@@ -218,26 +218,29 @@ def build(fresh: bool = False) -> bool:
     print(f"💶 deposits: {len(deposits)}")
 
     # ── Transactions ───────────────────────────────────────────────────────
+    # Cost bases are set as plausible historical levels below today's prices so
+    # the demo shows believable returns (roughly +15-35% on most names, BTC a
+    # solid winner, ETH a small loser). They are illustrative, not real trades.
     # (symbol, portfolio, type, qty, price, currency, days_ago, fees)
     buys = [
-        ("AAPL", "Degiro", 15, 165.00, "USD", 700, 1.0),
-        ("AAPL", "Degiro", 10, 185.50, "USD", 400, 1.0),
-        ("MSFT", "Degiro", 12, 250.00, "USD", 680, 1.0),
-        ("MSFT", "Degiro", 6, 330.00, "USD", 300, 1.0),
-        ("NVDA", "Trade Republic", 20, 45.00, "USD", 690, 1.0),
-        ("NVDA", "Trade Republic", 8, 110.00, "USD", 250, 1.0),
-        ("GOOGL", "Degiro", 14, 95.00, "USD", 520, 1.0),
-        ("JNJ", "Indexa Capital", 18, 158.00, "USD", 660, 1.0),
-        ("LLOY.L", "Trade Republic", 4000, 0.45, "GBP", 480, 2.0),
-        ("IWDA.AS", "Indexa Capital", 80, 78.00, "EUR", 710, 0.0),
-        ("IWDA.AS", "Indexa Capital", 40, 92.00, "EUR", 360, 0.0),
-        ("IWDA.AS", "Indexa Capital", 20, 100.00, "EUR", 90, 0.0),
-        ("VWCE.DE", "Trade Republic", 60, 95.00, "EUR", 600, 0.0),
-        ("VWCE.DE", "Trade Republic", 30, 108.00, "EUR", 200, 0.0),
-        ("BTC-EUR", "Coinbase", 0.15, 22000.00, "EUR", 540, 5.0),
-        ("BTC-EUR", "Coinbase", 0.08, 38000.00, "EUR", 200, 5.0),
-        ("ETH-EUR", "Coinbase", 2.5, 1400.00, "EUR", 520, 4.0),
-        ("ETH-EUR", "Coinbase", 1.2, 2600.00, "EUR", 150, 4.0),
+        ("AAPL", "Degiro", 15, 245.00, "USD", 700, 1.0),
+        ("AAPL", "Degiro", 10, 275.00, "USD", 400, 1.0),
+        ("MSFT", "Degiro", 12, 360.00, "USD", 680, 1.0),
+        ("MSFT", "Degiro", 6, 410.00, "USD", 300, 1.0),
+        ("NVDA", "Trade Republic", 20, 160.00, "USD", 690, 1.0),
+        ("NVDA", "Trade Republic", 8, 210.00, "USD", 250, 1.0),
+        ("GOOGL", "Degiro", 14, 320.00, "USD", 520, 1.0),
+        ("JNJ", "Indexa Capital", 18, 205.00, "USD", 660, 1.0),
+        ("LLOY.L", "Trade Republic", 4000, 0.88, "GBP", 480, 2.0),
+        ("IWDA.AS", "Indexa Capital", 80, 95.00, "EUR", 710, 0.0),
+        ("IWDA.AS", "Indexa Capital", 40, 108.00, "EUR", 360, 0.0),
+        ("IWDA.AS", "Indexa Capital", 20, 118.00, "EUR", 90, 0.0),
+        ("VWCE.DE", "Trade Republic", 60, 130.00, "EUR", 600, 0.0),
+        ("VWCE.DE", "Trade Republic", 30, 150.00, "EUR", 200, 0.0),
+        ("BTC-EUR", "Coinbase", 0.15, 38000.00, "EUR", 540, 5.0),
+        ("BTC-EUR", "Coinbase", 0.08, 50000.00, "EUR", 200, 5.0),
+        ("ETH-EUR", "Coinbase", 2.5, 1750.00, "EUR", 520, 4.0),
+        ("ETH-EUR", "Coinbase", 1.2, 2300.00, "EUR", 150, 4.0),
     ]
     n_tx = 0
     for sym, pf, qty, price, cur, days, fees in buys:
@@ -256,10 +259,11 @@ def build(fresh: bool = False) -> bool:
         )
         n_tx += 1
 
-    # A couple of sells → realised gains for the FIFO tax report.
+    # A couple of sells → modest realised gains for the FIFO tax report
+    # (sold above the earliest lot's cost, below today's price).
     sells = [
-        ("NVDA", "Trade Republic", 6, 130.00, "USD", 60, 1.0),
-        ("AAPL", "Degiro", 5, 210.00, "USD", 45, 1.0),
+        ("NVDA", "Trade Republic", 6, 195.00, "USD", 60, 1.0),
+        ("AAPL", "Degiro", 5, 290.00, "USD", 45, 1.0),
     ]
     for sym, pf, qty, price, cur, days, fees in sells:
         db.create_transaction(
