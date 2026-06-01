@@ -1,0 +1,158 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: portf_postgres
+    profiles:
+      - dev
+      - prod
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-portf_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-portf_password}
+      POSTGRES_DB: ${POSTGRES_DB:-portf_db}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - portf_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-portf_user} -d ${POSTGRES_DB:-portf_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  backend:
+    profiles:
+      - dev
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: portf_backend_dev
+    environment:
+      - PORTF_ENVIRONMENT
+      - PORTF_DEBUG
+      - PORTF_RELOAD
+      - PORTF_HOST
+      - PORTF_PORT
+      - PORTF_WORKERS
+      - PORTF_LOG_LEVEL
+      - PORTF_DATABASE_URL
+      - PORTF_SECRET_KEY
+      - PORTF_API_KEY_HEADER
+      - PORTF_GEMINI_API_KEY
+      - GEMINI_API_KEY
+      - GOOGLE_API_KEY
+      - OPENROUTER_API_KEY
+      - PORTF_OPENROUTER_API_KEY
+      - PORTF_LLM_PROVIDER=openrouter
+      - PORTF_LLM_MODEL
+      - LLM_PROVIDER=openrouter
+      - PORTF_PUBLIC_VIEW
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+      - POSTGRES_DB
+      - POSTGRES_PORT
+      - DATABASE_URL
+      - PGTZ
+    env_file:
+      - .env
+      - .env.development
+      - .env.local
+    volumes:
+      - .:/app
+      - backend_venv:/app/.venv
+      - playwright_cache:/home/appuser/.cache/ms-playwright
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - portf_net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
+    ports:
+      - "${PORTF_PORT:-8000}:8000"
+    restart: "no"
+
+  backend-prod:
+    profiles:
+      - prod
+    image: ${BACKEND_IMAGE:-ghcr.io/yourusername/portfolio-backend:${IMAGE_TAG:-latest}}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: portf_backend_prod
+    environment:
+      - PORTF_ENVIRONMENT
+      - PORTF_DEBUG
+      - PORTF_RELOAD
+      - PORTF_HOST
+      - PORTF_PORT
+      - PORTF_WORKERS
+      - PORTF_LOG_LEVEL
+      - PORTF_DATABASE_URL
+      - PORTF_SECRET_KEY
+      - PORTF_API_KEY_HEADER
+      - PORTF_GEMINI_API_KEY
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+      - POSTGRES_DB
+      - POSTGRES_PORT
+      - DATABASE_URL
+      - PGTZ
+    env_file:
+      - .env
+      - .env.production
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - portf_net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
+    ports:
+      - "${PORTF_PORT:-8000}:8000"
+    restart: unless-stopped
+
+  web:
+    image: ${WEB_IMAGE:-ghcr.io/yourusername/portfolio-web:${IMAGE_TAG:-latest}}
+    build:
+      context: ./web_client
+      dockerfile: Dockerfile
+    container_name: portf_web
+    profiles:
+      - dev
+      - prod
+    ports:
+      - "${WEB_PORT:-80}:80"
+    networks:
+      - portf_net
+    healthcheck:
+      test: ["CMD-SHELL", "wget --quiet --spider http://localhost || exit 1"]
+      interval: 30s
+      timeout: 3s
+      start_period: 5s
+      retries: 3
+    restart: unless-stopped
+
+networks:
+  portf_net:
+    external: true
+
+volumes:
+  postgres_data:
+    driver: local
+  backend_venv:
+    driver: local
+  playwright_cache:
+    driver: local

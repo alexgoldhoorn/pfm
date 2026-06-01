@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="robots" content="noindex">
+    <title>Portfolio — Public View</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <style> body { background:#f8fafc; } .card { border:none; box-shadow:0 1px 3px rgba(0,0,0,.08); } </style>
+</head>
+<body>
+    <div class="container py-4" style="max-width: 760px;">
+        <div class="d-flex align-items-center mb-3">
+            <i class="bi bi-graph-up fs-3 text-primary me-2"></i>
+            <div>
+                <h4 class="mb-0">Portfolio — Public View</h4>
+                <p class="text-muted small mb-0">Allocation and performance percentages only. No amounts shown.</p>
+            </div>
+        </div>
+
+        <div id="publicError" class="alert alert-warning d-none"></div>
+
+        <div class="row g-3">
+            <div class="col-12 col-md-6">
+                <div class="card h-100">
+                    <div class="card-body text-center">
+                        <div class="text-muted small text-uppercase">Total Return</div>
+                        <div id="pubReturn" class="display-6 fw-bold">…</div>
+                        <div id="pubPositions" class="text-muted small"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-12 col-md-6">
+                <div class="card h-100">
+                    <div class="card-header fw-semibold">Allocation by Type</div>
+                    <div class="card-body" id="pubDonut"></div>
+                </div>
+            </div>
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header fw-semibold">Top Holdings (by weight)</div>
+                    <div class="card-body p-0">
+                        <table class="table table-sm table-hover mb-0" id="pubHoldings"><tbody></tbody></table>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <p class="text-muted small mt-3 text-center" id="pubNote"></p>
+    </div>
+
+    <script>
+    const COLORS = ['#2563eb','#16a34a','#f59e0b','#dc2626','#7c3aed','#0891b2','#64748b'];
+    function fmtPct(v){ return (v>=0?'+':'') + v.toFixed(1) + '%'; }
+
+    function renderDonut(byType) {
+        const entries = Object.entries(byType);
+        if (!entries.length) return '<p class="text-muted small mb-0">No data.</p>';
+        const r=60, c=2*Math.PI*r; let off=0;
+        const circles = entries.map(([k,v],i)=>{
+            const len=c*v/100; const el=`<circle cx="80" cy="80" r="${r}" fill="none"
+                stroke="${COLORS[i%COLORS.length]}" stroke-width="24"
+                stroke-dasharray="${len.toFixed(2)} ${(c-len).toFixed(2)}"
+                stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 80 80)"/>`;
+            off+=len; return el;
+        }).join('');
+        const legend = entries.map(([k,v],i)=>`<div class="d-flex align-items-center small mb-1">
+            <span style="width:12px;height:12px;background:${COLORS[i%COLORS.length]};display:inline-block;border-radius:2px;" class="me-2"></span>
+            ${k} <span class="ms-auto fw-semibold">${v}%</span></div>`).join('');
+        return `<div class="d-flex align-items-center gap-3 flex-wrap justify-content-center">
+            <svg width="160" height="160" viewBox="0 0 160 160">${circles}</svg>
+            <div style="min-width:160px;">${legend}</div></div>`;
+    }
+
+    (async () => {
+        try {
+            const r = await fetch('/api/v1/public/summary');
+            if (!r.ok) throw new Error(r.status === 404 ? 'Public view is not enabled.' : 'Could not load.');
+            const d = await r.json();
+            document.getElementById('pubReturn').textContent = d.total_return_pct==null?'—':fmtPct(d.total_return_pct);
+            document.getElementById('pubReturn').className = 'display-6 fw-bold ' + ((d.total_return_pct||0)>=0?'text-success':'text-danger');
+            document.getElementById('pubPositions').textContent = d.positions + ' positions';
+            document.getElementById('pubDonut').innerHTML = renderDonut(d.allocation_by_type_pct);
+            document.querySelector('#pubHoldings tbody').innerHTML =
+                d.top_holdings_pct.map(h=>`<tr><td>${h.name}</td><td class="text-end fw-semibold">${h.pct}%</td></tr>`).join('');
+            document.getElementById('pubNote').textContent = d.note;
+        } catch (e) {
+            const el = document.getElementById('publicError');
+            el.textContent = e.message; el.classList.remove('d-none');
+        }
+    })();
+    </script>
+</body>
+</html>

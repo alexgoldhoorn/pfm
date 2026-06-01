@@ -1,0 +1,82 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+test-results/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Data Files
+*.csv
+*.json
+*.xlsx
+*.xls
+
+# Logs
+*.log
+*.logs
+
+# Backup files
+*.bak
+*.backup
+
+# Temporary files
+*.tmp
+*.temp
+
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.development
+
+# Docker
+docker-compose.override.yml
+.env.local
+service-account.json
+*.session
+.portf_session

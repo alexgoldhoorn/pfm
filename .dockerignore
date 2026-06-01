@@ -1,0 +1,110 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+README*.md
+CHANGELOG.md
+docs/
+*.md
+
+# Tests
+tests/
+test_*.py
+*_test.py
+.pytest_cache/
+test-results/
+.coverage
+htmlcov/
+.tox/
+
+# Development tools
+.pre-commit-config.yaml
+.pre-commit-hooks.yaml
+pre-commit/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.python-version
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Database files (exclude local development DBs)
+*.db
+*.sqlite
+*.sqlite3
+portfolio.db*
+
+# Temporary files
+*.tmp
+*.temp
+tmp/
+temp/
+
+# Development and demo files
+demo_*.py
+debug_*.py
+create_demo_*.py
+inspect_*.py
+migration_*.py
+repair_*.py
+script_*.py
+verify_*.py
+complete_*.py
+calculator.py
+config_test.py
+
+# MAS CrewAI (appears to be separate sub-project)
+mas-crewai/
+
+# Web client (if serving separately)
+web_client/

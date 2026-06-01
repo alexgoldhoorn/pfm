@@ -1,0 +1,1899 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Portfolio Management</title>
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <!-- Bootstrap Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" rel="stylesheet">
+
+    <!-- Chart.js (UMD build required for non-module scripts) -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+    <!-- Custom CSS -->
+    <link href="css/styles.css" rel="stylesheet">
+</head>
+<body>
+    <!-- Login Modal -->
+    <div class="modal fade" id="loginModal" data-bs-backdrop="static" data-bs-keyboard="false" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-graph-up me-2"></i>Portfolio Manager — Sign in
+                    </h5>
+                </div>
+                <div class="modal-body">
+                    <ul class="nav nav-pills nav-fill mb-3" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link active" data-bs-toggle="pill" data-bs-target="#tabPassword" type="button">Password</button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" data-bs-toggle="pill" data-bs-target="#tabCreate" type="button">Create account</button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" data-bs-toggle="pill" data-bs-target="#tabApiKey" type="button">API key</button>
+                        </li>
+                    </ul>
+                    <div class="tab-content">
+                        <!-- Username + password -->
+                        <div class="tab-pane fade show active" id="tabPassword" role="tabpanel">
+                            <form id="passwordLoginForm">
+                                <div class="mb-2">
+                                    <label for="loginUsername" class="form-label">Username</label>
+                                    <input type="text" class="form-control" id="loginUsername" autocomplete="username" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="loginPassword" class="form-label">Password</label>
+                                    <input type="password" class="form-control" id="loginPassword" autocomplete="current-password" required>
+                                </div>
+                                <div id="passwordLoginError" class="text-danger small mb-2"></div>
+                                <div class="d-grid">
+                                    <button type="submit" class="btn btn-primary">
+                                        <i class="bi bi-box-arrow-in-right me-2"></i>Sign in
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                        <!-- First-time account creation -->
+                        <div class="tab-pane fade" id="tabCreate" role="tabpanel">
+                            <form id="registerForm">
+                                <div class="mb-2">
+                                    <label for="regUsername" class="form-label">Username</label>
+                                    <input type="text" class="form-control" id="regUsername" minlength="3" required>
+                                </div>
+                                <div class="mb-2">
+                                    <label for="regEmail" class="form-label">Email</label>
+                                    <input type="email" class="form-control" id="regEmail" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="regPassword" class="form-label">Password <span class="text-muted">(min 8 chars)</span></label>
+                                    <input type="password" class="form-control" id="regPassword" minlength="8" required>
+                                </div>
+                                <div id="registerError" class="text-danger small mb-2"></div>
+                                <div class="d-grid">
+                                    <button type="submit" class="btn btn-success">
+                                        <i class="bi bi-person-plus me-2"></i>Create account &amp; sign in
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                        <!-- API key (advanced / machine) -->
+                        <div class="tab-pane fade" id="tabApiKey" role="tabpanel">
+                            <form id="loginForm">
+                                <div class="mb-3">
+                                    <label for="apiKey" class="form-label">API Key</label>
+                                    <div class="input-group">
+                                        <span class="input-group-text"><i class="bi bi-key"></i></span>
+                                        <input type="password" class="form-control" id="apiKey" placeholder="Enter your API key" required>
+                                        <button class="btn btn-outline-secondary" type="button" id="toggleApiKey" title="Show/hide API key">
+                                            <i class="bi bi-eye"></i>
+                                        </button>
+                                    </div>
+                                    <div class="form-text">For advanced/machine access. Use Password to sign in normally.</div>
+                                </div>
+                                <div class="d-grid">
+                                    <button type="submit" class="btn btn-primary">
+                                        <i class="bi bi-box-arrow-in-right me-2"></i>Login
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Offcanvas Sidebar (mobile) -->
+    <div class="offcanvas offcanvas-start" tabindex="-1" id="sidebarOffcanvas" aria-labelledby="sidebarOffcanvasLabel" style="width:240px;">
+        <div class="offcanvas-header bg-primary text-white">
+            <h6 class="offcanvas-title fw-bold" id="sidebarOffcanvasLabel">
+                <i class="bi bi-graph-up me-2"></i>Portfolio Manager
+            </h6>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+        </div>
+        <div class="offcanvas-body p-0">
+            <nav class="nav flex-column py-2">
+                <a class="sidebar-nav-link active" href="#" data-page="dashboard">
+                    <i class="bi bi-house-door me-2"></i>Dashboard
+                </a>
+                <a class="sidebar-nav-link" href="#" data-page="assets">
+                    <i class="bi bi-coin me-2"></i>Assets
+                </a>
+                <a class="sidebar-nav-link" href="#" data-page="transactions">
+                    <i class="bi bi-arrow-left-right me-2"></i>Transactions
+                </a>
+                <a class="sidebar-nav-link" href="#" data-page="holdings">
+                    <i class="bi bi-bar-chart-line me-2"></i>Holdings
+                </a>
+                <a class="sidebar-nav-link" href="#" data-page="analytics">
+                    <i class="bi bi-bar-chart-line me-2"></i>Analytics
+                </a>
+                <a class="sidebar-nav-link" href="#" data-page="watchlist">
+                    <i class="bi bi-eye me-2"></i>Watchlist
+                </a>
+                <a class="sidebar-nav-link" href="#" data-page="goals">
+                    <i class="bi bi-bullseye me-2"></i>Goals
+                </a>
+                <a class="sidebar-nav-link" href="#" data-page="forecast">
+                    <i class="bi bi-graph-up-arrow me-2"></i>Wealth Simulator
+                </a>
+                <a class="sidebar-nav-link" href="#" data-page="chat">
+                    <i class="bi bi-chat-dots me-2"></i>Chat
+                </a>
+                <a class="sidebar-nav-link" href="#" data-page="importexport">
+                    <i class="bi bi-box-arrow-in-down me-2"></i>Import / Export
+                </a>
+                <a class="sidebar-nav-link" href="#" data-page="portfolios">
+                    <i class="bi bi-briefcase me-2"></i>Portfolios
+                </a>
+                <hr class="mx-3 my-2">
+                <a class="sidebar-nav-link text-danger" href="#" id="logoutBtnOffcanvas">
+                    <i class="bi bi-box-arrow-right me-2"></i>Logout
+                </a>
+            </nav>
+        </div>
+    </div>
+
+    <!-- App Shell: sidebar + main -->
+    <div class="app-shell" id="appShell" style="display:none;">
+
+        <!-- Desktop Sidebar -->
+        <aside class="app-sidebar" id="mainNav">
+            <div class="sidebar-brand">
+                <i class="bi bi-graph-up me-2"></i>Portfolio Manager
+            </div>
+            <nav class="sidebar-nav flex-column py-2">
+                <a class="sidebar-nav-link active" href="#" data-page="dashboard">
+                    <i class="bi bi-house-door me-2"></i>Dashboard
+                </a>
+                <a class="sidebar-nav-link" href="#" data-page="assets">
+                    <i class="bi bi-coin me-2"></i>Assets
+                </a>
+                <a class="sidebar-nav-link" href="#" data-page="transactions">
+                    <i class="bi bi-arrow-left-right me-2"></i>Transactions
+                </a>
+                <a class="sidebar-nav-link" href="#" data-page="holdings">
+                    <i class="bi bi-bar-chart-line me-2"></i>Holdings
+                </a>
+                <a class="sidebar-nav-link" href="#" data-page="analytics">
+                    <i class="bi bi-bar-chart-line me-2"></i>Analytics
+                </a>
+                <a class="sidebar-nav-link" href="#" data-page="watchlist">
+                    <i class="bi bi-eye me-2"></i>Watchlist
+                </a>
+                <a class="sidebar-nav-link" href="#" data-page="goals">
+                    <i class="bi bi-bullseye me-2"></i>Goals
+                </a>
+                <a class="sidebar-nav-link" href="#" data-page="forecast">
+                    <i class="bi bi-graph-up-arrow me-2"></i>Wealth Simulator
+                </a>
+                <a class="sidebar-nav-link" href="#" data-page="chat">
+                    <i class="bi bi-chat-dots me-2"></i>Chat
+                </a>
+                <a class="sidebar-nav-link" href="#" data-page="importexport">
+                    <i class="bi bi-box-arrow-in-down me-2"></i>Import / Export
+                </a>
+                <a class="sidebar-nav-link" href="#" data-page="portfolios">
+                    <i class="bi bi-briefcase me-2"></i>Portfolios
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <a class="sidebar-nav-link text-danger" href="#" id="logoutBtn">
+                    <i class="bi bi-box-arrow-right me-2"></i>Logout
+                </a>
+            </div>
+        </aside>
+
+        <!-- Main content area -->
+        <div class="app-main">
+
+            <!-- Mobile topbar -->
+            <div class="mobile-topbar d-lg-none">
+                <button class="btn btn-sm btn-outline-secondary" type="button"
+                        data-bs-toggle="offcanvas" data-bs-target="#sidebarOffcanvas"
+                        aria-controls="sidebarOffcanvas" title="Open navigation">
+                    <i class="bi bi-list fs-5"></i>
+                </button>
+                <span class="fw-semibold ms-2 text-primary">
+                    <i class="bi bi-graph-up me-1"></i>Portfolio Manager
+                </span>
+            </div>
+
+            <!-- Page content -->
+            <div class="app-content" id="mainContent">
+
+                <!-- Dashboard Page -->
+                <div id="dashboardPage" class="page-content">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div>
+                            <h4 class="mb-0"><i class="bi bi-speedometer2 me-2 text-primary"></i>Dashboard<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('dashboard')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
+                            <p class="text-muted small mb-0">Portfolio overview and recent activity</p>
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary" id="refreshTransactions" title="Refresh dashboard data">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                        </button>
+                    </div>
+
+                    <!-- Row 1: KPI Cards -->
+                    <div class="row g-3 mb-4">
+                        <div class="col-6 col-md-3">
+                            <div class="card bg-primary text-white h-100">
+                                <div class="card-body py-3">
+                                    <div class="d-flex justify-content-between align-items-start">
+                                        <div>
+                                            <div class="small opacity-75 mb-1" data-bs-toggle="tooltip" title="Net Worth: total portfolio value in EUR (all currencies converted at current FX rates).">Portfolio Value</div>
+                                            <div class="fs-4 fw-bold" id="totalValue">—</div>
+                                        </div>
+                                        <i class="bi bi-cash-stack fs-2 opacity-40"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <div class="card bg-secondary text-white h-100">
+                                <div class="card-body py-3">
+                                    <div class="d-flex justify-content-between align-items-start">
+                                        <div>
+                                            <div class="small opacity-75 mb-1" data-bs-toggle="tooltip" title="Invested: cost basis of your currently-held positions (what you paid, in EUR).">Total Invested</div>
+                                            <div class="fs-4 fw-bold" id="dashTotalCost">—</div>
+                                        </div>
+                                        <i class="bi bi-wallet2 fs-2 opacity-40"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <div class="card text-white h-100" id="dashPnlCard" style="background:#6c757d;">
+                                <div class="card-body py-3">
+                                    <div class="d-flex justify-content-between align-items-start">
+                                        <div>
+                                            <div class="d-flex align-items-center gap-2 mb-1">
+                                                <div class="small opacity-75" data-bs-toggle="tooltip" title="Return: lifetime return vs cost basis for 'All'; YTD/1Y use daily snapshots.">Return</div>
+                                                <select class="form-select form-select-sm py-0 border-0 bg-transparent text-white" id="dashReturnPeriod" style="width:auto;font-size:.7rem;" title="Return timeframe">
+                                                    <option value="all">All</option>
+                                                    <option value="ytd">YTD</option>
+                                                    <option value="1y">1Y</option>
+                                                </select>
+                                            </div>
+                                            <div class="fs-4 fw-bold" id="dashReturnPct">—</div>
+                                            <div class="small opacity-75" id="totalGainLoss"></div>
+                                            <div class="small opacity-75" id="dashPnlPct"></div>
+                                        </div>
+                                        <i class="bi bi-graph-up-arrow fs-2 opacity-40"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <div class="card bg-info text-white h-100">
+                                <div class="card-body py-3">
+                                    <div class="d-flex justify-content-between align-items-start">
+                                        <div>
+                                            <div class="small opacity-75 mb-1">Open Positions</div>
+                                            <div class="fs-4 fw-bold" id="totalAssets">—</div>
+                                            <div class="small opacity-75" id="totalTransactions"></div>
+                                        </div>
+                                        <i class="bi bi-pie-chart fs-2 opacity-40"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Row 2: Top Positions + Allocation Donut -->
+                    <div class="row g-3 mb-4">
+                        <!-- Top 5 Positions -->
+                        <div class="col-12 col-lg-7">
+                            <div class="card h-100">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <span><i class="bi bi-bar-chart-steps me-2"></i>Top Positions</span>
+                                    <button class="btn btn-sm btn-outline-secondary" id="refreshTopPositions" title="Refresh top positions">
+                                        <i class="bi bi-arrow-clockwise"></i>
+                                    </button>
+                                </div>
+                                <div class="card-body p-0">
+                                    <div class="table-responsive">
+                                        <table class="table table-hover mb-0" id="dashTopPositionsTable">
+                                            <thead>
+                                                <tr>
+                                                    <th class="ps-3">Name</th>
+                                                    <th>Type</th>
+                                                    <th class="text-end">Value (EUR)</th>
+                                                    <th class="text-end pe-3">P&amp;L %</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr>
+                                                    <td colspan="4" class="text-center py-3">
+                                                        <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                                                        Loading…
+                                                    </td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Allocation Donut -->
+                        <div class="col-12 col-lg-5">
+                            <div class="card h-100">
+                                <div class="card-header">
+                                    <i class="bi bi-pie-chart-fill me-2"></i>Allocation by Type
+                                </div>
+                                <div class="card-body d-flex align-items-center justify-content-center">
+                                    <div id="dashDonutArea" class="d-flex align-items-center gap-4 flex-wrap justify-content-center w-100">
+                                        <div class="text-muted small text-center">
+                                            <div class="spinner-border spinner-border-sm mb-1" role="status"></div><br>Loading…
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Row 3: Simulator CTA + Recent Transactions -->
+                    <div class="row g-3">
+                        <!-- Simulate Future Wealth CTA -->
+                        <div class="col-12 col-md-4">
+                            <div class="card border-primary h-100">
+                                <div class="card-body d-flex flex-column justify-content-between">
+                                    <div>
+                                        <h5 class="card-title text-primary">
+                                            <i class="bi bi-graph-up-arrow me-2"></i>Wealth Simulator
+                                        </h5>
+                                        <p class="card-text text-muted small">
+                                            Project your portfolio growth over time using Geometric Brownian Motion.
+                                            Your current portfolio value is pre-filled automatically.
+                                        </p>
+                                    </div>
+                                    <button class="btn btn-primary mt-3" onclick="window.navigationManager.showPage('forecast')">
+                                        Simulate Future Wealth <i class="bi bi-arrow-right ms-1"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Recent Transactions -->
+                        <div class="col-12 col-md-8">
+                            <div class="card h-100">
+                                <div class="card-header">
+                                    <i class="bi bi-clock-history me-2"></i>Recent Transactions
+                                </div>
+                                <div class="card-body p-0">
+                                    <div class="table-responsive">
+                                        <table class="table table-hover table-sm mb-0" id="recentTransactionsTable">
+                                            <thead>
+                                                <tr>
+                                                    <th class="ps-3">Date</th>
+                                                    <th>Asset</th>
+                                                    <th>Type</th>
+                                                    <th class="text-end">Qty</th>
+                                                    <th class="text-end">Price</th>
+                                                    <th class="text-end pe-3">Total</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr>
+                                                    <td colspan="6" class="text-center py-3">
+                                                        <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                                                        Loading transactions...
+                                                    </td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Assets Page -->
+                <div id="assetsPage" class="page-content" style="display: none;">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div>
+                            <h4 class="mb-0"><i class="bi bi-coin me-2 text-primary"></i>Assets<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('assets')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
+                            <p class="text-muted small mb-0">All tracked securities and funds. Prices update daily from Yahoo Finance.</p>
+                        </div>
+                        <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addAssetModal">
+                            <i class="bi bi-plus-lg me-1"></i>Add Asset
+                        </button>
+                    </div>
+
+                    <!-- Assets Filter -->
+                    <div class="row g-2 mb-3">
+                        <div class="col-12 col-sm-4">
+                            <select class="form-select form-select-sm" id="assetTypeFilter">
+                                <option value="">All Asset Types</option>
+                                <option value="stock">Stock</option>
+                                <option value="bond">Bond</option>
+                                <option value="etf">ETF</option>
+                                <option value="crypto">Cryptocurrency</option>
+                                <option value="commodity">Commodity</option>
+                            </select>
+                        </div>
+                        <div class="col-12 col-sm-5">
+                            <input type="text" class="form-control form-control-sm" id="assetSearchInput" placeholder="Search assets...">
+                        </div>
+                        <div class="col-12 col-sm-3">
+                            <button class="btn btn-sm btn-outline-secondary w-100" id="refreshAssets" title="Refresh assets list">
+                                <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Assets Table -->
+                    <div class="card">
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-hover mb-0" id="assetsTable">
+                                    <thead>
+                                        <tr>
+                                            <th class="ps-3">Symbol</th>
+                                            <th>Name</th>
+                                            <th>Type</th>
+                                            <th>Exchange</th>
+                                            <th class="text-end">Current Price</th>
+                                            <th>Currency</th>
+                                            <th class="pe-3">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td colspan="7" class="text-center py-4">
+                                                <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                                                Loading assets...
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Transactions Page -->
+                <div id="transactionsPage" class="page-content" style="display: none;">
+                    <div class="d-flex align-items-start justify-content-between mb-3">
+                        <div>
+                            <h4 class="mb-0"><i class="bi bi-arrow-left-right me-2 text-primary"></i>Transactions<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('transactions')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
+                            <p class="text-muted small mb-0">Full transaction history: buys, sells, and dividends across all brokers.</p>
+                        </div>
+                        <div class="d-flex gap-2 flex-wrap justify-content-end">
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#llmImportModal" title="Import using AI text extraction">
+                                    <i class="bi bi-magic me-1"></i><span class="d-none d-md-inline">Import text</span>
+                                </button>
+                                <button class="btn btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#fileImportModal" title="Import from broker file">
+                                    <i class="bi bi-file-earmark-arrow-up me-1"></i><span class="d-none d-md-inline">Import file</span>
+                                </button>
+                            </div>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-secondary" id="exportCsvBtn" title="Export all transactions as CSV">
+                                    <i class="bi bi-filetype-csv me-1"></i><span class="d-none d-md-inline">CSV</span>
+                                </button>
+                                <button class="btn btn-outline-secondary" id="exportPdtBtn" title="Export as Portfolio Dividend Tracker XLSX">
+                                    <i class="bi bi-file-earmark-spreadsheet me-1"></i><span class="d-none d-md-inline">PDT</span>
+                                </button>
+                            </div>
+                            <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addTransactionModal" title="Add new transaction">
+                                <i class="bi bi-plus-lg me-1"></i><span class="d-none d-sm-inline">Add</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Transactions Filter -->
+                    <div class="row g-2 mb-3">
+                        <div class="col-12 col-sm-6 col-md-3">
+                            <select class="form-select form-select-sm" id="txPortfolioFilter">
+                                <option value="">All Portfolios</option>
+                            </select>
+                        </div>
+                        <div class="col-6 col-md-2">
+                            <select class="form-select form-select-sm" id="transactionTypeFilter">
+                                <option value="">All Types</option>
+                                <option value="buy">Buy</option>
+                                <option value="sell">Sell</option>
+                                <option value="dividend">Dividend</option>
+                                <option value="split">Stock Split</option>
+                            </select>
+                        </div>
+                        <div class="col-6 col-md-2">
+                            <input type="date" class="form-control form-control-sm" id="fromDate">
+                        </div>
+                        <div class="col-6 col-md-2">
+                            <input type="date" class="form-control form-control-sm" id="toDate">
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <button class="btn btn-sm btn-outline-secondary w-100" id="refreshTransactionsPage" title="Refresh transaction list">
+                                <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Transactions Table -->
+                    <div class="card">
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-hover mb-0" id="transactionsTable">
+                                    <thead>
+                                        <tr>
+                                            <th class="ps-3">Date</th>
+                                            <th>Portfolio</th>
+                                            <th>Asset</th>
+                                            <th>Type</th>
+                                            <th class="text-end">Quantity</th>
+                                            <th class="text-end">Price</th>
+                                            <th>Currency</th>
+                                            <th class="text-end">Total</th>
+                                            <th class="text-end">Fees</th>
+                                            <th class="pe-3">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td colspan="10" class="text-center py-4">
+                                                <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                                                Loading transactions...
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Holdings Page -->
+                <div id="holdingsPage" class="page-content" style="display: none;">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div>
+                            <h4 class="mb-0"><i class="bi bi-bar-chart-line me-2 text-primary"></i>Holdings<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('holdings')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
+                            <p class="text-muted small mb-0">Current open positions with cost basis, live price, and P&amp;L. All values in EUR.</p>
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary" id="refreshHoldings" title="Refresh holdings data">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                        </button>
+                    </div>
+
+                    <!-- Holdings Summary Cards -->
+                    <div class="row g-3 mb-4">
+                        <div class="col-12 col-md-4">
+                            <div class="card bg-primary text-white">
+                                <div class="card-body py-3">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <div class="small opacity-75 mb-1">Total Value</div>
+                                            <div class="fs-4 fw-bold" id="holdingsTotalValue">—</div>
+                                        </div>
+                                        <i class="bi bi-cash-stack fs-2 opacity-50"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <div class="card bg-secondary text-white">
+                                <div class="card-body py-3">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <div class="small opacity-75 mb-1">Total Cost</div>
+                                            <div class="fs-4 fw-bold" id="holdingsTotalCost">—</div>
+                                        </div>
+                                        <i class="bi bi-wallet2 fs-2 opacity-50"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <div class="card text-white" id="holdingsPnlCard">
+                                <div class="card-body py-3">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <div class="small opacity-75 mb-1">Total P/L</div>
+                                            <div class="fs-4 fw-bold" id="holdingsTotalPnl">—</div>
+                                        </div>
+                                        <i class="bi bi-graph-up-arrow fs-2 opacity-50"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Holdings Table -->
+                    <div class="card">
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-hover mb-0" id="holdingsTable">
+                                    <thead>
+                                        <tr>
+                                            <th class="ps-3">Symbol</th>
+                                            <th>Name</th>
+                                            <th>Type</th>
+                                            <th>Currency</th>
+                                            <th class="text-end">Quantity</th>
+                                            <th class="text-end">Avg Price</th>
+                                            <th class="text-end">Current Price</th>
+                                            <th class="text-end">Total Value</th>
+                                            <th class="text-end">P/L</th>
+                                            <th class="text-end">P/L %</th>
+                                            <th class="text-center">Links</th>
+                                            <th class="text-end pe-3">Research</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td colspan="12" class="text-center py-4">
+                                                <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                                                Loading holdings...
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Rebalancing Card -->
+                    <div class="card mt-4">
+                        <div class="card-header fw-semibold" style="cursor:pointer;" data-bs-toggle="collapse" data-bs-target="#rebalanceBody" aria-expanded="false">
+                            <i class="bi bi-sliders me-2 text-primary"></i>Rebalancing
+                            <i class="bi bi-chevron-down float-end mt-1 small"></i>
+                        </div>
+                        <div class="collapse" id="rebalanceBody">
+                            <div class="card-body">
+                                <div class="row g-4">
+                                    <!-- Target allocation form -->
+                                    <div class="col-12 col-lg-5">
+                                        <h6 class="fw-semibold mb-2"><i class="bi bi-bullseye me-2"></i>Target Allocation</h6>
+                                        <p class="text-muted small mb-2">Set a target percentage for each asset type. Targets should sum to 100%.</p>
+                                        <form id="rebalanceTargetsForm">
+                                            <div id="rebalanceTargetsRows">
+                                                <p class="text-muted small mb-0">Loading…</p>
+                                            </div>
+                                            <div class="d-flex justify-content-between align-items-center mt-2">
+                                                <span class="small">Total: <strong id="rebalanceTargetsTotal">0%</strong></span>
+                                                <button type="submit" class="btn btn-sm btn-primary" id="rebalanceSaveBtn">
+                                                    <i class="bi bi-check-lg me-1"></i>Save Targets
+                                                </button>
+                                            </div>
+                                        </form>
+                                    </div>
+
+                                    <!-- Analysis -->
+                                    <div class="col-12 col-lg-7">
+                                        <h6 class="fw-semibold mb-2"><i class="bi bi-graph-up me-2"></i>Analysis</h6>
+                                        <div class="table-responsive">
+                                            <table class="table table-sm table-hover mb-3" id="rebalanceAnalysisTable">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Type</th>
+                                                        <th class="text-end">Current %</th>
+                                                        <th class="text-end">Target %</th>
+                                                        <th class="text-end">Drift %</th>
+                                                        <th class="text-end">Action</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <tr><td colspan="5" class="text-center text-muted small">Save targets to see analysis.</td></tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                        <div id="rebalanceActions"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Analytics Page -->
+                <div id="analyticsPage" class="page-content" style="display: none;">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div>
+                            <h4 class="mb-0"><i class="bi bi-bar-chart-line me-2 text-primary"></i>Analytics<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('analytics')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
+                            <p class="text-muted small mb-0">Performance vs benchmark, net worth history, dividend income and a Spanish IRPF tax estimate.</p>
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary" id="refreshAnalytics" title="Refresh analytics data">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                        </button>
+                    </div>
+
+                    <!-- a) Performance -->
+                    <div class="card mb-4">
+                        <div class="card-header fw-semibold d-flex justify-content-between align-items-center flex-wrap gap-2">
+                            <span><i class="bi bi-speedometer2 me-2 text-primary"></i>Performance</span>
+                            <div class="d-flex align-items-center gap-2 flex-wrap">
+                                <div class="btn-group btn-group-sm" role="group" aria-label="Return period" id="anPeriodGroup">
+                                    <input type="radio" class="btn-check" name="anPeriod" id="anPeriodAll" value="all" autocomplete="off" checked>
+                                    <label class="btn btn-outline-secondary" for="anPeriodAll">All</label>
+                                    <input type="radio" class="btn-check" name="anPeriod" id="anPeriodYtd" value="ytd" autocomplete="off">
+                                    <label class="btn btn-outline-secondary" for="anPeriodYtd">YTD</label>
+                                    <input type="radio" class="btn-check" name="anPeriod" id="anPeriod1y" value="1y" autocomplete="off">
+                                    <label class="btn btn-outline-secondary" for="anPeriod1y">1Y</label>
+                                    <input type="radio" class="btn-check" name="anPeriod" id="anPeriod1m" value="1m" autocomplete="off">
+                                    <label class="btn btn-outline-secondary" for="anPeriod1m">1M</label>
+                                </div>
+                                <label class="small text-muted mb-0" for="anBenchmark">Benchmark</label>
+                                <select class="form-select form-select-sm" id="anBenchmark" style="width:auto;">
+                                    <option value="^GSPC">S&amp;P 500 (^GSPC)</option>
+                                    <option value="^IXIC">NASDAQ (^IXIC)</option>
+                                    <option value="URTH">MSCI World (URTH)</option>
+                                    <option value="^STOXX50E">Euro Stoxx 50 (^STOXX50E)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="card-body" id="anPerformanceBody">
+                            <div class="text-center text-muted py-4">
+                                <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                                Loading performance (fetching benchmark, may take a few seconds)…
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- b) Net worth over time -->
+                    <div class="card mb-4">
+                        <div class="card-header fw-semibold d-flex justify-content-between align-items-center flex-wrap gap-2">
+                            <span><i class="bi bi-graph-up me-2 text-primary"></i>Net Worth Over Time</span>
+                            <div class="d-flex gap-3 align-items-center" style="font-size:0.8rem;">
+                                <span><svg width="18" height="3"><line x1="0" y1="1.5" x2="18" y2="1.5" stroke="#2563eb" stroke-width="2.5"/></svg> Value</span>
+                                <span><svg width="18" height="3"><line x1="0" y1="1.5" x2="18" y2="1.5" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4 3"/></svg> Invested</span>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div id="anNetworthContainer" style="position:relative; width:100%; min-height:300px;">
+                                <div class="d-flex align-items-center justify-content-center text-muted" id="anNetworthPlaceholder" style="min-height:300px;">
+                                    <div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading…
+                                </div>
+                                <svg id="anNetworthSvg" width="100%" style="display:none; overflow:visible;"></svg>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- c) Dividend income -->
+                    <div class="card mb-4">
+                        <div class="card-header fw-semibold">
+                            <i class="bi bi-cash-coin me-2 text-success"></i>Dividend Income
+                        </div>
+                        <div class="card-body" id="anDividendsBody">
+                            <div class="text-center text-muted py-4">
+                                <div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading…
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- d) Tax estimate -->
+                    <div class="card mb-4">
+                        <div class="card-header fw-semibold d-flex justify-content-between align-items-center flex-wrap gap-2">
+                            <span><i class="bi bi-receipt me-2 text-danger"></i>Tax Estimate (Spanish IRPF)</span>
+                            <div class="d-flex align-items-center gap-2">
+                                <label class="small text-muted mb-0" for="anTaxYear">Year</label>
+                                <select class="form-select form-select-sm" id="anTaxYear" style="width:auto;"></select>
+                            </div>
+                        </div>
+                        <div class="card-body" id="anTaxBody">
+                            <div class="text-center text-muted py-4">
+                                <div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading…
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- e) Diversification & concentration -->
+                    <div class="card mb-4">
+                        <div class="card-header fw-semibold">
+                            <i class="bi bi-pie-chart-fill me-2 text-primary"></i>Diversification &amp; Concentration
+                        </div>
+                        <div class="card-body" id="anDiversificationBody">
+                            <div class="text-center text-muted py-4">
+                                <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                                Loading diversification (fetching sector / country data, may take a few seconds)…
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- f) Risk metrics -->
+                    <div class="card mb-4">
+                        <div class="card-header fw-semibold">
+                            <i class="bi bi-shield-exclamation me-2 text-danger"></i>Risk
+                        </div>
+                        <div class="card-body" id="anRiskBody">
+                            <div class="text-center text-muted py-4">
+                                <div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading…
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- g) Fees & costs -->
+                    <div class="card mb-4">
+                        <div class="card-header fw-semibold">
+                            <i class="bi bi-cash-stack me-2 text-warning"></i>Fees &amp; Costs
+                        </div>
+                        <div class="card-body" id="anFeesBody">
+                            <div class="text-center text-muted py-4">
+                                <div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading…
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Watchlist Page -->
+                <div id="watchlistPage" class="page-content" style="display: none;">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div>
+                            <h4 class="mb-0"><i class="bi bi-eye me-2 text-primary"></i>Watchlist<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('watchlist')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
+                            <p class="text-muted small mb-0">Track securities you are considering and get alerted when they enter your buy zone. Prices fetch live, so loading may take a few seconds.</p>
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary" id="refreshWatchlist" title="Refresh watchlist">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                        </button>
+                    </div>
+
+                    <!-- Add to watchlist -->
+                    <div class="card mb-4">
+                        <div class="card-header fw-semibold">
+                            <i class="bi bi-plus-lg me-2"></i>Add to Watchlist
+                        </div>
+                        <div class="card-body">
+                            <form id="addWatchlistForm" class="row g-2 align-items-end">
+                                <div class="col-6 col-sm-3 col-md-2">
+                                    <label class="form-label small mb-1">Symbol *</label>
+                                    <input type="text" class="form-control form-control-sm" id="addWatchlistSymbol" placeholder="e.g. AAPL" required>
+                                </div>
+                                <div class="col-6 col-sm-3 col-md-2">
+                                    <label class="form-label small mb-1">Buy below</label>
+                                    <input type="number" step="any" class="form-control form-control-sm" id="addWatchlistBuyBelow" placeholder="0.00">
+                                </div>
+                                <div class="col-12 col-sm-4 col-md-5">
+                                    <label class="form-label small mb-1">Notes</label>
+                                    <input type="text" class="form-control form-control-sm" id="addWatchlistNotes" placeholder="Optional notes">
+                                </div>
+                                <div class="col-6 col-sm-2 col-md-3">
+                                    <button type="submit" class="btn btn-sm btn-primary w-100" id="addWatchlistBtn">
+                                        <i class="bi bi-plus-lg me-1"></i>Add
+                                    </button>
+                                </div>
+                            </form>
+                            <div id="watchlistFormStatus" class="small mt-2"></div>
+                        </div>
+                    </div>
+
+                    <!-- Watchlist table -->
+                    <div class="card">
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-hover mb-0" id="watchlistTable">
+                                    <thead>
+                                        <tr>
+                                            <th class="ps-3">Symbol</th>
+                                            <th>Name</th>
+                                            <th>Type</th>
+                                            <th class="text-end">Current Price</th>
+                                            <th class="text-end">Buy Below</th>
+                                            <th class="text-end">Distance to Buy</th>
+                                            <th>Notes</th>
+                                            <th class="pe-3">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr>
+                                            <td colspan="8" class="text-center py-4">
+                                                <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+                                                Loading watchlist (fetching live prices)…
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Goals Page -->
+                <div id="goalsPage" class="page-content" style="display: none;">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div>
+                            <h4 class="mb-0"><i class="bi bi-bullseye me-2 text-primary"></i>Goals<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('goals')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
+                            <p class="text-muted small mb-0">Set financial targets and track whether your current net worth and monthly contributions keep you on course.</p>
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary" id="refreshGoals" title="Refresh goals">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                        </button>
+                    </div>
+
+                    <!-- Add goal -->
+                    <div class="card mb-4">
+                        <div class="card-header fw-semibold">
+                            <i class="bi bi-plus-lg me-2"></i>Add Goal
+                        </div>
+                        <div class="card-body">
+                            <form id="addGoalForm" class="row g-2 align-items-end">
+                                <div class="col-12 col-sm-6 col-md-3">
+                                    <label class="form-label small mb-1">Name *</label>
+                                    <input type="text" class="form-control form-control-sm" id="addGoalName" placeholder="e.g. Retire at 60" required>
+                                </div>
+                                <div class="col-6 col-sm-3 col-md-2">
+                                    <label class="form-label small mb-1">Target € *</label>
+                                    <input type="number" step="any" min="0" class="form-control form-control-sm" id="addGoalTarget" placeholder="100000" required>
+                                </div>
+                                <div class="col-6 col-sm-3 col-md-2">
+                                    <label class="form-label small mb-1">Target date *</label>
+                                    <input type="date" class="form-control form-control-sm" id="addGoalDate" required>
+                                </div>
+                                <div class="col-6 col-sm-4 col-md-2">
+                                    <label class="form-label small mb-1">Monthly € *</label>
+                                    <input type="number" step="any" min="0" class="form-control form-control-sm" id="addGoalMonthly" placeholder="500" required>
+                                </div>
+                                <div class="col-6 col-sm-3 col-md-2">
+                                    <label class="form-label small mb-1">Return % *</label>
+                                    <input type="number" step="any" class="form-control form-control-sm" id="addGoalReturn" value="6" required>
+                                </div>
+                                <div class="col-12 col-sm-5 col-md-1">
+                                    <button type="submit" class="btn btn-sm btn-primary w-100" id="addGoalBtn">
+                                        <i class="bi bi-plus-lg me-1"></i>Add
+                                    </button>
+                                </div>
+                            </form>
+                            <div id="goalFormStatus" class="small mt-2"></div>
+                        </div>
+                    </div>
+
+                    <!-- Goals list -->
+                    <div id="goalsList" class="row g-3">
+                        <div class="col-12 text-center text-muted py-4">
+                            <div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading…
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Chat Page -->
+                <div id="chatPage" class="page-content" style="display: none;">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div>
+                            <h4 class="mb-0"><i class="bi bi-chat-dots me-2 text-primary"></i>Chat<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('chat')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
+                            <p class="text-muted small mb-0">Ask questions about your portfolio or extract transactions from broker statements.</p>
+                        </div>
+                    </div>
+
+                    <div class="row justify-content-center">
+                        <div class="col-12 col-xl-9">
+                            <!-- Message thread -->
+                            <div id="chatMessages" class="border rounded bg-white p-3 mb-3" style="height:460px;overflow-y:auto;display:flex;flex-direction:column;gap:12px;">
+                                <div class="text-muted text-center small mt-auto" id="chatEmpty">
+                                    <i class="bi bi-robot fs-3 d-block mb-2"></i>
+                                    <strong>What can I help you with?</strong><br>
+                                    <span class="text-muted">Try: "What is my total P&amp;L?" &middot; "Show me my top holdings" &middot; or paste a broker statement and click <strong>Extract &amp; Import</strong>.</span>
+                                </div>
+                            </div>
+
+                            <!-- Input area -->
+                            <div class="card">
+                                <div class="card-body pb-2">
+                                    <textarea class="form-control mb-2" id="chatInput" rows="3"
+                                        placeholder="Ask a question about your portfolio, or paste a broker statement to extract transactions&#10;&#10;Tip: Ctrl+Enter to send quickly."></textarea>
+                                    <div class="d-flex gap-2 justify-content-end">
+                                        <button class="btn btn-outline-secondary btn-sm" id="chatExtractBtn" title="Extract buy/sell transactions from pasted broker statement">
+                                            <i class="bi bi-magic me-1"></i>Extract &amp; Import
+                                        </button>
+                                        <button class="btn btn-primary btn-sm" id="chatSendBtn" title="Send message (Ctrl+Enter)">
+                                            <i class="bi bi-send me-1"></i>Send
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Portfolios Page -->
+                <div id="portfoliosPage" class="page-content" style="display: none;">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div>
+                            <h4 class="mb-0"><i class="bi bi-briefcase me-2 text-primary"></i>Portfolios<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('portfolios')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
+                            <p class="text-muted small mb-0">Broker and account groups. Each import automatically creates a portfolio if needed.</p>
+                        </div>
+                        <button class="btn btn-primary btn-sm" id="addPortfolioBtn">
+                            <i class="bi bi-plus-lg me-1"></i>Add Portfolio
+                        </button>
+                    </div>
+                    <div class="card">
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-hover mb-0" id="portfoliosTable">
+                                    <thead>
+                                        <tr>
+                                            <th class="ps-3">Name</th>
+                                            <th>Currency</th>
+                                            <th class="text-end">Value (EUR)</th>
+                                            <th class="text-end">P&amp;L</th>
+                                            <th>Description</th>
+                                            <th class="pe-3">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr><td colspan="6" class="text-center py-4">
+                                            <div class="spinner-border spinner-border-sm me-2"></div>Loading…
+                                        </td></tr>
+                                    </tbody>
+                                    <tfoot id="portfoliosFooter"></tfoot>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Forecast Page -->
+                <div id="forecastPage" class="page-content" style="display: none;">
+                    <div class="d-flex align-items-start justify-content-between mb-3">
+                        <div>
+                            <h4 class="mb-0"><i class="bi bi-graph-up-arrow me-2 text-primary"></i>Wealth Simulator<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('forecast')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
+                            <p class="text-muted small mb-0">Project net worth using Geometric Brownian Motion per asset class plus deterministic mortgage amortization. Stocks value is auto-populated from holdings.</p>
+                        </div>
+                    </div>
+
+                    <div class="row g-4">
+                        <!-- Inputs Panel -->
+                        <div class="col-12 col-lg-4">
+
+                            <!-- Asset Allocation Card -->
+                            <div class="card mb-3">
+                                <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+                                    <span><i class="bi bi-pie-chart me-2 text-success"></i>Asset Allocation</span>
+                                    <span class="badge bg-secondary" id="fcTotalLiquidBadge">Total: —</span>
+                                </div>
+                                <div class="card-body">
+
+                                    <!-- Cash row -->
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold text-muted small text-uppercase">Cash / Savings</label>
+                                        <div class="row g-2">
+                                            <div class="col-7">
+                                                <div class="input-group input-group-sm">
+                                                    <span class="input-group-text"><i class="bi bi-currency-euro"></i></span>
+                                                    <input type="number" class="form-control" id="fcCashAmount" value="0" min="0" step="1000" placeholder="0">
+                                                </div>
+                                            </div>
+                                            <div class="col-5">
+                                                <div class="input-group input-group-sm">
+                                                    <input type="number" class="form-control" id="fcCashRate" value="1.5" min="0" max="15" step="0.1">
+                                                    <span class="input-group-text">%</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="form-text">Volatility: 1% — very stable</div>
+                                    </div>
+
+                                    <!-- Stocks row -->
+                                    <div class="mb-3">
+                                        <label class="form-label fw-semibold text-muted small text-uppercase">Stocks / ETFs</label>
+                                        <div class="row g-2">
+                                            <div class="col-7">
+                                                <div class="input-group input-group-sm">
+                                                    <span class="input-group-text"><i class="bi bi-currency-euro"></i></span>
+                                                    <input type="number" class="form-control" id="fcStocksAmount" value="0" min="0" step="1000" placeholder="Loading…">
+                                                </div>
+                                            </div>
+                                            <div class="col-5">
+                                                <div class="input-group input-group-sm">
+                                                    <input type="number" class="form-control" id="fcStocksRate" value="8.0" min="-5" max="20" step="0.1">
+                                                    <span class="input-group-text">%</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="form-text d-flex justify-content-between">
+                                            <span>Volatility: 16% — high risk</span>
+                                            <button class="btn btn-link btn-sm p-0 text-muted" id="fcRefreshBtn" title="Reload stocks value from current holdings">
+                                                <i class="bi bi-arrow-clockwise"></i>
+                                            </button>
+                                        </div>
+                                        <div class="form-text" id="fcStartValueNote"></div>
+                                    </div>
+
+                                    <!-- Bonds row -->
+                                    <div class="mb-0">
+                                        <label class="form-label fw-semibold text-muted small text-uppercase">Bonds / Fixed Income</label>
+                                        <div class="row g-2">
+                                            <div class="col-7">
+                                                <div class="input-group input-group-sm">
+                                                    <span class="input-group-text"><i class="bi bi-currency-euro"></i></span>
+                                                    <input type="number" class="form-control" id="fcBondsAmount" value="0" min="0" step="1000" placeholder="0">
+                                                </div>
+                                            </div>
+                                            <div class="col-5">
+                                                <div class="input-group input-group-sm">
+                                                    <input type="number" class="form-control" id="fcBondsRate" value="4.0" min="-2" max="15" step="0.1">
+                                                    <span class="input-group-text">%</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="form-text">Volatility: 6% — moderate risk</div>
+                                    </div>
+
+                                </div>
+                            </div>
+
+                            <!-- Mortgage Card -->
+                            <div class="card mb-3">
+                                <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+                                    <span><i class="bi bi-house me-2 text-danger"></i>Mortgage</span>
+                                    <span class="badge bg-success" id="fcMortgagePayoffBadge" style="display:none;"></span>
+                                </div>
+                                <div class="card-body">
+                                    <div class="mb-3">
+                                        <label class="form-label small">Outstanding Balance (EUR)</label>
+                                        <div class="input-group input-group-sm">
+                                            <span class="input-group-text"><i class="bi bi-currency-euro"></i></span>
+                                            <input type="number" class="form-control" id="fcMortgagePrincipal" value="0" min="0" step="1000">
+                                        </div>
+                                    </div>
+                                    <div class="mb-3">
+                                        <label class="form-label small">Interest Rate (%)</label>
+                                        <div class="input-group input-group-sm">
+                                            <input type="number" class="form-control" id="fcMortgageRate" value="3.5" min="0" max="10" step="0.1">
+                                            <span class="input-group-text">%</span>
+                                        </div>
+                                    </div>
+                                    <div class="mb-0">
+                                        <label class="form-label small">Monthly Payment (EUR)</label>
+                                        <div class="input-group input-group-sm">
+                                            <span class="input-group-text"><i class="bi bi-currency-euro"></i></span>
+                                            <input type="number" class="form-control" id="fcMonthlyPayment" value="0" min="0" step="50">
+                                        </div>
+                                        <div class="form-text" id="fcMortgageMinNote">Leave at 0 if no mortgage.</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Settings Card -->
+                            <div class="card mb-3">
+                                <div class="card-header fw-semibold">
+                                    <i class="bi bi-sliders me-2"></i>Settings
+                                </div>
+                                <div class="card-body">
+                                    <!-- Years slider -->
+                                    <div class="mb-3">
+                                        <label class="form-label d-flex justify-content-between">
+                                            <span>Years to Project</span>
+                                            <strong id="fcYearsDisplay">30</strong>
+                                        </label>
+                                        <input type="range" class="form-range" id="fcYears" min="5" max="40" step="1" value="30">
+                                        <div class="d-flex justify-content-between text-muted" style="font-size:0.75rem;">
+                                            <span>5</span><span>40</span>
+                                        </div>
+                                    </div>
+
+                                    <!-- Confidence interval -->
+                                    <div class="mb-3">
+                                        <label class="form-label" for="fcConfidence">Confidence Interval</label>
+                                        <select class="form-select form-select-sm" id="fcConfidence">
+                                            <option value="1.0">68% — 1 Standard Deviation</option>
+                                            <option value="1.96" selected>95% — 2 Standard Deviations</option>
+                                            <option value="2.576">99% — 3 Standard Deviations</option>
+                                        </select>
+                                    </div>
+
+                                    <button class="btn btn-primary w-100" id="fcRunBtn">
+                                        <i class="bi bi-play-fill me-2"></i>Run Forecast
+                                    </button>
+                                </div>
+                            </div>
+
+                        </div>
+
+                        <!-- Chart + Summary -->
+                        <div class="col-12 col-lg-8 d-flex flex-column gap-4">
+                            <!-- Chart Card -->
+                            <div class="card flex-grow-1">
+                                <div class="card-header fw-semibold d-flex justify-content-between align-items-center flex-wrap gap-2">
+                                    <span><i class="bi bi-bar-chart-line me-2"></i>Net Worth Projection</span>
+                                    <div class="d-flex gap-3 align-items-center" style="font-size:0.8rem;">
+                                        <span><svg width="18" height="3"><line x1="0" y1="1.5" x2="18" y2="1.5" stroke="#2563eb" stroke-width="2.5"/></svg> Net Worth</span>
+                                        <span><svg width="18" height="3"><line x1="0" y1="1.5" x2="18" y2="1.5" stroke="#f43f5e" stroke-width="2" stroke-dasharray="4 3"/></svg> Mortgage</span>
+                                        <span><svg width="18" height="10"><rect x="0" y="0" width="18" height="10" fill="#93c5fd" fill-opacity="0.4"/></svg> Confidence Band</span>
+                                    </div>
+                                </div>
+                                <div class="card-body p-2">
+                                    <div id="fcChartContainer" style="position:relative; width:100%; min-height:340px;">
+                                        <div class="d-flex align-items-center justify-content-center h-100 text-muted" id="fcChartPlaceholder" style="min-height:340px;">
+                                            <div class="text-center">
+                                                <i class="bi bi-graph-up-arrow fs-1 d-block mb-2 text-primary opacity-50"></i>
+                                                Configure parameters and click <strong>Run Forecast</strong>
+                                            </div>
+                                        </div>
+                                        <svg id="fcChartSvg" width="100%" style="display:none; overflow:visible;"></svg>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Summary Cards Row 1 -->
+                            <div class="row g-3" id="fcSummaryRow" style="display:none !important;">
+                                <div class="col-6 col-md-3">
+                                    <div class="card bg-primary text-white">
+                                        <div class="card-body py-3">
+                                            <div class="small opacity-75 mb-1">Liquid Assets (Mean)</div>
+                                            <div class="fs-5 fw-bold" id="fcSumMean">—</div>
+                                            <div class="small opacity-75" id="fcSumYearLabel">at year N</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-6 col-md-3">
+                                    <div class="card bg-dark text-white">
+                                        <div class="card-body py-3">
+                                            <div class="small opacity-75 mb-1">Net Worth (Mean)</div>
+                                            <div class="fs-5 fw-bold" id="fcSumNetWorth">—</div>
+                                            <div class="small opacity-75">assets − mortgage</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-6 col-md-3">
+                                    <div class="card bg-secondary text-white">
+                                        <div class="card-body py-3">
+                                            <div class="small opacity-75 mb-1">Total Interest Paid</div>
+                                            <div class="fs-5 fw-bold" id="fcSumInterest">—</div>
+                                            <div class="small opacity-75">mortgage cost</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-6 col-md-3">
+                                    <div class="card bg-success text-white">
+                                        <div class="card-body py-3">
+                                            <div class="small opacity-75 mb-1">Investment Gains</div>
+                                            <div class="fs-5 fw-bold" id="fcSumGains">—</div>
+                                            <div class="small opacity-75">liquid − starting capital</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Confidence range cards -->
+                            <div class="row g-3" id="fcRangeRow" style="display:none !important;">
+                                <div class="col-12 col-md-6">
+                                    <div class="card border-warning">
+                                        <div class="card-body py-3">
+                                            <div class="small text-muted mb-1"><i class="bi bi-arrow-down-circle me-1 text-warning"></i>Pessimistic Net Worth</div>
+                                            <div class="fs-5 fw-bold text-warning" id="fcSumLow">—</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-12 col-md-6">
+                                    <div class="card border-success">
+                                        <div class="card-body py-3">
+                                            <div class="small text-muted mb-1"><i class="bi bi-arrow-up-circle me-1 text-success"></i>Optimistic Net Worth</div>
+                                            <div class="fs-5 fw-bold text-success" id="fcSumHigh">—</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Methodology (collapsible) -->
+                            <div class="card">
+                                <div class="card-header fw-semibold" style="cursor:pointer;" data-bs-toggle="collapse" data-bs-target="#fcMethodologyBody" aria-expanded="false">
+                                    <i class="bi bi-book me-2"></i>Methodology
+                                    <i class="bi bi-chevron-down float-end mt-1 small"></i>
+                                </div>
+                                <div class="collapse" id="fcMethodologyBody">
+                                    <div class="card-body">
+                                        <h6 class="fw-semibold">Geometric Brownian Motion (GBM)</h6>
+                                        <p class="small text-muted mb-2">Each asset class is projected independently using a simplified GBM model. The <em>mean</em> path is deterministic compound interest; the confidence bands scale with time:</p>
+                                        <pre class="bg-light p-3 rounded small mb-3">mean(t)  = S&#x2080; &times; (1 + r)^t
+upper(t) = mean(t) &times; e^(+z &times; &sigma; &times; &radic;t)
+lower(t) = mean(t) &times; e^(&minus;z &times; &sigma; &times; &radic;t)</pre>
+                                        <table class="table table-sm table-bordered small mb-3">
+                                            <thead class="table-light"><tr><th>Asset</th><th>Volatility &sigma;</th></tr></thead>
+                                            <tbody>
+                                                <tr><td>Stocks / ETFs</td><td>16%</td></tr>
+                                                <tr><td>Bonds</td><td>6%</td></tr>
+                                                <tr><td>Cash</td><td>1%</td></tr>
+                                            </tbody>
+                                        </table>
+                                        <h6 class="fw-semibold">Mortgage Amortization</h6>
+                                        <p class="small text-muted mb-2">The mortgage is reduced month-by-month using standard amortization:</p>
+                                        <pre class="bg-light p-3 rounded small mb-3">Monthly interest  = balance &times; (annual_rate / 12)
+Principal payment = monthly_payment &minus; monthly_interest</pre>
+                                        <p class="small text-muted mb-0"><strong>Net Worth</strong> = total liquid assets (cash + stocks + bonds) &minus; remaining mortgage balance at each year.</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Import / Export Page -->
+                <div id="importexportPage" class="page-content" style="display: none;">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div>
+                            <h4 class="mb-0"><i class="bi bi-box-arrow-in-down me-2 text-primary"></i>Import / Export<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('importexport')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
+                            <p class="text-muted small mb-0">Import transactions from broker files or text, export your data, manage bookings and sync with Google Sheets.</p>
+                        </div>
+                    </div>
+                    <div class="row g-4">
+                        <!-- File Import -->
+                        <div class="col-12 col-lg-6">
+                            <div class="card h-100">
+                                <div class="card-header fw-semibold">
+                                    <i class="bi bi-file-earmark-arrow-up me-2"></i>Import from File
+                                </div>
+                                <div class="card-body d-flex flex-column">
+                                    <div id="ioFileStep1">
+                                        <div class="mb-3">
+                                            <label class="form-label" for="ioFileBroker">Broker / Format</label>
+                                            <select class="form-select" id="ioFileBroker">
+                                                <option value="">Select broker…</option>
+                                                <option value="indexacapital">IndexaCapital (CSV)</option>
+                                                <option value="coinbase">Coinbase (CSV)</option>
+                                                <option value="pdt">Portfolio Dividend Tracker (XLSX)</option>
+                                            </select>
+                                        </div>
+                                        <div id="ioFileHint" class="alert alert-info py-2 small" style="display:none;"></div>
+                                        <div class="mb-3">
+                                            <label class="form-label" for="ioFileInput">File</label>
+                                            <input type="file" class="form-control" id="ioFileInput" accept=".csv,.xlsx,.xls">
+                                        </div>
+                                    </div>
+                                    <div id="ioFileStep2" style="display:none;">
+                                        <div id="ioFilePreview"></div>
+                                    </div>
+                                    <div class="d-flex gap-2 mt-auto pt-3">
+                                        <button class="btn btn-sm btn-outline-secondary" id="ioFileBackBtn" style="display:none;">
+                                            <i class="bi bi-arrow-left me-1"></i>Back
+                                        </button>
+                                        <button class="btn btn-sm btn-primary" id="ioFileParseBtn">
+                                            <i class="bi bi-search me-1"></i>Parse File
+                                        </button>
+                                        <button class="btn btn-sm btn-success" id="ioFileSaveBtn" style="display:none;">
+                                            <i class="bi bi-check-lg me-1"></i>Save Selected
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- LLM Text Import -->
+                        <div class="col-12 col-lg-6">
+                            <div class="card h-100">
+                                <div class="card-header fw-semibold">
+                                    <i class="bi bi-magic me-2"></i>Import from Text (AI Extraction)
+                                </div>
+                                <div class="card-body d-flex flex-column">
+                                    <p class="text-muted small mb-2">Paste a broker statement. Works with MyInvestor and any broker not directly supported.</p>
+                                    <div id="ioTextStep1" class="flex-grow-1">
+                                        <div class="mb-2">
+                                            <select class="form-select form-select-sm" id="ioTextPortfolio">
+                                                <option value="">Portfolio — None / auto-detect</option>
+                                            </select>
+                                        </div>
+                                        <textarea class="form-control font-monospace" id="ioTextarea" rows="8"
+                                            placeholder="Paste broker statement text here…"></textarea>
+                                    </div>
+                                    <div id="ioTextStep2" style="display:none;">
+                                        <div id="ioTextPreview"></div>
+                                    </div>
+                                    <div class="d-flex gap-2 mt-auto pt-3">
+                                        <button class="btn btn-sm btn-outline-secondary" id="ioTextBackBtn" style="display:none;">
+                                            <i class="bi bi-arrow-left me-1"></i>Back
+                                        </button>
+                                        <button class="btn btn-sm btn-primary" id="ioTextExtractBtn">
+                                            <i class="bi bi-magic me-1"></i>Extract Transactions
+                                        </button>
+                                        <button class="btn btn-sm btn-success" id="ioTextSaveBtn" style="display:none;">
+                                            <i class="bi bi-check-lg me-1"></i>Save Selected
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Export -->
+                        <div class="col-12 col-lg-6">
+                            <div class="card">
+                                <div class="card-header fw-semibold">
+                                    <i class="bi bi-file-earmark-arrow-down me-2"></i>Export
+                                </div>
+                                <div class="card-body">
+                                    <p class="text-muted small mb-3">Download all transactions. CSV is compatible with spreadsheets; PDT (XLSX) is the Portfolio Dividend Tracker format (includes bookings).</p>
+                                    <div class="d-flex gap-3 flex-wrap">
+                                        <button class="btn btn-sm btn-outline-primary" id="ioExportCsvBtn">
+                                            <i class="bi bi-filetype-csv me-2"></i>Export CSV
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-primary" id="ioExportPdtBtn">
+                                            <i class="bi bi-file-earmark-spreadsheet me-2"></i>Export PDT (XLSX)
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Bookings (cash transactions: deposits / withdrawals) -->
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+                                    <span><i class="bi bi-bank me-2"></i>Cash Transactions (Deposits &amp; Withdrawals)</span>
+                                    <button class="btn btn-sm btn-outline-secondary" id="ioRefreshBookingsBtn" title="Refresh">
+                                        <i class="bi bi-arrow-clockwise"></i>
+                                    </button>
+                                </div>
+                                <div class="card-body">
+                                    <!-- Add booking form -->
+                                    <form id="addBookingForm" class="row g-2 align-items-end mb-3">
+                                        <div class="col-6 col-sm-3 col-md-2">
+                                            <label class="form-label small mb-1">Date</label>
+                                            <input type="date" class="form-control form-control-sm" id="addBookingDate" required>
+                                        </div>
+                                        <div class="col-6 col-sm-3 col-md-2">
+                                            <label class="form-label small mb-1">Type</label>
+                                            <select class="form-select form-select-sm" id="addBookingAction">
+                                                <option value="Deposit">Deposit</option>
+                                                <option value="Withdrawal">Withdrawal</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-6 col-sm-3 col-md-2">
+                                            <label class="form-label small mb-1">Amount</label>
+                                            <input type="number" class="form-control form-control-sm" id="addBookingAmount" min="0.01" step="0.01" placeholder="0.00" required>
+                                        </div>
+                                        <div class="col-4 col-sm-2 col-md-1">
+                                            <label class="form-label small mb-1">Currency</label>
+                                            <input type="text" class="form-control form-control-sm" id="addBookingCurrency" value="EUR" maxlength="3">
+                                        </div>
+                                        <div class="col-8 col-sm-4 col-md-3">
+                                            <label class="form-label small mb-1">Portfolio</label>
+                                            <select class="form-select form-select-sm" id="addBookingPortfolio">
+                                                <option value="">— None —</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-6 col-sm-2 col-md-2">
+                                            <button type="submit" class="btn btn-sm btn-primary w-100">
+                                                <i class="bi bi-plus-lg me-1"></i>Add
+                                            </button>
+                                        </div>
+                                    </form>
+                                    <!-- Bookings table -->
+                                    <div id="ioBookingsTable" class="table-responsive" style="max-height:300px;">
+                                        <p class="text-muted small mb-0">Loading…</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Google Sheets PDT Sync -->
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-header fw-semibold">
+                                    <i class="bi bi-cloud-arrow-up-fill me-2 text-success"></i>Google Sheets — PDT Sync
+                                </div>
+                                <div class="card-body">
+                                    <p class="text-muted small mb-3">
+                                        Sync directly with a Google Spreadsheet in Portfolio Dividend Tracker format.
+                                        The sheet must be shared with the service account email shown below.
+                                    </p>
+                                    <div id="syncConfigInfo" class="mb-3"></div>
+                                    <div class="mb-3">
+                                        <label class="form-label" for="syncSheetId">Spreadsheet ID
+                                            <span class="text-muted small">(the long ID from the URL: /spreadsheets/d/<strong>ID</strong>/)</span>
+                                        </label>
+                                        <input type="text" class="form-control font-monospace" id="syncSheetId"
+                                            placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms">
+                                    </div>
+                                    <div class="d-flex gap-3 flex-wrap">
+                                        <button class="btn btn-sm btn-outline-success" id="syncPullBtn">
+                                            <i class="bi bi-cloud-arrow-down me-2"></i>Pull from Sheet
+                                        </button>
+                                        <button class="btn btn-sm btn-outline-primary" id="syncPushBtn">
+                                            <i class="bi bi-cloud-arrow-up me-2"></i>Push to Sheet
+                                        </button>
+                                    </div>
+                                    <div id="syncStatus" class="mt-3"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div><!-- /.app-content -->
+        </div><!-- /.app-main -->
+    </div><!-- /.app-shell -->
+
+    <!-- Add Asset Modal -->
+    <div class="modal fade" id="addAssetModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-plus-lg me-2"></i>Add New Asset</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="addAssetForm">
+                        <div class="mb-3">
+                            <label for="assetSymbol" class="form-label">Symbol *</label>
+                            <input type="text" class="form-control" id="assetSymbol" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="assetName" class="form-label">Name *</label>
+                            <input type="text" class="form-control" id="assetName" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="assetType" class="form-label">Asset Type *</label>
+                            <select class="form-select" id="assetType" required>
+                                <option value="">Select asset type</option>
+                                <option value="stock">Stock</option>
+                                <option value="bond">Bond</option>
+                                <option value="etf">ETF</option>
+                                <option value="crypto">Cryptocurrency</option>
+                                <option value="commodity">Commodity</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="assetExchange" class="form-label">Exchange</label>
+                            <input type="text" class="form-control" id="assetExchange" placeholder="e.g., NYSE, NASDAQ">
+                        </div>
+                        <div class="mb-3">
+                            <label for="assetCurrency" class="form-label">Currency *</label>
+                            <input type="text" class="form-control" id="assetCurrency" value="USD" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="assetSector" class="form-label">Sector</label>
+                            <input type="text" class="form-control" id="assetSector" placeholder="e.g., Technology, Healthcare">
+                        </div>
+                        <div class="mb-3">
+                            <label for="assetDescription" class="form-label">Description</label>
+                            <textarea class="form-control" id="assetDescription" rows="3"></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" form="addAssetForm" class="btn btn-primary">Add Asset</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Transaction Modal -->
+    <div class="modal fade" id="addTransactionModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-plus-lg me-2"></i>Add New Transaction</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="addTransactionForm">
+                        <div class="mb-3">
+                            <label for="transactionAsset" class="form-label">Asset *</label>
+                            <select class="form-select" id="transactionAsset" required>
+                                <option value="">Select asset</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="transactionType" class="form-label">Transaction Type *</label>
+                            <select class="form-select" id="transactionType" required>
+                                <option value="">Select type</option>
+                                <option value="buy">Buy</option>
+                                <option value="sell">Sell</option>
+                                <option value="dividend">Dividend</option>
+                                <option value="split">Stock Split</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="transactionDate" class="form-label">Date *</label>
+                            <input type="date" class="form-control" id="transactionDate" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="transactionQuantity" class="form-label">Quantity *</label>
+                            <input type="number" class="form-control" id="transactionQuantity" step="0.0001" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="transactionPrice" class="form-label">Price per Unit *</label>
+                            <input type="number" class="form-control" id="transactionPrice" step="0.01" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="transactionFees" class="form-label">Fees</label>
+                            <input type="number" class="form-control" id="transactionFees" step="0.01" value="0">
+                        </div>
+                        <div class="mb-3">
+                            <label for="transactionNotes" class="form-label">Notes</label>
+                            <textarea class="form-control" id="transactionNotes" rows="2"></textarea>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" form="addTransactionForm" class="btn btn-primary">Add Transaction</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- File Import Modal -->
+    <div class="modal fade" id="fileImportModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-file-earmark-arrow-up me-2"></i>Import from File</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- Step 1: broker + file -->
+                    <div id="fileImportStep1">
+                        <div class="mb-3">
+                            <label for="fileImportBroker" class="form-label">Broker / Format</label>
+                            <select class="form-select" id="fileImportBroker">
+                                <option value="">Select broker...</option>
+                                <option value="indexacapital">IndexaCapital (CSV)</option>
+                                <option value="coinbase">Coinbase (CSV)</option>
+                                <option value="pdt">Portfolio Dividend Tracker (XLSX)</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="fileImportFile" class="form-label">File</label>
+                            <input type="file" class="form-control" id="fileImportFile" accept=".csv,.xlsx,.xls">
+                        </div>
+                        <div id="fileImportHint" class="text-muted small" style="display:none;"></div>
+                    </div>
+                    <!-- Step 2: preview -->
+                    <div id="fileImportStep2" style="display:none;">
+                        <div id="fileImportResults"></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-outline-secondary" id="fileImportBackBtn" style="display:none;">
+                        <i class="bi bi-arrow-left me-1"></i>Back
+                    </button>
+                    <button type="button" class="btn btn-primary" id="fileImportParseBtn">
+                        <i class="bi bi-search me-2"></i>Parse File
+                    </button>
+                    <button type="button" class="btn btn-success" id="fileImportSaveBtn" style="display:none;">
+                        <i class="bi bi-check-lg me-2"></i>Save Selected
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- LLM Import from Text Modal -->
+    <div class="modal fade" id="llmImportModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-magic me-2"></i>Import Transactions from Text</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <!-- Step 1: input -->
+                    <div id="llmImportStep1">
+                        <p class="text-muted small">Paste your broker statement text below. The AI will extract buy/sell transactions automatically.</p>
+                        <div class="mb-3">
+                            <label for="llmImportPortfolio" class="form-label">Portfolio <span class="text-muted">(optional)</span></label>
+                            <select class="form-select" id="llmImportPortfolio">
+                                <option value="">— None / auto-detect —</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="llmImportText" class="form-label">Broker statement text</label>
+                            <textarea class="form-control font-monospace" id="llmImportText" rows="9" placeholder="Paste your broker statement here..."></textarea>
+                        </div>
+                    </div>
+                    <!-- Step 2: results -->
+                    <div id="llmImportStep2" style="display:none;">
+                        <div id="llmImportResults"></div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal" id="llmImportCancelBtn">Cancel</button>
+                    <button type="button" class="btn btn-outline-secondary" id="llmImportBackBtn" style="display:none;">
+                        <i class="bi bi-arrow-left me-1"></i>Back
+                    </button>
+                    <button type="button" class="btn btn-primary" id="llmImportExtractBtn">
+                        <i class="bi bi-magic me-2"></i>Extract Transactions
+                    </button>
+                    <button type="button" class="btn btn-success" id="llmImportSaveBtn" style="display:none;">
+                        <i class="bi bi-check-lg me-2"></i>Save All
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Page Help Modal (reusable, populated from window.PAGE_HELP) -->
+    <div class="modal fade" id="pageHelpModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-question-circle me-2 text-primary"></i><span id="pageHelpTitle">Help</span>
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body" id="pageHelpBody"></div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container position-fixed top-0 end-0 p-3">
+        <div id="toast" class="toast" role="alert">
+            <div class="toast-header">
+                <strong class="me-auto" id="toastTitle">Notification</strong>
+                <button type="button" class="btn-close" data-bs-dismiss="toast"></button>
+            </div>
+            <div class="toast-body" id="toastBody">
+                Message content
+            </div>
+        </div>
+    </div>
+
+    <!-- Edit Transaction Modal -->
+    <div class="modal fade" id="editTransactionModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Edit Transaction</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="editTransactionForm">
+                        <input type="hidden" id="editTxId">
+                        <div class="row g-3">
+                            <div class="col-6">
+                                <label class="form-label" for="editTxDate">Date *</label>
+                                <input type="date" class="form-control" id="editTxDate" required>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label" for="editTxType">Type *</label>
+                                <select class="form-select" id="editTxType" required>
+                                    <option value="buy">Buy</option>
+                                    <option value="sell">Sell</option>
+                                    <option value="dividend">Dividend</option>
+                                    <option value="split">Stock Split</option>
+                                </select>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label" for="editTxQty">Quantity *</label>
+                                <input type="number" class="form-control" id="editTxQty" step="0.000001" required>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label" for="editTxPrice">Price *</label>
+                                <input type="number" class="form-control" id="editTxPrice" step="0.0001" required>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label" for="editTxFees">Fees</label>
+                                <input type="number" class="form-control" id="editTxFees" step="0.01" value="0">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label" for="editTxPortfolio">Portfolio</label>
+                                <select class="form-select" id="editTxPortfolio">
+                                    <option value="">— none —</option>
+                                </select>
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label" for="editTxNotes">Notes</label>
+                                <input type="text" class="form-control" id="editTxNotes">
+                            </div>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" form="editTransactionForm" class="btn btn-primary">Save Changes</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Portfolio Add/Edit Modal -->
+    <div class="modal fade" id="portfolioModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="portfolioModalTitle">Add Portfolio</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="portfolioForm">
+                        <input type="hidden" id="portfolioEditId">
+                        <div class="mb-3">
+                            <label class="form-label" for="portfolioName">Name *</label>
+                            <input type="text" class="form-control" id="portfolioName" placeholder="e.g. IndexaCapital" required>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label" for="portfolioCurrency">Currency</label>
+                            <input type="text" class="form-control" id="portfolioCurrency" value="EUR" maxlength="3">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label" for="portfolioDescription">Description</label>
+                            <input type="text" class="form-control" id="portfolioDescription">
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" form="portfolioForm" class="btn btn-primary" id="portfolioSaveBtn">Save</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Research / Valuation Modal -->
+    <div class="modal fade" id="researchModal" tabindex="-1">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">
+                        <i class="bi bi-graph-up me-2"></i>Research &mdash; <span id="researchModalSymbol"></span> <span id="researchModalLinks" class="ms-2 fs-6"></span>
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <small class="text-muted" id="researchGeneratedAt"></small>
+                        <button class="btn btn-sm btn-primary" id="researchGenerateBtn">
+                            <i class="bi bi-magic me-1"></i>Generate / Refresh Analysis
+                        </button>
+                    </div>
+                    <div id="researchReportBody">
+                        <p class="text-muted text-center py-4 mb-0">Loading…</p>
+                    </div>
+                    <hr>
+                    <h6 class="fw-semibold mb-2"><i class="bi bi-bullseye me-2"></i>Price Targets</h6>
+                    <form id="researchTargetsForm" class="row g-2 align-items-end">
+                        <div class="col-6 col-sm-4">
+                            <label class="form-label small mb-1" for="researchBuyBelow">Buy below</label>
+                            <input type="number" step="any" class="form-control form-control-sm" id="researchBuyBelow" placeholder="0.00">
+                        </div>
+                        <div class="col-6 col-sm-4">
+                            <label class="form-label small mb-1" for="researchSellAbove">Sell above</label>
+                            <input type="number" step="any" class="form-control form-control-sm" id="researchSellAbove" placeholder="0.00">
+                        </div>
+                        <div class="col-12 col-sm-4">
+                            <button type="submit" class="btn btn-sm btn-success w-100">
+                                <i class="bi bi-check-lg me-1"></i>Save Targets
+                            </button>
+                        </div>
+                    </form>
+                    <div id="researchTargetsStatus" class="small mt-2"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap 5 JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+    <!-- Centralized help text (must load before portfolio_debug.js) -->
+    <script src="js/help_text.js?v=1780000001"></script>
+
+    <!-- Custom JavaScript -->
+    <script src="js/portfolio_debug.js?v=1780000011"></script>
+</body>
+</html>

@@ -1,0 +1,47 @@
+FROM python:3.13-slim
+
+ENV PYTHONUNBUFFERED=1
+ENV PORTF_ENVIRONMENT=development
+ENV PATH="/app/.venv/bin:$PATH"
+
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    git \
+    curl \
+    wget \
+    gnupg \
+    ca-certificates \
+    postgresql-client \
+    libnss3-dev \
+    libatk-bridge2.0-dev \
+    libdrm2 \
+    libgtk-3-dev \
+    libgbm-dev \
+    libasound2-dev \
+    pkg-config \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
+RUN useradd --create-home --shell /bin/bash --uid 1000 appuser
+
+WORKDIR /app
+
+# Install all deps including dev
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-install-project
+
+# Install playwright browsers (requires root)
+RUN uv run playwright install --with-deps chromium firefox webkit
+
+COPY . .
+
+RUN chown -R appuser:appuser /app
+
+EXPOSE 8000
+
+USER appuser
+
+CMD ["uvicorn", "portf_server.app:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
