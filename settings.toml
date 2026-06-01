@@ -1,0 +1,43 @@
+# Portfolio Management API Configuration
+# This file contains default configuration settings for the API server
+
+[server]
+# Server binding configuration
+host = "localhost"
+port = 8000
+debug = false
+reload = false
+workers = 1
+log_level = "info"
+
+[database]
+# Database connection settings
+# For development, use SQLite (default)
+database_url = "sqlite:///portfolio.db"
+
+# For PostgreSQL (uncomment and modify as needed):
+# database_url = "postgresql://portf_user:portf_password@localhost:5432/portf_db"
+
+[app]
+# Application metadata
+title = "Portfolio Management API"
+description = "A comprehensive API for portfolio management, transaction tracking, and tax reporting"
+version = "1.0.0"
+environment = "development"
+
+[security]
+# Security settings
+secret_key = "your-secret-key-change-in-production"
+api_key_header = "X-API-Key"
+
+[cors]
+# CORS (Cross-Origin Resource Sharing) settings
+origins = [
+    "http://localhost:3000",
+    "http://localhost:8080",
+    "http://127.0.0.1:8080"
+]
+
+[external_services]
+# External service API keys (optional)
+# gemini_api_key = "your-google-gemini-api-key-here"

@@ -1,0 +1,368 @@
+/* Custom styles for Portfolio Management Web Client */
+
+/* Section: CSS Variables */
+:root {
+    --primary-color: #0d6efd;   /* Bootstrap primary blue */
+    --success-color: #198754;   /* Bootstrap success green */
+    --info-color: #0dcaf0;      /* Bootstrap info cyan */
+    --warning-color: #ffc107;   /* Bootstrap warning yellow */
+    --danger-color: #dc3545;    /* Bootstrap danger red */
+    --dark-color: #212529;      /* Bootstrap dark */
+    --light-color: #f8f9fa;     /* Bootstrap light */
+}
+
+/* Section: Base */
+body {
+    background-color: var(--light-color);
+    font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+}
+
+/* Section: Loading States */
+.loading {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+.table tbody tr.loading {
+    background-color: rgba(0, 0, 0, 0.03);
+}
+
+/* Section: Navigation */
+.navbar-brand {
+    font-weight: 600;
+}
+
+.nav-link {
+    font-weight: 500;
+    transition: color 0.2s ease;
+}
+
+.nav-link:hover {
+    color: rgba(255, 255, 255, 0.8) !important;
+}
+
+/* API Key toggle — remove double border from input-group */
+#toggleApiKey {
+    border-left: none;
+}
+
+/* Section: Cards */
+.card {
+    border: none;
+    box-shadow: 0 0.125rem 0.25rem rgba(0, 0, 0, 0.075);
+    transition: box-shadow 0.15s ease-in-out;
+}
+
+.card:hover {
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+}
+
+/* Keep card-title legible on coloured card backgrounds */
+.card.bg-primary .card-title,
+.card.bg-success .card-title,
+.card.bg-info .card-title,
+.card.bg-warning .card-title {
+    color: rgba(255, 255, 255, 0.9);
+}
+
+/* Section: Tables */
+.table th {
+    font-weight: 600;
+    color: var(--dark-color);
+    background-color: rgba(0, 0, 0, 0.02);
+}
+
+/* Section: Buttons */
+.btn-outline-primary:hover,
+.btn-outline-secondary:hover {
+    transform: translateY(-1px);
+}
+
+/* Section: Forms */
+.form-control:focus,
+.form-select:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 0.2rem rgba(13, 110, 253, 0.25);
+}
+
+.form-label {
+    font-weight: 600;
+    color: var(--dark-color);
+}
+
+/* Section: Modals */
+.modal-header {
+    background-color: rgba(0, 0, 0, 0.02);
+}
+
+/* Section: Page animations */
+.page-content {
+    animation: fadeIn 0.3s ease-in-out;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Section: Toast Notifications */
+.toast {
+    border: none;
+    box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+}
+
+/* Success Toast */
+.toast.toast-success .toast-header {
+    background-color: rgba(25, 135, 84, 0.1);  /* --success-color tint */
+    border-bottom-color: var(--success-color);
+}
+
+/* Error Toast */
+.toast.toast-error .toast-header {
+    background-color: rgba(220, 53, 69, 0.1);  /* --danger-color tint */
+    border-bottom-color: var(--danger-color);
+}
+
+/* Section: Asset / Transaction type badges */
+/* These extend Bootstrap badges with domain-specific colour mapping. */
+.badge-asset-type {
+    font-size: 0.75em;
+    font-weight: 500;
+}
+
+.badge-stock     { background-color: var(--primary-color); }
+.badge-bond      { background-color: var(--success-color); }
+.badge-etf       { background-color: var(--info-color); }
+.badge-crypto    { background-color: var(--warning-color); color: var(--dark-color); }
+.badge-commodity { background-color: var(--danger-color); }
+
+.badge-buy      { background-color: var(--success-color); }
+.badge-sell     { background-color: var(--danger-color); }
+.badge-dividend { background-color: var(--info-color); }
+.badge-split    { background-color: var(--warning-color); color: var(--dark-color); }
+
+/* Section: Currency display */
+.currency {
+    font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+    font-weight: 600;
+}
+
+.currency.positive { color: var(--success-color); }
+.currency.negative { color: var(--danger-color); }
+
+/* Section: Responsive — tablet */
+@media (max-width: 768px) {
+    .container-fluid {
+        padding-left: 15px;
+        padding-right: 15px;
+    }
+
+    .btn-group {
+        flex-wrap: wrap;
+    }
+}
+
+/* Section: Responsive — mobile */
+@media (max-width: 576px) {
+    .modal-dialog {
+        margin: 1rem 0.5rem;
+    }
+
+    .table-responsive {
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+}
+
+/* Section: Dark mode */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --light-color: #212529;
+        --dark-color: #f8f9fa;
+    }
+
+    body {
+        background-color: var(--light-color);
+        color: var(--dark-color);
+    }
+
+    .card {
+        background-color: #2d3748;
+        color: var(--dark-color);
+    }
+
+    .table th {
+        background-color: rgba(255, 255, 255, 0.05);
+        color: var(--dark-color);
+    }
+
+    .modal-content {
+        background-color: #2d3748;
+        color: var(--dark-color);
+    }
+}
+
+/* Section: Print */
+@media print {
+    .navbar,
+    .modal,
+    .toast-container,
+    .btn {
+        display: none !important;
+    }
+
+    .card {
+        border: 1px solid #ddd !important;
+        box-shadow: none !important;
+    }
+
+    .page-content {
+        animation: none;
+    }
+}
+
+/* Section: Spinner overlay (full-page loading state) */
+.spinner-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.5);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+}
+
+.spinner-overlay .spinner-border {
+    width: 3rem;
+    height: 3rem;
+    color: white;
+}
+
+/* ───────────────────────────────────────────────────────────────────────────
+   Section: App Shell & Sidebar Navigation (restored after UX redesign)
+   Layout: fixed left sidebar on desktop (≥992px), offcanvas on mobile.
+   ─────────────────────────────────────────────────────────────────────────── */
+
+.app-shell {
+    display: flex;
+    min-height: 100vh;
+}
+
+/* Desktop sidebar — fixed 220px column */
+.app-sidebar {
+    width: 220px;
+    flex: 0 0 220px;
+    background: var(--bs-primary, #0d6efd);
+    color: #fff;
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 1030;
+    overflow-y: auto;
+}
+
+.sidebar-brand {
+    font-size: 1.05rem;
+    font-weight: 700;
+    padding: 1rem 1rem 0.75rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.15);
+    white-space: nowrap;
+}
+
+.sidebar-nav {
+    display: flex;
+    flex: 1 1 auto;
+}
+
+.sidebar-nav-link {
+    display: block;
+    color: rgba(255, 255, 255, 0.85);
+    text-decoration: none;
+    padding: 0.6rem 1rem;
+    font-size: 0.92rem;
+    border-left: 3px solid transparent;
+    transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.sidebar-nav-link:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+}
+
+.sidebar-nav-link.active {
+    background: rgba(255, 255, 255, 0.15);
+    border-left-color: #fff;
+    color: #fff;
+    font-weight: 600;
+}
+
+.sidebar-footer {
+    border-top: 1px solid rgba(255, 255, 255, 0.15);
+    padding: 0.5rem 0;
+}
+
+/* Main content area — offset by the sidebar width */
+.app-main {
+    flex: 1 1 auto;
+    margin-left: 220px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.app-content {
+    padding: 1.5rem;
+    flex: 1 1 auto;
+}
+
+/* Mobile topbar (hamburger) — hidden on desktop */
+.mobile-topbar {
+    display: none;
+    align-items: center;
+    padding: 0.5rem 1rem;
+    background: #fff;
+    border-bottom: 1px solid var(--bs-border-color, #dee2e6);
+    position: sticky;
+    top: 0;
+    z-index: 1020;
+}
+
+/* Mobile breakpoint: hide fixed sidebar, show topbar, full-width content */
+@media (max-width: 991.98px) {
+    .app-sidebar {
+        display: none;
+    }
+    .app-main {
+        margin-left: 0;
+    }
+    .mobile-topbar {
+        display: flex;
+    }
+    .app-content {
+        padding: 1rem;
+    }
+}
+
+/* Offcanvas sidebar nav links reuse the same look on a dark background */
+.offcanvas .sidebar-nav-link {
+    color: var(--bs-body-color, #212529);
+    border-left-color: transparent;
+}
+.offcanvas .sidebar-nav-link:hover,
+.offcanvas .sidebar-nav-link.active {
+    background: rgba(13, 110, 253, 0.1);
+    color: var(--bs-primary, #0d6efd);
+    border-left-color: var(--bs-primary, #0d6efd);
+}

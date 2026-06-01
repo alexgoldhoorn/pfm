@@ -1,0 +1,51 @@
+[project]
+name = "pfm"
+version = "0.1.0"
+description = "Portfolio tracker CLI + FastAPI server for stocks, ETFs, and P2P investments"
+requires-python = ">=3.13"
+dependencies = [
+    "click",
+    "pandas",
+    "yfinance",
+    "requests",
+    "scipy",
+    "numpy",
+    "google-generativeai",
+    "sqlalchemy>=2.0.0",
+    "psycopg2-binary",
+    "fastapi",
+    "uvicorn[standard]",
+    "gunicorn",
+    "asyncpg",
+    "httpx",
+    "python-dotenv",
+    "pydantic-settings",
+    "pydantic[email]",
+    "python-multipart",
+    "reportlab",
+    "openpyxl>=3.1.0",
+    "google-api-python-client>=2.0.0",
+    "google-auth>=2.0.0",
+    "google-auth-httplib2>=0.1.0",
+    "google-auth-oauthlib>=1.0.0",
+]
+
+[tool.uv]
+package = false
+dev-dependencies = [
+    "black",
+    "pytest",
+    "pre-commit",
+    "pytest-asyncio",
+    "pytest-httpx",
+    "playwright",
+    "pytest-playwright",
+    "pytest-mock",
+    "pytest-cov",
+    "pytest-xvfb",
+    "flake8>=7.3.0",
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py313"]
