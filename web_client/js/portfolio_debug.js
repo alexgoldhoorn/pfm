@@ -340,6 +340,19 @@ function createAPIClient() {
             return resp.json();
         },
 
+        async createTransaction(payload) {
+            const resp = await fetch(this.baseURL + '/api/v1/transactions/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(payload)
+            });
+            if (!resp.ok) {
+                const e = await resp.json().catch(() => ({}));
+                throw new Error(e.detail || 'Failed to create transaction');
+            }
+            return resp.json();
+        },
+
         async createBooking(booking) {
             const resp = await fetch(this.baseURL + '/api/v1/bookings/', {
                 method: 'POST',
@@ -4058,6 +4071,87 @@ function setupExportButtons() {
 // ---------------------------------------------------------------------------
 // Initialisation
 // ---------------------------------------------------------------------------
+// Manual "Add Transaction" modal — buy / sell / dividend / stock split.
+function setupAddTransaction() {
+    const form = document.getElementById('addTransactionForm');
+    const modalEl = document.getElementById('addTransactionModal');
+    if (!form || !modalEl) return;
+    const $ = id => document.getElementById(id);
+    const typeSel = $('transactionType');
+    const hint = $('transactionTypeHint');
+    const priceInput = $('transactionPrice');
+    let populated = false;
+
+    async function populate() {
+        if (populated) return;
+        populated = true;
+        try {
+            const assets = await window.apiClient.getAssets();
+            (assets || []).forEach(a => {
+                const o = document.createElement('option');
+                o.value = a.id; o.textContent = `${a.symbol} — ${a.name || ''}`;
+                $('transactionAsset').appendChild(o);
+            });
+        } catch (e) { /* ignore */ }
+        try {
+            const pfs = await window.apiClient.getPortfolios();
+            (pfs || []).forEach(p => {
+                const o = document.createElement('option');
+                o.value = p.id; o.textContent = p.name;
+                $('transactionPortfolio').appendChild(o);
+            });
+        } catch (e) { /* ignore */ }
+    }
+    modalEl.addEventListener('show.bs.modal', populate);
+
+    // Split = ratio in Quantity, price irrelevant.
+    typeSel.addEventListener('change', () => {
+        if (typeSel.value === 'split') {
+            hint.textContent = 'For a split, put the ratio in Quantity (2-for-1 → 2; 1-for-10 reverse → 0.1). Price is ignored.';
+            hint.style.display = '';
+            priceInput.value = '0'; priceInput.required = false;
+        } else {
+            hint.style.display = 'none';
+            priceInput.required = true;
+        }
+    });
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const type = typeSel.value;
+        const qty = parseFloat($('transactionQuantity').value) || 0;
+        const price = type === 'split' ? 0 : (parseFloat($('transactionPrice').value) || 0);
+        const fees = parseFloat($('transactionFees').value) || 0;
+        let total;
+        if (type === 'split') total = 0;
+        else if (type === 'dividend') total = qty * price;
+        else if (type === 'sell') total = qty * price - fees;
+        else total = qty * price + fees;  // buy
+        const payload = {
+            asset_id: parseInt($('transactionAsset').value),
+            transaction_type: type,
+            quantity: qty,
+            price: price,
+            total_amount: total,
+            transaction_date: $('transactionDate').value,
+            portfolio_id: $('transactionPortfolio').value ? parseInt($('transactionPortfolio').value) : null,
+            fees: fees,
+            description: $('transactionNotes').value || null,
+        };
+        if (!payload.asset_id || !type || !payload.transaction_date || qty <= 0) {
+            alert('Asset, type, date and a positive quantity are required.'); return;
+        }
+        try {
+            await window.apiClient.createTransaction(payload);
+            bootstrap.Modal.getInstance(modalEl).hide();
+            form.reset(); hint.style.display = 'none'; priceInput.required = true;
+            if (window.pageManager) window.pageManager.loadTransactionsPage();
+        } catch (err) {
+            alert('Error adding transaction: ' + err.message);
+        }
+    });
+}
+
 // Settings modal — browser-local preferences (theme, formats, defaults, privacy)
 function setupSettings() {
     const modalEl = document.getElementById('settingsModal');
@@ -4127,6 +4221,7 @@ document.addEventListener('DOMContentLoaded', function() {
     applyTheme();
     applyPrivacy();
     setupSettings();
+    setupAddTransaction();
 
     window.authManager.setupLoginForm();
     window.authManager.setupLogout();

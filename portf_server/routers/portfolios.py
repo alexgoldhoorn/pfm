@@ -13,6 +13,7 @@ import logging
 import yfinance as yf
 
 from portf_manager.database import Database
+from portf_manager.positions import compute_positions
 from ..dependencies import get_database
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager
@@ -202,25 +203,11 @@ async def get_portfolio_values(
     """
     transactions = database.get_all_transactions()
 
-    # Accumulate cost basis + quantity per (portfolio_id, asset_id)
-    positions: dict = {}
-    for tx in transactions:
-        pid = tx.get("portfolio_id")
-        aid = tx["asset_id"]
-        key = (pid, aid)
-        qty = float(tx["quantity"])
-        total = float(tx["total_amount"])
-        t = tx["transaction_type"].lower()
-        if key not in positions:
-            positions[key] = {"quantity": 0.0, "cost": 0.0}
-        if t == "buy":
-            positions[key]["quantity"] += qty
-            positions[key]["cost"] += total
-        elif t == "sell":
-            pos = positions[key]
-            if pos["quantity"] > 0:
-                pos["cost"] *= (pos["quantity"] - qty) / pos["quantity"]
-            pos["quantity"] -= qty
+    # Cost basis + quantity per (portfolio_id, asset_id) — shared chronological
+    # helper (handles buy/sell/splits).
+    positions, _ = compute_positions(
+        transactions, key=lambda tx: (tx.get("portfolio_id"), tx["asset_id"])
+    )
 
     all_portfolios = database.get_all_portfolios()
     names = {p["id"]: p["name"] for p in all_portfolios}
@@ -322,24 +309,8 @@ async def get_holdings(
     """Get current holdings (positions with total value) computed from transactions."""
     transactions = database.get_all_transactions()
 
-    positions: dict = {}
-    for tx in transactions:
-        asset_id = tx["asset_id"]
-        qty = float(tx["quantity"])
-        total = float(tx["total_amount"])
-        tx_type = tx["transaction_type"].lower()
-
-        if asset_id not in positions:
-            positions[asset_id] = {"quantity": 0.0, "cost_basis": 0.0}
-
-        if tx_type == "buy":
-            positions[asset_id]["quantity"] += qty
-            positions[asset_id]["cost_basis"] += total
-        elif tx_type == "sell":
-            pos = positions[asset_id]
-            if pos["quantity"] > 0:
-                pos["cost_basis"] *= (pos["quantity"] - qty) / pos["quantity"]
-            pos["quantity"] -= qty
+    # Shared chronological position helper (handles buy/sell/splits).
+    positions, _ = compute_positions(transactions)
 
     def to_eur(amount: float, currency: str) -> float:
         if amount == 0.0:
@@ -362,7 +333,7 @@ async def get_holdings(
         currency = asset.get("currency", "EUR")
         price_data = database.get_latest_price(asset_id)
         current_price = float(price_data["price"]) if price_data else 0.0
-        cost_basis = data["cost_basis"]
+        cost_basis = data["cost"]
         total_value = qty * current_price
         avg_price = cost_basis / qty if qty > 0 else 0.0
         pnl_amount = total_value - cost_basis
