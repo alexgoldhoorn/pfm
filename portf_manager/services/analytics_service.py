@@ -149,42 +149,62 @@ def period_start_date(period: str, today: Optional[date] = None) -> Optional[dat
 
 
 def period_return(
-    snapshots: list[dict], current_value: float, period: str
+    snapshots: list[dict],
+    current_value: float,
+    period: str,
+    current_cost: Optional[float] = None,
 ) -> Optional[float]:
-    """Time-weighted-ish return over a period using snapshot boundary values.
+    """Time-weighted return (TWR) over a period from daily snapshots.
 
-    Uses the earliest snapshot on/after the period start as the opening value
-    and *current_value* as the closing value. Returns None when there is no
-    snapshot within the period (history too short).
+    Chains each step's market return while removing the day's net contribution
+    (≈ change in cost basis), so deposits/withdrawals don't inflate the figure —
+    the correct way to measure return when money is being added (a naive
+    (end−start)/start can read absurdly high, e.g. when the starting balance was
+    tiny and most growth came from contributions). Falls back to a chained value
+    return if snapshots carry no cost basis. Returns None if history is too short
+    or doesn't cover the period start.
 
     Args:
-        snapshots: list of {snapshot_date, total_value_eur} ascending by date.
-        current_value: latest portfolio value in EUR.
+        snapshots: [{snapshot_date, total_value_eur, total_cost_eur}].
+        current_value: latest value (kept for signature compatibility).
         period: 'ytd' | '1m' | '1y' | 'all'.
+        current_cost: latest cost basis (kept for signature compatibility).
     """
     if not snapshots:
         return None
+    ordered = sorted(snapshots, key=lambda s: str(s.get("snapshot_date", "")))
     start = period_start_date(period)
     if start is None:
-        opening = snapshots[0]["total_value_eur"]
+        window = ordered
     else:
-        in_period = [
+        window = [
             s
-            for s in snapshots
+            for s in ordered
             if _parse_date(s["snapshot_date"])
             and _parse_date(s["snapshot_date"]) >= start
         ]
-        if not in_period:
+        if not window:
             return None
         # History coverage guard: if the earliest snapshot inside the window is
         # far after the period start, our daily history doesn't actually cover
-        # the period (e.g. snapshots only began mid-year). Returning a number
-        # then would be a shorter-period return mislabeled as YTD/1Y, so report
-        # "no data" instead of a misleading value.
-        opening_date = _parse_date(in_period[0]["snapshot_date"])
+        # the period — report "no data" rather than a mislabeled shorter return.
+        opening_date = _parse_date(window[0]["snapshot_date"])
         if opening_date and (opening_date - start).days > 10:
             return None
-        opening = in_period[0]["total_value_eur"]
-    if not opening:
+    if len(window) < 2:
         return None
-    return round((current_value - opening) / opening * 100, 2)
+
+    # Time-weighted return: chain each step's market return, removing the day's
+    # net contribution (≈ change in cost basis) so deposits/withdrawals don't
+    # inflate the figure. This is the correct way to measure return over a
+    # period when money is being added — unlike a naive (end-start)/start.
+    factor = 1.0
+    has_cost = all(s.get("total_cost_eur") is not None for s in window)
+    for prev, cur in zip(window, window[1:]):
+        v0 = prev.get("total_value_eur") or 0
+        v1 = cur.get("total_value_eur") or 0
+        if v0 <= 0:
+            continue
+        flow = (cur["total_cost_eur"] - prev["total_cost_eur"]) if has_cost else 0.0
+        factor *= 1 + (v1 - v0 - flow) / v0
+    return round((factor - 1) * 100, 2)
