@@ -24,7 +24,7 @@ Portfolio Manager: a Python CLI + FastAPI server + web client for tracking stock
 ### Database
 SQLite by default (`portfolio.db`), PostgreSQL via `DATABASE_URL` env var. Use `portf_manager/database.py` for SQLite, `database_factory.py` for auto-detection.
 
-**Current schema version: 9.** Migrations run automatically on startup.
+**Current schema version: 10.** Migrations run automatically on startup.
 
 Key fields added in recent migrations:
 - v5: `tax REAL DEFAULT 0` on `transactions`; new `bookings` table (deposits/withdrawals)
@@ -32,6 +32,7 @@ Key fields added in recent migrations:
 - v7: `allocation_targets` (rebalancing), `price_targets` (buy/sell thresholds + fair value), `research_reports` (LLM valuation cache)
 - v8: `portfolio_snapshots` (daily value/cost for the net-worth chart, recorded by the price cron)
 - v9: `watchlist` (tracked tickers + buy_below), `goals` (FIRE targets + projection)
+- v10: `website TEXT` on `portfolios` (broker website; `description` already existed)
 
 All transaction SELECT queries use `COALESCE(t.currency, a.currency) AS currency` with an explicit column list (NOT `t.*`) because `sqlite3.Row` dict uses the first column when names collide.
 
@@ -46,6 +47,8 @@ Provider-agnostic via `portf_manager/llm_client.py`. Factory `get_llm_client()` 
 Override with env vars:
 - `PORTF_LLM_PROVIDER=auto|ollama|gemini|openrouter`
 - `PORTF_LLM_MODEL=<model-name>`
+
+`docker-compose.yml` sets `PORTF_LLM_PROVIDER=gemini` for the backend (the container has `GEMINI_API_KEY`). These `environment:` entries override `.env*`, so change the provider there, not only in `.env.local`. `GeminiClient.extract_transactions` keeps a statement's time (`...THH:MM:SS`) when present; `extract_bookings` pulls cash deposits/withdrawals.
 
 All LLM calls go through `LLMClient.generate(prompt) -> str`. `GeminiClient` is a legacy wrapper kept for backward compatibility; it delegates to `get_llm_client()`.
 
@@ -82,11 +85,13 @@ Auth: `GOOGLE_SERVICE_ACCOUNT_FILE=service-account.json` (already configured).
 
 ### Import API (`portf_server/routers/imports.py`)
 - `POST /api/v1/import/upload` — multipart file + `broker` field → parse preview (no DB write)
-- `POST /api/v1/import/save` — `SaveRequest(transactions, bookings, portfolio_id)` → write to DB
-- Supported broker values: `indexacapital`, `coinbase`, `pdt`
-- `PreviewTransaction` has: `symbol, name, asset_type, tx_type, date, quantity, price, currency, fees, tax, exchange, notes, broker`
-- `PreviewBooking` has: `broker, date, action, amount, currency`
-- `SaveResponse` has: `saved, saved_bookings, errors`
+- `POST /api/v1/import/save` — `SaveRequest(transactions, bookings, portfolio_id, duplicate_action)` → write to DB
+- `POST /api/v1/import/check-duplicates` — flag which supplied rows already exist (no write); powers the text/LLM preview
+- Supported broker values: `indexacapital`, `coinbase`, `pdt`, `bookings` (generic cash-CSV → `parsers/bookings_csv_parser.py`)
+- `PreviewTransaction` has: `symbol, name, asset_type, tx_type, date, quantity, price, currency, fees, tax, exchange, notes, broker, is_duplicate`
+- `PreviewBooking` has: `broker, date, action, amount, currency, is_duplicate`
+- `SaveResponse` has: `saved, saved_bookings, duplicates_skipped, overwritten, errors`
+- **Duplicate handling**: `duplicate_action` = `skip` (default) | `add` (insert copy) | `overwrite` (update existing). `force=True` is the legacy alias for `add`. `find_duplicate_transaction` matches asset+type+qty(±0.0001)+price(±0.001%)+portfolio and is **time-aware**: matches on the calendar date, plus the time-of-day only when both rows carry one. `find_duplicate_booking` matches date+action+amount+currency+portfolio. Upload/preview set `is_duplicate`; the dedup is pure SQL (no LLM).
 
 ### Export API (`portf_server/routers/exports.py`)
 - `GET /api/v1/export/csv` — all transactions as UTF-8 CSV (Excel BOM)
@@ -95,7 +100,9 @@ Auth: `GOOGLE_SERVICE_ACCOUNT_FILE=service-account.json` (already configured).
 
 ### Bookings API (`portf_server/routers/bookings.py`)
 - `GET /api/v1/bookings/` — list bookings, optional `?portfolio_id=`
+- `POST /api/v1/bookings/` — create a manual deposit/withdrawal (the Import/Export page's add-booking form)
 - `DELETE /api/v1/bookings/{id}`
+- Bookings are importable 4 ways: PDT (sheet/XLSX), generic `bookings` CSV, LLM text extraction (`POST /api/v1/llm/extract-bookings`), and the manual form.
 
 ### Rebalance API (`portf_server/routers/rebalance.py`)
 - `GET /api/v1/rebalance/targets` — list allocation targets per asset type
@@ -152,6 +159,9 @@ API key auth for all server endpoints (`X-API-Key` header). User auth with passw
 ### Portfolio Resolver
 `db.get_or_create_portfolio(name, base_currency="EUR")` — centralized helper in `database.py`. Use this instead of the inline get/create pattern in every router.
 
+### Portfolios = Brokers (`portf_server/routers/portfolios.py`)
+A portfolio doubles as a broker/account (the web page is titled "Portfolios / Brokers"; no rename). `GET /api/v1/portfolios/` returns `website` + `description` (stored value, else a built-in default from `KNOWN_BROKERS` for names like MyInvestor/Indexa/Degiro/Coinbase/Mintos…) plus `first/last_transaction_date` and `first/last_booking_date` (from `db.get_portfolio_date_ranges()`). `website` is editable via `PUT /api/v1/portfolios/{id}` (v10 column). Portfolio queries alias `e.website AS entity_website` to avoid colliding with the new `p.website`.
+
 ### Price Updates
 Daily cron at **20:00 UTC** via `~/scripts/portf-update-prices.sh` (reads API key from `.env.local`).
 Manual: `docker exec -e PORTF_API_KEY=... portf_backend_dev python3 -m portf_manager.cli update-prices`
@@ -206,7 +216,7 @@ Signature: `saveImportedTransactions(transactions, bookings = [], portfolioId = 
 - PDT parser tests: `tests/test_pdt_xlsx_parser.py` (42 tests)
 - PDT Sheets sync tests: `tests/test_pdt_sheets_sync.py` (40 tests — all mocked, no real API calls)
 - Import/export + sync API tests: `tests/unit/test_imports_exports.py` (30 tests)
-- DB tests: `tests/test_database.py` — check version assertion is `== 6`
+- DB tests: `tests/test_database.py` — version assertion is `== 10` (bump it with `DATABASE_VERSION`)
 
 ## Git
 - Main development branch: `develop` (ahead of `main`). Current feature branch: `pdt-format`.

@@ -245,6 +245,15 @@ Import/Export page also has direct **Pull/Push** buttons for Google Sheets sync.
 | PDT (Portfolio Dividend Tracker) | XLSX | `pdt_xlsx_parser.py` | ✅ | ✅ |
 | PDT Google Sheets | Sheets API | `pdt_sheets_sync.py` | ✅ | ✅ |
 | Any broker | Free-text (LLM) | `llm_client.py` | ✅ | ✅ |
+| Cash deposits/withdrawals | Generic CSV (`date, action, amount, currency, broker`) | `bookings_csv_parser.py` | — | ✅ |
+
+**Duplicate handling**: every import path (file, CSV, PDT, text/LLM) flags rows that already
+exist and lets you choose **skip** (default), **import anyway**, or **overwrite**. Matching is
+deterministic (asset + type + quantity + price + broker + date, time-aware when a statement
+provides a time) — no LLM involved. Cash bookings are deduplicated too.
+
+**Bookings** (cash transfers to/from a broker) can be added via PDT, the generic cash CSV,
+free-text/LLM extraction, or the manual form on the Import/Export page.
 
 ---
 
