@@ -1016,8 +1016,8 @@
                 <div id="portfoliosPage" class="page-content" style="display: none;">
                     <div class="d-flex align-items-center justify-content-between mb-3">
                         <div>
-                            <h4 class="mb-0"><i class="bi bi-briefcase me-2 text-primary"></i>Portfolios<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('portfolios')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
-                            <p class="text-muted small mb-0">Broker and account groups. Each import automatically creates a portfolio if needed.</p>
+                            <h4 class="mb-0"><i class="bi bi-briefcase me-2 text-primary"></i>Portfolios <span class="text-muted fw-normal">/ Brokers</span><button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('portfolios')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
+                            <p class="text-muted small mb-0">Each portfolio is one broker / account. Imports create a portfolio automatically; the dates show what each already covers.</p>
                         </div>
                         <button class="btn btn-primary btn-sm" id="addPortfolioBtn">
                             <i class="bi bi-plus-lg me-1"></i>Add Portfolio
@@ -1029,16 +1029,17 @@
                                 <table class="table table-hover mb-0" id="portfoliosTable">
                                     <thead>
                                         <tr>
-                                            <th class="ps-3">Name</th>
+                                            <th class="ps-3">Broker</th>
                                             <th>Currency</th>
                                             <th class="text-end">Value (EUR)</th>
                                             <th class="text-end">P&amp;L</th>
+                                            <th>Activity <span class="text-muted fw-normal small">(first → last)</span></th>
                                             <th>Description</th>
                                             <th class="pe-3">Actions</th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        <tr><td colspan="6" class="text-center py-4">
+                                        <tr><td colspan="7" class="text-center py-4">
                                             <div class="spinner-border spinner-border-sm me-2"></div>Loading…
                                         </td></tr>
                                     </tbody>
@@ -1833,7 +1834,12 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         </div>
                         <div class="mb-3">
                             <label class="form-label" for="portfolioDescription">Description</label>
-                            <input type="text" class="form-control" id="portfolioDescription">
+                            <input type="text" class="form-control" id="portfolioDescription" placeholder="e.g. Main brokerage account">
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label" for="portfolioWebsite">Broker website</label>
+                            <input type="url" class="form-control" id="portfolioWebsite" placeholder="https://…">
+                            <div class="form-text">Known brokers are pre-filled automatically; leave blank to use the suggestion.</div>
                         </div>
                     </form>
                 </div>

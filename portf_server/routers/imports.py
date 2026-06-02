@@ -13,7 +13,7 @@ Supported brokers:
 import logging
 import tempfile
 import os
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from fastapi import (
     APIRouter,
@@ -66,6 +66,8 @@ class PreviewTransaction(BaseModel):
     exchange: Optional[str] = None
     notes: str = ""
     broker: Optional[str] = None
+    # Set by the preview endpoint when a matching transaction already exists.
+    is_duplicate: bool = False
 
 
 class PreviewBooking(BaseModel):
@@ -74,6 +76,7 @@ class PreviewBooking(BaseModel):
     action: str  # "Deposit" or "Withdrawal"
     amount: float
     currency: str
+    is_duplicate: bool = False
 
 
 class UploadPreviewResponse(BaseModel):
@@ -82,19 +85,28 @@ class UploadPreviewResponse(BaseModel):
     bookings: List[PreviewBooking] = []
     skipped_count: int
     skipped: List[dict]
+    duplicate_count: int = 0
+
+
+# What to do when an imported row matches an existing one.
+DuplicateAction = Literal["skip", "add", "overwrite"]
 
 
 class SaveRequest(BaseModel):
     transactions: List[PreviewTransaction]
     bookings: List[PreviewBooking] = []
     portfolio_id: Optional[int] = None
-    force: bool = False  # if True, import even if a duplicate is detected
+    # skip = ignore duplicates (default), add = import anyway, overwrite = update
+    # the existing row. `force` is kept for backwards compatibility (== "add").
+    duplicate_action: DuplicateAction = "skip"
+    force: bool = False
 
 
 class SaveResponse(BaseModel):
     saved: int
     saved_bookings: int = 0
     duplicates_skipped: int = 0
+    overwritten: int = 0
     errors: List[str]
 
 
@@ -233,14 +245,69 @@ def _parse_pdt(
 # ---------------------------------------------------------------------------
 
 
+def _flag_duplicates(
+    db,
+    previews: List[PreviewTransaction],
+    bookings: List[PreviewBooking],
+    portfolio_id: Optional[int] = None,
+) -> int:
+    """Mark preview rows that already exist in the DB (best-effort). Returns count."""
+    n = 0
+    for tx in previews:
+        try:
+            symbol = tx.symbol.upper()
+            asset = db.get_asset_by_symbol(symbol)
+            if not asset:
+                continue  # new asset → can't be a duplicate yet
+            price, _t, _fees, _cur = normalize_gbx_amounts(
+                symbol, tx.price, None, tx.fees, tx.currency
+            )
+            pid = portfolio_id
+            if tx.broker:
+                existing_pf = db.get_portfolio_by_name(tx.broker)
+                pid = existing_pf["id"] if existing_pf else None
+            if db.find_duplicate_transaction(
+                asset_id=asset["id"],
+                transaction_type=tx.tx_type,
+                quantity=tx.quantity,
+                price=price,
+                transaction_date=tx.date,
+                portfolio_id=pid,
+            ):
+                tx.is_duplicate = True
+                n += 1
+        except Exception:
+            continue
+    for bk in bookings:
+        try:
+            pid = portfolio_id
+            if bk.broker:
+                existing_pf = db.get_portfolio_by_name(bk.broker)
+                pid = existing_pf["id"] if existing_pf else None
+            if db.find_duplicate_booking(
+                date=bk.date,
+                action=bk.action,
+                amount=bk.amount,
+                currency=bk.currency,
+                portfolio_id=pid,
+            ):
+                bk.is_duplicate = True
+                n += 1
+        except Exception:
+            continue
+    return n
+
+
 @router.post("/upload", response_model=UploadPreviewResponse)
 async def upload_broker_file(
     broker: str = Form(..., description=f"Broker type: {', '.join(SUPPORTED_BROKERS)}"),
     file: UploadFile = File(..., description="Broker statement file (CSV or XLSX)"),
+    db=Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """
     Parse a broker statement file and return a preview of extracted transactions.
+    Rows that already exist in the DB are flagged (``is_duplicate``).
     No data is saved — call POST /save to commit.
     """
     broker = broker.lower().strip()
@@ -280,12 +347,15 @@ async def upload_broker_file(
             detail=f"Failed to parse file: {str(e)}",
         )
 
+    dup_count = _flag_duplicates(db, previews, bookings)
+
     return UploadPreviewResponse(
         broker=broker,
         transactions=previews,
         bookings=bookings,
         skipped_count=len(skipped),
         skipped=skipped,
+        duplicate_count=dup_count,
     )
 
 
@@ -302,7 +372,11 @@ async def save_imported_transactions(
     saved = 0
     saved_bookings = 0
     duplicates_skipped = 0
+    overwritten = 0
     errors: List[str] = []
+
+    # force=True is the legacy way to say "import duplicates anyway".
+    action = "add" if body.force else body.duplicate_action
 
     for tx in body.transactions:
         try:
@@ -335,29 +409,41 @@ async def save_imported_transactions(
                     tx.broker, base_currency=currency or "EUR"
                 )
 
-            # Duplicate check — skip unless caller explicitly sets force=True
-            if not body.force:
-                existing = db.find_duplicate_transaction(
-                    asset_id=asset_id,
-                    transaction_type=tx.tx_type,
-                    quantity=tx.quantity,
-                    price=price,
-                    transaction_date=tx.date,
-                    portfolio_id=tx_portfolio_id,
-                )
-                if existing:
-                    duplicates_skipped += 1
-                    errors.append(
-                        f"DUPLICATE: {symbol} {tx.tx_type} {tx.quantity}@{price} on {tx.date} "
-                        f"(existing id={existing['id']})"
-                    )
-                    continue
-
             total_amount = tx.quantity * price
             if tx.tx_type == "sell":
                 total_amount -= fees
             else:
                 total_amount += fees
+
+            # Duplicate handling: skip (default) / add anyway / overwrite.
+            existing = db.find_duplicate_transaction(
+                asset_id=asset_id,
+                transaction_type=tx.tx_type,
+                quantity=tx.quantity,
+                price=price,
+                transaction_date=tx.date,
+                portfolio_id=tx_portfolio_id,
+            )
+            if existing:
+                if action == "skip":
+                    duplicates_skipped += 1
+                    errors.append(
+                        f"DUPLICATE: {symbol} {tx.tx_type} {tx.quantity}@{price} "
+                        f"on {tx.date} (existing id={existing['id']})"
+                    )
+                    continue
+                if action == "overwrite":
+                    db.update_transaction(
+                        existing["id"],
+                        total_amount=total_amount,
+                        fees=fees,
+                        tax=tx.tax,
+                        currency=currency,
+                        description=tx.notes or None,
+                    )
+                    overwritten += 1
+                    continue
+                # action == "add": fall through and insert a second copy
 
             db.create_transaction(
                 asset_id=asset_id,
@@ -386,6 +472,21 @@ async def save_imported_transactions(
                     bk.broker, base_currency=bk.currency or "EUR"
                 )
 
+            # Bookings dedup: skip exact matches unless importing anyway.
+            # (Overwrite is a no-op for a booking — the match is already exact.)
+            if action != "add" and db.find_duplicate_booking(
+                date=bk.date,
+                action=bk.action,
+                amount=bk.amount,
+                currency=bk.currency,
+                portfolio_id=bk_portfolio_id,
+            ):
+                duplicates_skipped += 1
+                errors.append(
+                    f"DUPLICATE: {bk.action} {bk.amount} {bk.currency} on {bk.date}"
+                )
+                continue
+
             db.create_booking(
                 date=bk.date,
                 action=bk.action,
@@ -403,5 +504,6 @@ async def save_imported_transactions(
         saved=saved,
         saved_bookings=saved_bookings,
         duplicates_skipped=duplicates_skipped,
+        overwritten=overwritten,
         errors=errors,
     )

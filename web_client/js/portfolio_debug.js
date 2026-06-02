@@ -224,11 +224,11 @@ function createAPIClient() {
             return response.json();
         },
 
-        async saveImportedTransactions(transactions, bookings = [], portfolioId = null) {
+        async saveImportedTransactions(transactions, bookings = [], portfolioId = null, duplicateAction = 'skip') {
             const response = await fetch(this.baseURL + '/api/v1/import/save', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
-                body: JSON.stringify({ transactions, bookings, portfolio_id: portfolioId })
+                body: JSON.stringify({ transactions, bookings, portfolio_id: portfolioId, duplicate_action: duplicateAction })
             });
             if (!response.ok) {
                 const err = await response.text();
@@ -601,6 +601,31 @@ const BROKER_HINTS = {
     bookings: 'Generic cash CSV with columns: date, action (deposit/withdrawal), amount, currency, broker (optional). Delimiter and decimal style are auto-detected.',
 };
 
+// Shown above an import preview when some rows already exist in the DB. The
+// <select id="ioDupAction"> value is read by the save handlers.
+function _dupControl(transactions, bookings) {
+    const dupTx = (transactions || []).filter(t => t.is_duplicate).length;
+    const dupBk = (bookings || []).filter(b => b.is_duplicate).length;
+    const total = dupTx + dupBk;
+    if (total === 0) return '';
+    return `
+        <div class="alert alert-warning py-2 small d-flex flex-wrap align-items-center gap-2 mb-2">
+            <span><i class="bi bi-exclamation-triangle me-1"></i><strong>${total}</strong> row(s) already exist (marked <span class="badge bg-warning text-dark">dup</span> below).</span>
+            <label class="ms-auto mb-0 d-flex align-items-center">On duplicates:
+                <select id="ioDupAction" class="form-select form-select-sm d-inline-block w-auto ms-1">
+                    <option value="skip">Skip them</option>
+                    <option value="add">Import anyway (add copy)</option>
+                    <option value="overwrite">Overwrite existing</option>
+                </select>
+            </label>
+        </div>`;
+}
+
+function _dupAction() {
+    const el = document.getElementById('ioDupAction');
+    return el ? el.value : 'skip';
+}
+
 function _buildPreviewTable(transactions, bookings) {
     bookings = bookings || [];
     let bookingsSummary = '';
@@ -612,15 +637,17 @@ function _buildPreviewTable(transactions, bookings) {
         if (totalWithdrawals > 0) parts.push(`${bookings.filter(b=>b.action==='Withdrawal').length} withdrawal(s) totalling ${totalWithdrawals.toFixed(2)}`);
         bookingsSummary = `<div class="alert alert-info py-1 mb-2 small"><i class="bi bi-bank me-1"></i><strong>Bookings:</strong> ${parts.join(' + ')} — will be saved automatically.</div>`;
     }
+    const dupControl = _dupControl(transactions, bookings);
     if (transactions.length === 0) {
-        return bookingsSummary + '<div class="alert alert-warning">No importable transactions found in this file.</div>';
+        return bookingsSummary + dupControl + '<div class="alert alert-warning">No importable transactions found in this file.</div>';
     }
     const hasBroker = transactions.some(tx => tx.broker);
+    const dupBadge = '<span class="badge bg-warning text-dark ms-1">dup</span>';
     const rows = transactions.map((tx, i) => `
-        <tr>
+        <tr class="${tx.is_duplicate ? 'table-warning' : ''}">
             <td><input class="form-check-input file-tx-select" type="checkbox" checked data-idx="${i}"></td>
             ${hasBroker ? `<td><small>${tx.broker || ''}</small></td>` : ''}
-            <td>${tx.date || ''}</td>
+            <td>${tx.date || ''}${tx.is_duplicate ? dupBadge : ''}</td>
             <td><strong>${tx.symbol || ''}</strong><br><small class="text-muted">${tx.name || ''}</small></td>
             <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : tx.tx_type === 'sell' ? 'danger' : 'secondary'}">${(tx.tx_type || '').toUpperCase()}</span></td>
             <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(undefined, {maximumFractionDigits: 4})}</td>
@@ -629,7 +656,7 @@ function _buildPreviewTable(transactions, bookings) {
             <td class="text-end">${parseFloat(tx.fees || 0).toFixed(2)}</td>
         </tr>
     `).join('');
-    return bookingsSummary + `
+    return bookingsSummary + dupControl + `
         <p class="text-muted small mb-2">Found <strong>${transactions.length}</strong> transaction(s). Uncheck any to skip.
         ${hasBroker ? ' <span class="badge bg-info">Broker column detected — portfolios will be auto-assigned.</span>' : ''}</p>
         <div class="table-responsive">
@@ -729,7 +756,7 @@ function setupFileImportModal() {
         saveBtn.disabled = true;
         saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving...';
         try {
-            const result = await window.apiClient.saveImportedTransactions(selected, parsedBookings);
+            const result = await window.apiClient.saveImportedTransactions(selected, parsedBookings, null, _dupAction());
             saveBtn.disabled = false;
             saveBtn.innerHTML = '<i class="bi bi-check-lg me-2"></i>Save Selected';
             bootstrap.Modal.getInstance(modal).hide();
@@ -1252,7 +1279,7 @@ function createPageManager() {
             const tableBody = document.querySelector('#portfoliosTable tbody');
             const footer = document.getElementById('portfoliosFooter');
             if (!tableBody) return;
-            tableBody.innerHTML = '<tr><td colspan="6" class="text-center"><div class="spinner-border spinner-border-sm me-2"></div>Loading…</td></tr>';
+            tableBody.innerHTML = '<tr><td colspan="7" class="text-center"><div class="spinner-border spinner-border-sm me-2"></div>Loading…</td></tr>';
             if (footer) footer.innerHTML = '';
             try {
                 // Portfolios list + per-portfolio EUR values (best-effort; values may be slow)
@@ -1270,23 +1297,37 @@ function createPageManager() {
                     return `<td class="text-end ${cls}">${sign}${eur(v.pnl_eur)} <small>(${sign}${v.pnl_pct}%)</small></td>`;
                 };
 
+                const esc = s => (s || '').replace(/'/g, "\\'");
+                // Compact "first → last" date range, or "—"
+                const range = (a, b) => {
+                    if (!a && !b) return '<span class="text-muted">—</span>';
+                    if (a === b) return a;
+                    return `${a || '?'} <span class="text-muted">→</span> ${b || '?'}`;
+                };
                 if (portfolios.length === 0) {
-                    tableBody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No portfolios yet. Click "Add Portfolio" to create one.</td></tr>';
+                    tableBody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No brokers yet. Click "Add Portfolio" to create one.</td></tr>';
                 } else {
                     tableBody.innerHTML = portfolios.map(p => {
                         const v = valByName[p.name];
+                        const site = p.website
+                            ? ` <a href="${p.website}" target="_blank" rel="noopener" title="${p.website}${p.website_is_default ? ' (suggested)' : ''}" class="text-decoration-none"><i class="bi bi-box-arrow-up-right small ${p.website_is_default ? 'text-muted' : ''}"></i></a>`
+                            : '';
+                        const activity = `
+                            <div class="small"><i class="bi bi-graph-up me-1 text-muted" title="Transactions"></i>${range(p.first_transaction_date, p.last_transaction_date)}</div>
+                            <div class="small"><i class="bi bi-cash-stack me-1 text-muted" title="Cash deposits/withdrawals"></i>${range(p.first_booking_date, p.last_booking_date)}</div>`;
                         return `
                         <tr>
-                            <td class="ps-3"><strong>${p.name}</strong></td>
+                            <td class="ps-3"><strong>${p.name}</strong>${site}</td>
                             <td>${p.base_currency || ''}</td>
                             <td class="text-end">${v ? eur(v.value_eur) : '<span class="text-muted">—</span>'}</td>
                             ${pnlCell(v)}
+                            <td>${activity}</td>
                             <td><small class="text-muted">${p.description || ''}</small></td>
                             <td class="pe-3">
-                                <button class="btn btn-sm btn-outline-primary me-1" title="Edit" onclick="editPortfolio(${p.id}, '${p.name.replace(/'/g,"\\'")}', '${p.base_currency || 'EUR'}', '${(p.description||'').replace(/'/g,"\\'")}')">
+                                <button class="btn btn-sm btn-outline-primary me-1" title="Edit" onclick="editPortfolio(${p.id}, '${esc(p.name)}', '${p.base_currency || 'EUR'}', '${esc(p.description)}', '${esc(p.website)}')">
                                     <i class="bi bi-pencil"></i>
                                 </button>
-                                <button class="btn btn-sm btn-outline-danger" title="Delete" onclick="deletePortfolio(${p.id}, '${p.name.replace(/'/g,"\\'")}')">
+                                <button class="btn btn-sm btn-outline-danger" title="Delete" onclick="deletePortfolio(${p.id}, '${esc(p.name)}')">
                                     <i class="bi bi-trash"></i>
                                 </button>
                             </td>
@@ -1300,12 +1341,12 @@ function createPageManager() {
                             <td class="ps-3">Total</td><td></td>
                             <td class="text-end">${eur(values.total_value_eur)}</td>
                             <td class="text-end ${tcls}">${tsign}${eur(tp)}</td>
-                            <td colspan="2"></td>
+                            <td colspan="3"></td>
                         </tr>`;
                     }
                 }
             } catch (err) {
-                tableBody.innerHTML = '<tr><td colspan="6" class="text-center text-danger">Error loading portfolios.</td></tr>';
+                tableBody.innerHTML = '<tr><td colspan="7" class="text-center text-danger">Error loading portfolios.</td></tr>';
             }
         },
 
@@ -2719,6 +2760,7 @@ function setupPortfoliosPage() {
         document.getElementById('portfolioName').value = '';
         document.getElementById('portfolioCurrency').value = 'EUR';
         document.getElementById('portfolioDescription').value = '';
+        document.getElementById('portfolioWebsite').value = '';
         bsModal.show();
     });
 
@@ -2729,6 +2771,7 @@ function setupPortfoliosPage() {
             name: document.getElementById('portfolioName').value.trim(),
             base_currency: document.getElementById('portfolioCurrency').value.trim() || 'EUR',
             description: document.getElementById('portfolioDescription').value.trim() || null,
+            website: document.getElementById('portfolioWebsite').value.trim() || null,
         };
         try {
             if (id) {
@@ -2747,12 +2790,13 @@ function setupPortfoliosPage() {
     });
 }
 
-window.editPortfolio = function(id, name, currency, description) {
+window.editPortfolio = function(id, name, currency, description, website) {
     document.getElementById('portfolioModalTitle').textContent = 'Edit Portfolio';
     document.getElementById('portfolioEditId').value           = id;
     document.getElementById('portfolioName').value             = name;
     document.getElementById('portfolioCurrency').value         = currency;
-    document.getElementById('portfolioDescription').value      = description;
+    document.getElementById('portfolioDescription').value      = description === 'null' ? '' : (description || '');
+    document.getElementById('portfolioWebsite').value          = website === 'null' ? '' : (website || '');
     new bootstrap.Modal(document.getElementById('portfolioModal')).show();
 };
 
@@ -2836,11 +2880,14 @@ function setupImportExportPage() {
         fileSaveBtn.disabled = true;
         fileSaveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving…';
         try {
-            const result = await window.apiClient.saveImportedTransactions(selected, parsedFileBookings);
+            const result = await window.apiClient.saveImportedTransactions(selected, parsedFileBookings, null, _dupAction());
             const bkMsg = result.saved_bookings > 0 ? ` + ${result.saved_bookings} booking(s)` : '';
-            alert(result.errors.length > 0
-                ? `Saved ${result.saved}${bkMsg}. Errors:\n${result.errors.join('\n')}`
-                : `Successfully imported ${result.saved} transaction(s)${bkMsg}.`);
+            const owMsg = result.overwritten > 0 ? `, ${result.overwritten} overwritten` : '';
+            const dupMsg = result.duplicates_skipped > 0 ? `, ${result.duplicates_skipped} duplicate(s) skipped` : '';
+            const realErrors = result.errors.filter(e => !e.startsWith('DUPLICATE'));
+            alert(realErrors.length > 0
+                ? `Saved ${result.saved}${bkMsg}${owMsg}${dupMsg}. Errors:\n${realErrors.join('\n')}`
+                : `Successfully imported ${result.saved} transaction(s)${bkMsg}${owMsg}${dupMsg}.`);
             fileShowStep1();
         } catch (err) {
             alert('Error saving: ' + err.message);
@@ -3943,6 +3990,31 @@ document.addEventListener('DOMContentLoaded', function() {
             loadAnalyticsNetworth();
         }
     });
+
+    // Global 401 handling: when the API key expires or is rotated, every /api
+    // call returns 401. Clear it and show the login modal once — instead of a
+    // confusing per-card error like "Failed to load bookings".
+    if (!window.__fetchPatchedFor401) {
+        window.__fetchPatchedFor401 = true;
+        const _origFetch = window.fetch.bind(window);
+        let _authPrompted = false;
+        window.fetch = async function(input, init) {
+            const resp = await _origFetch(input, init);
+            try {
+                const url = typeof input === 'string' ? input : (input && input.url) || '';
+                if (resp.status === 401 && url.includes('/api/') && !url.includes('/auth/')) {
+                    if (!_authPrompted) {
+                        _authPrompted = true;
+                        localStorage.removeItem('apiKey');
+                        if (window.apiClient && window.apiClient.clearApiKey) window.apiClient.clearApiKey();
+                        if (window.authManager && window.authManager.showLoginModal) window.authManager.showLoginModal();
+                        setTimeout(() => { _authPrompted = false; }, 3000);
+                    }
+                }
+            } catch (e) { /* ignore */ }
+            return resp;
+        };
+    }
 
     const existingKey = localStorage.getItem('apiKey');
     if (existingKey) {
