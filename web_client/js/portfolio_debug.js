@@ -298,6 +298,16 @@ function createAPIClient() {
             return resp.json();
         },
 
+        async checkDuplicates(transactions, bookings = [], portfolioId = null) {
+            const response = await fetch(this.baseURL + '/api/v1/import/check-duplicates', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify({ transactions, bookings, portfolio_id: portfolioId })
+            });
+            if (!response.ok) throw new Error('Duplicate check failed');
+            return response.json();
+        },
+
         async extractBookings(text) {
             const resp = await fetch(this.baseURL + '/api/v1/llm/extract-bookings', {
                 method: 'POST',
@@ -2948,18 +2958,35 @@ function setupImportExportPage() {
             ]);
             extractedText = data.transactions || [];
             extractedTextBookings = (bkData && bkData.bookings) || [];
+
+            // Flag rows that already exist in the DB (best-effort), same as the
+            // file-upload preview.
+            try {
+                const ioPid = ioTextPortfolio && ioTextPortfolio.value ? parseInt(ioTextPortfolio.value) : null;
+                const previewTx = extractedText.map(tx => ({
+                    symbol: tx.symbol, name: tx.asset_name || tx.symbol, asset_type: 'stock',
+                    tx_type: tx.tx_type, date: tx.date, quantity: tx.quantity, price: tx.price,
+                    currency: tx.currency || 'EUR', fees: parseFloat(tx.fees) || 0.0
+                }));
+                const chk = await window.apiClient.checkDuplicates(previewTx, extractedTextBookings, ioPid);
+                (chk.transactions || []).forEach((t, i) => { if (extractedText[i]) extractedText[i].is_duplicate = t.is_duplicate; });
+                (chk.bookings || []).forEach((b, i) => { if (extractedTextBookings[i]) extractedTextBookings[i].is_duplicate = b.is_duplicate; });
+            } catch (e) { /* flagging is optional */ }
+
             textStep1.style.display = 'none'; textStep2.style.display = '';
             extractBtn.style.display = 'none'; textBackBtn.style.display = '';
             textSaveBtn.style.display = (extractedText.length > 0 || extractedTextBookings.length > 0) ? '' : 'none';
+            const dupControl = _dupControl(extractedText, extractedTextBookings);
+            const dupBadge = '<span class="badge bg-warning text-dark ms-1">dup</span>';
             const bookingsSummary = extractedTextBookings.length > 0
                 ? `<div class="alert alert-info py-1 mb-2 small"><i class="bi bi-bank me-1"></i><strong>${extractedTextBookings.length} cash movement(s)</strong> detected (`
-                  + extractedTextBookings.map(b => `${b.action} ${b.amount.toFixed(2)} ${b.currency}`).join(', ')
+                  + extractedTextBookings.map(b => `${b.action} ${b.amount.toFixed(2)} ${b.currency}${b.is_duplicate ? ' ' + dupBadge : ''}`).join(', ')
                   + ') — saved with the transactions.</div>'
                 : '';
             const rows = extractedText.map((tx, i) => `
-                <tr>
+                <tr class="${tx.is_duplicate ? 'table-warning' : ''}">
                     <td><input class="form-check-input io-tx-select" type="checkbox" checked data-idx="${i}"></td>
-                    <td>${tx.date || ''}</td>
+                    <td>${tx.date || ''}${tx.is_duplicate ? dupBadge : ''}</td>
                     <td><strong>${tx.symbol || ''}</strong> <small class="text-muted">${tx.asset_name || ''}</small></td>
                     <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : 'danger'}">${(tx.tx_type || '').toUpperCase()}</span></td>
                     <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(undefined, {maximumFractionDigits:4})}</td>
@@ -2967,8 +2994,8 @@ function setupImportExportPage() {
                     <td class="text-end text-muted">${(parseFloat(tx.fees)||0) > 0 ? (parseFloat(tx.fees).toFixed(2) + ' ' + (tx.currency||'')) : '—'}</td>
                 </tr>`).join('');
             textPreview.innerHTML = extractedText.length === 0
-                ? (bookingsSummary || '<div class="alert alert-warning">No transactions or cash movements could be extracted.</div>')
-                : bookingsSummary
+                ? (bookingsSummary + dupControl || '<div class="alert alert-warning">No transactions or cash movements could be extracted.</div>')
+                : bookingsSummary + dupControl
                    + `<p class="text-muted small mb-2">Found <strong>${extractedText.length}</strong> transaction(s). Uncheck any to skip.</p>
                    <div class="table-responsive"><table class="table table-sm table-hover">
                    <thead><tr><th></th><th>Date</th><th>Asset</th><th>Type</th><th class="text-end">Qty</th><th class="text-end">Price</th><th class="text-end">Fees</th></tr></thead>
@@ -2997,12 +3024,14 @@ function setupImportExportPage() {
         textSaveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving…';
         try {
             const ioPortfolioId = ioTextPortfolio && ioTextPortfolio.value ? parseInt(ioTextPortfolio.value) : null;
-            const result = await window.apiClient.saveImportedTransactions(normalized, extractedTextBookings, ioPortfolioId);
+            const result = await window.apiClient.saveImportedTransactions(normalized, extractedTextBookings, ioPortfolioId, _dupAction());
             const dupNote = result.duplicates_skipped ? `, ${result.duplicates_skipped} duplicate(s) skipped` : '';
+            const owMsg = result.overwritten > 0 ? `, ${result.overwritten} overwritten` : '';
             const bkMsg = result.saved_bookings > 0 ? ` + ${result.saved_bookings} cash movement(s)` : '';
-            alert(result.errors.filter(e => !e.startsWith('DUPLICATE')).length > 0
-                ? `Saved ${result.saved}${bkMsg}${dupNote}. Errors:\n${result.errors.filter(e => !e.startsWith('DUPLICATE')).join('\n')}`
-                : `Successfully imported ${result.saved} transaction(s)${bkMsg}${dupNote}.`);
+            const realErrors = result.errors.filter(e => !e.startsWith('DUPLICATE'));
+            alert(realErrors.length > 0
+                ? `Saved ${result.saved}${bkMsg}${owMsg}${dupNote}. Errors:\n${realErrors.join('\n')}`
+                : `Successfully imported ${result.saved} transaction(s)${bkMsg}${owMsg}${dupNote}.`);
             textShowStep1();
             textarea.value = '';
             loadBookings();

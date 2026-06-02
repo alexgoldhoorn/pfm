@@ -507,3 +507,22 @@ async def save_imported_transactions(
         overwritten=overwritten,
         errors=errors,
     )
+
+
+@router.post("/check-duplicates")
+async def check_duplicates(
+    body: SaveRequest,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Flag which of the supplied transactions/bookings already exist (no write).
+
+    Lets the text/LLM import preview show duplicates before saving, the same way
+    the file-upload preview does.
+    """
+    n = _flag_duplicates(db, body.transactions, body.bookings, body.portfolio_id)
+    return {
+        "transactions": body.transactions,
+        "bookings": body.bookings,
+        "duplicate_count": n,
+    }
