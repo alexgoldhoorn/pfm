@@ -16,6 +16,13 @@ window.METRIC_HELP = {
   benchmark: "Benchmark: total return of a market index over the same window, for comparison.",
   netWorth: "Net Worth: total portfolio value in EUR (all currencies converted at current FX rates).",
   invested: "Invested: cost basis of your currently-held positions (what you paid, in EUR).",
+  savingsBase: "Savings Base (base del ahorro): the Spanish IRPF income category for investment income — realised capital gains plus dividends. Taxed on a progressive scale (19/21/23/27/28%), separate from your salary.",
+  realisedGain: "Realised Gain/Loss: profit or loss actually locked in by selling, using FIFO cost basis. Only realised gains are taxed.",
+  unrealisedGain: "Unrealised Gain/Loss: paper profit on positions you still hold (current value − cost basis). Not taxed until you sell.",
+  taxEstimate: "Estimated Tax: progressive IRPF savings-base brackets applied to this year's realised gains + dividends. An estimate, not tax advice.",
+  taxHarvest: "Tax-Loss Harvesting: positions currently at an unrealised loss. Selling them would realise a loss that offsets taxable gains (watch the 2-month wash-sale rule).",
+  snapshots: "Snapshots: a daily record of your portfolio's total value and cost, saved by the price cron. Risk and period-return charts are built from these, so history starts when snapshots began.",
+  diversification: "Diversification: your holdings grouped by sector, country, currency and asset type (from Yahoo Finance fundamentals). Concentration (HHI) measures how lopsided the mix is.",
 };
 
 // Per-page help: what's shown, where data comes from, how it's computed.
