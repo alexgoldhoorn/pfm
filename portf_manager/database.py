@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 
 # Database version for migration tracking
-DATABASE_VERSION = 11
+DATABASE_VERSION = 12
 
 
 # black
@@ -371,6 +371,26 @@ class Database:
         """)
 
         conn.execute("""
+            CREATE TABLE IF NOT EXISTS research_notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                asset_id INTEGER,
+                symbol TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                thesis TEXT,
+                conviction INTEGER,
+                method TEXT,
+                assumptions TEXT,
+                fair_value REAL,
+                buy_below REAL,
+                sell_above REAL,
+                price_at_save REAL,
+                llm_summary TEXT,
+                sources TEXT,
+                FOREIGN KEY (asset_id) REFERENCES assets (id) ON DELETE CASCADE
+            )
+        """)
+
+        conn.execute("""
             CREATE TABLE IF NOT EXISTS portfolio_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 snapshot_date DATE NOT NULL UNIQUE,
@@ -444,6 +464,8 @@ class Database:
             self._migrate_to_v10(conn)
         if current_version < 11:
             self._migrate_to_v11(conn)
+        if current_version < 12:
+            self._migrate_to_v12(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -786,6 +808,31 @@ class Database:
         """
         _add_column_if_missing(
             conn, "assets", "auto_price", "INTEGER NOT NULL DEFAULT 1"
+        )
+        conn.commit()
+
+    def _migrate_to_v12(self, conn: sqlite3.Connection):
+        """Migrate from v11 to v12 — add research_notes (versioned research)."""
+        conn.execute("""CREATE TABLE IF NOT EXISTS research_notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                asset_id INTEGER,
+                symbol TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                thesis TEXT,
+                conviction INTEGER,
+                method TEXT,
+                assumptions TEXT,
+                fair_value REAL,
+                buy_below REAL,
+                sell_above REAL,
+                price_at_save REAL,
+                llm_summary TEXT,
+                sources TEXT,
+                FOREIGN KEY (asset_id) REFERENCES assets (id) ON DELETE CASCADE
+            )""")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_research_notes_symbol "
+            "ON research_notes (symbol, created_at)"
         )
         conn.commit()
 
@@ -1932,6 +1979,52 @@ class Database:
                 "SELECT * FROM research_reports WHERE asset_id = ?", (asset_id,)
             ).fetchone()
             return dict(row) if row else None
+
+    def create_research_note(self, **kwargs) -> int:
+        """Append a versioned research record (thesis + calculated targets)."""
+        cols = [
+            "asset_id",
+            "symbol",
+            "thesis",
+            "conviction",
+            "method",
+            "assumptions",
+            "fair_value",
+            "buy_below",
+            "sell_above",
+            "price_at_save",
+            "llm_summary",
+            "sources",
+        ]
+        vals = [kwargs.get(c) for c in cols]
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                f"INSERT INTO research_notes ({', '.join(cols)}) "
+                f"VALUES ({', '.join('?' for _ in cols)})",
+                vals,
+            )
+            conn.commit()
+            return cur.lastrowid
+
+    def get_research_notes(self, symbol: str) -> List[Dict]:
+        """Version history of saved research for a symbol (newest first)."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM research_notes WHERE symbol = ? "
+                "ORDER BY created_at DESC, id DESC",
+                (symbol.upper(),),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_latest_research_notes(self) -> List[Dict]:
+        """The most recent research note per symbol (for the compare table)."""
+        with self.get_connection() as conn:
+            rows = conn.execute("""SELECT rn.* FROM research_notes rn
+                   JOIN (SELECT symbol, MAX(id) AS mx FROM research_notes
+                         GROUP BY symbol) latest
+                     ON rn.id = latest.mx
+                   ORDER BY rn.created_at DESC""").fetchall()
+            return [dict(r) for r in rows]
 
     def upsert_research_report(
         self,
