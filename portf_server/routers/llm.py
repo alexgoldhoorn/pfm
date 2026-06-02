@@ -83,6 +83,13 @@ class TransactionExtractionResponse(BaseModel):
     count: int = Field(..., description="Number of transactions extracted")
 
 
+class BookingExtractionResponse(BaseModel):
+    """Schema for cash booking (deposit/withdrawal) extraction response."""
+
+    bookings: List[dict] = Field(..., description="Extracted deposits/withdrawals")
+    count: int = Field(..., description="Number of bookings extracted")
+
+
 class ChatRequest(BaseModel):
     """Enhanced chat request with stock advice integration."""
 
@@ -594,6 +601,23 @@ async def extract_transactions_from_text(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to extract transactions: {str(e)}",
+        )
+
+
+@router.post("/extract-bookings", response_model=BookingExtractionResponse)
+async def extract_bookings_from_text(
+    request: TransactionExtractionRequest,
+    api_key_info: dict = Depends(get_api_key_auth_for_llm),
+):
+    """Extract cash deposits/withdrawals (bookings) from statement text via LLM."""
+    try:
+        gemini_client = GeminiClient(llm=get_llm_client())
+        bookings = gemini_client.extract_bookings(request.text)
+        return BookingExtractionResponse(bookings=bookings, count=len(bookings))
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to extract bookings: {str(e)}",
         )
 
 

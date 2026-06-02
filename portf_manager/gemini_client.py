@@ -255,6 +255,78 @@ Now extract transactions from this broker statement:
 
         return transactions
 
+    def extract_bookings(self, text: str) -> List[dict]:
+        """Extract cash deposits / withdrawals (bookings) from statement text.
+
+        Bookings are cash transfers into or out of a broker account — distinct
+        from buy/sell trades. Returns a list of dicts with keys: ``date``,
+        ``action`` ("Deposit" | "Withdrawal"), ``amount`` (float), ``currency``,
+        and optional ``broker``. Returns [] on any failure.
+        """
+        prompt = f"""
+You extract CASH MOVEMENTS (deposits and withdrawals) from a broker or bank
+statement. These are transfers of money INTO or OUT OF a brokerage/cash
+account — NOT purchases or sales of shares/ETFs/crypto. Ignore any buy/sell
+trades, dividends, and fees.
+
+Return ONLY a JSON array. Each object has these exact fields:
+- date: ISO-8601 date (YYYY-MM-DD)
+- action: "Deposit" (money in) or "Withdrawal" (money out)
+- amount: positive number (float), the cash amount
+- currency: currency code (e.g. "EUR", "USD"); default "EUR"
+- broker: account/broker name if stated, else null
+
+LANGUAGE MAPPING:
+- "Ingreso" / "Transferencia recibida" / "Aportación" / "Deposit" / "Storting" -> "Deposit"
+- "Retirada" / "Reintegro" / "Transferencia enviada" / "Withdrawal" / "Opname" -> "Withdrawal"
+- "€"->"EUR", "$"->"USD"; decimal comma "1.234,56" -> 1234.56
+
+EXAMPLE
+Input: "10/01/2026 Ingreso por transferencia 2.000,00 € Degiro"
+Output: [{{"date": "2026-01-10", "action": "Deposit", "amount": 2000.0, "currency": "EUR", "broker": "Degiro"}}]
+
+Rules:
+- Return ONLY the JSON array, no prose.
+- If there are no cash movements, return [].
+- amount is always positive; the direction is in "action".
+
+Now extract cash movements from this text:
+
+{text}
+"""
+        try:
+            response_text = self.llm.generate(prompt).strip()
+            if response_text.startswith("```"):
+                lines = response_text.split("\n")
+                response_text = "\n".join(
+                    ln for ln in lines if not ln.strip().startswith("```")
+                )
+            data = json.loads(response_text)
+            bookings = []
+            for item in data if isinstance(data, list) else []:
+                action = str(item.get("action", "")).strip().capitalize()
+                if action not in ("Deposit", "Withdrawal"):
+                    continue
+                try:
+                    amount = abs(float(item.get("amount")))
+                except (TypeError, ValueError):
+                    continue
+                if not item.get("date") or amount <= 0:
+                    continue
+                bookings.append(
+                    {
+                        "broker": item.get("broker") or None,
+                        "date": str(item["date"])[:10],
+                        "action": action,
+                        "amount": amount,
+                        "currency": (item.get("currency") or "EUR").upper()[:3],
+                    }
+                )
+            return bookings
+        except Exception as e:
+            logger.error(f"Error extracting bookings: {str(e)}")
+            return []
+
     def chat(self, prompt: str) -> str:
         """
         Generate a chat response using the configured LLM.

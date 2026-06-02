@@ -30,6 +30,7 @@ from pydantic import BaseModel
 from portf_manager.currency_utils import normalize_gbx_amounts
 from portf_manager.parsers.indexacapital_csv_parser import parse_indexacapital_csv
 from portf_manager.parsers.coinbase_csv_parser import parse_coinbase_csv
+from portf_manager.parsers.bookings_csv_parser import parse_bookings_csv
 from portf_manager.parsers.pdt_xlsx_parser import (
     PDTXLSXParser,
     _detect_asset_type,
@@ -43,7 +44,7 @@ from ..dependencies import get_api_key_manager
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-SUPPORTED_BROKERS = ["indexacapital", "coinbase", "pdt"]
+SUPPORTED_BROKERS = ["indexacapital", "coinbase", "pdt", "bookings"]
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +263,12 @@ async def upload_broker_file(
             bookings = []
         elif broker == "pdt":
             previews, bookings, skipped = _parse_pdt(file_bytes)
+        elif broker == "bookings":
+            content = file_bytes.decode("utf-8-sig")
+            previews = []
+            result = parse_bookings_csv(content)
+            bookings = [PreviewBooking(**bk) for bk in result.bookings]
+            skipped = [{"row": r, "reason": reason} for r, reason in result.skipped]
         else:
             raise HTTPException(status_code=500, detail="Unreachable broker branch")
     except HTTPException:

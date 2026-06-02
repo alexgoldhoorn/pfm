@@ -1350,6 +1350,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                                 <option value="indexacapital">IndexaCapital (CSV)</option>
                                                 <option value="coinbase">Coinbase (CSV)</option>
                                                 <option value="pdt">Portfolio Dividend Tracker (XLSX)</option>
+                                                <option value="bookings">Cash deposits/withdrawals (CSV)</option>
                                             </select>
                                         </div>
                                         <div id="ioFileHint" class="alert alert-info py-2 small" style="display:none;"></div>
@@ -1383,7 +1384,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                     <i class="bi bi-magic me-2"></i>Import from Text (AI Extraction)
                                 </div>
                                 <div class="card-body d-flex flex-column">
-                                    <p class="text-muted small mb-2">Paste a broker statement. Works with MyInvestor and any broker not directly supported.</p>
+                                    <p class="text-muted small mb-2">Paste a broker statement. Works with any broker not directly supported. Detects buy/sell trades <em>and</em> cash deposits/withdrawals.</p>
                                     <div id="ioTextStep1" class="flex-grow-1">
                                         <div class="mb-2">
                                             <select class="form-select form-select-sm" id="ioTextPortfolio">
@@ -1401,7 +1402,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                             <i class="bi bi-arrow-left me-1"></i>Back
                                         </button>
                                         <button class="btn btn-sm btn-primary" id="ioTextExtractBtn">
-                                            <i class="bi bi-magic me-1"></i>Extract Transactions
+                                            <i class="bi bi-magic me-1"></i>Extract
                                         </button>
                                         <button class="btn btn-sm btn-success" id="ioTextSaveBtn" style="display:none;">
                                             <i class="bi bi-check-lg me-1"></i>Save Selected

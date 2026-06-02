@@ -285,6 +285,32 @@ function createAPIClient() {
             return resp.json();
         },
 
+        async createBooking(booking) {
+            const resp = await fetch(this.baseURL + '/api/v1/bookings/', {
+                method: 'POST',
+                headers: { 'X-API-Key': this.apiKey, 'Content-Type': 'application/json' },
+                body: JSON.stringify(booking)
+            });
+            if (!resp.ok) {
+                const e = await resp.json().catch(() => ({}));
+                throw new Error(e.detail || 'Failed to create booking');
+            }
+            return resp.json();
+        },
+
+        async extractBookings(text) {
+            const resp = await fetch(this.baseURL + '/api/v1/llm/extract-bookings', {
+                method: 'POST',
+                headers: { 'X-API-Key': this.apiKey, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text })
+            });
+            if (!resp.ok) {
+                const e = await resp.json().catch(() => ({}));
+                throw new Error(e.detail || 'Failed to extract bookings');
+            }
+            return resp.json();
+        },
+
         async getSyncConfig() {
             const resp = await fetch(this.baseURL + '/api/v1/sync/pdt-config', {
                 headers: { 'X-API-Key': this.apiKey }
@@ -572,6 +598,7 @@ const BROKER_HINTS = {
     indexacapital: 'Export from IndexaCapital → "Mis fondos" → Download CSV.',
     coinbase: 'Export from Coinbase → Reports → Generate → Transaction History CSV.',
     pdt: 'Export from Portfolio Dividend Tracker (app.portfoliodividendtracker.com) → Download XLSX.',
+    bookings: 'Generic cash CSV with columns: date, action (deposit/withdrawal), amount, currency, broker (optional). Delimiter and decimal style are auto-detected.',
 };
 
 function _buildPreviewTable(transactions, bookings) {
@@ -2849,12 +2876,14 @@ function setupImportExportPage() {
     })();
 
     let extractedText = [];
+    let extractedTextBookings = [];
 
     function textShowStep1() {
         textStep1.style.display = ''; textStep2.style.display = 'none';
         extractBtn.style.display = ''; textSaveBtn.style.display = 'none';
         textBackBtn.style.display = 'none';
         extractedText = [];
+        extractedTextBookings = [];
     }
 
     textBackBtn.addEventListener('click', textShowStep1);
@@ -2865,11 +2894,21 @@ function setupImportExportPage() {
         extractBtn.disabled = true;
         extractBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Extracting…';
         try {
-            const data = await window.apiClient.extractTransactions(text);
+            // Extract trades and cash movements (deposits/withdrawals) together.
+            const [data, bkData] = await Promise.all([
+                window.apiClient.extractTransactions(text),
+                window.apiClient.extractBookings(text).catch(() => ({ bookings: [] })),
+            ]);
             extractedText = data.transactions || [];
+            extractedTextBookings = (bkData && bkData.bookings) || [];
             textStep1.style.display = 'none'; textStep2.style.display = '';
             extractBtn.style.display = 'none'; textBackBtn.style.display = '';
-            textSaveBtn.style.display = extractedText.length > 0 ? '' : 'none';
+            textSaveBtn.style.display = (extractedText.length > 0 || extractedTextBookings.length > 0) ? '' : 'none';
+            const bookingsSummary = extractedTextBookings.length > 0
+                ? `<div class="alert alert-info py-1 mb-2 small"><i class="bi bi-bank me-1"></i><strong>${extractedTextBookings.length} cash movement(s)</strong> detected (`
+                  + extractedTextBookings.map(b => `${b.action} ${b.amount.toFixed(2)} ${b.currency}`).join(', ')
+                  + ') — saved with the transactions.</div>'
+                : '';
             const rows = extractedText.map((tx, i) => `
                 <tr>
                     <td><input class="form-check-input io-tx-select" type="checkbox" checked data-idx="${i}"></td>
@@ -2881,8 +2920,9 @@ function setupImportExportPage() {
                     <td class="text-end text-muted">${(parseFloat(tx.fees)||0) > 0 ? (parseFloat(tx.fees).toFixed(2) + ' ' + (tx.currency||'')) : '—'}</td>
                 </tr>`).join('');
             textPreview.innerHTML = extractedText.length === 0
-                ? '<div class="alert alert-warning">No transactions could be extracted.</div>'
-                : `<p class="text-muted small mb-2">Found <strong>${extractedText.length}</strong> transaction(s). Uncheck any to skip.</p>
+                ? (bookingsSummary || '<div class="alert alert-warning">No transactions or cash movements could be extracted.</div>')
+                : bookingsSummary
+                   + `<p class="text-muted small mb-2">Found <strong>${extractedText.length}</strong> transaction(s). Uncheck any to skip.</p>
                    <div class="table-responsive"><table class="table table-sm table-hover">
                    <thead><tr><th></th><th>Date</th><th>Asset</th><th>Type</th><th class="text-end">Qty</th><th class="text-end">Price</th><th class="text-end">Fees</th></tr></thead>
                    <tbody>${rows}</tbody></table></div>`;
@@ -2890,14 +2930,16 @@ function setupImportExportPage() {
             alert('Error extracting: ' + err.message);
         } finally {
             extractBtn.disabled = false;
-            extractBtn.innerHTML = '<i class="bi bi-magic me-1"></i>Extract Transactions';
+            extractBtn.innerHTML = '<i class="bi bi-magic me-1"></i>Extract';
         }
     });
 
     textSaveBtn.addEventListener('click', async () => {
         const checked = Array.from(document.querySelectorAll('#ioTextPreview .io-tx-select:checked'))
             .map(cb => extractedText[parseInt(cb.dataset.idx)]);
-        if (checked.length === 0) { alert('No transactions selected.'); return; }
+        if (checked.length === 0 && extractedTextBookings.length === 0) {
+            alert('Nothing selected to save.'); return;
+        }
         const normalized = checked.map(tx => ({
             symbol: tx.symbol, name: tx.asset_name || tx.symbol,
             asset_type: 'stock', tx_type: tx.tx_type, date: tx.date,
@@ -2908,13 +2950,15 @@ function setupImportExportPage() {
         textSaveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving…';
         try {
             const ioPortfolioId = ioTextPortfolio && ioTextPortfolio.value ? parseInt(ioTextPortfolio.value) : null;
-            const result = await window.apiClient.saveImportedTransactions(normalized, [], ioPortfolioId);
+            const result = await window.apiClient.saveImportedTransactions(normalized, extractedTextBookings, ioPortfolioId);
             const dupNote = result.duplicates_skipped ? `, ${result.duplicates_skipped} duplicate(s) skipped` : '';
+            const bkMsg = result.saved_bookings > 0 ? ` + ${result.saved_bookings} cash movement(s)` : '';
             alert(result.errors.filter(e => !e.startsWith('DUPLICATE')).length > 0
-                ? `Saved ${result.saved}${dupNote}. Errors:\n${result.errors.filter(e => !e.startsWith('DUPLICATE')).join('\n')}`
-                : `Successfully imported ${result.saved} transaction(s)${dupNote}.`);
+                ? `Saved ${result.saved}${bkMsg}${dupNote}. Errors:\n${result.errors.filter(e => !e.startsWith('DUPLICATE')).join('\n')}`
+                : `Successfully imported ${result.saved} transaction(s)${bkMsg}${dupNote}.`);
             textShowStep1();
             textarea.value = '';
+            loadBookings();
         } catch (err) {
             alert('Error saving: ' + err.message);
         } finally {
@@ -2967,6 +3011,56 @@ function setupImportExportPage() {
     loadBookings();
     const refreshBookingsBtn = document.getElementById('ioRefreshBookingsBtn');
     if (refreshBookingsBtn) refreshBookingsBtn.addEventListener('click', loadBookings);
+
+    // Manual "Add booking" form (deposit / withdrawal)
+    const addBookingForm = document.getElementById('addBookingForm');
+    const addBookingPortfolio = document.getElementById('addBookingPortfolio');
+    if (addBookingPortfolio && addBookingPortfolio.options.length <= 1) {
+        (async () => {
+            try {
+                const portfolios = await window.apiClient.getPortfolios();
+                portfolios.forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p.id; opt.textContent = p.name;
+                    addBookingPortfolio.appendChild(opt);
+                });
+            } catch (e) { /* silent */ }
+        })();
+    }
+    const addBookingDate = document.getElementById('addBookingDate');
+    if (addBookingDate && !addBookingDate.value) {
+        addBookingDate.value = new Date().toISOString().slice(0, 10);
+    }
+    if (addBookingForm) {
+        addBookingForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = addBookingForm.querySelector('button[type="submit"]');
+            const payload = {
+                date: document.getElementById('addBookingDate').value,
+                action: document.getElementById('addBookingAction').value,
+                amount: parseFloat(document.getElementById('addBookingAmount').value),
+                currency: (document.getElementById('addBookingCurrency').value || 'EUR').toUpperCase(),
+                portfolio_id: addBookingPortfolio && addBookingPortfolio.value
+                    ? parseInt(addBookingPortfolio.value) : null,
+            };
+            if (!payload.date || !payload.amount || payload.amount <= 0) {
+                alert('Please enter a valid date and amount.'); return;
+            }
+            btn.disabled = true;
+            const orig = btn.innerHTML;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+            try {
+                await window.apiClient.createBooking(payload);
+                document.getElementById('addBookingAmount').value = '';
+                loadBookings();
+            } catch (err) {
+                alert('Error adding booking: ' + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = orig;
+            }
+        });
+    }
 
     // --- Google Sheets PDT Sync section ---
     const syncSheetInput = document.getElementById('syncSheetId');
