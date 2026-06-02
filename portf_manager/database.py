@@ -1207,8 +1207,17 @@ class Database:
         """Return an existing transaction that matches on all key fields, or None.
 
         Used before inserting to detect accidental re-imports. Matches on
-        asset_id, type, quantity, price (±0.001%), date, and portfolio.
+        asset_id, type, quantity (±0.0001), price (±0.001%), portfolio, and date.
+
+        Date matching is time-aware: it always matches on the calendar date, and
+        *additionally* requires the same time-of-day only when BOTH the incoming
+        row and the existing one carry a time component. That way two genuinely
+        distinct same-day trades (different times) aren't treated as duplicates,
+        while date-only data keeps matching on the date alone.
         """
+        inc = str(transaction_date or "").replace("T", " ")
+        inc_date = inc[:10]
+        inc_time = inc[11:].strip()
         with self.get_connection() as conn:
             cursor = conn.execute(
                 """
@@ -1216,24 +1225,30 @@ class Database:
                 FROM transactions
                 WHERE asset_id = ?
                   AND transaction_type = ?
-                  AND transaction_date = ?
+                  AND substr(transaction_date, 1, 10) = ?
                   AND ABS(quantity - ?) < 0.0001
                   AND ABS(price - ?) / NULLIF(price, 0) < 0.00001
                   AND (portfolio_id IS ? OR portfolio_id = ?)
-                LIMIT 1
                 """,
                 (
                     asset_id,
                     transaction_type,
-                    transaction_date,
+                    inc_date,
                     quantity,
                     price,
                     portfolio_id,
                     portfolio_id,
                 ),
             )
-            row = cursor.fetchone()
-            return dict(row) if row else None
+            for row in cursor.fetchall():
+                cand = str(row["transaction_date"] or "").replace("T", " ")
+                cand_time = cand[11:].strip()
+                # Only the date matched so far; if both sides have a time, it
+                # must also match for this to count as a duplicate.
+                if inc_time and cand_time and inc_time != cand_time:
+                    continue
+                return dict(row)
+            return None
 
     def create_transaction(
         self,
