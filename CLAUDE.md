@@ -110,8 +110,13 @@ Auth: `GOOGLE_SERVICE_ACCOUNT_FILE=service-account.json` (already configured).
 - `GET /api/v1/rebalance/analysis` — current vs target % drift + buy/sell actions to rebalance (EUR-converted)
 
 ### Research API (`portf_server/routers/research.py` + `services/research.py`)
+The **Research workbench** (web page `researchPage`, `setupResearchPage()`): pick any ticker (held / watchlist / free-typed), see fundamentals, compute goal prices, write a thesis, get an LLM read, save it (versioned), compare.
+- `GET /api/v1/research/{symbol}/lookup` — snapshot (price, position, fundamentals, news, targets, latest note); **no LLM**. Works for any symbol (asset optional; live yfinance price when not held).
+- `POST /api/v1/research/{symbol}/generate` — **web-augmented** LLM (yfinance fundamentals + recent news as context, news URLs stored as `sources` citations) → fair value, BUY/HOLD/SELL, confidence, risks, catalysts. No longer 404s for non-held tickers.
+- `compute_targets(fundamentals, method, assumptions)` — deterministic valuation calculator (`pe` / `dividend_yield` + margin-of-safety/premium → fair_value, buy_below, sell_above). Also mirrored client-side for live recompute.
+- `POST /api/v1/research/{symbol}/save` — append a versioned `research_notes` row (thesis, conviction, method, assumptions, targets, price_at_save, llm_summary, sources) and push targets to `price_targets` (held assets) so alerts fire.
+- `GET /api/v1/research/{symbol}/history` — past research records. `GET /api/v1/research/compare` — latest note per symbol with price/fair/upside/conviction (registered **before** `/{symbol}` to win routing).
 - `GET /api/v1/research/{symbol}` — cached valuation report (404 if none)
-- `POST /api/v1/research/{symbol}/generate` — fetch yfinance fundamentals + LLM → fair value, BUY/HOLD/SELL, confidence, risks, catalysts (~10s)
 - `GET|PUT /api/v1/research/{symbol}/targets` — per-asset buy_below / sell_above / fair_value
 - `GET /api/v1/research/alerts/check` — price targets crossed vs latest prices (no Telegram send)
 - Telegram alerts: `~/scripts/portf-price-alerts.sh` runs at 20:05 daily (after price update) via cron, calls the check endpoint and pings Telegram on crossed thresholds.
