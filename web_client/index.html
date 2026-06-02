@@ -17,6 +17,11 @@
 
     <!-- Custom CSS -->
     <link href="css/styles.css" rel="stylesheet">
+    <style>
+        /* Privacy mode: blur monetary amounts until hovered */
+        body.pfm-privacy .pfm-amt { filter: blur(0.45em); transition: filter .12s ease; user-select: none; }
+        body.pfm-privacy .pfm-amt:hover { filter: none; }
+    </style>
 </head>
 <body>
     <!-- Login Modal -->
@@ -154,6 +159,9 @@
                     <i class="bi bi-briefcase me-2"></i>Portfolios
                 </a>
                 <hr class="mx-3 my-2">
+                <a class="sidebar-nav-link" href="#" id="settingsBtnOffcanvas">
+                    <i class="bi bi-gear me-2"></i>Settings
+                </a>
                 <a class="sidebar-nav-link text-danger" href="#" id="logoutBtnOffcanvas">
                     <i class="bi bi-box-arrow-right me-2"></i>Logout
                 </a>
@@ -205,6 +213,9 @@
                 </a>
             </nav>
             <div class="sidebar-footer">
+                <a class="sidebar-nav-link" href="#" id="settingsBtn">
+                    <i class="bi bi-gear me-2"></i>Settings
+                </a>
                 <a class="sidebar-nav-link text-danger" href="#" id="logoutBtn">
                     <i class="bi bi-box-arrow-right me-2"></i>Logout
                 </a>
@@ -1808,6 +1819,95 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                     <button type="submit" form="editTransactionForm" class="btn btn-primary">Save Changes</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Modal (browser-local preferences) -->
+    <div class="modal fade" id="settingsModal" tabindex="-1">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-gear me-2"></i>Settings</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted small">Preferences are stored in this browser only.</p>
+                    <div class="row g-3">
+                        <div class="col-12"><h6 class="text-muted text-uppercase small mb-1">Appearance</h6></div>
+                        <div class="col-sm-6">
+                            <label class="form-label" for="setTheme">Theme</label>
+                            <select class="form-select" id="setTheme">
+                                <option value="auto">Auto (match system)</option>
+                                <option value="light">Light</option>
+                                <option value="dark">Dark</option>
+                            </select>
+                        </div>
+                        <div class="col-sm-6 d-flex align-items-end">
+                            <div class="form-check form-switch">
+                                <input class="form-check-input" type="checkbox" id="setPrivacy">
+                                <label class="form-check-label" for="setPrivacy">Privacy mode — blur amounts (hover to reveal)</label>
+                            </div>
+                        </div>
+
+                        <div class="col-12 mt-3"><h6 class="text-muted text-uppercase small mb-1">Numbers &amp; dates</h6></div>
+                        <div class="col-sm-4">
+                            <label class="form-label" for="setNumberLocale">Number format</label>
+                            <select class="form-select" id="setNumberLocale">
+                                <option value="">Browser default</option>
+                                <option value="en-US">1,234.56 (US)</option>
+                                <option value="en-GB">1,234.56 (UK)</option>
+                                <option value="de-DE">1.234,56 (German)</option>
+                                <option value="es-ES">1.234,56 (Spanish)</option>
+                                <option value="nl-NL">1.234,56 (Dutch)</option>
+                                <option value="fr-FR">1 234,56 (French)</option>
+                                <option value="de-CH">1’234.56 (Swiss)</option>
+                            </select>
+                        </div>
+                        <div class="col-sm-4">
+                            <label class="form-label" for="setDateFormat">Date format</label>
+                            <select class="form-select" id="setDateFormat">
+                                <option value="iso">2026-05-28 (ISO)</option>
+                                <option value="dmy">28-05-2026 (D-M-Y)</option>
+                                <option value="mdy">05-28-2026 (M-D-Y)</option>
+                            </select>
+                        </div>
+                        <div class="col-sm-4">
+                            <label class="form-label" for="setDecimals">Decimal places</label>
+                            <input type="number" class="form-control" id="setDecimals" min="0" max="6" step="1">
+                        </div>
+
+                        <div class="col-12 mt-3"><h6 class="text-muted text-uppercase small mb-1">Defaults</h6></div>
+                        <div class="col-sm-4">
+                            <label class="form-label" for="setBenchmark">Benchmark</label>
+                            <select class="form-select" id="setBenchmark">
+                                <option value="^GSPC">S&amp;P 500 (^GSPC)</option>
+                                <option value="^IXIC">NASDAQ (^IXIC)</option>
+                                <option value="URTH">MSCI World (URTH)</option>
+                                <option value="^STOXX50E">Euro Stoxx 50 (^STOXX50E)</option>
+                            </select>
+                        </div>
+                        <div class="col-sm-4">
+                            <label class="form-label" for="setLandingPage">Landing page</label>
+                            <select class="form-select" id="setLandingPage">
+                                <option value="dashboard">Dashboard</option>
+                                <option value="holdings">Holdings</option>
+                                <option value="analytics">Analytics</option>
+                                <option value="transactions">Transactions</option>
+                                <option value="portfolios">Portfolios</option>
+                            </select>
+                        </div>
+                        <div class="col-sm-4">
+                            <label class="form-label" for="setRowsPerPage">Rows per page</label>
+                            <input type="number" class="form-control" id="setRowsPerPage" min="10" max="500" step="10">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" id="settingsResetBtn">Reset to defaults</button>
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-primary" id="settingsSaveBtn">Save</button>
                 </div>
             </div>
         </div>

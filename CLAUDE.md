@@ -179,6 +179,8 @@ All financial transactions go through `database.create_transaction()` with `port
 ## Web Client (`web_client/`)
 Single HTML file (`index.html`) + one JS file (`portfolio_debug.js`). All pages are divs toggled by `navigationManager.showPage()`. Pages: `dashboard`, `assets`, `transactions`, `holdings`, `chat`, `importexport`, `portfolios`, **`forecast`**.
 
+**User preferences (browser-local)**: `window.PREFS` (persisted to `localStorage` key `pfmPrefs`) holds number locale, decimals, date format, theme, privacy-blur, default benchmark, landing page, rows-per-page. The Settings modal (`setupSettings()`, gear in the sidebar) edits them. Format all numbers via `Fmt.num()` / money helpers (which wrap in `<span class="pfm-amt">` for privacy blur) and dates via `Fmt.date()`. Theme = `data-bs-theme` on `<html>` (Bootstrap 5.3). There is no server-side per-user settings store — the web logs in with the shared `SERVER_API_KEY`, so prefs are per-browser.
+
 **Deploy after editing web files**: `portf_web` is an nginx container with files **baked into the image** at build time — they are NOT live-mounted. After any change to `web_client/`:
 ```bash
 docker compose build web && docker stop portf_web && docker compose up -d web
