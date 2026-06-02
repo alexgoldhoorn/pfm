@@ -180,32 +180,37 @@ body {
     }
 }
 
-/* Section: Dark mode */
-@media (prefers-color-scheme: dark) {
-    :root {
-        --light-color: #212529;
-        --dark-color: #f8f9fa;
-    }
+/* Section: Dark mode
+   The app sets data-bs-theme="dark" on <html> (resolving the "auto" setting
+   against the OS preference in JS — see applyTheme()), so dark styling keys off
+   that attribute, NOT @media. Using @media meant picking "Dark" in Settings
+   while the OS was in light mode left the page background white and the sidebar
+   blue. Bootstrap 5.3 themes cards / modals / tables natively under
+   data-bs-theme; we only override the bits Bootstrap doesn't own: our custom
+   body background, the sidebar, and the mobile topbar. */
+[data-bs-theme="dark"] {
+    --light-color: #1a1d21;
+    --dark-color: #e9ecef;
+}
 
-    body {
-        background-color: var(--light-color);
-        color: var(--dark-color);
-    }
+[data-bs-theme="dark"] body {
+    background-color: var(--bs-body-bg);
+    color: var(--bs-body-color);
+}
 
-    .card {
-        background-color: #2d3748;
-        color: var(--dark-color);
-    }
+/* Sidebar: a dark surface instead of the primary-blue used in light mode */
+[data-bs-theme="dark"] .app-sidebar {
+    background: #16191d;
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
+}
 
-    .table th {
-        background-color: rgba(255, 255, 255, 0.05);
-        color: var(--dark-color);
-    }
+[data-bs-theme="dark"] .mobile-topbar {
+    background: #16191d;
+    border-bottom-color: rgba(255, 255, 255, 0.08);
+}
 
-    .modal-content {
-        background-color: #2d3748;
-        color: var(--dark-color);
-    }
+[data-bs-theme="dark"] .table th {
+    background-color: rgba(255, 255, 255, 0.05);
 }
 
 /* Section: Print */

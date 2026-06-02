@@ -4302,6 +4302,8 @@ function setupResearchPage() {
     const $ = id => document.getElementById(id);
     const money = (v, cur) => (v == null ? '—' : Fmt.num(v, 2, 2) + (cur ? ' ' + cur : ''));
     let R = { symbol: null, currency: '', price: 0, fundamentals: {}, llm: null };
+    // Autocomplete suggestions: {symbol, name, currency, source} — populated on page open.
+    let suggestions = [];
 
     // Tabs
     page.querySelectorAll('#researchTabs [data-rtab]').forEach(a => {
@@ -4346,10 +4348,55 @@ function setupResearchPage() {
         $(id).addEventListener('change', recompute);
     });
 
+    // Human-readable labels for the camelCase keys yfinance returns.
+    const FUND_LABELS = {
+        currentPrice: 'Current price', marketCap: 'Market cap',
+        trailingPE: 'Trailing P/E', forwardPE: 'Forward P/E',
+        trailingEps: 'Trailing EPS', forwardEps: 'Forward EPS',
+        dividendRate: 'Dividend rate', dividendYield: 'Dividend yield',
+        fiftyTwoWeekLow: '52-week low', fiftyTwoWeekHigh: '52-week high',
+        fiftyDayAverage: '50-day average', twoHundredDayAverage: '200-day average',
+        beta: 'Beta', priceToBook: 'Price / book', bookValue: 'Book value',
+        payoutRatio: 'Payout ratio', profitMargins: 'Profit margin',
+        operatingMargins: 'Operating margin', grossMargins: 'Gross margin',
+        returnOnEquity: 'Return on equity', returnOnAssets: 'Return on assets',
+        revenueGrowth: 'Revenue growth', earningsGrowth: 'Earnings growth',
+        debtToEquity: 'Debt / equity', freeCashflow: 'Free cash flow',
+        operatingCashflow: 'Operating cash flow', totalRevenue: 'Total revenue',
+        totalCash: 'Total cash', totalDebt: 'Total debt', ebitda: 'EBITDA',
+        enterpriseValue: 'Enterprise value', sector: 'Sector', industry: 'Industry',
+        country: 'Country', longName: 'Name', shortName: 'Name', currency: 'Currency',
+    };
+    const FUND_PCT = new Set(['dividendYield', 'payoutRatio', 'profitMargins',
+        'operatingMargins', 'grossMargins', 'returnOnEquity', 'returnOnAssets',
+        'revenueGrowth', 'earningsGrowth']);
+    const FUND_BIG = new Set(['marketCap', 'freeCashflow', 'operatingCashflow',
+        'totalRevenue', 'totalCash', 'totalDebt', 'ebitda', 'enterpriseValue']);
+    function humanizeFundKey(k) {
+        if (FUND_LABELS[k]) return FUND_LABELS[k];
+        // camelCase / PascalCase → spaced + capitalized; keep digit groups (52 → "52")
+        return k.replace(/([a-z])([A-Z])/g, '$1 $2')
+            .replace(/([A-Za-z])([0-9])/g, '$1 $2')
+            .replace(/^./, c => c.toUpperCase());
+    }
+    function compactNum(v) {
+        const a = Math.abs(v);
+        if (a >= 1e12) return (v / 1e12).toFixed(2) + 'T';
+        if (a >= 1e9) return (v / 1e9).toFixed(2) + 'B';
+        if (a >= 1e6) return (v / 1e6).toFixed(2) + 'M';
+        if (a >= 1e3) return (v / 1e3).toFixed(2) + 'k';
+        return Fmt.num(v, 0, 2);
+    }
+    function fmtFundVal(k, v) {
+        if (typeof v !== 'number') return v;
+        if (FUND_PCT.has(k)) return (v * 100).toFixed(2) + '%';
+        if (FUND_BIG.has(k)) return compactNum(v);
+        return Fmt.num(v, 0, 2);
+    }
     function renderFundamentals(f) {
-        const keys = Object.keys(f || {}).filter(k => k !== 'symbol');
+        const keys = Object.keys(f || {}).filter(k => k !== 'symbol' && f[k] != null);
         $('rsFundamentals').innerHTML = keys.length
-            ? keys.map(k => `<div class="d-flex justify-content-between"><span class="text-muted">${k}</span><span>${typeof f[k] === 'number' ? Fmt.num(f[k], 0, 4) : f[k]}</span></div>`).join('')
+            ? keys.map(k => `<div class="d-flex justify-content-between"><span class="text-muted">${humanizeFundKey(k)}</span><span>${fmtFundVal(k, f[k])}</span></div>`).join('')
             : '<span class="text-muted">No fundamentals available.</span>';
     }
 
@@ -4412,8 +4459,77 @@ function setupResearchPage() {
         }
     }
 
-    $('researchLoadBtn').addEventListener('click', () => load($('researchTicker').value));
-    $('researchTicker').addEventListener('keydown', e => { if (e.key === 'Enter') load($('researchTicker').value); });
+    // ── Ticker autocomplete ────────────────────────────────────────────────
+    const tickerInput = $('researchTicker');
+    const suggestBox = $('researchSuggest');
+    let activeIdx = -1;
+
+    function hideSuggest() { suggestBox.style.display = 'none'; activeIdx = -1; }
+
+    function matchSuggestions(q) {
+        q = (q || '').trim().toLowerCase();
+        if (!q) return [];
+        // Match on symbol OR name; symbol-prefix matches rank first.
+        const scored = suggestions
+            .map(s => {
+                const sym = (s.symbol || '').toLowerCase();
+                const name = (s.name || '').toLowerCase();
+                let score = -1;
+                if (sym.startsWith(q)) score = 0;
+                else if (name.startsWith(q)) score = 1;
+                else if (sym.includes(q)) score = 2;
+                else if (name.includes(q)) score = 3;
+                return { s, score };
+            })
+            .filter(x => x.score >= 0)
+            .sort((a, b) => a.score - b.score)
+            .slice(0, 10);
+        return scored.map(x => x.s);
+    }
+
+    function renderSuggest(q) {
+        const matches = matchSuggestions(q);
+        if (!matches.length) { hideSuggest(); return; }
+        suggestBox.innerHTML = matches.map((s, i) => `
+            <button type="button" class="list-group-item list-group-item-action py-1 px-2" data-sym="${s.symbol}" data-idx="${i}">
+                <div class="d-flex justify-content-between align-items-center">
+                    <span><strong>${s.symbol}</strong>${s.currency ? ` <span class="badge bg-light text-secondary border ms-1">${s.currency}</span>` : ''}</span>
+                    <span class="badge ${s.source === 'watchlist' ? 'bg-info' : 'bg-secondary'} ms-2">${s.source}</span>
+                </div>
+                <div class="small text-muted text-truncate">${s.name || ''}</div>
+            </button>`).join('');
+        suggestBox.querySelectorAll('[data-sym]').forEach(b => {
+            b.addEventListener('mousedown', e => {
+                // mousedown (not click) so it fires before the input blur hides the box
+                e.preventDefault();
+                tickerInput.value = b.dataset.sym;
+                hideSuggest();
+                load(b.dataset.sym);
+            });
+        });
+        activeIdx = -1;
+        suggestBox.style.display = '';
+    }
+
+    tickerInput.addEventListener('input', () => renderSuggest(tickerInput.value));
+    tickerInput.addEventListener('focus', () => { if (tickerInput.value) renderSuggest(tickerInput.value); });
+    tickerInput.addEventListener('blur', () => setTimeout(hideSuggest, 150));
+    tickerInput.addEventListener('keydown', e => {
+        const items = suggestBox.querySelectorAll('[data-sym]');
+        if (suggestBox.style.display !== 'none' && items.length) {
+            if (e.key === 'ArrowDown') { e.preventDefault(); activeIdx = Math.min(activeIdx + 1, items.length - 1); }
+            else if (e.key === 'ArrowUp') { e.preventDefault(); activeIdx = Math.max(activeIdx - 1, 0); }
+            else if (e.key === 'Enter') {
+                if (activeIdx >= 0) { e.preventDefault(); items[activeIdx].dispatchEvent(new Event('mousedown')); return; }
+            }
+            items.forEach((it, i) => it.classList.toggle('active', i === activeIdx));
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') return;
+        }
+        if (e.key === 'Enter') { hideSuggest(); load(tickerInput.value); }
+        if (e.key === 'Escape') hideSuggest();
+    });
+
+    $('researchLoadBtn').addEventListener('click', () => { hideSuggest(); load(tickerInput.value); });
 
     $('rvGenerateBtn').addEventListener('click', async () => {
         if (!R.symbol) return;
@@ -4503,17 +4619,25 @@ function setupResearchPage() {
         } catch (e) { body.innerHTML = '<tr><td colspan="8" class="text-danger text-center py-3">' + e.message + '</td></tr>'; }
     }
 
-    // Expose loader (populates the ticker datalist on each page open).
+    // Expose loader (builds the autocomplete suggestion list on each page open).
     window.loadResearchPage = async function () {
         try {
             const [holdings, watch] = await Promise.all([
                 window.apiClient.getHoldings().catch(() => ({ holdings: [] })),
                 window.apiClient.getWatchlist().catch(() => []),
             ]);
-            const syms = new Set();
-            (holdings.holdings || []).forEach(h => syms.add(h.symbol));
-            (watch || []).forEach(w => syms.add(w.symbol));
-            $('researchTickerList').innerHTML = [...syms].map(s => `<option value="${s}">`).join('');
+            const bySym = new Map();
+            (holdings.holdings || []).forEach(h => {
+                if (h.symbol && !bySym.has(h.symbol)) {
+                    bySym.set(h.symbol, { symbol: h.symbol, name: h.name || '', currency: h.currency || '', source: 'held' });
+                }
+            });
+            (Array.isArray(watch) ? watch : (watch.watchlist || [])).forEach(w => {
+                if (w.symbol && !bySym.has(w.symbol)) {
+                    bySym.set(w.symbol, { symbol: w.symbol, name: w.name || '', currency: w.currency || '', source: 'watchlist' });
+                }
+            });
+            suggestions = [...bySym.values()];
         } catch (e) { /* ignore */ }
     };
 }
