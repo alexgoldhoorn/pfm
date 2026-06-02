@@ -413,6 +413,21 @@ function createAPIClient() {
             throw new Error('Extraction is taking too long — try a shorter statement or split it.');
         },
 
+        async startBackfill(force = false) {
+            const r = await fetch(this.baseURL + '/api/v1/analytics/backfill-snapshots' + (force ? '?force=true' : ''), {
+                method: 'POST', headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!r.ok) throw new Error('Could not start backfill');
+            return r.json();
+        },
+        async getBackfillStatus() {
+            const r = await fetch(this.baseURL + '/api/v1/analytics/backfill-status', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!r.ok) throw new Error('status failed');
+            return r.json();
+        },
+
         async checkDuplicates(transactions, bookings = [], portfolioId = null) {
             const response = await fetch(this.baseURL + '/api/v1/import/check-duplicates', {
                 method: 'POST',
@@ -1671,7 +1686,38 @@ async function loadAnalyticsPerformance() {
 }
 
 // b) Net worth over time section (SVG line chart)
+// Wire the "Backfill history" button once (reconstruct daily snapshots).
+function _wireBackfillButton() {
+    const btn = document.getElementById('anBackfillBtn');
+    if (!btn || btn.dataset.wired) return;
+    btn.dataset.wired = '1';
+    btn.addEventListener('click', async () => {
+        if (!confirm('Reconstruct daily net-worth history from your transactions and historical prices? This can take a minute and fills dates that are missing.')) return;
+        const orig = btn.innerHTML;
+        btn.disabled = true;
+        try {
+            await window.apiClient.startBackfill(false);
+            for (let i = 0; i < 60; i++) {
+                await new Promise(r => setTimeout(r, 3000));
+                const s = await window.apiClient.getBackfillStatus();
+                btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>${s.running ? (s.total ? `prices ${s.done}/${s.total}` : '…') + (s.added ? ` · ${s.added} days` : '') : 'finishing'}`;
+                if (!s.running) {
+                    if (s.error) alert('Backfill error: ' + s.error);
+                    break;
+                }
+            }
+            loadAnalyticsNetworth();
+        } catch (e) {
+            alert('Backfill failed: ' + e.message);
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = orig;
+        }
+    });
+}
+
 async function loadAnalyticsNetworth() {
+    _wireBackfillButton();
     const container = document.getElementById('anNetworthContainer');
     const placeholder = document.getElementById('anNetworthPlaceholder');
     const svg = document.getElementById('anNetworthSvg');

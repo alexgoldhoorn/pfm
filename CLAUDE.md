@@ -121,6 +121,7 @@ Auth: `GOOGLE_SERVICE_ACCOUNT_FILE=service-account.json` (already configured).
 - `GET /api/v1/analytics/performance?benchmark=^GSPC` — invested, current value, total return, money-weighted IRR, benchmark comparison
 - `GET /api/v1/analytics/networth-history` — daily value/cost snapshots for the chart
 - `POST /api/v1/analytics/snapshot` — record today's value/cost (called by the price cron)
+- `POST /api/v1/analytics/backfill-snapshots[?force=]` + `GET /analytics/backfill-status` — reconstruct daily snapshots from transactions + historical yfinance prices (background thread; only fills missing dates unless `force`). Unpriced assets (ISIN/P2P) are valued at cost for history. `period_return` is a **time-weighted return** (chains daily returns, removes contributions via the cost-basis delta) — a naive (end−start)/start reads absurdly high when contributions dominate.
 - `GET /api/v1/analytics/tax-estimate?year=` — Spanish IRPF savings-base estimate (realised gains + dividends), unrealised gain, tax-loss harvesting candidates
 - `irpf_savings_tax()` uses the progressive base-del-ahorro brackets (19/21/23/27/28%)
 - `GET /api/v1/analytics/diversification` — sector/country/currency/type concentration + Herfindahl HHI (fetches yfinance, slow)

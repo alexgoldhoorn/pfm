@@ -5,7 +5,8 @@ Analytics Router — dividends, performance, net-worth history, tax estimate.
 import logging
 import math
 import statistics
-from datetime import date, datetime
+import threading
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 import yfinance as yf
@@ -167,7 +168,9 @@ async def get_performance(
     if (period or "all").lower() == "all":
         period_ret = total_ret
     else:
-        period_ret = period_return(db.get_snapshots(), current_value, period)
+        period_ret = period_return(
+            db.get_snapshots(), current_value, period, current_cost=invested
+        )
     bench_start = period_start_date(period)
 
     # Benchmark: total return over the selected window (or full history for 'all')
@@ -242,6 +245,140 @@ async def take_snapshot(db=Depends(get_database), api_key_info: dict = Depends(_
         "total_value_eur": round(value, 2),
         "total_cost_eur": round(cost, 2),
     }
+
+
+# ── Historical net-worth backfill ──────────────────────────────────────────────
+# Reconstructs daily snapshots from transactions + historical prices so the
+# net-worth chart, period returns and risk metrics work from inception (not just
+# from when the daily cron started). Runs in a background thread (it fetches
+# per-asset price history) and only fills dates that don't already have a
+# snapshot, so it never overwrites the accurate forward cron snapshots.
+_BACKFILL: dict = {
+    "running": False,
+    "done": 0,
+    "total": 0,
+    "added": 0,
+    "message": "",
+    "error": None,
+}
+_CRYPTO_YF_OVERRIDES = {"UNI": "UNI1"}
+
+
+def _yf_symbol(asset: dict) -> str:
+    sym = asset.get("symbol", "")
+    if asset.get("asset_type") == "crypto":
+        return f"{_CRYPTO_YF_OVERRIDES.get(sym, sym)}-EUR"
+    return sym
+
+
+def _run_backfill(db, force: bool = False) -> None:
+    try:
+        _BACKFILL.update(running=True, error=None, done=0, added=0)
+        txs = [t for t in db.get_all_transactions() if t.get("transaction_date")]
+        if not txs:
+            _BACKFILL.update(running=False, message="No transactions to backfill.")
+            return
+
+        def d10(s):
+            return str(s)[:10]
+
+        start_d = datetime.strptime(
+            min(d10(t["transaction_date"]) for t in txs), "%Y-%m-%d"
+        ).date()
+        today = date.today()
+        aids = {t["asset_id"] for t in txs}
+        assets = {aid: db.get_asset(aid) for aid in aids}
+
+        # Per-asset historical close series (GBX-normalised); flat fallback to the
+        # latest stored price for assets yfinance can't resolve (unlisted/P2P).
+        _BACKFILL.update(message="Fetching historical prices…", total=len(aids))
+        hist: dict = {}
+        for i, aid in enumerate(aids):
+            a = assets[aid] or {}
+            series = []
+            try:
+                yfsym = _yf_symbol(a)
+                ticker = yf.Ticker(yfsym)
+                h = ticker.history(start=start_d, end=today + timedelta(days=1))
+                gbx = False
+                try:
+                    gbx = ticker.fast_info.currency == "GBp"
+                except Exception:
+                    pass
+                for idx, row in h.iterrows():
+                    series.append(
+                        (
+                            idx.date().isoformat(),
+                            float(row["Close"]) / (100.0 if gbx else 1.0),
+                        )
+                    )
+            except Exception:
+                pass
+            hist[aid] = sorted(series)
+            _BACKFILL.update(done=i + 1)
+
+        def price_asof(aid, dstr):
+            # Return the last close on/before the date, or None if we have no
+            # real price there (caller values the position at cost instead).
+            price = None
+            for ds, close in hist.get(aid, []):
+                if ds <= dstr:
+                    price = close
+                else:
+                    break
+            return price
+
+        existing = (
+            set() if force else {d10(s["snapshot_date"]) for s in db.get_snapshots()}
+        )
+        _BACKFILL.update(message="Computing daily snapshots…")
+        added = 0
+        d = start_d
+        while d <= today:
+            dstr = d.isoformat()
+            if dstr not in existing:
+                day_txs = [t for t in txs if d10(t["transaction_date"]) <= dstr]
+                pos, _ = compute_positions(day_txs)
+                value = cost = 0.0
+                for aid, p in pos.items():
+                    if p["quantity"] <= 0:
+                        continue
+                    cur = (assets.get(aid) or {}).get("currency", "EUR")
+                    fx = _fx(cur)
+                    px = price_asof(aid, dstr)
+                    # No real price for this asset/date → value it at cost
+                    # (neutral) instead of inventing a mark-to-market figure.
+                    value += (p["quantity"] * px if px is not None else p["cost"]) * fx
+                    cost += p["cost"] * fx
+                db.record_snapshot(dstr, round(value, 2), round(cost, 2))
+                added += 1
+                _BACKFILL.update(added=added)
+            d += timedelta(days=1)
+        _BACKFILL.update(
+            running=False, message=f"Backfilled {added} day(s) of history."
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Snapshot backfill failed")
+        _BACKFILL.update(running=False, error=str(e))
+
+
+@router.post("/backfill-snapshots")
+async def backfill_snapshots(
+    force: bool = Query(False, description="Recompute/overwrite existing snapshots"),
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Start a background reconstruction of historical net-worth snapshots."""
+    if _BACKFILL["running"]:
+        return {"status": "running", **_BACKFILL}
+    threading.Thread(target=_run_backfill, args=(db, force), daemon=True).start()
+    return {"status": "started"}
+
+
+@router.get("/backfill-status")
+async def backfill_status(api_key_info: dict = Depends(_auth)):
+    """Progress of the historical backfill (poll while running)."""
+    return _BACKFILL
 
 
 # ── Tax estimate ──────────────────────────────────────────────────────────────
