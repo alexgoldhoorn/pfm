@@ -222,15 +222,46 @@ async def get_portfolio_values(
                 pos["cost"] *= (pos["quantity"] - qty) / pos["quantity"]
             pos["quantity"] -= qty
 
-    names = {p["id"]: p["name"] for p in database.get_all_portfolios()}
+    all_portfolios = database.get_all_portfolios()
+    names = {p["id"]: p["name"] for p in all_portfolios}
+
+    # Cache asset currency to avoid repeated lookups.
+    _asset_cur: dict = {}
+
+    def asset_currency(aid: int) -> str:
+        if aid not in _asset_cur:
+            a = database.get_asset(aid)
+            _asset_cur[aid] = (a.get("currency", "EUR") if a else "EUR") or "EUR"
+        return _asset_cur[aid]
+
+    # Cash balance per portfolio (EUR): deposits - withdrawals from bookings,
+    # plus sells + dividends, minus buys (all FX-converted). A first-class cash
+    # position so the page reconciles against the broker and shows idle cash.
+    cash_by_pid: dict = {}
+    for tx in transactions:
+        pid = tx.get("portfolio_id")
+        amt = float(tx["total_amount"] or 0) * _get_fx_rate(
+            asset_currency(tx["asset_id"])
+        )
+        t = tx["transaction_type"].lower()
+        if t == "buy":
+            cash_by_pid[pid] = cash_by_pid.get(pid, 0.0) - amt
+        elif t in ("sell", "dividend"):
+            cash_by_pid[pid] = cash_by_pid.get(pid, 0.0) + amt
+    for bk in database.get_all_bookings():
+        pid = bk.get("portfolio_id")
+        amt = float(bk["amount"] or 0) * _get_fx_rate(
+            bk.get("currency", "EUR") or "EUR"
+        )
+        cash_by_pid[pid] = cash_by_pid.get(pid, 0.0) + (
+            amt if bk.get("action") == "Deposit" else -amt
+        )
+
     by_portfolio: dict = {}
     for (pid, aid), pos in positions.items():
         if pos["quantity"] <= 0:
             continue
-        asset = database.get_asset(aid)
-        if not asset:
-            continue
-        cur = asset.get("currency", "EUR")
+        cur = asset_currency(aid)
         price_data = database.get_latest_price(aid)
         price = float(price_data["price"]) if price_data else 0.0
         value_eur = pos["quantity"] * price * _get_fx_rate(cur)
@@ -242,11 +273,22 @@ async def get_portfolio_values(
         slot["value_eur"] += value_eur
         slot["cost_eur"] += cost_eur
 
+    # Make sure portfolios that hold only cash (no open positions) still appear.
+    for pid, name in names.items():
+        if name not in by_portfolio and abs(cash_by_pid.get(pid, 0.0)) > 0.005:
+            by_portfolio[name] = {
+                "portfolio_id": pid,
+                "value_eur": 0.0,
+                "cost_eur": 0.0,
+            }
+
     result = []
-    total_value = total_cost = 0.0
+    total_value = total_cost = total_cash = 0.0
     for name, d in by_portfolio.items():
+        cash = cash_by_pid.get(d["portfolio_id"], 0.0)
         total_value += d["value_eur"]
         total_cost += d["cost_eur"]
+        total_cash += cash
         pnl = d["value_eur"] - d["cost_eur"]
         result.append(
             {
@@ -254,19 +296,22 @@ async def get_portfolio_values(
                 "portfolio_id": d["portfolio_id"],
                 "value_eur": round(d["value_eur"], 2),
                 "cost_eur": round(d["cost_eur"], 2),
+                "cash_eur": round(cash, 2),
                 "pnl_eur": round(pnl, 2),
                 "pnl_pct": (
                     round(pnl / d["cost_eur"] * 100, 1) if d["cost_eur"] else 0.0
                 ),
             }
         )
-    result.sort(key=lambda x: -x["value_eur"])
+    result.sort(key=lambda x: -(x["value_eur"] + x["cash_eur"]))
 
     return {
         "portfolios": result,
         "total_value_eur": round(total_value, 2),
         "total_cost_eur": round(total_cost, 2),
         "total_pnl_eur": round(total_value - total_cost, 2),
+        "total_cash_eur": round(total_cash, 2),
+        "total_networth_eur": round(total_value + total_cash, 2),
     }
 
 

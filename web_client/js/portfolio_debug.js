@@ -1417,7 +1417,7 @@ function createPageManager() {
                         <tr>
                             <td class="ps-3"><strong>${p.name}</strong>${site}</td>
                             <td>${p.base_currency || ''}</td>
-                            <td class="text-end">${v ? eur(v.value_eur) : '<span class="text-muted">—</span>'}</td>
+                            <td class="text-end">${v ? eur(v.value_eur) : '<span class="text-muted">—</span>'}${v && Math.abs(v.cash_eur || 0) >= 1 ? `<div class="small text-muted" title="Cash balance (deposits − withdrawals + sells − buys + dividends)"><i class="bi bi-cash-coin me-1"></i>${eur(v.cash_eur)} cash</div>` : ''}</td>
                             ${pnlCell(v)}
                             <td>${activity}</td>
                             <td><small class="text-muted">${p.description || ''}</small></td>
@@ -1435,11 +1435,23 @@ function createPageManager() {
                         const tp = values.total_pnl_eur;
                         const tcls = tp >= 0 ? 'text-success' : 'text-danger';
                         const tsign = tp >= 0 ? '+' : '';
+                        const cash = values.total_cash_eur || 0;
+                        const nw = values.total_networth_eur != null ? values.total_networth_eur : (values.total_value_eur + cash);
                         footer.innerHTML = `<tr class="fw-bold border-top">
-                            <td class="ps-3">Total</td><td></td>
+                            <td class="ps-3">Total holdings</td><td></td>
                             <td class="text-end">${eur(values.total_value_eur)}</td>
                             <td class="text-end ${tcls}">${tsign}${eur(tp)}</td>
                             <td colspan="3"></td>
+                        </tr>
+                        <tr class="text-muted">
+                            <td class="ps-3">+ Cash</td><td></td>
+                            <td class="text-end">${eur(cash)}</td>
+                            <td colspan="4"></td>
+                        </tr>
+                        <tr class="fw-bold">
+                            <td class="ps-3">Net worth</td><td></td>
+                            <td class="text-end">${eur(nw)}</td>
+                            <td colspan="4"></td>
                         </tr>`;
                     }
                 }
