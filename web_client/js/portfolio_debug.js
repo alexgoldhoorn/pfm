@@ -3138,6 +3138,12 @@ function setupImportExportPage() {
             await window.apiClient.downloadBlob(window.apiClient.baseURL + '/api/v1/export/pdt', 'portfolio_pdt.xlsx');
         } catch (err) { alert('Export error: ' + err.message); }
     });
+    const ioBackupBtn = document.getElementById('ioExportBackupBtn');
+    if (ioBackupBtn) ioBackupBtn.addEventListener('click', async () => {
+        try {
+            await window.apiClient.downloadBlob(window.apiClient.baseURL + '/api/v1/export/backup', 'pfm-backup.db');
+        } catch (err) { alert('Backup error: ' + err.message); }
+    });
 
     // --- Bookings section ---
     async function loadBookings() {

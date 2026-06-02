@@ -10,10 +10,12 @@ import csv
 import io
 import logging
 import os
+import sqlite3
 import tempfile
+from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 
 from portf_manager.parsers.pdt_xlsx_parser import PDTXLSXExporter
@@ -115,4 +117,45 @@ async def export_pdt_xlsx(
         content=xlsx_bytes,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=portfolio_pdt.xlsx"},
+    )
+
+
+@router.get("/backup")
+async def export_db_backup(
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Download a consistent snapshot of the SQLite database (online-safe backup).
+
+    Uses SQLite's backup API so it is safe to run against the live DB; the result
+    is a normal .db file you can keep or restore by dropping it in place.
+    """
+    src_path = getattr(db, "db_path", None)
+    if not src_path or not os.path.exists(src_path):
+        raise HTTPException(
+            status_code=503,
+            detail="Database download is only available for the SQLite backend.",
+        )
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        src = sqlite3.connect(src_path)
+        dst = sqlite3.connect(tmp_path)
+        with dst:
+            src.backup(dst)
+        dst.close()
+        src.close()
+        with open(tmp_path, "rb") as f:
+            data = f.read()
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+    fname = f"pfm-backup-{datetime.now():%Y%m%d-%H%M%S}.db"
+    return Response(
+        content=data,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f"attachment; filename={fname}"},
     )
