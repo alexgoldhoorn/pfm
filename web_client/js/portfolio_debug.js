@@ -1,14 +1,69 @@
 // Portfolio Manager — Web Client
 
 // ---------------------------------------------------------------------------
+// User preferences (browser-local) + central formatting
+// ---------------------------------------------------------------------------
+const PREFS_KEY = 'pfmPrefs';
+const PREFS_DEFAULTS = {
+    numberLocale: '',      // '' = browser default; e.g. 'en-US', 'es-ES', 'de-DE', 'nl-NL', 'en-GB'
+    decimals: 2,
+    dateFormat: 'iso',     // 'iso' (2026-05-28) | 'dmy' (28-05-2026) | 'mdy' (05-28-2026)
+    theme: 'auto',         // 'auto' | 'light' | 'dark'
+    privacy: false,        // blur monetary amounts
+    benchmark: '^GSPC',
+    landingPage: 'dashboard',
+    rowsPerPage: 50,
+};
+window.PREFS = Object.assign({}, PREFS_DEFAULTS, (() => {
+    try { return JSON.parse(localStorage.getItem(PREFS_KEY) || '{}'); } catch (e) { return {}; }
+})());
+function savePrefs() { localStorage.setItem(PREFS_KEY, JSON.stringify(window.PREFS)); }
+
+const Fmt = {
+    loc() { return window.PREFS.numberLocale || undefined; },
+    num(v, min, max) {
+        const d = (window.PREFS.decimals != null) ? window.PREFS.decimals : 2;
+        return parseFloat(v || 0).toLocaleString(this.loc(), {
+            minimumFractionDigits: (min != null ? min : d),
+            maximumFractionDigits: (max != null ? max : d),
+        });
+    },
+    // Wrap money text so the privacy toggle can blur it (hover to reveal).
+    amt(text) { return `<span class="pfm-amt">${text}</span>`; },
+    date(s) {
+        if (!s) return '';
+        const str = String(s);
+        const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(str);
+        if (!m) return str;
+        const [, y, mo, d] = m;
+        const time = str.length > 10 ? str.replace('T', ' ').slice(11, 16) : '';
+        let out;
+        if (window.PREFS.dateFormat === 'dmy') out = `${d}-${mo}-${y}`;
+        else if (window.PREFS.dateFormat === 'mdy') out = `${mo}-${d}-${y}`;
+        else out = `${y}-${mo}-${d}`;
+        return time ? `${out} ${time}` : out;
+    },
+};
+window.Fmt = Fmt;
+
+function applyTheme() {
+    let t = window.PREFS.theme;
+    if (t === 'auto') {
+        t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+    }
+    document.documentElement.setAttribute('data-bs-theme', t);
+}
+function applyPrivacy() {
+    if (document.body) document.body.classList.toggle('pfm-privacy', !!window.PREFS.privacy);
+}
+applyTheme();  // before first paint
+
+// ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
 
 function fmtPrice(amount, currency) {
-    const n = parseFloat(amount || 0).toLocaleString(undefined, {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
-    });
+    const n = Fmt.num(amount, 2, 2);
     return currency ? `${n} ${currency}` : n;
 }
 
@@ -693,7 +748,7 @@ function _buildPreviewTable(transactions, bookings) {
             <td>${tx.date || ''}${tx.is_duplicate ? dupBadge : ''}</td>
             <td><strong>${tx.symbol || ''}</strong><br><small class="text-muted">${tx.name || ''}</small></td>
             <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : tx.tx_type === 'sell' ? 'danger' : 'secondary'}">${(tx.tx_type || '').toUpperCase()}</span></td>
-            <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(undefined, {maximumFractionDigits: 4})}</td>
+            <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(Fmt.loc(), {maximumFractionDigits: 4})}</td>
             <td class="text-end">${parseFloat(tx.price || 0).toFixed(4)}</td>
             <td>${tx.currency || ''}</td>
             <td class="text-end">${parseFloat(tx.fees || 0).toFixed(2)}</td>
@@ -1012,12 +1067,12 @@ function createPageManager() {
 
             const fmtEur = (val) => {
                 const n = parseFloat(val) || 0;
-                return n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' EUR';
+                return n.toLocaleString(Fmt.loc(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' EUR';
             };
 
             const fmtPct = (val) => {
                 const n = parseFloat(val) || 0;
-                return (n >= 0 ? '+' : '') + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%';
+                return (n >= 0 ? '+' : '') + n.toLocaleString(Fmt.loc(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%';
             };
 
             // Kick off both data fetches in parallel
@@ -1079,7 +1134,7 @@ function createPageManager() {
                                 <div class="small text-muted">${h.symbol || ''} ${assetLinks(h.symbol)}</div>
                             </td>
                             <td><span class="badge ${typeBadge(h.asset_type)}">${(h.asset_type || '').toUpperCase()}</span></td>
-                            <td class="text-end">${valEur.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                            <td class="text-end">${valEur.toLocaleString(Fmt.loc(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             <td class="text-end pe-3 ${pnlClass} fw-semibold">${fmtPct(pnlPct)}</td>
                         </tr>`;
                     }).join('');
@@ -1161,13 +1216,13 @@ function createPageManager() {
                         const txName = tx.name || tx.symbol || '';
                         return `
                             <tr>
-                                <td class="ps-3">${tx.transaction_date || ''}</td>
+                                <td class="ps-3">${Fmt.date(tx.transaction_date)}</td>
                                 <td style="max-width:200px;">
                                     <div class="fw-semibold text-truncate" title="${txName}">${txName}</div>
                                     <div class="small text-muted">${tx.symbol || ''}</div>
                                 </td>
                                 <td><span class="badge bg-${typeCls}">${(tx.transaction_type || '').toUpperCase()}</span></td>
-                                <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
+                                <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(Fmt.loc(), { maximumFractionDigits: 4 })}</td>
                                 <td class="text-end">${fmtPrice(tx.price, tx.currency)}</td>
                                 <td class="text-end pe-3">${fmtPrice(tx.total_amount, tx.currency)}</td>
                             </tr>
@@ -1223,11 +1278,11 @@ function createPageManager() {
                 } else {
                     tableBody.innerHTML = transactions.map(tx => `
                         <tr>
-                            <td>${tx.transaction_date || ''}</td>
+                            <td>${Fmt.date(tx.transaction_date)}</td>
                             <td><small>${tx.portfolio_name || ''}</small></td>
                             <td><strong>${tx.symbol || ''}</strong> ${assetLinks(tx.symbol)}<br><small class="text-muted">${tx.name || ''}</small></td>
                             <td><span class="badge bg-${tx.transaction_type === 'buy' ? 'success' : tx.transaction_type === 'sell' ? 'danger' : 'secondary'}">${(tx.transaction_type || '').toUpperCase()}</span></td>
-                            <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(undefined, {maximumFractionDigits: 6})}</td>
+                            <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(Fmt.loc(), {maximumFractionDigits: 6})}</td>
                             <td class="text-end">${fmtPrice(tx.price, tx.currency)}</td>
                             <td>${tx.currency || ''}</td>
                             <td class="text-end">${fmtPrice(tx.total_amount, tx.currency)}</td>
@@ -1264,7 +1319,7 @@ function createPageManager() {
                 const { holdings = [], summary = {} } = data;
 
                 // Update summary cards
-                const fmt = (n) => n !== undefined ? parseFloat(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+                const fmt = (n) => n !== undefined ? parseFloat(n).toLocaleString(Fmt.loc(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
                 const el = id => document.getElementById(id);
                 if (el('holdingsTotalValue')) el('holdingsTotalValue').textContent = fmt(summary.total_value);
                 if (el('holdingsTotalCost'))  el('holdingsTotalCost').textContent  = fmt(summary.total_cost);
@@ -1291,7 +1346,7 @@ function createPageManager() {
                             <td>${h.name}</td>
                             <td><span class="badge ${typeBadge}">${(h.asset_type || '').toUpperCase()}</span></td>
                             <td>${h.currency || ''}</td>
-                            <td class="text-end">${parseFloat(h.quantity).toLocaleString(undefined, { maximumFractionDigits: 4 })}</td>
+                            <td class="text-end">${parseFloat(h.quantity).toLocaleString(Fmt.loc(), { maximumFractionDigits: 4 })}</td>
                             <td class="text-end">${fmt(h.avg_price)}</td>
                             <td class="text-end">${h.current_price > 0 ? fmt(h.current_price) : '<span class="text-muted">—</span>'}</td>
                             <td class="text-end fw-bold">${fmt(h.total_value)}</td>
@@ -1332,7 +1387,7 @@ function createPageManager() {
                 const valByName = {};
                 (values.portfolios || []).forEach(v => { valByName[v.name] = v; });
 
-                const eur = n => '€' + Math.round(n).toLocaleString();
+                const eur = n => Fmt.amt('€' + Fmt.num(Math.round(n), 0, 0));
                 const pnlCell = v => {
                     if (!v) return '<td class="text-end text-muted">—</td>';
                     const cls = v.pnl_eur >= 0 ? 'text-success' : 'text-danger';
@@ -1344,8 +1399,8 @@ function createPageManager() {
                 // Compact "first → last" date range, or "—"
                 const range = (a, b) => {
                     if (!a && !b) return '<span class="text-muted">—</span>';
-                    if (a === b) return a;
-                    return `${a || '?'} <span class="text-muted">→</span> ${b || '?'}`;
+                    if (a === b) return Fmt.date(a);
+                    return `${a ? Fmt.date(a) : '?'} <span class="text-muted">→</span> ${b ? Fmt.date(b) : '?'}`;
                 };
                 if (portfolios.length === 0) {
                     tableBody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No brokers yet. Click "Add Portfolio" to create one.</td></tr>';
@@ -1481,18 +1536,12 @@ async function loadDashboardReturn(period) {
 
 // Compact euro formatter, no decimals (matches dashboard / forecast style)
 function anFmtEur(val) {
-    return parseFloat(val || 0).toLocaleString(undefined, {
-        minimumFractionDigits: 0,
-        maximumFractionDigits: 0
-    }) + ' €';
+    return Fmt.amt(Fmt.num(val, 0, 0) + ' €');
 }
 
 // Euro formatter with 2 decimals, used for dividend / tax detail figures
 function anFmtEur2(val) {
-    return parseFloat(val || 0).toLocaleString(undefined, {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2
-    }) + ' €';
+    return Fmt.amt(Fmt.num(val, 2, 2) + ' €');
 }
 
 function anFmtPct(val) {
@@ -2184,8 +2233,8 @@ async function loadWatchlist() {
                     <td class="ps-3">${symCell}</td>
                     <td>${w.name || ''}</td>
                     <td><span class="badge ${typeBadge(w.asset_type)}">${(w.asset_type || '').toUpperCase() || '—'}</span></td>
-                    <td class="text-end">${price != null ? price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
-                    <td class="text-end">${buyBelow != null ? buyBelow.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
+                    <td class="text-end">${price != null ? price.toLocaleString(Fmt.loc(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
+                    <td class="text-end">${buyBelow != null ? buyBelow.toLocaleString(Fmt.loc(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
                     <td class="text-end">${distCell}</td>
                     <td class="text-muted small">${w.notes || ''}</td>
                     <td class="pe-3">
@@ -2458,7 +2507,7 @@ function createAuthManager() {
                 if (nav) nav.style.display = "block";
                 if (content) content.style.display = "block";
             }
-            window.navigationManager.showPage('dashboard');
+            window.navigationManager.showPage((window.PREFS && window.PREFS.landingPage) || 'dashboard');
             this.isAuthenticated = true;
         },
         setupLogout: function() {
@@ -2616,7 +2665,7 @@ function setupChatPage() {
                 <td>${tx.date || ''}</td>
                 <td><strong>${tx.symbol || ''}</strong> <small class="text-muted">${tx.asset_name || ''}</small></td>
                 <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : tx.tx_type === 'sell' ? 'danger' : 'info'}">${(tx.tx_type || '').toUpperCase()}</span></td>
-                <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(undefined, {maximumFractionDigits:4})}</td>
+                <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(Fmt.loc(), {maximumFractionDigits:4})}</td>
                 <td class="text-end">${parseFloat(tx.price || 0).toFixed(4)} ${tx.currency || ''}</td>
                 <td class="text-end text-muted">${(parseFloat(tx.fees)||0) > 0 ? (parseFloat(tx.fees).toFixed(2) + ' ' + (tx.currency||'')) : '—'}</td>
             </tr>`).join('');
@@ -3022,7 +3071,7 @@ function setupImportExportPage() {
                     <td>${tx.date || ''}${tx.is_duplicate ? dupBadge : ''}</td>
                     <td><strong>${tx.symbol || ''}</strong> <small class="text-muted">${tx.asset_name || ''}</small></td>
                     <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : tx.tx_type === 'sell' ? 'danger' : 'info'}">${(tx.tx_type || '').toUpperCase()}</span></td>
-                    <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(undefined, {maximumFractionDigits:4})}</td>
+                    <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(Fmt.loc(), {maximumFractionDigits:4})}</td>
                     <td class="text-end">${parseFloat(tx.price || 0).toFixed(4)} ${tx.currency || ''}</td>
                     <td class="text-end text-muted">${(parseFloat(tx.fees)||0) > 0 ? (parseFloat(tx.fees).toFixed(2) + ' ' + (tx.currency||'')) : '—'}</td>
                 </tr>`).join('');
@@ -3102,7 +3151,7 @@ function setupImportExportPage() {
             }
             const rows = bookings.map(b => `
                 <tr>
-                    <td>${b.date || ''}</td>
+                    <td>${Fmt.date(b.date)}</td>
                     <td><span class="badge bg-${b.action === 'Deposit' ? 'success' : 'warning'}">${b.action}</span></td>
                     <td class="text-end">${parseFloat(b.amount).toFixed(2)}</td>
                     <td>${b.currency}</td>
@@ -3302,7 +3351,7 @@ function setupForecastPage() {
         const n = Math.round(val);
         if (n >= 1000000) return '€' + (n / 1000000).toFixed(2) + 'M';
         if (n >= 1000)    return '€' + (n / 1000).toFixed(1) + 'k';
-        return '€' + n.toLocaleString();
+        return '€' + Fmt.num(n, 0, 0);
     }
 
     // Load stocks starting value from holdings API
@@ -3730,7 +3779,7 @@ async function loadRebalanceAnalysis() {
     try {
         const data = await window.apiClient.getRebalanceAnalysis();
         const allocations = data.allocations || [];
-        const fmtEur = (v) => parseFloat(v || 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + ' €';
+        const fmtEur = (v) => parseFloat(v || 0).toLocaleString(Fmt.loc(), { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + ' €';
 
         if (allocations.length === 0) {
             tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted small">No allocation data.</td></tr>';
@@ -3833,7 +3882,7 @@ function renderResearchReport(report) {
     const recClass = { BUY: 'bg-success', HOLD: 'bg-secondary', SELL: 'bg-danger' }[rec] || 'bg-secondary';
 
     const fmtNum = (v) => (v === undefined || v === null || v === '') ? '—'
-        : parseFloat(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        : parseFloat(v).toLocaleString(Fmt.loc(), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
     const fairValue = report.fair_value;
     const current = report.current_price;
@@ -3991,12 +4040,75 @@ function setupExportButtons() {
 // ---------------------------------------------------------------------------
 // Initialisation
 // ---------------------------------------------------------------------------
+// Settings modal — browser-local preferences (theme, formats, defaults, privacy)
+function setupSettings() {
+    const modalEl = document.getElementById('settingsModal');
+    if (!modalEl) return;
+    const bs = new bootstrap.Modal(modalEl);
+    const $ = id => document.getElementById(id);
+
+    function load() {
+        $('setTheme').value = PREFS.theme;
+        $('setPrivacy').checked = !!PREFS.privacy;
+        $('setNumberLocale').value = PREFS.numberLocale || '';
+        $('setDateFormat').value = PREFS.dateFormat;
+        $('setDecimals').value = PREFS.decimals;
+        $('setBenchmark').value = PREFS.benchmark;
+        $('setLandingPage').value = PREFS.landingPage;
+        $('setRowsPerPage').value = PREFS.rowsPerPage;
+    }
+    function openModal(e) { if (e) e.preventDefault(); load(); bs.show(); }
+
+    ['settingsBtn', 'settingsBtnOffcanvas'].forEach(id => {
+        const el = $(id);
+        if (el) el.addEventListener('click', openModal);
+    });
+
+    $('settingsSaveBtn').addEventListener('click', () => {
+        PREFS.theme = $('setTheme').value;
+        PREFS.privacy = $('setPrivacy').checked;
+        PREFS.numberLocale = $('setNumberLocale').value;
+        PREFS.dateFormat = $('setDateFormat').value;
+        PREFS.decimals = Math.max(0, Math.min(6, parseInt($('setDecimals').value) || 0));
+        PREFS.benchmark = $('setBenchmark').value;
+        PREFS.landingPage = $('setLandingPage').value;
+        PREFS.rowsPerPage = Math.max(10, Math.min(500, parseInt($('setRowsPerPage').value) || 50));
+        savePrefs();
+        applyTheme();
+        applyPrivacy();
+        // Reflect the default benchmark in the analytics selector if present.
+        const bm = document.getElementById('anBenchmark');
+        if (bm) bm.value = PREFS.benchmark;
+        bs.hide();
+        // Re-render the current page so number/date formatting updates everywhere.
+        const active = document.querySelector('.page-content[style*="block"]');
+        const page = active ? active.id.replace('Page', '') : null;
+        if (page && window.navigationManager) window.navigationManager.showPage(page);
+    });
+
+    $('settingsResetBtn').addEventListener('click', () => {
+        Object.assign(PREFS, PREFS_DEFAULTS);
+        savePrefs();
+        load();
+        applyTheme();
+        applyPrivacy();
+    });
+
+    // Apply the saved default benchmark to the analytics selector on first load.
+    const bm = document.getElementById('anBenchmark');
+    if (bm && PREFS.benchmark) bm.value = PREFS.benchmark;
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     window.apiClient         = createAPIClient();
     window.authManager       = createAuthManager();
     window.navigationManager = createNavigationManager();
     window.pageManager       = createPageManager();
     window.modalManager      = createModalManager();
+
+    applyTheme();
+    applyPrivacy();
+    setupSettings();
 
     window.authManager.setupLoginForm();
     window.authManager.setupLogout();
