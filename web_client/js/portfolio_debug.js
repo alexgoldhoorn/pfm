@@ -1777,13 +1777,13 @@ async function loadAnalyticsTax() {
             <div class="row g-3 mb-3">
                 <div class="col-6 col-md-4">
                     <div class="border rounded p-3 h-100">
-                        <div class="small text-muted mb-1">Realised Gains YTD</div>
+                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="Net realised capital gains and losses on shares sold in ${year}, computed FIFO (first-in, first-out) across all brokers. Negative when losses outweigh gains.">Realised Gains ${year}</div>
                         <div class="fs-6 fw-bold">${anFmtEur2(d.realised_gain_eur)}</div>
                     </div>
                 </div>
                 <div class="col-6 col-md-4">
                     <div class="border rounded p-3 h-100">
-                        <div class="small text-muted mb-1">Dividend Income</div>
+                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="Cash dividends received in ${year}.">Dividend Income ${year}</div>
                         <div class="fs-6 fw-bold">${anFmtEur2(d.dividend_income_eur)}</div>
                     </div>
                 </div>

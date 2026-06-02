@@ -176,6 +176,14 @@ def period_return(
         ]
         if not in_period:
             return None
+        # History coverage guard: if the earliest snapshot inside the window is
+        # far after the period start, our daily history doesn't actually cover
+        # the period (e.g. snapshots only began mid-year). Returning a number
+        # then would be a shorter-period return mislabeled as YTD/1Y, so report
+        # "no data" instead of a misleading value.
+        opening_date = _parse_date(in_period[0]["snapshot_date"])
+        if opening_date and (opening_date - start).days > 10:
+            return None
         opening = in_period[0]["total_value_eur"]
     if not opening:
         return None

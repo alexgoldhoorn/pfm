@@ -5,7 +5,6 @@ Analytics Router — dividends, performance, net-worth history, tax estimate.
 import logging
 import math
 import statistics
-import time as _time
 from datetime import date, datetime
 from typing import Optional
 
@@ -25,28 +24,15 @@ from portf_manager.tax_calculator import TaxCalculator
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
 
+# Reuse the portfolios router's resilient FX helper: it pre-seeds typical
+# rates with fresh timestamps (so the first request never blocks on yfinance)
+# and falls back to the cached/default rate on failure (so a yfinance outage
+# can't make us re-hit the network per position — the cause of the tax-estimate
+# 504 gateway timeouts).
+from .portfolios import _get_fx_rate as _fx
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
-
-# Module-level FX cache shared pattern (30-min TTL)
-_FX = {"USD": 0.92, "GBP": 1.17, "SEK": 0.088, "DKK": 0.134, "CHF": 1.05}
-_FX_TS = {k: 0.0 for k in _FX}
-
-
-def _fx(currency: str) -> float:
-    if currency == "EUR":
-        return 1.0
-    now = _time.time()
-    if currency in _FX and now - _FX_TS.get(currency, 0) < 1800:
-        return _FX[currency]
-    try:
-        _FX[currency] = float(
-            yf.Ticker(f"{currency}EUR=X").fast_info.last_price or _FX.get(currency, 1.0)
-        )
-    except Exception:
-        pass
-    _FX_TS[currency] = now
-    return _FX.get(currency, 1.0)
 
 
 async def _auth(
@@ -187,8 +173,16 @@ async def get_performance(
     irr = money_weighted_irr(cash_flows, current_value)
     total_ret = simple_return(invested, current_value, realised)
 
-    # Period return from daily snapshots (None when history too short)
-    period_ret = period_return(db.get_snapshots(), current_value, period)
+    # Period return.
+    # "All-time" is a lifetime figure, so it must equal the cost-basis total
+    # return — deriving it from snapshots[0] instead understates it whenever
+    # the daily-snapshot history started after the portfolio's inception
+    # (which is why All-time previously showed ~0% next to a +12% Total Return).
+    # Named windows (ytd/1m/1y) use the snapshot-based time-weighted return.
+    if (period or "all").lower() == "all":
+        period_ret = total_ret
+    else:
+        period_ret = period_return(db.get_snapshots(), current_value, period)
     bench_start = period_start_date(period)
 
     # Benchmark: total return over the selected window (or full history for 'all')
