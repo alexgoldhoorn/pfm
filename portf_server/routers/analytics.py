@@ -97,11 +97,17 @@ async def get_dividends(db=Depends(get_database), api_key_info: dict = Depends(_
 
     projected_annual = round(sum(ttm_by_symbol.values()), 2)
 
+    # Symbol → display name, so the UI can show names alongside tickers
+    names = {}
+    for a in db.get_all_assets():
+        names[a["symbol"]] = a.get("name", a["symbol"])
+
     return {
         **income,
         "ttm": round(sum(ttm_by_symbol.values()), 2),
         "projected_annual": projected_annual,
         "yield_on_cost": yield_on_cost,
+        "names": names,
     }
 
 
@@ -395,14 +401,24 @@ async def get_tax_estimate(
     start = date(yr, 1, 1)
     end = date(yr, 12, 31)
 
-    # Realised capital gains via FIFO (all portfolios)
+    # Realised capital gains via FIFO (all portfolios), broken down per symbol
     calc = TaxCalculator(db)
     realised_gain = 0.0
+    realised_by_symbol: list = []
     try:
         report = calc.calculate_tax_report(user_id=1, start_date=start, end_date=end)
-        for txns in report.values():
-            for t in txns:
-                realised_gain += float(getattr(t, "gain_loss", 0) or 0)
+        for sym, txns in report.items():
+            sym_total = sum(float(getattr(t, "gain_loss", 0) or 0) for t in txns)
+            realised_gain += sym_total
+            a = db.get_asset_by_symbol(sym)
+            realised_by_symbol.append(
+                {
+                    "symbol": sym,
+                    "name": (a or {}).get("name", sym),
+                    "realised_eur": round(sym_total, 2),
+                }
+            )
+        realised_by_symbol.sort(key=lambda x: x["realised_eur"])
     except Exception as e:
         logger.warning(f"Tax report calc failed: {e}")
 
@@ -433,6 +449,8 @@ async def get_tax_estimate(
             harvest_candidates.append(
                 {
                     "symbol": asset["symbol"],
+                    "name": asset.get("name", asset["symbol"]),
+                    "quantity": round(pos["quantity"], 4),
                     "unrealised_loss_eur": round(gain, 2),
                 }
             )
@@ -442,6 +460,7 @@ async def get_tax_estimate(
     return {
         "year": yr,
         "realised_gain_eur": round(realised_gain, 2),
+        "realised_by_symbol": realised_by_symbol,
         "dividend_income_eur": round(div_this_year, 2),
         "savings_base_eur": round(savings_base, 2),
         "estimated_tax_eur": estimated_tax,
@@ -465,6 +484,10 @@ async def get_diversification(
     by_currency: dict[str, float] = {}
     by_sector: dict[str, float] = {}
     by_country: dict[str, float] = {}
+    # Per-holding values for the textbook concentration measure (HHI over
+    # individual positions, not asset-type buckets).
+    by_position: dict[str, float] = {}
+    position_names: dict[str, str] = {}
     total = 0.0
 
     for aid, pos in positions.items():
@@ -480,6 +503,9 @@ async def get_diversification(
         if value <= 0:
             continue
         total += value
+        sym = asset["symbol"]
+        by_position[sym] = by_position.get(sym, 0) + value
+        position_names[sym] = asset.get("name", sym)
         by_type[asset.get("asset_type", "other")] = (
             by_type.get(asset.get("asset_type", "other"), 0) + value
         )
@@ -512,14 +538,27 @@ async def get_diversification(
             return 0.0
         return round(sum((v / total) ** 2 for v in d.values()) * 10000, 0)
 
+    # Largest single holding (more meaningful than the biggest asset-type bucket)
+    largest_symbol = None
+    if by_position:
+        largest_symbol = max(by_position, key=by_position.get)
+    largest_pct = (
+        round(by_position[largest_symbol] / total * 100, 1)
+        if total and largest_symbol
+        else 0
+    )
+
     return {
         "total_value_eur": round(total, 2),
         "by_asset_type": pct_map(by_type),
         "by_currency": pct_map(by_currency),
         "by_sector": pct_map(by_sector),
         "by_country": pct_map(by_country),
-        "concentration_hhi": herfindahl(by_type),
-        "largest_position_pct": max(pct_map(by_type).values()) if by_type else 0,
+        # HHI over individual holdings — the standard portfolio concentration index
+        "concentration_hhi": herfindahl(by_position),
+        "largest_position_pct": largest_pct,
+        "largest_position_symbol": largest_symbol,
+        "largest_position_name": position_names.get(largest_symbol, largest_symbol),
     }
 
 

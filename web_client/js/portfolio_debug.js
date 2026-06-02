@@ -1760,6 +1760,8 @@ async function loadAnalyticsNetworth() {
             return;
         }
         renderNetworthChart(snaps);
+        placeholder.style.display = 'none';
+        svg.style.display = '';
     } catch (err) {
         svg.style.display = 'none';
         placeholder.style.display = 'flex';
@@ -1823,7 +1825,8 @@ function renderNetworthChart(snaps) {
     function shortDate(dStr) {
         const dt = new Date(dStr);
         if (isNaN(dt)) return String(dStr);
-        return dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        // Include the year (history can span multiple years) e.g. "Jun '25".
+        return dt.toLocaleDateString(Fmt.loc(), { month: 'short', year: '2-digit' });
     }
 
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
@@ -1890,9 +1893,10 @@ async function loadAnalyticsDividends() {
 
         const yieldByline = d.yield_on_cost || {};
         const bySymbol = d.by_symbol || {};
+        const names = d.names || {};
         // Top payers by total received, descending
         const topPayers = Object.keys(bySymbol)
-            .map(sym => ({ sym, total: parseFloat(bySymbol[sym] || 0), yoc: yieldByline[sym] }))
+            .map(sym => ({ sym, name: names[sym] || sym, total: parseFloat(bySymbol[sym] || 0), yoc: yieldByline[sym] }))
             .sort((a, b) => b.total - a.total)
             .slice(0, 8);
 
@@ -1900,10 +1904,11 @@ async function loadAnalyticsDividends() {
             ? topPayers.map(p => `
                 <tr>
                     <td><strong>${p.sym}</strong></td>
+                    <td class="text-truncate small text-muted" style="max-width:180px;" title="${p.name}">${p.name !== p.sym ? p.name : ''}</td>
                     <td class="text-end">${anFmtEur2(p.total)}</td>
                     <td class="text-end">${p.yoc != null ? parseFloat(p.yoc).toFixed(2) + '%' : '—'}</td>
                 </tr>`).join('')
-            : '<tr><td colspan="3" class="text-center text-muted small">No dividend payers yet.</td></tr>';
+            : '<tr><td colspan="4" class="text-center text-muted small">No dividend payers yet.</td></tr>';
 
         body.innerHTML = `
             <div class="row g-3 mb-3">
@@ -1938,8 +1943,9 @@ async function loadAnalyticsDividends() {
                             <thead>
                                 <tr>
                                     <th>Symbol</th>
+                                    <th>Name</th>
                                     <th class="text-end">Received</th>
-                                    <th class="text-end">Yield on Cost</th>
+                                    <th class="text-end">Yield on Cost <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="${METRIC_HELP.yieldOnCost}"></i></th>
                                 </tr>
                             </thead>
                             <tbody>${payersRows}</tbody>
@@ -1947,6 +1953,7 @@ async function loadAnalyticsDividends() {
                     </div>
                 </div>
             </div>`;
+        initTooltips();
     } catch (err) {
         body.innerHTML = `<div class="text-danger small">Error loading dividends: ${err.message}</div>`;
     }
@@ -2039,9 +2046,24 @@ async function loadAnalyticsTax() {
             ? candidates.map(c => `
                 <tr>
                     <td><strong>${c.symbol}</strong></td>
+                    <td class="text-truncate small text-muted" style="max-width:220px;" title="${c.name || ''}">${c.name || ''}</td>
+                    <td class="text-end">${c.quantity != null ? Fmt.num(c.quantity, 0, 4) : '—'}</td>
                     <td class="text-end text-danger">${anFmtEur2(c.unrealised_loss_eur)}</td>
                 </tr>`).join('')
-            : '<tr><td colspan="2" class="text-center text-muted small">No positions currently at a loss.</td></tr>';
+            : '<tr><td colspan="4" class="text-center text-muted small">No positions currently at a loss.</td></tr>';
+        // Realised gains/losses per symbol (sorted most-negative first by the API)
+        const realised = d.realised_by_symbol || [];
+        const realisedRows = realised.length
+            ? realised.map(r => {
+                const v = parseFloat(r.realised_eur || 0);
+                return `
+                <tr>
+                    <td><strong>${r.symbol}</strong></td>
+                    <td class="text-truncate small text-muted" style="max-width:220px;" title="${r.name || ''}">${r.name || ''}</td>
+                    <td class="text-end ${v >= 0 ? 'text-success' : 'text-danger'}">${anFmtEur2(v)}</td>
+                </tr>`;
+            }).join('')
+            : `<tr><td colspan="3" class="text-center text-muted small">No sales realised in ${year}.</td></tr>`;
         const harvestTooltip = 'These positions are currently at a loss. Selling them realises the loss, which can offset realised gains and reduce your savings-base tax.';
         body.innerHTML = `
             <div class="row g-3 mb-3">
@@ -2059,32 +2081,50 @@ async function loadAnalyticsTax() {
                 </div>
                 <div class="col-6 col-md-4">
                     <div class="border rounded p-3 h-100">
-                        <div class="small text-muted mb-1">Savings Base</div>
+                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.savingsBase}">Savings Base</div>
                         <div class="fs-6 fw-bold">${anFmtEur2(d.savings_base_eur)}</div>
                     </div>
                 </div>
                 <div class="col-6 col-md-4">
                     <div class="border border-danger rounded p-3 h-100 bg-light">
-                        <div class="small text-muted mb-1"><i class="bi bi-receipt me-1"></i>Estimated IRPF Tax</div>
+                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.taxEstimate}"><i class="bi bi-receipt me-1"></i>Estimated IRPF Tax</div>
                         <div class="fs-5 fw-bold text-danger">${anFmtEur2(d.estimated_tax_eur)}</div>
                     </div>
                 </div>
                 <div class="col-6 col-md-4">
                     <div class="border rounded p-3 h-100">
-                        <div class="small text-muted mb-1">Unrealised Gain / Loss</div>
+                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.unrealisedGain}">Unrealised Gain / Loss</div>
                         <div class="fs-6 fw-bold ${unrealCls}">${anFmtEur2(unreal)}</div>
                     </div>
                 </div>
+            </div>
+            <h6 class="fw-semibold mb-2">
+                <i class="bi bi-arrow-left-right me-1 text-secondary"></i>Realised Gains / Losses ${year}
+                <i class="bi bi-info-circle text-muted ms-1" style="cursor:help;" data-bs-toggle="tooltip" title="${METRIC_HELP.realisedGain}"></i>
+            </h6>
+            <div class="table-responsive">
+                <table class="table table-sm table-hover mb-3" style="max-width:560px;">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Name</th>
+                            <th class="text-end">Realised G/L</th>
+                        </tr>
+                    </thead>
+                    <tbody>${realisedRows}</tbody>
+                </table>
             </div>
             <h6 class="fw-semibold mb-2">
                 <i class="bi bi-scissors me-1 text-danger"></i>Tax-Loss Harvesting Candidates
                 <i class="bi bi-info-circle text-muted ms-1" style="cursor:help;" title="${harvestTooltip}"></i>
             </h6>
             <div class="table-responsive">
-                <table class="table table-sm table-hover mb-2" style="max-width:480px;">
+                <table class="table table-sm table-hover mb-2" style="max-width:620px;">
                     <thead>
                         <tr>
                             <th>Symbol</th>
+                            <th>Name</th>
+                            <th class="text-end">Qty</th>
                             <th class="text-end">Unrealised Loss</th>
                         </tr>
                     </thead>
@@ -2092,6 +2132,7 @@ async function loadAnalyticsTax() {
                 </table>
             </div>
             ${d.note ? `<p class="text-muted small mb-0"><em>${d.note}</em></p>` : ''}`;
+        initTooltips();
     } catch (err) {
         body.innerHTML = `<div class="text-danger small">Error loading tax estimate: ${err.message}</div>`;
     }
@@ -2144,11 +2185,13 @@ async function loadAnalyticsDiversification() {
                 </div>
                 <div class="col-6 col-md-4">
                     <div class="border rounded p-3 h-100">
-                        <div class="small text-muted mb-1">Largest Position</div>
+                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="Your single biggest holding as a share of total portfolio value — a quick read on single-name risk.">Largest Holding</div>
                         <div class="fs-5 fw-bold">${largest.toFixed(1)}%</div>
+                        ${d.largest_position_symbol ? `<div class="small text-muted text-truncate" title="${d.largest_position_name || ''}">${d.largest_position_symbol}${d.largest_position_name && d.largest_position_name !== d.largest_position_symbol ? ' · ' + d.largest_position_name : ''}</div>` : ''}
                     </div>
                 </div>
             </div>
+            <p class="text-muted small mb-3">${METRIC_HELP.diversification}</p>
             <div class="row g-4">${cols}</div>`;
     } catch (err) {
         body.innerHTML = `<div class="text-danger small">Error loading diversification: ${err.message}</div>`;
@@ -2219,7 +2262,7 @@ async function loadAnalyticsRisk() {
                 </div>
                 <div class="col-6 col-md-3">
                     <div class="border rounded p-3 h-100">
-                        <div class="small text-muted mb-1">Snapshots Used</div>
+                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.snapshots}">Snapshots Used</div>
                         <div class="fs-5 fw-bold">${d.snapshots_used != null ? d.snapshots_used : '—'}</div>
                     </div>
                 </div>
@@ -4264,7 +4307,7 @@ function setupResearchPage() {
     page.querySelectorAll('#researchTabs [data-rtab]').forEach(a => {
         a.addEventListener('click', (e) => {
             e.preventDefault();
-            page.querySelectorAll('#researchTabs .nav-link').forEach(n => n.classList.remove('active'));
+            page.querySelectorAll('#researchTabs [data-rtab]').forEach(n => n.classList.remove('active'));
             a.classList.add('active');
             const t = a.dataset.rtab;
             $('researchWorkbench').style.display = t === 'workbench' ? '' : 'none';
