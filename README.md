@@ -266,16 +266,41 @@ All values, currencies (per-transaction, not just per-asset), fees, and taxes ar
 
 ### Google Sheets setup (one-time)
 
-1. Share your PDT Google Spreadsheet with the service account:
-   - Go to **Share** in Google Sheets
-   - Add: `name@project-id.iam.gserviceaccount.com`
-   - Grant **Editor** access
-2. Copy the spreadsheet ID from the URL (`/spreadsheets/d/**ID**/`) and set it:
+> **Google Sheets sync is optional.** It needs **two** things: a Google **service-account
+> JSON key** (a secret credential you create once) *and* the **spreadsheet ID**. File
+> import/export (XLSX/CSV) and everything else work without any of this.
+
+**1. Create a service account and download its JSON key** (in the [Google Cloud Console](https://console.cloud.google.com/)):
+
+   1. Create or select a project.
+   2. Enable the **Google Sheets API** (APIs & Services → Library → "Google Sheets API" → Enable).
+   3. APIs & Services → **Credentials** → *Create credentials* → **Service account**. Give it a name; no roles are required.
+   4. Open the new service account → **Keys** → *Add key* → *Create new key* → **JSON**. A `.json` file downloads — **this is the secret**.
+
+**2. Put the key where the app can find it:**
+
    ```bash
-   GOOGLE_SPREADSHEET_ID=your_id_here   # in .env, or pass --sheet-id to CLI
+   # Save the downloaded file in the project root as service-account.json
+   # (it is gitignored — never commit it). Then point the app at it:
+   GOOGLE_SERVICE_ACCOUNT_FILE=service-account.json   # in .env / .env.local
    ```
 
-The service account JSON is already in `service-account.json`. Set `GOOGLE_SERVICE_ACCOUNT_FILE=service-account.json` (already in `.env`).
+**3. Share your Google Sheet with the service account.** Open the JSON and copy the
+   `client_email` value (looks like `name@project-id.iam.gserviceaccount.com`). In your
+   PDT Google Sheet click **Share**, add that email, and grant **Editor** access.
+
+   > Tip: once the key is configured, `GET /api/v1/sync/pdt-config` returns the exact
+   > `service_account_email` to share with — and the web **Import/Export → Google Sheets**
+   > card shows it for you, along with a green/red "configured" badge.
+
+**4. Set the spreadsheet ID** (the long ID in the sheet URL, `/spreadsheets/d/`**`ID`**`/`):
+
+   ```bash
+   GOOGLE_SPREADSHEET_ID=your_id_here   # optional default; or pass --sheet-id (CLI) / enter it in the web UI
+   ```
+
+Once the JSON key is in place and the sheet is shared, use the Pull/Push buttons on the
+**Import/Export** page, the CLI commands below, or the sync API endpoints.
 
 ### Sync endpoints
 
