@@ -72,12 +72,13 @@ class GeminiClient:
             Formatted prompt string
         """
         return f"""
-You are a financial transaction parser. Extract all buy/sell transactions from the following broker statement text and return them as a JSON array.
+You are a financial transaction parser. Extract all buy, sell AND dividend transactions from the following broker statement text and return them as a JSON array. (Do NOT include cash transfers/deposits/withdrawals or plain cash-interest lines here — only securities trades and dividends.)
 
 The text can be in any language (English, Spanish, etc.) and may be unstructured or formatted as complex broker statements. Look for key transaction information scattered throughout the text.
 
 Each transaction should be formatted as a JSON object with these exact fields:
-- tx_type: "buy" or "sell"
+- tx_type: "buy", "sell", or "dividend"
+  (for a dividend: set quantity = 1 and price = the cash dividend amount received)
 - symbol: Stock symbol/ticker (e.g., "AAPL", "GOOGL") or ISIN code
 - asset_name: Full company or fund name (e.g., "Apple Inc.", "Apple Inc.")
 - quantity: Number of shares/units as a float
@@ -135,9 +136,40 @@ Output: {{
   "raw_text": "Compra de acciones US0378331005 17/06/2025, 15:07:28 138,60 € 14 títulos Apple Inc. Precio límite: 9,87 €"
 }}
 
+Input (MyInvestor-style):
+"28/05/2026 VD Venta De Valores 2.051,14 € INTEL CORP @ 20"
+Output: {{
+  "tx_type": "sell",
+  "symbol": "INTEL CORP",
+  "asset_name": "INTEL CORP",
+  "quantity": 20.0,
+  "price": 102.557,
+  "date": "2026-05-28",
+  "currency": "EUR",
+  "raw_text": "28/05/2026 VD Venta De Valores 2.051,14 € INTEL CORP @ 20"
+}}
+(For a sale the total is 2.051,14 €; per-share price = 2051.14 / 20.)
+
+Input (dividend):
+"AD Abono De Dividendo 17,92 € THALES SA @ 10"
+Output: {{
+  "tx_type": "dividend",
+  "symbol": "THALES SA",
+  "asset_name": "THALES SA",
+  "quantity": 1.0,
+  "price": 17.92,
+  "date": "2026-05-20",
+  "currency": "EUR",
+  "raw_text": "AD Abono De Dividendo 17,92 € THALES SA @ 10"
+}}
+
 LANGUAGE MAPPING (Spanish to English):
 - "Compra" / "Compra de acciones" → "buy"
-- "Venta" / "Venta de acciones" → "sell"
+- "Venta" / "Venta de acciones" / "Venta De Valores" / "VD" → "sell"
+- "Abono De Dividendo" / "Dividendo" / "AD" → "dividend" (quantity 1, price = the € amount)
+- "Transferencia Sepa" / "TS" → a CASH TRANSFER, NOT a trade → SKIP it here
+- "Liquidac. Intereses" / "LI" (cash interest, no security) → SKIP it here
+- A line like "INTEL CORP @ 20" means the security INTEL CORP and 20 shares; "@ N" is the share count
 - "títulos" / "acciones" → shares/units
 - "€" → "EUR"
 - "$" → "USD"
@@ -279,6 +311,11 @@ Return ONLY a JSON array. Each object has these exact fields:
 LANGUAGE MAPPING:
 - "Ingreso" / "Transferencia recibida" / "Aportación" / "Deposit" / "Storting" -> "Deposit"
 - "Retirada" / "Reintegro" / "Transferencia enviada" / "Withdrawal" / "Opname" -> "Withdrawal"
+- "Transferencia Sepa" / "TS" -> a cash transfer: usually a Deposit when it funds the
+  investing/brokerage account (e.g. destination "INVEST"), a Withdrawal when money leaves
+  it (e.g. destination is an external bank). Infer the direction from the destination/label.
+- Include cash interest payouts ("Liquidac. Intereses" / "LI") as a "Deposit".
+- Ignore securities trades and dividends here (those are handled separately).
 - "€"->"EUR", "$"->"USD"; decimal comma "1.234,56" -> 1234.56
 
 EXAMPLE
