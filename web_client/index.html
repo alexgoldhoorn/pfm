@@ -1608,6 +1608,12 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                             </select>
                         </div>
                         <div class="mb-3">
+                            <label for="transactionPortfolio" class="form-label">Broker / Portfolio</label>
+                            <select class="form-select" id="transactionPortfolio">
+                                <option value="">— None —</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
                             <label for="transactionType" class="form-label">Transaction Type *</label>
                             <select class="form-select" id="transactionType" required>
                                 <option value="">Select type</option>
@@ -1616,6 +1622,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                 <option value="dividend">Dividend</option>
                                 <option value="split">Stock Split</option>
                             </select>
+                            <div class="form-text" id="transactionTypeHint" style="display:none;"></div>
                         </div>
                         <div class="mb-3">
                             <label for="transactionDate" class="form-label">Date *</label>

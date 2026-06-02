@@ -176,6 +176,9 @@ Manual: `docker exec -e PORTF_API_KEY=... portf_backend_dev python3 -m portf_man
 ### Transactions
 All financial transactions go through `database.create_transaction()` with `portfolio_id` for per-broker tracking. `asset_id` is required; use `db.get_asset_by_symbol()` + `db.create_asset()` for auto-create pattern. Always pass `currency=` (the transaction's own currency, e.g. `tx.price_currency`) to preserve per-row currency correctly.
 
+### Positions & corporate actions (`portf_manager/positions.py`)
+`compute_positions(transactions, key=...)` is the **single source of truth** for turning transactions into `{key: {quantity, cost}}` + realised P&L. It processes **chronologically** and supports **stock splits**: a `split` transaction stores the ratio in its `quantity` (2-for-1 → 2.0; 1-for-10 reverse → 0.1), scaling held quantity and leaving cost unchanged. The holdings/values endpoints and `analytics._compute_positions` all delegate to it; `tax_calculator` applies splits to FIFO lots. **Note:** this fixed a latent cost-basis bug — the old per-loop accumulation ran on `get_all_transactions()` (date DESC), so a partial sell processed before its buys left sold shares in cost basis, *overstating invested / understating return* for any asset with sells.
+
 ## Web Client (`web_client/`)
 Single HTML file (`index.html`) + one JS file (`portfolio_debug.js`). All pages are divs toggled by `navigationManager.showPage()`. Pages: `dashboard`, `assets`, `transactions`, `holdings`, `chat`, `importexport`, `portfolios`, **`forecast`**.
 

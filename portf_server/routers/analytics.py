@@ -20,6 +20,7 @@ from portf_manager.services.analytics_service import (
     simple_return,
 )
 from portf_manager.tax_calculator import TaxCalculator
+from portf_manager.positions import compute_positions
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
@@ -42,27 +43,11 @@ async def _auth(
 
 
 def _compute_positions(db):
-    """Return {asset_id: {quantity, cost}} for open positions, plus realised P&L."""
-    positions = {}
-    realised = 0.0
-    for tx in db.get_all_transactions():
-        aid = tx["asset_id"]
-        t = tx["transaction_type"].lower()
-        qty = float(tx["quantity"])
-        total = float(tx["total_amount"])
-        if aid not in positions:
-            positions[aid] = {"quantity": 0.0, "cost": 0.0}
-        if t == "buy":
-            positions[aid]["quantity"] += qty
-            positions[aid]["cost"] += total
-        elif t == "sell":
-            pos = positions[aid]
-            if pos["quantity"] > 0:
-                avg = pos["cost"] / pos["quantity"]
-                realised += total - avg * qty
-                pos["cost"] *= (pos["quantity"] - qty) / pos["quantity"]
-            pos["quantity"] -= qty
-    return positions, realised
+    """Return {asset_id: {quantity, cost}} for open positions, plus realised P&L.
+
+    Delegates to the shared chronological helper (handles buy/sell/splits).
+    """
+    return compute_positions(db.get_all_transactions())
 
 
 # ── Dividends ────────────────────────────────────────────────────────────────

@@ -194,6 +194,14 @@ class TaxCalculator:
                     )
                     tax_transactions.extend(sell_transactions)
 
+            elif tx_type == "split" and quantity > 0:
+                # Split ratio is stored in quantity (2-for-1 → 2). Scale every
+                # open lot's shares and divide its price so cost basis is kept.
+                for lot in tax_lots:
+                    lot.quantity *= quantity
+                    lot.remaining_quantity *= quantity
+                    lot.price /= quantity
+
         return tax_transactions
 
     def _process_sell_transaction(
