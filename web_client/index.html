@@ -16,7 +16,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <!-- Custom CSS -->
-    <link href="css/styles.css" rel="stylesheet">
+    <link href="css/styles.css?v=1780000002" rel="stylesheet">
     <style>
         /* Privacy mode: blur monetary amounts until hovered */
         body.pfm-privacy .pfm-amt { filter: blur(0.45em); transition: filter .12s ease; user-select: none; }
@@ -1093,10 +1093,12 @@
                         <div class="card mb-3">
                             <div class="card-body d-flex flex-wrap gap-2 align-items-center">
                                 <label class="form-label mb-0 me-1">Ticker</label>
-                                <input class="form-control" list="researchTickerList" id="researchTicker" placeholder="e.g. AAPL or an ISIN" style="max-width:260px;">
-                                <datalist id="researchTickerList"></datalist>
+                                <div class="position-relative" style="max-width:320px; flex:1 1 280px;">
+                                    <input class="form-control" id="researchTicker" autocomplete="off" placeholder="Type a name or ticker (e.g. ASML or an ISIN)">
+                                    <div id="researchSuggest" class="list-group position-absolute w-100 shadow-sm" style="z-index:1050; display:none; max-height:300px; overflow-y:auto;"></div>
+                                </div>
                                 <button class="btn btn-primary" id="researchLoadBtn"><i class="bi bi-search me-1"></i>Load</button>
-                                <span class="text-muted small" id="researchHint">Held &amp; watchlist tickers are suggested.</span>
+                                <span class="text-muted small" id="researchHint">Start typing — your holdings &amp; watchlist (with names &amp; exchange) are suggested.</span>
                             </div>
                         </div>
 
@@ -1161,6 +1163,15 @@
                                                 <div class="col-4"><div class="border rounded p-2"><div class="small text-muted">Sell above</div><div class="fw-bold text-danger" id="rvSellAbove">—</div></div></div>
                                             </div>
                                             <div class="small text-muted mt-1" id="rvUpside"></div>
+                                            <div class="small text-muted mt-2 border-top pt-2">
+                                                <i class="bi bi-info-circle me-1"></i>
+                                                <strong>EPS</strong> and <strong>Target P/E</strong> are pre-filled from Yahoo Finance fundamentals
+                                                (trailing-twelve-month EPS and current trailing P/E); <strong>Annual dividend</strong> / <strong>yield</strong>
+                                                likewise. Edit any of them to model your own assumptions. Then:
+                                                <span class="d-block mt-1">Fair value = EPS × target&nbsp;P/E (or dividend ÷ target&nbsp;yield) ·
+                                                Buy&nbsp;below = fair × (1 − margin&nbsp;of&nbsp;safety) ·
+                                                Sell&nbsp;above = fair × (1 + take-profit&nbsp;premium).</span>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -2171,9 +2182,9 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 
     <!-- Centralized help text (must load before portfolio_debug.js) -->
-    <script src="js/help_text.js?v=1780000001"></script>
+    <script src="js/help_text.js?v=1780000002"></script>
 
     <!-- Custom JavaScript -->
-    <script src="js/portfolio_debug.js?v=1780000011"></script>
+    <script src="js/portfolio_debug.js?v=1780000012"></script>
 </body>
 </html>
