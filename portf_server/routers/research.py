@@ -12,6 +12,7 @@ import json
 import logging
 from typing import Optional
 
+import yfinance as yf
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
@@ -29,6 +30,19 @@ class PriceTargetBody(BaseModel):
     notes: Optional[str] = None
 
 
+class ResearchSaveBody(BaseModel):
+    thesis: Optional[str] = None
+    conviction: Optional[int] = None
+    method: Optional[str] = None
+    assumptions: Optional[dict] = None
+    fair_value: Optional[float] = None
+    buy_below: Optional[float] = None
+    sell_above: Optional[float] = None
+    llm_summary: Optional[str] = None
+    sources: Optional[list] = None
+    current_price: Optional[float] = None
+
+
 async def _auth(
     request: Request, api_key_manager: APIKeyManager = Depends(get_api_key_manager)
 ) -> dict:
@@ -40,6 +54,67 @@ def _resolve_asset(db, symbol: str) -> dict:
     if not asset:
         raise HTTPException(status_code=404, detail=f"Asset '{symbol}' not found")
     return asset
+
+
+def _position_stats(db, asset: Optional[dict]) -> dict:
+    """Current quantity + average cost for a held asset (zeros if not held)."""
+    if not asset:
+        return {"quantity": 0.0, "avg_cost": 0.0}
+    qty = cost = 0.0
+    for tx in db.get_transactions_by_asset(asset["id"]):
+        t = tx["transaction_type"].lower()
+        q = float(tx["quantity"])
+        total = float(tx["total_amount"])
+        if t == "buy":
+            qty += q
+            cost += total
+        elif t == "sell":
+            if qty > 0:
+                cost *= (qty - q) / qty
+            qty -= q
+        elif t == "split" and q > 0:
+            qty *= q
+    return {"quantity": qty, "avg_cost": cost / qty if qty > 0 else 0.0}
+
+
+def _current_price(db, asset: Optional[dict], symbol: str) -> tuple[float, str]:
+    """Latest price + currency: stored price for held assets, else live yfinance."""
+    if asset:
+        pd_ = db.get_latest_price(asset["id"])
+        if pd_:
+            return float(pd_["price"]), asset.get("currency", "EUR")
+    try:
+        fi = yf.Ticker(symbol.upper()).fast_info
+        return float(fi["last_price"]), (fi.get("currency") or "EUR")
+    except Exception:
+        return 0.0, (asset.get("currency", "EUR") if asset else "EUR")
+
+
+@router.get("/compare")
+async def compare(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+    """Latest saved research per symbol: price, fair value, upside, conviction."""
+    out = []
+    for n in db.get_latest_research_notes():
+        sym = n["symbol"]
+        asset = db.get_asset_by_symbol(sym)
+        price, cur = _current_price(db, asset, sym)
+        fair = n.get("fair_value")
+        upside = round((fair - price) / price * 100, 1) if (fair and price) else None
+        out.append(
+            {
+                "symbol": sym,
+                "current_price": round(price, 4),
+                "currency": cur,
+                "fair_value": fair,
+                "buy_below": n.get("buy_below"),
+                "sell_above": n.get("sell_above"),
+                "conviction": n.get("conviction"),
+                "upside_pct": upside,
+                "updated_at": n.get("created_at"),
+            }
+        )
+    out.sort(key=lambda x: (x["upside_pct"] is None, -(x["upside_pct"] or 0)))
+    return out
 
 
 @router.get("/{symbol}")
@@ -60,73 +135,134 @@ async def get_report(
 async def generate_report(
     symbol: str, db=Depends(get_database), api_key_info: dict = Depends(_auth)
 ):
-    """Run LLM valuation analysis and cache the result. Takes ~10 seconds."""
+    """Run web-augmented LLM valuation. Works for any symbol (held or not)."""
     from portf_manager.services.research import (
         fetch_fundamentals,
+        fetch_recent_news,
         generate_valuation_report,
     )
 
-    asset = _resolve_asset(db, symbol)
+    sym = symbol.upper()
+    asset = db.get_asset_by_symbol(sym)  # may be None (research anything)
+    pos = _position_stats(db, asset)
+    current_price, currency = _current_price(db, asset, sym)
+    fundamentals = fetch_fundamentals(sym)
+    news = fetch_recent_news(sym)
 
-    # Calculate current position stats
-    transactions = db.get_transactions_by_asset(asset["id"])
-    qty = cost = 0.0
-    for tx in transactions:
-        t = tx["transaction_type"].lower()
-        q = float(tx["quantity"])
-        total = float(tx["total_amount"])
-        if t == "buy":
-            qty += q
-            cost += total
-        elif t == "sell":
-            if qty > 0:
-                cost *= (qty - q) / qty
-            qty -= q
-    avg_cost = cost / qty if qty > 0 else 0.0
-
-    price_data = db.get_latest_price(asset["id"])
-    current_price = float(price_data["price"]) if price_data else 0.0
-    currency = asset.get("currency", "EUR")
-
-    # Fetch fundamentals from yfinance
-    fundamentals = fetch_fundamentals(symbol.upper())
-
-    # Call LLM
     result = generate_valuation_report(
-        symbol=symbol.upper(),
-        asset_name=asset.get("name", symbol),
-        asset_type=asset.get("asset_type", "stock"),
+        symbol=sym,
+        asset_name=asset.get("name", sym) if asset else sym,
+        asset_type=asset.get("asset_type", "stock") if asset else "stock",
         current_price=current_price,
-        avg_cost=avg_cost,
+        avg_cost=pos["avg_cost"],
         currency=currency,
         fundamentals=fundamentals,
+        news=news,
     )
 
-    # Persist
-    db.upsert_research_report(
-        asset_id=asset["id"],
-        symbol=symbol.upper(),
-        fair_value=result.get("fair_value"),
-        recommendation=result.get("recommendation", "HOLD"),
-        confidence=result.get("confidence", "low"),
-        summary=result.get("summary", ""),
-        report_json=json.dumps(result),
-    )
-
-    # Auto-save price targets from report if not already set
-    existing = db.get_price_target(asset["id"])
-    if not existing and (result.get("buy_below") or result.get("sell_above")):
-        db.upsert_price_target(
+    # Cache the LLM report only for assets we actually hold/track.
+    if asset:
+        db.upsert_research_report(
             asset_id=asset["id"],
-            buy_below=result.get("buy_below"),
-            sell_above=result.get("sell_above"),
+            symbol=sym,
             fair_value=result.get("fair_value"),
+            recommendation=result.get("recommendation", "HOLD"),
+            confidence=result.get("confidence", "low"),
+            summary=result.get("summary", ""),
+            report_json=json.dumps(result),
         )
 
-    result["symbol"] = symbol.upper()
+    result["symbol"] = sym
     result["current_price"] = current_price
-    result["avg_cost"] = round(avg_cost, 4)
+    result["currency"] = currency
+    result["avg_cost"] = round(pos["avg_cost"], 4)
+    result["fundamentals"] = fundamentals
     return result
+
+
+@router.get("/{symbol}/lookup")
+async def lookup(
+    symbol: str, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+):
+    """Snapshot for the research workbench (no LLM): price, position,
+    fundamentals, news, existing targets and the latest saved research."""
+    from portf_manager.services.research import fetch_fundamentals, fetch_recent_news
+
+    sym = symbol.upper()
+    asset = db.get_asset_by_symbol(sym)
+    pos = _position_stats(db, asset)
+    price, currency = _current_price(db, asset, sym)
+    targets = db.get_price_target(asset["id"]) if asset else None
+    notes = db.get_research_notes(sym)
+    return {
+        "symbol": sym,
+        "name": asset.get("name") if asset else sym,
+        "held": bool(asset and pos["quantity"] > 0),
+        "quantity": round(pos["quantity"], 6),
+        "avg_cost": round(pos["avg_cost"], 4),
+        "current_price": round(price, 4),
+        "currency": currency,
+        "fundamentals": fetch_fundamentals(sym),
+        "news": fetch_recent_news(sym),
+        "targets": targets,
+        "latest_note": notes[0] if notes else None,
+    }
+
+
+@router.post("/{symbol}/save")
+async def save_research(
+    symbol: str,
+    body: ResearchSaveBody,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Save a versioned research record and (for held assets) push targets so
+    price alerts fire."""
+    sym = symbol.upper()
+    asset = db.get_asset_by_symbol(sym)
+    note_id = db.create_research_note(
+        asset_id=asset["id"] if asset else None,
+        symbol=sym,
+        thesis=body.thesis,
+        conviction=body.conviction,
+        method=body.method,
+        assumptions=json.dumps(body.assumptions) if body.assumptions else None,
+        fair_value=body.fair_value,
+        buy_below=body.buy_below,
+        sell_above=body.sell_above,
+        price_at_save=body.current_price,
+        llm_summary=body.llm_summary,
+        sources=json.dumps(body.sources) if body.sources else None,
+    )
+    if asset and (body.buy_below or body.sell_above or body.fair_value):
+        db.upsert_price_target(
+            asset_id=asset["id"],
+            buy_below=body.buy_below,
+            sell_above=body.sell_above,
+            fair_value=body.fair_value,
+            notes=(body.thesis or "")[:500] or None,
+        )
+    return {"id": note_id, "symbol": sym, "targets_updated": bool(asset)}
+
+
+@router.get("/{symbol}/history")
+async def history(
+    symbol: str, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+):
+    """Version history of saved research for a symbol."""
+    notes = db.get_research_notes(symbol.upper())
+    for n in notes:
+        if n.get("assumptions"):
+            try:
+                n["assumptions"] = json.loads(n["assumptions"])
+            except (TypeError, ValueError):
+                pass
+        if n.get("sources"):
+            try:
+                n["sources"] = json.loads(n["sources"])
+            except (TypeError, ValueError):
+                pass
+    return notes
 
 
 @router.get("/{symbol}/targets")
