@@ -298,6 +298,39 @@ function createAPIClient() {
             return resp.json();
         },
 
+        async extractAsync(text) {
+            const response = await fetch(this.baseURL + '/api/v1/llm/extract-async', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify({ text })
+            });
+            if (!response.ok) throw new Error('Could not start extraction');
+            return response.json();
+        },
+
+        async getExtractStatus(jobId) {
+            const response = await fetch(this.baseURL + '/api/v1/llm/extract-status/' + encodeURIComponent(jobId), {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) throw new Error('Lost track of the extraction job');
+            return response.json();
+        },
+
+        // Submit text, then poll until the extraction job finishes (or times out).
+        async extractTransactionsAndBookings(text, onProgress) {
+            const { job_id } = await this.extractAsync(text);
+            const started = Date.now();
+            const maxMs = 180000; // 3 min ceiling
+            while (Date.now() - started < maxMs) {
+                await new Promise(r => setTimeout(r, 1800));
+                const s = await this.getExtractStatus(job_id);
+                if (onProgress) onProgress(Math.round((Date.now() - started) / 1000));
+                if (s.status === 'done') return { transactions: s.transactions || [], bookings: s.bookings || [] };
+                if (s.status === 'error') throw new Error(s.error || 'Extraction failed');
+            }
+            throw new Error('Extraction is taking too long — try a shorter statement or split it.');
+        },
+
         async checkDuplicates(transactions, bookings = [], portfolioId = null) {
             const response = await fetch(this.baseURL + '/api/v1/import/check-duplicates', {
                 method: 'POST',
@@ -843,7 +876,7 @@ function setupLlmImportModal() {
                 <td><input class="form-check-input tx-select" type="checkbox" checked data-idx="${i}"></td>
                 <td>${tx.date || ''}</td>
                 <td><strong>${tx.symbol || ''}</strong><br><small class="text-muted">${tx.asset_name || ''}</small></td>
-                <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : 'danger'}">${(tx.tx_type || '').toUpperCase()}</span></td>
+                <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : tx.tx_type === 'sell' ? 'danger' : 'info'}">${(tx.tx_type || '').toUpperCase()}</span></td>
                 <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString()}</td>
                 <td class="text-end">${parseFloat(tx.price || 0).toFixed(4)}</td>
                 <td>${tx.currency || ''}</td>
@@ -2582,7 +2615,7 @@ function setupChatPage() {
                 <td><input class="form-check-input chat-tx-select" type="checkbox" checked data-idx="${i}"></td>
                 <td>${tx.date || ''}</td>
                 <td><strong>${tx.symbol || ''}</strong> <small class="text-muted">${tx.asset_name || ''}</small></td>
-                <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : 'danger'}">${(tx.tx_type || '').toUpperCase()}</span></td>
+                <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : tx.tx_type === 'sell' ? 'danger' : 'info'}">${(tx.tx_type || '').toUpperCase()}</span></td>
                 <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(undefined, {maximumFractionDigits:4})}</td>
                 <td class="text-end">${parseFloat(tx.price || 0).toFixed(4)} ${tx.currency || ''}</td>
                 <td class="text-end text-muted">${(parseFloat(tx.fees)||0) > 0 ? (parseFloat(tx.fees).toFixed(2) + ' ' + (tx.currency||'')) : '—'}</td>
@@ -2951,13 +2984,13 @@ function setupImportExportPage() {
         extractBtn.disabled = true;
         extractBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Extracting…';
         try {
-            // Extract trades and cash movements (deposits/withdrawals) together.
-            const [data, bkData] = await Promise.all([
-                window.apiClient.extractTransactions(text),
-                window.apiClient.extractBookings(text).catch(() => ({ bookings: [] })),
-            ]);
-            extractedText = data.transactions || [];
-            extractedTextBookings = (bkData && bkData.bookings) || [];
+            // Async: extract trades+dividends and cash movements via a background
+            // job and poll, so a big statement can't trip the gateway timeout.
+            const result = await window.apiClient.extractTransactionsAndBookings(text, (secs) => {
+                extractBtn.innerHTML = `<span class="spinner-border spinner-border-sm me-2"></span>Extracting… ${secs}s`;
+            });
+            extractedText = result.transactions || [];
+            extractedTextBookings = result.bookings || [];
 
             // Flag rows that already exist in the DB (best-effort), same as the
             // file-upload preview.
@@ -2988,7 +3021,7 @@ function setupImportExportPage() {
                     <td><input class="form-check-input io-tx-select" type="checkbox" checked data-idx="${i}"></td>
                     <td>${tx.date || ''}${tx.is_duplicate ? dupBadge : ''}</td>
                     <td><strong>${tx.symbol || ''}</strong> <small class="text-muted">${tx.asset_name || ''}</small></td>
-                    <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : 'danger'}">${(tx.tx_type || '').toUpperCase()}</span></td>
+                    <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : tx.tx_type === 'sell' ? 'danger' : 'info'}">${(tx.tx_type || '').toUpperCase()}</span></td>
                     <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(undefined, {maximumFractionDigits:4})}</td>
                     <td class="text-end">${parseFloat(tx.price || 0).toFixed(4)} ${tx.currency || ''}</td>
                     <td class="text-end text-muted">${(parseFloat(tx.fees)||0) > 0 ? (parseFloat(tx.fees).toFixed(2) + ' ' + (tx.currency||'')) : '—'}</td>

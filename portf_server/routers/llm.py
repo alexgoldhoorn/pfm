@@ -9,6 +9,9 @@ import re
 import json
 import asyncio
 import logging
+import time
+import uuid
+import threading
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, status, Depends, Request
 from pydantic import BaseModel, Field
@@ -619,6 +622,104 @@ async def extract_bookings_from_text(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to extract bookings: {str(e)}",
         )
+
+
+# ---------------------------------------------------------------------------
+# Async extraction jobs
+#
+# A big pasted statement can take longer than the gateway's read timeout (the
+# LLM runs two passes — trades+dividends, then cash movements), which surfaced
+# as a raw "504 Gateway time-out". Instead, /extract-async returns a job id
+# immediately, the work runs in a background thread, and the client polls
+# /extract-status/{id}. Each request is fast, so no gateway timeout.
+# ---------------------------------------------------------------------------
+_EXTRACT_JOBS: Dict[str, Dict[str, Any]] = {}
+_EXTRACT_JOBS_LOCK = threading.Lock()
+_EXTRACT_JOB_TTL = 1800  # seconds
+
+
+def _prune_extract_jobs() -> None:
+    now = time.time()
+    with _EXTRACT_JOBS_LOCK:
+        for jid in [
+            j
+            for j, v in _EXTRACT_JOBS.items()
+            if now - v.get("created", now) > _EXTRACT_JOB_TTL
+        ]:
+            _EXTRACT_JOBS.pop(jid, None)
+
+
+def _run_extraction_job(job_id: str, text: str) -> None:
+    """Background worker: extract trades+dividends and cash movements."""
+    try:
+        client = GeminiClient(llm=get_llm_client())
+        transactions = []
+        for t in client.extract_transactions(text):
+            if t.validate():
+                continue
+            transactions.append(
+                {
+                    "tx_type": t.tx_type,
+                    "symbol": t.symbol,
+                    "asset_name": t.asset_name,
+                    "quantity": t.quantity,
+                    "price": t.price,
+                    "date": t.date,
+                    "currency": t.currency,
+                    "fees": t.fees,
+                    "raw_text": t.raw_text,
+                }
+            )
+        bookings = client.extract_bookings(text)
+        with _EXTRACT_JOBS_LOCK:
+            _EXTRACT_JOBS[job_id].update(
+                status="done", transactions=transactions, bookings=bookings
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Async extraction failed")
+        with _EXTRACT_JOBS_LOCK:
+            _EXTRACT_JOBS[job_id].update(status="error", error=str(e))
+
+
+@router.post("/extract-async")
+async def extract_async(
+    request: TransactionExtractionRequest,
+    api_key_info: dict = Depends(get_api_key_auth_for_llm),
+):
+    """Start an extraction job and return its id immediately (poll for the result)."""
+    _prune_extract_jobs()
+    job_id = uuid.uuid4().hex
+    with _EXTRACT_JOBS_LOCK:
+        _EXTRACT_JOBS[job_id] = {
+            "status": "pending",
+            "transactions": [],
+            "bookings": [],
+            "error": None,
+            "created": time.time(),
+        }
+    threading.Thread(
+        target=_run_extraction_job, args=(job_id, request.text), daemon=True
+    ).start()
+    return {"job_id": job_id, "status": "pending"}
+
+
+@router.get("/extract-status/{job_id}")
+async def extract_status(
+    job_id: str,
+    api_key_info: dict = Depends(get_api_key_auth_for_llm),
+):
+    """Return the status/result of an extraction job."""
+    with _EXTRACT_JOBS_LOCK:
+        job = _EXTRACT_JOBS.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Unknown or expired job id")
+        return {
+            "status": job["status"],
+            "transactions": job["transactions"],
+            "bookings": job["bookings"],
+            "count": len(job["transactions"]),
+            "error": job["error"],
+        }
 
 
 # Enhanced chat endpoint that integrates stock advice
