@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 
 # Database version for migration tracking
-DATABASE_VERSION = 10
+DATABASE_VERSION = 11
 
 
 # black
@@ -201,6 +201,7 @@ class Database:
                 sector TEXT,
                 description TEXT,
                 is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                auto_price INTEGER NOT NULL DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -441,6 +442,8 @@ class Database:
             self._migrate_to_v9(conn)
         if current_version < 10:
             self._migrate_to_v10(conn)
+        if current_version < 11:
+            self._migrate_to_v11(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -773,6 +776,17 @@ class Database:
         (A portfolio doubles as a broker/account; `description` already exists.)
         """
         _add_column_if_missing(conn, "portfolios", "website", "TEXT")
+        conn.commit()
+
+    def _migrate_to_v11(self, conn: sqlite3.Connection):
+        """Migrate database from v10 to v11 — add assets.auto_price.
+
+        auto_price=0 means the price cron skips the asset so a manually-entered
+        price (for unlisted / P2P / illiquid holdings) is not overwritten.
+        """
+        _add_column_if_missing(
+            conn, "assets", "auto_price", "INTEGER NOT NULL DEFAULT 1"
+        )
         conn.commit()
 
     # CRUD Operations for Users
@@ -1174,6 +1188,7 @@ class Database:
             "sector",
             "description",
             "is_active",
+            "auto_price",
         }
         update_fields = {k: v for k, v in kwargs.items() if k in valid_fields}
 
