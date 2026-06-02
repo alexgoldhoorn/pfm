@@ -1,7 +1,7 @@
 # CLAUDE.md — Project Rules for AI Assistants
 
 ## Project Overview
-Portfolio Manager: a Python CLI + FastAPI server + web client for tracking stock/ETF/P2P investments across multiple brokers, with LLM-powered import, file import/export, web chat, Spanish IRPF tax reporting, and Google Sheets PDT sync.
+Portfolio Manager: a Python CLI + FastAPI server + web client for tracking stocks, ETFs, funds, bonds, crypto and commodities across multiple brokers, with LLM-powered import, file import/export, web chat, Spanish IRPF tax reporting, and Google Sheets PDT sync.
 
 ## Code Style
 - Use **black** code formatting (line length 88). Run: `uv run black <file>`.
@@ -222,7 +222,7 @@ Signature: `saveImportedTransactions(transactions, bookings = [], portfolioId = 
 - **App always uses SQLite**: `app.py` falls back to `portfolio.db` (SQLite) for non-`sqlite://` URLs. Container data lives at `/app/portfolio.db` inside `portf_backend_dev`.
 - **Linting**: `uv add --dev flake8` then `uv run flake8 portf_manager/ portf_server/ --max-line-length=88 --extend-ignore=E203,W503,E501`. ~11 known structural warnings remain in `cli.py` / `portfolio_aware_agent.py`.
 - MyInvestor CSV is semicolon-delimited with European number formatting (comma = decimal, dot = thousands). No standalone parser module — handled inline in CLI or via LLM text import.
-- Spanish tax: stocks, ETFs, P2P interest all = "rendimientos del capital mobiliario" (IRPF Box 27). FIFO method for cost basis.
+- Spanish tax: stocks, ETFs, bonds and funds all = "rendimientos del capital mobiliario" (IRPF Box 27). FIFO method for cost basis.
 - PDT XLSX export uses tempfile (openpyxl writes to a file path, not BytesIO). Always clean up with `os.unlink()`.
 - `portf_server/settings.py` uses `PORTF_` prefix for all env vars. Google vars (`GOOGLE_SERVICE_ACCOUNT_FILE`, `GOOGLE_SPREADSHEET_ID`) are NOT prefixed — read directly via `os.getenv()` in the sync router and `pdt_sheets_sync.py`.
 - `sqlite3.Row` dict (from `dict(row)`) uses the **first** occurrence when column names collide. Never rely on `SELECT t.*, ..., COALESCE(t.col, other) AS col` — use an explicit column list instead.

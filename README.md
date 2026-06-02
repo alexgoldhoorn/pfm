@@ -5,7 +5,7 @@
 [![Code Style](https://img.shields.io/badge/Code%20Style-Black-000000.svg)](https://github.com/psf/black)
 [![Testing](https://img.shields.io/badge/Tests-394%20passing-brightgreen.svg)](https://pytest.org)
 
-Python CLI + FastAPI server + web client for tracking stock, ETF, and P2P investments across multiple brokers. Features LLM-powered import, full Portfolio Dividend Tracker (PDT) v2 compatibility, Google Sheets sync, and Spanish IRPF tax reporting.
+Python CLI + FastAPI server + web client for tracking stocks, ETFs, funds, bonds, crypto and commodities across multiple brokers. Features LLM-powered import, full Portfolio Dividend Tracker (PDT) v2 compatibility, Google Sheets sync, and Spanish IRPF tax reporting.
 
 ---
 
