@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 
 # Database version for migration tracking
-DATABASE_VERSION = 9
+DATABASE_VERSION = 10
 
 
 # black
@@ -180,6 +180,7 @@ class Database:
                 entity_id INTEGER,
                 user_id INTEGER,
                 description TEXT,
+                website TEXT,
                 is_active BOOLEAN NOT NULL DEFAULT TRUE,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -438,6 +439,8 @@ class Database:
             self._migrate_to_v8(conn)
         if current_version < 9:
             self._migrate_to_v9(conn)
+        if current_version < 10:
+            self._migrate_to_v10(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -764,6 +767,14 @@ class Database:
             )""")
         conn.commit()
 
+    def _migrate_to_v10(self, conn: sqlite3.Connection):
+        """Migrate database from v9 to v10 — add broker website to portfolios.
+
+        (A portfolio doubles as a broker/account; `description` already exists.)
+        """
+        _add_column_if_missing(conn, "portfolios", "website", "TEXT")
+        conn.commit()
+
     # CRUD Operations for Users
     def create_user(
         self,
@@ -960,7 +971,8 @@ class Database:
         with self.get_connection() as conn:
             cursor = conn.execute(
                 """
-                SELECT p.*, e.name as entity_name, e.entity_type, e.website
+                SELECT p.*, e.name as entity_name, e.entity_type,
+                       e.website AS entity_website
                 FROM portfolios p
                 LEFT JOIN entities e ON p.entity_id = e.id
                 WHERE p.id = ?
@@ -975,7 +987,8 @@ class Database:
         with self.get_connection() as conn:
             cursor = conn.execute(
                 """
-                SELECT p.*, e.name as entity_name, e.entity_type, e.website
+                SELECT p.*, e.name as entity_name, e.entity_type,
+                       e.website AS entity_website
                 FROM portfolios p
                 LEFT JOIN entities e ON p.entity_id = e.id
                 WHERE p.name = ?
@@ -1013,7 +1026,8 @@ class Database:
         """Get all portfolios."""
         with self.get_connection() as conn:
             query = """
-                SELECT p.*, e.name as entity_name, e.entity_type, e.website
+                SELECT p.*, e.name as entity_name, e.entity_type,
+                       e.website AS entity_website
                 FROM portfolios p
                 LEFT JOIN entities e ON p.entity_id = e.id
             """
@@ -1046,6 +1060,7 @@ class Database:
             "base_currency",
             "entity_id",
             "description",
+            "website",
             "is_active",
         }
         update_fields = {k: v for k, v in kwargs.items() if k in valid_fields}
@@ -1410,6 +1425,34 @@ class Database:
             conn.commit()
             return cursor.lastrowid
 
+    def find_duplicate_booking(
+        self,
+        date: str,
+        action: str,
+        amount: float,
+        currency: str,
+        portfolio_id: int = None,
+    ) -> Optional[Dict]:
+        """Return an existing booking matching on date, action, amount (±0.001),
+        currency and portfolio, or None. Used to detect re-imported cash moves.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT id, date, action, amount, currency, portfolio_id
+                FROM bookings
+                WHERE date = ?
+                  AND action = ?
+                  AND ABS(amount - ?) < 0.001
+                  AND currency = ?
+                  AND (portfolio_id IS ? OR portfolio_id = ?)
+                LIMIT 1
+                """,
+                (date, action, amount, currency, portfolio_id, portfolio_id),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
     def get_booking(self, booking_id: int) -> Optional[Dict]:
         """Get a booking by ID."""
         with self.get_connection() as conn:
@@ -1444,6 +1487,32 @@ class Database:
     def get_bookings_by_portfolio(self, portfolio_id: int) -> List[Dict]:
         """Get all bookings for a given portfolio."""
         return self.get_all_bookings(portfolio_id=portfolio_id)
+
+    def get_portfolio_date_ranges(self) -> Dict[int, Dict[str, str]]:
+        """Per-portfolio first/last transaction date and first/last booking date.
+
+        Returns {portfolio_id: {first_transaction_date, last_transaction_date,
+        first_booking_date, last_booking_date}}. Lets the Brokers page show what
+        period each broker already covers (so you know what's left to import).
+        """
+        out: Dict[int, Dict[str, str]] = {}
+        with self.get_connection() as conn:
+            for row in conn.execute(
+                "SELECT portfolio_id, MIN(transaction_date) AS mn, "
+                "MAX(transaction_date) AS mx FROM transactions "
+                "WHERE portfolio_id IS NOT NULL GROUP BY portfolio_id"
+            ):
+                out.setdefault(row["portfolio_id"], {}).update(
+                    first_transaction_date=row["mn"], last_transaction_date=row["mx"]
+                )
+            for row in conn.execute(
+                "SELECT portfolio_id, MIN(date) AS mn, MAX(date) AS mx "
+                "FROM bookings WHERE portfolio_id IS NOT NULL GROUP BY portfolio_id"
+            ):
+                out.setdefault(row["portfolio_id"], {}).update(
+                    first_booking_date=row["mn"], last_booking_date=row["mx"]
+                )
+        return out
 
     def delete_booking(self, booking_id: int) -> bool:
         """Delete a booking by ID."""

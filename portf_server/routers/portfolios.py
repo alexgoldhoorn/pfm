@@ -60,6 +60,7 @@ class PortfolioCreate(BaseModel):
     base_currency: str = Field("EUR", description="Base currency")
     entity_id: Optional[int] = Field(None, description="Linked entity/broker ID")
     description: Optional[str] = Field(None, description="Portfolio description")
+    website: Optional[str] = Field(None, description="Broker website URL")
 
 
 class PortfolioUpdate(BaseModel):
@@ -68,6 +69,7 @@ class PortfolioUpdate(BaseModel):
     name: Optional[str] = None
     base_currency: Optional[str] = None
     description: Optional[str] = None
+    website: Optional[str] = None
 
 
 class PortfolioResponse(BaseModel):
@@ -89,24 +91,104 @@ async def _get_api_key_auth(
     return await require_api_key(api_key_manager)(request)
 
 
+# Built-in defaults for well-known brokers — used to pre-fill website/description
+# when a portfolio has none and its name matches (case-insensitive). The user's
+# own stored value always takes precedence. No live scraping (slow/brittle/ToS).
+KNOWN_BROKERS: dict[str, dict[str, str]] = {
+    "myinvestor": {
+        "website": "https://myinvestor.es",
+        "description": "Spanish online bank and low-cost broker.",
+    },
+    "indexa capital": {
+        "website": "https://indexacapital.com",
+        "description": "Spanish automated index-fund manager (robo-advisor).",
+    },
+    "degiro": {
+        "website": "https://www.degiro.com",
+        "description": "European low-cost online broker.",
+    },
+    "trade republic": {
+        "website": "https://traderepublic.com",
+        "description": "European mobile-first broker and savings app.",
+    },
+    "coinbase": {
+        "website": "https://www.coinbase.com",
+        "description": "Cryptocurrency exchange and brokerage.",
+    },
+    "binance": {
+        "website": "https://www.binance.com",
+        "description": "Cryptocurrency exchange.",
+    },
+    "mintos": {
+        "website": "https://www.mintos.com",
+        "description": "Peer-to-peer lending marketplace (tracked as a generic holding).",
+    },
+    "bondora": {
+        "website": "https://www.bondora.com",
+        "description": "Peer-to-peer lending platform (tracked as a generic holding).",
+    },
+    "interactive brokers": {
+        "website": "https://www.interactivebrokers.com",
+        "description": "Global online broker with broad market access.",
+    },
+    "ibkr": {
+        "website": "https://www.interactivebrokers.com",
+        "description": "Global online broker with broad market access.",
+    },
+    "etoro": {
+        "website": "https://www.etoro.com",
+        "description": "Multi-asset social-investing broker.",
+    },
+    "revolut": {
+        "website": "https://www.revolut.com",
+        "description": "Fintech app with investing and trading features.",
+    },
+    "xtb": {
+        "website": "https://www.xtb.com",
+        "description": "European online broker (stocks, ETFs, CFDs).",
+    },
+}
+
+
+def _broker_defaults(name: str) -> dict:
+    return KNOWN_BROKERS.get((name or "").strip().lower(), {})
+
+
 @router.get("/")
 async def list_portfolios(
     database: Database = Depends(get_database),
 ):
-    """Get all portfolios."""
+    """Get all portfolios (a portfolio doubles as a broker/account).
+
+    Includes the broker website/description (stored value, else a built-in
+    default for known brokers) and the first/last transaction and booking dates
+    so you can see what each broker already covers.
+    """
     portfolios = database.get_all_portfolios()
-    return [
-        {
-            "id": p["id"],
-            "name": p["name"],
-            "base_currency": p.get("base_currency", "EUR"),
-            "entity_id": p.get("entity_id"),
-            "entity_name": p.get("entity_name"),
-            "description": p.get("description"),
-            "is_active": p.get("is_active", True),
-        }
-        for p in portfolios
-    ]
+    ranges = database.get_portfolio_date_ranges()
+    out = []
+    for p in portfolios:
+        defaults = _broker_defaults(p["name"])
+        r = ranges.get(p["id"], {})
+        out.append(
+            {
+                "id": p["id"],
+                "name": p["name"],
+                "base_currency": p.get("base_currency", "EUR"),
+                "entity_id": p.get("entity_id"),
+                "entity_name": p.get("entity_name"),
+                "description": p.get("description") or defaults.get("description"),
+                "website": p.get("website") or defaults.get("website"),
+                "website_is_default": not p.get("website")
+                and bool(defaults.get("website")),
+                "is_active": p.get("is_active", True),
+                "first_transaction_date": r.get("first_transaction_date"),
+                "last_transaction_date": r.get("last_transaction_date"),
+                "first_booking_date": r.get("first_booking_date"),
+                "last_booking_date": r.get("last_booking_date"),
+            }
+        )
+    return out
 
 
 @router.get("/values")
