@@ -47,9 +47,9 @@ services:
       - GOOGLE_API_KEY
       - OPENROUTER_API_KEY
       - PORTF_OPENROUTER_API_KEY
-      - PORTF_LLM_PROVIDER=openrouter
+      - PORTF_LLM_PROVIDER=gemini
       - PORTF_LLM_MODEL
-      - LLM_PROVIDER=openrouter
+      - LLM_PROVIDER=gemini
       - PORTF_PUBLIC_VIEW
       - POSTGRES_USER
       - POSTGRES_PASSWORD
