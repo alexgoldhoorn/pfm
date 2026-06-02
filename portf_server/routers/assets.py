@@ -363,6 +363,11 @@ async def add_price(
             source=price_data.source,
         )
 
+        # A manually-entered price marks the asset so the daily price cron skips
+        # it (won't overwrite manual prices for unlisted / P2P / illiquid assets).
+        if (price_data.source or "").lower() == "manual":
+            db.update_asset(asset_id, auto_price=0)
+
         # Get created price
         price_dict = db.get_price(
             asset_id=asset_id,

@@ -69,6 +69,7 @@ class AssetResponse(BaseModel):
     sector: Optional[str] = None
     description: Optional[str] = None
     is_active: bool
+    auto_price: bool = True
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

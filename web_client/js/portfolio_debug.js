@@ -353,6 +353,20 @@ function createAPIClient() {
             return resp.json();
         },
 
+        async setAssetPrice(assetId, price) {
+            const today = new Date().toISOString().slice(0, 10);
+            const resp = await fetch(this.baseURL + `/api/v1/assets/${assetId}/prices`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify({ price, price_date: today, price_type: 'close', source: 'manual' })
+            });
+            if (!resp.ok) {
+                const e = await resp.json().catch(() => ({}));
+                throw new Error(e.detail || 'Failed to set price');
+            }
+            return resp.json();
+        },
+
         async createBooking(booking) {
             const resp = await fetch(this.baseURL + '/api/v1/bookings/', {
                 method: 'POST',
@@ -1057,12 +1071,14 @@ function createPageManager() {
                                 <td>${asset.name || 'N/A'}</td>
                                 <td><span class="badge bg-primary">${asset.asset_type || 'N/A'}</span></td>
                                 <td>${asset.exchange || 'N/A'}</td>
-                                <td>${fmtPrice(asset.current_price, asset.currency)}</td>
+                                <td>
+                                    ${fmtPrice(asset.current_price, asset.currency)}
+                                    ${asset.auto_price === false ? '<span class="badge bg-secondary ms-1" title="Manual price — the daily cron will not overwrite it">manual</span>' : ''}
+                                    <button class="btn btn-sm btn-link p-0 ms-1 align-baseline" title="Set a manual price" onclick="setAssetPrice(${asset.id}, '${(asset.symbol || '').replace(/'/g, "\\'")}', '${asset.currency || ''}')"><i class="bi bi-pencil-square"></i></button>
+                                </td>
                                 <td>${asset.currency || ''}</td>
                                 <td>
-                                    <button class="btn btn-sm btn-outline-primary me-1">View</button>
-                                    <button class="btn btn-sm btn-outline-secondary me-1">Edit</button>
-                                    <button class="btn btn-sm btn-outline-danger">Delete</button>
+                                    ${assetLinks(asset.symbol)}
                                 </td>
                             </tr>
                         `).join('');
@@ -2906,6 +2922,19 @@ function setupPortfoliosPage() {
         }
     });
 }
+
+window.setAssetPrice = async function(id, symbol, currency) {
+    const val = prompt(`Set a manual price for ${symbol}${currency ? ' (' + currency + ')' : ''}.\nThe daily price update will stop overwriting it.`);
+    if (val === null) return;
+    const price = parseFloat(val);
+    if (!(price > 0)) { alert('Please enter a positive number.'); return; }
+    try {
+        await window.apiClient.setAssetPrice(id, price);
+        window.pageManager.loadAssetsPage();
+    } catch (e) {
+        alert('Error setting price: ' + e.message);
+    }
+};
 
 window.editPortfolio = function(id, name, currency, description, website) {
     document.getElementById('portfolioModalTitle').textContent = 'Edit Portfolio';

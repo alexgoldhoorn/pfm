@@ -2735,8 +2735,13 @@ class PortfolioManagerCLI:
                     print("❌ No valid assets found for the specified symbols")
                     return
             else:
-                # Get all active assets
-                assets_to_update = self.db_manager.get_all_assets(active_only=True)
+                # Get all active assets, excluding manual-price ones (auto_price=0)
+                # so a manually-entered price isn't overwritten by the cron.
+                assets_to_update = [
+                    a
+                    for a in self.db_manager.get_all_assets(active_only=True)
+                    if a.get("auto_price", 1)
+                ]
 
                 if not assets_to_update:
                     print("📋 No active assets found in portfolio")
