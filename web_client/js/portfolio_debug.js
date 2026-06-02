@@ -532,6 +532,29 @@ function createAPIClient() {
             return resp.json();
         },
 
+        async researchLookup(symbol) {
+            const r = await fetch(this.baseURL + `/api/v1/research/${encodeURIComponent(symbol)}/lookup`, { headers: { 'X-API-Key': this.apiKey } });
+            if (!r.ok) throw new Error(await r.text());
+            return r.json();
+        },
+        async researchSave(symbol, body) {
+            const r = await fetch(this.baseURL + `/api/v1/research/${encodeURIComponent(symbol)}/save`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey }, body: JSON.stringify(body)
+            });
+            if (!r.ok) throw new Error(await r.text());
+            return r.json();
+        },
+        async researchHistory(symbol) {
+            const r = await fetch(this.baseURL + `/api/v1/research/${encodeURIComponent(symbol)}/history`, { headers: { 'X-API-Key': this.apiKey } });
+            if (!r.ok) throw new Error(await r.text());
+            return r.json();
+        },
+        async researchCompare() {
+            const r = await fetch(this.baseURL + '/api/v1/research/compare', { headers: { 'X-API-Key': this.apiKey } });
+            if (!r.ok) throw new Error(await r.text());
+            return r.json();
+        },
+
         async getPriceTargets(symbol) {
             const resp = await fetch(this.baseURL + `/api/v1/research/${encodeURIComponent(symbol)}/targets`, {
                 headers: { 'X-API-Key': this.apiKey }
@@ -2507,7 +2530,7 @@ function createNavigationManager() {
     return {
         currentPage: 'dashboard',
         showPage: function(pageName) {
-            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'holdingsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage'];
+            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'holdingsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage'];
             pages.forEach(pageId => {
                 const page = document.getElementById(pageId);
                 if (page) page.style.display = 'none';
@@ -2543,6 +2566,7 @@ function createNavigationManager() {
                 case 'chat':         break;
                 case 'importexport': break;
                 case 'portfolios':   window.pageManager.loadPortfoliosPage(); break;
+                case 'research':     if (window.loadResearchPage) window.loadResearchPage(); break;
                 case 'forecast':     if (window._fcLoadStartValue) window._fcLoadStartValue(); break;
             }
         },
@@ -4227,6 +4251,230 @@ function setupAddTransaction() {
     });
 }
 
+// Research workbench page
+function setupResearchPage() {
+    const page = document.getElementById('researchPage');
+    if (!page || page.dataset.wired) return;
+    page.dataset.wired = '1';
+    const $ = id => document.getElementById(id);
+    const money = (v, cur) => (v == null ? '—' : Fmt.num(v, 2, 2) + (cur ? ' ' + cur : ''));
+    let R = { symbol: null, currency: '', price: 0, fundamentals: {}, llm: null };
+
+    // Tabs
+    page.querySelectorAll('#researchTabs [data-rtab]').forEach(a => {
+        a.addEventListener('click', (e) => {
+            e.preventDefault();
+            page.querySelectorAll('#researchTabs .nav-link').forEach(n => n.classList.remove('active'));
+            a.classList.add('active');
+            const t = a.dataset.rtab;
+            $('researchWorkbench').style.display = t === 'workbench' ? '' : 'none';
+            $('researchCompare').style.display = t === 'compare' ? '' : 'none';
+            if (t === 'compare') loadCompare();
+        });
+    });
+
+    function recompute() {
+        const method = $('rvMethod').value;
+        page.querySelectorAll('[data-method]').forEach(el => {
+            el.style.display = el.dataset.method === method ? '' : 'none';
+        });
+        let fair = null;
+        if (method === 'pe') {
+            const eps = parseFloat($('rvEps').value), pe = parseFloat($('rvTargetPe').value);
+            if (eps && pe) fair = eps * pe;
+        } else {
+            const div = parseFloat($('rvDiv').value), ty = parseFloat($('rvTargetYield').value);
+            if (div && ty) fair = div / (ty / 100);
+        }
+        const mos = parseFloat($('rvMos').value) || 0, prem = parseFloat($('rvPremium').value) || 0;
+        const buy = fair != null ? fair * (1 - mos / 100) : null;
+        const sell = fair != null ? fair * (1 + prem / 100) : null;
+        $('rvFairValue').textContent = money(fair, R.currency);
+        $('rvBuyBelow').textContent = money(buy, R.currency);
+        $('rvSellAbove').textContent = money(sell, R.currency);
+        if (fair && R.price) {
+            const up = (fair - R.price) / R.price * 100;
+            $('rvUpside').innerHTML = `Upside to fair value: <strong class="${up >= 0 ? 'text-success' : 'text-danger'}">${anFmtPct(up)}</strong> (price ${money(R.price, R.currency)})`;
+        } else $('rvUpside').textContent = '';
+        return { method, fair, buy, sell };
+    }
+    ['rvMethod', 'rvEps', 'rvTargetPe', 'rvDiv', 'rvTargetYield', 'rvMos', 'rvPremium'].forEach(id => {
+        $(id).addEventListener('input', recompute);
+        $(id).addEventListener('change', recompute);
+    });
+
+    function renderFundamentals(f) {
+        const keys = Object.keys(f || {}).filter(k => k !== 'symbol');
+        $('rsFundamentals').innerHTML = keys.length
+            ? keys.map(k => `<div class="d-flex justify-content-between"><span class="text-muted">${k}</span><span>${typeof f[k] === 'number' ? Fmt.num(f[k], 0, 4) : f[k]}</span></div>`).join('')
+            : '<span class="text-muted">No fundamentals available.</span>';
+    }
+
+    async function loadHistory(sym) {
+        try {
+            const notes = await window.apiClient.researchHistory(sym);
+            $('rvHistory').innerHTML = notes.length ? notes.map(n => `
+                <button class="list-group-item list-group-item-action" data-note='${JSON.stringify({ thesis: n.thesis, conviction: n.conviction, method: n.method, assumptions: n.assumptions }).replace(/'/g, "&#39;")}'>
+                    <div class="d-flex justify-content-between"><strong>${money(n.fair_value, '')}</strong><small class="text-muted">${Fmt.date(n.created_at)}</small></div>
+                    <div class="small text-muted">buy ${money(n.buy_below, '')} · sell ${money(n.sell_above, '')} · conv ${n.conviction ?? '—'}</div>
+                </button>`).join('') : '<div class="p-3 text-muted small">No saved research yet.</div>';
+            $('rvHistory').querySelectorAll('[data-note]').forEach(b => b.addEventListener('click', () => {
+                try {
+                    const n = JSON.parse(b.dataset.note);
+                    if (n.thesis) $('rvThesis').value = n.thesis;
+                    if (n.conviction) $('rvConviction').value = n.conviction;
+                    if (n.method) $('rvMethod').value = n.method;
+                    const a = n.assumptions || {};
+                    if (a.eps != null) $('rvEps').value = a.eps;
+                    if (a.target_pe != null) $('rvTargetPe').value = a.target_pe;
+                    if (a.annual_dividend != null) $('rvDiv').value = a.annual_dividend;
+                    if (a.target_yield != null) $('rvTargetYield').value = a.target_yield;
+                    if (a.margin_of_safety != null) $('rvMos').value = a.margin_of_safety;
+                    if (a.premium != null) $('rvPremium').value = a.premium;
+                    recompute();
+                } catch (e) { /* ignore */ }
+            }));
+        } catch (e) { $('rvHistory').innerHTML = '<div class="p-3 text-danger small">' + e.message + '</div>'; }
+    }
+
+    async function load(sym) {
+        sym = (sym || '').trim().toUpperCase();
+        if (!sym) return;
+        $('researchHint').textContent = 'Loading ' + sym + '…';
+        try {
+            const d = await window.apiClient.researchLookup(sym);
+            R = { symbol: sym, currency: d.currency, price: d.current_price, fundamentals: d.fundamentals || {}, llm: null };
+            $('researchBody').style.display = '';
+            $('rsName').textContent = `${sym} — ${d.name || ''}`;
+            $('rsHeld').textContent = d.held ? 'held' : 'not held';
+            $('rsHeld').className = 'badge ms-1 ' + (d.held ? 'bg-success' : 'bg-secondary');
+            $('rsPrice').textContent = money(d.current_price, d.currency);
+            $('rsAvgCost').textContent = d.avg_cost ? money(d.avg_cost, d.currency) : '—';
+            $('rsQty').textContent = d.quantity || '—';
+            renderFundamentals(d.fundamentals);
+            // Pre-fill calculator from fundamentals + any existing target.
+            $('rvEps').value = d.fundamentals?.trailingEps ?? '';
+            $('rvTargetPe').value = d.fundamentals?.trailingPE ? Math.round(d.fundamentals.trailingPE) : 20;
+            $('rvDiv').value = d.fundamentals?.dividendRate ?? '';
+            $('rvTargetYield').value = d.fundamentals?.dividendYield ? (d.fundamentals.dividendYield * 100).toFixed(1) : 4;
+            const t = d.targets || {};
+            if (d.latest_note && d.latest_note.thesis) $('rvThesis').value = d.latest_note.thesis;
+            recompute();
+            $('rvLlmBody').innerHTML = '<span class="text-muted small">Click “Research with web” for an LLM read.</span>';
+            $('rvSaveMsg').textContent = '';
+            loadHistory(sym);
+            $('researchHint').textContent = '';
+        } catch (e) {
+            $('researchHint').innerHTML = '<span class="text-danger">' + (e.message || 'lookup failed') + '</span>';
+        }
+    }
+
+    $('researchLoadBtn').addEventListener('click', () => load($('researchTicker').value));
+    $('researchTicker').addEventListener('keydown', e => { if (e.key === 'Enter') load($('researchTicker').value); });
+
+    $('rvGenerateBtn').addEventListener('click', async () => {
+        if (!R.symbol) return;
+        const btn = $('rvGenerateBtn'); const orig = btn.innerHTML;
+        btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Researching…';
+        try {
+            const r = await window.apiClient.generateResearchReport(R.symbol);
+            R.llm = r;
+            const sources = (r.sources || []).map(s => `<li><a href="${s.url}" target="_blank" rel="noopener">${s.title || s.url}</a> <span class="text-muted small">${s.publisher || ''}</span></li>`).join('');
+            const recCls = r.recommendation === 'BUY' ? 'success' : r.recommendation === 'SELL' ? 'danger' : 'secondary';
+            $('rvLlmBody').innerHTML = `
+                <div class="d-flex gap-2 align-items-center mb-2">
+                    <span class="badge bg-${recCls}">${r.recommendation || '—'}</span>
+                    <span class="text-muted small">confidence: ${r.confidence || '—'}</span>
+                    ${r.fair_value != null ? `<span class="ms-auto">LLM fair value: <strong>${money(r.fair_value, R.currency)}</strong> <button class="btn btn-sm btn-outline-secondary ms-1" id="rvPullFair">Use ↓</button></span>` : ''}
+                </div>
+                <p class="mb-2">${r.summary || ''}</p>
+                ${r.rationale ? `<p class="small text-muted">${r.rationale}</p>` : ''}
+                ${(r.risks || []).length ? `<div class="small"><strong>Risks:</strong> ${(r.risks || []).join('; ')}</div>` : ''}
+                ${(r.catalysts || []).length ? `<div class="small"><strong>Catalysts:</strong> ${(r.catalysts || []).join('; ')}</div>` : ''}
+                ${sources ? `<div class="small mt-2"><strong>Sources (recent news):</strong><ul class="mb-0">${sources}</ul></div>` : ''}`;
+            const pull = $('rvPullFair');
+            if (pull) pull.addEventListener('click', () => {
+                // Set EPS-implied target so the calculator reflects the LLM fair value when possible.
+                if (r.fair_value && R.fundamentals?.trailingEps) {
+                    $('rvMethod').value = 'pe';
+                    $('rvEps').value = R.fundamentals.trailingEps;
+                    $('rvTargetPe').value = (r.fair_value / R.fundamentals.trailingEps).toFixed(1);
+                }
+                recompute();
+            });
+        } catch (e) {
+            $('rvLlmBody').innerHTML = '<span class="text-danger small">' + (e.message || 'failed') + '</span>';
+        } finally { btn.disabled = false; btn.innerHTML = orig; }
+    });
+
+    $('rvSaveBtn').addEventListener('click', async () => {
+        if (!R.symbol) { alert('Load a ticker first.'); return; }
+        const c = recompute();
+        const assumptions = {
+            eps: parseFloat($('rvEps').value) || null,
+            target_pe: parseFloat($('rvTargetPe').value) || null,
+            annual_dividend: parseFloat($('rvDiv').value) || null,
+            target_yield: parseFloat($('rvTargetYield').value) || null,
+            margin_of_safety: parseFloat($('rvMos').value) || null,
+            premium: parseFloat($('rvPremium').value) || null,
+        };
+        try {
+            const res = await window.apiClient.researchSave(R.symbol, {
+                thesis: $('rvThesis').value || null,
+                conviction: parseInt($('rvConviction').value),
+                method: c.method,
+                assumptions,
+                fair_value: c.fair, buy_below: c.buy, sell_above: c.sell,
+                current_price: R.price,
+                llm_summary: R.llm ? R.llm.summary : null,
+                sources: R.llm ? R.llm.sources : null,
+            });
+            $('rvSaveMsg').innerHTML = `<span class="text-success">Saved.${res.targets_updated ? ' Targets updated (alerts active).' : ' (Not held — saved as research only.)'}</span>`;
+            loadHistory(R.symbol);
+        } catch (e) { $('rvSaveMsg').innerHTML = '<span class="text-danger">' + e.message + '</span>'; }
+    });
+
+    async function loadCompare() {
+        const body = $('researchCompareBody');
+        body.innerHTML = '<tr><td colspan="8" class="text-center py-3"><span class="spinner-border spinner-border-sm"></span></td></tr>';
+        try {
+            const rows = await window.apiClient.researchCompare();
+            if (!rows.length) { body.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">No saved research yet.</td></tr>'; return; }
+            body.innerHTML = rows.map(r => {
+                const up = r.upside_pct;
+                const upCls = up == null ? 'text-muted' : up >= 0 ? 'text-success' : 'text-danger';
+                return `<tr style="cursor:pointer" data-sym="${r.symbol}">
+                    <td class="ps-3"><strong>${r.symbol}</strong></td>
+                    <td class="text-end">${money(r.current_price, '')}</td>
+                    <td class="text-end">${money(r.fair_value, '')}</td>
+                    <td class="text-end ${upCls}">${up == null ? '—' : anFmtPct(up)}</td>
+                    <td class="text-end">${money(r.buy_below, '')}</td>
+                    <td class="text-end">${money(r.sell_above, '')}</td>
+                    <td class="text-center">${r.conviction ?? '—'}</td>
+                    <td>${Fmt.date(r.updated_at)}</td></tr>`;
+            }).join('');
+            body.querySelectorAll('[data-sym]').forEach(tr => tr.addEventListener('click', () => {
+                page.querySelector('#researchTabs [data-rtab="workbench"]').click();
+                $('researchTicker').value = tr.dataset.sym; load(tr.dataset.sym);
+            }));
+        } catch (e) { body.innerHTML = '<tr><td colspan="8" class="text-danger text-center py-3">' + e.message + '</td></tr>'; }
+    }
+
+    // Expose loader (populates the ticker datalist on each page open).
+    window.loadResearchPage = async function () {
+        try {
+            const [holdings, watch] = await Promise.all([
+                window.apiClient.getHoldings().catch(() => ({ holdings: [] })),
+                window.apiClient.getWatchlist().catch(() => []),
+            ]);
+            const syms = new Set();
+            (holdings.holdings || []).forEach(h => syms.add(h.symbol));
+            (watch || []).forEach(w => syms.add(w.symbol));
+            $('researchTickerList').innerHTML = [...syms].map(s => `<option value="${s}">`).join('');
+        } catch (e) { /* ignore */ }
+    };
+}
+
 // Settings modal — browser-local preferences (theme, formats, defaults, privacy)
 function setupSettings() {
     const modalEl = document.getElementById('settingsModal');
@@ -4297,6 +4545,7 @@ document.addEventListener('DOMContentLoaded', function() {
     applyPrivacy();
     setupSettings();
     setupAddTransaction();
+    setupResearchPage();
 
     window.authManager.setupLoginForm();
     window.authManager.setupLogout();

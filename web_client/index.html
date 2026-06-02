@@ -143,6 +143,9 @@
                 <a class="sidebar-nav-link" href="#" data-page="watchlist">
                     <i class="bi bi-eye me-2"></i>Watchlist
                 </a>
+                <a class="sidebar-nav-link" href="#" data-page="research">
+                    <i class="bi bi-search-heart me-2"></i>Research
+                </a>
                 <a class="sidebar-nav-link" href="#" data-page="goals">
                     <i class="bi bi-bullseye me-2"></i>Goals
                 </a>
@@ -195,6 +198,9 @@
                 </a>
                 <a class="sidebar-nav-link" href="#" data-page="watchlist">
                     <i class="bi bi-eye me-2"></i>Watchlist
+                </a>
+                <a class="sidebar-nav-link" href="#" data-page="research">
+                    <i class="bi bi-search-heart me-2"></i>Research
                 </a>
                 <a class="sidebar-nav-link" href="#" data-page="goals">
                     <i class="bi bi-bullseye me-2"></i>Goals
@@ -1058,6 +1064,150 @@
                                         </td></tr>
                                     </tbody>
                                     <tfoot id="portfoliosFooter"></tfoot>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Research Page -->
+                <div id="researchPage" class="page-content" style="display: none;">
+                    <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+                        <div>
+                            <h4 class="mb-0"><i class="bi bi-search-heart me-2 text-primary"></i>Research</h4>
+                            <p class="text-muted small mb-0">Pick a ticker — from your holdings, watchlist, or any symbol — set goal buy/sell prices, capture your thesis, and let an LLM (with live news) assist.</p>
+                        </div>
+                        <ul class="nav nav-pills" id="researchTabs">
+                            <li class="nav-item"><a class="nav-link active" href="#" data-rtab="workbench">Workbench</a></li>
+                            <li class="nav-item"><a class="nav-link" href="#" data-rtab="compare">Compare</a></li>
+                        </ul>
+                    </div>
+
+                    <!-- Workbench tab -->
+                    <div id="researchWorkbench">
+                        <div class="card mb-3">
+                            <div class="card-body d-flex flex-wrap gap-2 align-items-center">
+                                <label class="form-label mb-0 me-1">Ticker</label>
+                                <input class="form-control" list="researchTickerList" id="researchTicker" placeholder="e.g. AAPL or an ISIN" style="max-width:260px;">
+                                <datalist id="researchTickerList"></datalist>
+                                <button class="btn btn-primary" id="researchLoadBtn"><i class="bi bi-search me-1"></i>Load</button>
+                                <span class="text-muted small" id="researchHint">Held &amp; watchlist tickers are suggested.</span>
+                            </div>
+                        </div>
+
+                        <div id="researchBody" style="display:none;">
+                            <div class="row g-3">
+                                <!-- Snapshot + fundamentals -->
+                                <div class="col-12 col-lg-5">
+                                    <div class="card h-100">
+                                        <div class="card-header fw-semibold"><i class="bi bi-info-circle me-2"></i><span id="rsName">—</span> <span id="rsHeld" class="badge bg-secondary ms-1"></span></div>
+                                        <div class="card-body">
+                                            <div class="d-flex justify-content-between"><span class="text-muted">Current price</span><strong id="rsPrice">—</strong></div>
+                                            <div class="d-flex justify-content-between"><span class="text-muted">Your avg cost</span><span id="rsAvgCost">—</span></div>
+                                            <div class="d-flex justify-content-between"><span class="text-muted">Position</span><span id="rsQty">—</span></div>
+                                            <hr>
+                                            <div class="small text-muted mb-1">Fundamentals</div>
+                                            <div id="rsFundamentals" class="small" style="max-height:220px;overflow:auto;"></div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Valuation calculator -->
+                                <div class="col-12 col-lg-7">
+                                    <div class="card h-100">
+                                        <div class="card-header fw-semibold"><i class="bi bi-calculator me-2"></i>Valuation → goal prices</div>
+                                        <div class="card-body">
+                                            <div class="row g-2 align-items-end">
+                                                <div class="col-sm-4">
+                                                    <label class="form-label small mb-1">Method</label>
+                                                    <select class="form-select form-select-sm" id="rvMethod">
+                                                        <option value="pe">P/E multiple</option>
+                                                        <option value="dividend_yield">Dividend yield</option>
+                                                    </select>
+                                                </div>
+                                                <div class="col-sm-4" data-method="pe">
+                                                    <label class="form-label small mb-1">EPS</label>
+                                                    <input type="number" step="0.01" class="form-control form-control-sm" id="rvEps">
+                                                </div>
+                                                <div class="col-sm-4" data-method="pe">
+                                                    <label class="form-label small mb-1">Target P/E</label>
+                                                    <input type="number" step="0.1" class="form-control form-control-sm" id="rvTargetPe">
+                                                </div>
+                                                <div class="col-sm-4" data-method="dividend_yield" style="display:none;">
+                                                    <label class="form-label small mb-1">Annual dividend</label>
+                                                    <input type="number" step="0.01" class="form-control form-control-sm" id="rvDiv">
+                                                </div>
+                                                <div class="col-sm-4" data-method="dividend_yield" style="display:none;">
+                                                    <label class="form-label small mb-1">Target yield %</label>
+                                                    <input type="number" step="0.1" class="form-control form-control-sm" id="rvTargetYield">
+                                                </div>
+                                                <div class="col-sm-4">
+                                                    <label class="form-label small mb-1">Margin of safety %</label>
+                                                    <input type="number" step="1" class="form-control form-control-sm" id="rvMos" value="20">
+                                                </div>
+                                                <div class="col-sm-4">
+                                                    <label class="form-label small mb-1">Take-profit premium %</label>
+                                                    <input type="number" step="1" class="form-control form-control-sm" id="rvPremium" value="20">
+                                                </div>
+                                            </div>
+                                            <div class="row g-2 mt-2 text-center">
+                                                <div class="col-4"><div class="border rounded p-2"><div class="small text-muted">Buy below</div><div class="fw-bold text-success" id="rvBuyBelow">—</div></div></div>
+                                                <div class="col-4"><div class="border rounded p-2"><div class="small text-muted">Fair value</div><div class="fw-bold" id="rvFairValue">—</div></div></div>
+                                                <div class="col-4"><div class="border rounded p-2"><div class="small text-muted">Sell above</div><div class="fw-bold text-danger" id="rvSellAbove">—</div></div></div>
+                                            </div>
+                                            <div class="small text-muted mt-1" id="rvUpside"></div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- LLM assist -->
+                                <div class="col-12">
+                                    <div class="card">
+                                        <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+                                            <span><i class="bi bi-magic me-2"></i>LLM analysis <span class="text-muted small">(live news context + citations)</span></span>
+                                            <button class="btn btn-sm btn-outline-primary" id="rvGenerateBtn"><i class="bi bi-stars me-1"></i>Research with web</button>
+                                        </div>
+                                        <div class="card-body" id="rvLlmBody"><span class="text-muted small">Click “Research with web” for an LLM read on fundamentals + recent news. You can pull its fair value into the calculator.</span></div>
+                                    </div>
+                                </div>
+
+                                <!-- Thesis + save -->
+                                <div class="col-12 col-lg-8">
+                                    <div class="card h-100">
+                                        <div class="card-header fw-semibold"><i class="bi bi-journal-text me-2"></i>Your thesis</div>
+                                        <div class="card-body">
+                                            <textarea class="form-control mb-2" id="rvThesis" rows="5" placeholder="Bull case / bear case / catalysts / risks — your reasoning behind the targets."></textarea>
+                                            <div class="d-flex align-items-center gap-2">
+                                                <label class="form-label small mb-0">Conviction</label>
+                                                <select class="form-select form-select-sm" id="rvConviction" style="max-width:90px;">
+                                                    <option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option>
+                                                </select>
+                                                <button class="btn btn-success btn-sm ms-auto" id="rvSaveBtn"><i class="bi bi-save me-1"></i>Save research</button>
+                                            </div>
+                                            <div class="small mt-2" id="rvSaveMsg"></div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- History -->
+                                <div class="col-12 col-lg-4">
+                                    <div class="card h-100">
+                                        <div class="card-header fw-semibold"><i class="bi bi-clock-history me-2"></i>History</div>
+                                        <div class="card-body p-0"><div id="rvHistory" class="list-group list-group-flush" style="max-height:320px;overflow:auto;"></div></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Compare tab -->
+                    <div id="researchCompare" style="display:none;">
+                        <div class="card">
+                            <div class="card-header fw-semibold"><i class="bi bi-bar-chart me-2"></i>Saved research — compare</div>
+                            <div class="table-responsive">
+                                <table class="table table-hover mb-0">
+                                    <thead><tr><th class="ps-3">Ticker</th><th class="text-end">Price</th><th class="text-end">Fair value</th><th class="text-end">Upside</th><th class="text-end">Buy&lt;</th><th class="text-end">Sell&gt;</th><th class="text-center">Conviction</th><th>Updated</th></tr></thead>
+                                    <tbody id="researchCompareBody"><tr><td colspan="8" class="text-center text-muted py-4">No saved research yet.</td></tr></tbody>
                                 </table>
                             </div>
                         </div>
