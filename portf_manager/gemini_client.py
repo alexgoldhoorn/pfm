@@ -82,7 +82,7 @@ Each transaction should be formatted as a JSON object with these exact fields:
 - asset_name: Full company or fund name (e.g., "Apple Inc.", "Apple Inc.")
 - quantity: Number of shares/units as a float
 - price: Price per share/unit as a float (use "Precio" / "Precio límite" for Spanish, or the gross price per share)
-- date: Date in ISO-8601 format (YYYY-MM-DD)
+- date: ISO-8601. Use date+time "YYYY-MM-DDTHH:MM:SS" when the statement shows a time of day; otherwise just "YYYY-MM-DD"
 - currency: Currency code (e.g., "USD", "EUR")
 - fees: Total transaction costs as a float — sum ALL fee/commission/expense fields (e.g., "Comisiones" + "Gastos", or "Commission" + "Fees"). Default 0.0 if none.
 - raw_text: A relevant excerpt from the original text containing this transaction
@@ -130,7 +130,7 @@ Output: {{
   "asset_name": "Apple Inc.",
   "quantity": 14.0,
   "price": 9.87,
-  "date": "2025-06-17",
+  "date": "2025-06-17T15:07:28",
   "currency": "EUR",
   "raw_text": "Compra de acciones US0378331005 17/06/2025, 15:07:28 138,60 € 14 títulos Apple Inc. Precio límite: 9,87 €"
 }}
@@ -163,7 +163,7 @@ IMPORTANT:
 - Do not include any other text or explanations
 - If no transactions are found, return an empty array: []
 - Ensure all numeric values are proper numbers (not strings)
-- Convert dates to ISO-8601 format (YYYY-MM-DD)
+- Convert dates to ISO-8601 (YYYY-MM-DD), keeping the time as "...THH:MM:SS" when the statement shows one
 - Convert decimal commas to dots (e.g., "9,87" → 9.87)
 - Map transaction types to "buy" or "sell" regardless of language
 - Use ISIN codes as symbols when stock tickers are not available
