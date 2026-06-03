@@ -13,6 +13,7 @@ const PREFS_DEFAULTS = {
     benchmark: '^GSPC',
     landingPage: 'dashboard',
     rowsPerPage: 50,
+    defaultCurrency: 'EUR',   // pre-fills currency on new assets/transactions/bookings
 };
 window.PREFS = Object.assign({}, PREFS_DEFAULTS, (() => {
     try { return JSON.parse(localStorage.getItem(PREFS_KEY) || '{}'); } catch (e) { return {}; }
@@ -45,6 +46,17 @@ const Fmt = {
     },
 };
 window.Fmt = Fmt;
+
+// Apply the user's default currency to the static "new entry" form fields
+// (Add booking, new broker). Add-asset is handled on modal-show.
+function applyDefaultCurrency() {
+    const cur = (window.PREFS && window.PREFS.defaultCurrency) || 'EUR';
+    ['addBookingCurrency', 'portfolioCurrency'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = cur;
+    });
+}
+window.applyDefaultCurrency = applyDefaultCurrency;
 
 function applyTheme() {
     let t = window.PREFS.theme;
@@ -122,7 +134,23 @@ function createAPIClient() {
                 const err = await resp.json().catch(() => ({}));
                 throw new Error(err.detail || 'Login failed');
             }
+            // Remember username so the Settings → Change password form can prefill it
+            try { localStorage.setItem('pfm_username', username); } catch (e) { /* ignore */ }
             return (await resp.json()).api_key;
+        },
+
+        // Change password (web/shared-key model: current password is the gate)
+        changePassword: async function(username, currentPassword, newPassword) {
+            const resp = await fetch(this.baseURL + '/api/v1/auth/change-password-key', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, current_password: currentPassword, new_password: newPassword })
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.detail || 'Password change failed');
+            }
+            return resp.json();
         },
 
         // First-time account creation
@@ -708,6 +736,15 @@ function createModalManager() {
             if (!form) {
                 console.error('Add Asset form not found!');
                 return;
+            }
+
+            // Pre-fill the currency from the user's default each time it opens.
+            const addAssetModalEl = document.getElementById('addAssetModal');
+            if (addAssetModalEl) {
+                addAssetModalEl.addEventListener('show.bs.modal', () => {
+                    const c = document.getElementById('assetCurrency');
+                    if (c) c.value = (window.PREFS && window.PREFS.defaultCurrency) || 'EUR';
+                });
             }
 
             form.addEventListener('submit', async (e) => {
@@ -4998,7 +5035,11 @@ function setupSettings() {
         $('setDecimals').value = PREFS.decimals;
         $('setBenchmark').value = PREFS.benchmark;
         $('setLandingPage').value = PREFS.landingPage;
+        $('setDefaultCurrency').value = PREFS.defaultCurrency || 'EUR';
         $('setRowsPerPage').value = PREFS.rowsPerPage;
+        // Pre-fill the username for the password form from the last login
+        const u = localStorage.getItem('pfm_username');
+        if (u && $('setPwUser')) $('setPwUser').value = u;
     }
     function openModal(e) { if (e) e.preventDefault(); load(); bs.show(); }
 
@@ -5015,10 +5056,12 @@ function setupSettings() {
         PREFS.decimals = Math.max(0, Math.min(6, parseInt($('setDecimals').value) || 0));
         PREFS.benchmark = $('setBenchmark').value;
         PREFS.landingPage = $('setLandingPage').value;
+        PREFS.defaultCurrency = $('setDefaultCurrency').value || 'EUR';
         PREFS.rowsPerPage = Math.max(10, Math.min(500, parseInt($('setRowsPerPage').value) || 50));
         savePrefs();
         applyTheme();
         applyPrivacy();
+        applyDefaultCurrency();
         // Reflect the default benchmark in the analytics selector if present.
         const bm = document.getElementById('anBenchmark');
         if (bm) bm.value = PREFS.benchmark;
@@ -5037,6 +5080,29 @@ function setupSettings() {
         applyPrivacy();
     });
 
+    // Change password
+    const pwBtn = $('setChangePwBtn');
+    if (pwBtn) pwBtn.addEventListener('click', async () => {
+        const status = $('setChangePwStatus');
+        const user = ($('setPwUser').value || '').trim();
+        const cur = $('setPwCurrent').value;
+        const nw = $('setPwNew').value;
+        status.className = 'small text-muted';
+        if (!user || !cur || !nw) { status.className = 'small text-danger'; status.textContent = 'Fill in all three fields.'; return; }
+        if (nw.length < 8) { status.className = 'small text-danger'; status.textContent = 'New password must be at least 8 characters.'; return; }
+        pwBtn.disabled = true;
+        status.textContent = 'Changing…';
+        try {
+            await window.apiClient.changePassword(user, cur, nw);
+            status.className = 'small text-success';
+            status.textContent = 'Password changed.';
+            $('setPwCurrent').value = ''; $('setPwNew').value = '';
+        } catch (e) {
+            status.className = 'small text-danger';
+            status.textContent = e.message || 'Failed.';
+        } finally { pwBtn.disabled = false; }
+    });
+
     // Apply the saved default benchmark to the analytics selector on first load.
     const bm = document.getElementById('anBenchmark');
     if (bm && PREFS.benchmark) bm.value = PREFS.benchmark;
@@ -5051,6 +5117,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     applyTheme();
     applyPrivacy();
+    applyDefaultCurrency();
     setupSettings();
     setupAddTransaction();
     setupResearchPage();
