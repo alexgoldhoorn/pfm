@@ -50,6 +50,39 @@ const Fmt = {
 };
 window.Fmt = Fmt;
 
+// Dashboard alerts banner: price targets crossed + watchlist buy zones.
+// Loaded async so it never blocks the dashboard (watchlist check hits live
+// prices). Hidden entirely when nothing is triggered.
+async function loadDashboardAlerts() {
+    const box = document.getElementById('dashAlerts');
+    if (!box) return;
+    try {
+        const [targets, watch] = await Promise.all([
+            window.apiClient.getResearchAlerts().catch(() => ({ alerts: [] })),
+            window.apiClient.getWatchlistAlerts().catch(() => ({ alerts: [] })),
+        ]);
+        const items = [];
+        (targets.alerts || []).forEach(a => {
+            (a.triggers || []).forEach(t => {
+                const buy = t.type === 'BUY';
+                items.push(`<li class="mb-1"><span class="badge bg-${buy ? 'success' : 'danger'} me-2">${t.type}</span><strong>${a.symbol}</strong> at ${Fmt.num(t.price, 2, 2)} ${buy ? '≤ buy-below' : '≥ sell-above'} ${Fmt.num(t.threshold, 2, 2)}</li>`);
+            });
+        });
+        (watch.alerts || []).forEach(a => {
+            items.push(`<li class="mb-1"><span class="badge bg-info text-dark me-2">WATCH</span><strong>${a.symbol}</strong> ${a.name ? '· ' + a.name : ''} at ${Fmt.num(a.price, 2, 2)} entered buy zone (≤ ${Fmt.num(a.buy_below, 2, 2)})</li>`);
+        });
+        if (!items.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+        box.style.display = '';
+        box.innerHTML = `
+            <div class="alert alert-warning mb-0">
+                <div class="fw-semibold mb-1"><i class="bi bi-bell-fill me-2"></i>${items.length} alert${items.length > 1 ? 's' : ''}</div>
+                <ul class="list-unstyled mb-0 small">${items.join('')}</ul>
+            </div>`;
+    } catch (e) {
+        box.style.display = 'none';
+    }
+}
+
 // Apply the user's default currency to the static "new entry" form fields
 // (Add booking, new broker). Add-asset is handled on modal-show.
 function applyDefaultCurrency() {
@@ -378,6 +411,30 @@ function createAPIClient() {
                 headers: { 'X-API-Key': this.apiKey }
             });
             if (!resp.ok) throw new Error('Failed to load bookings');
+            return resp.json();
+        },
+
+        async getTaxReport(year) {
+            const resp = await fetch(this.baseURL + '/api/v1/analytics/tax-report' + (year ? `?year=${year}` : ''), {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error('Failed to load tax report');
+            return resp.json();
+        },
+
+        async getResearchAlerts() {
+            const resp = await fetch(this.baseURL + '/api/v1/research/alerts/check', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error('Failed to check alerts');
+            return resp.json();
+        },
+
+        async getWatchlistAlerts() {
+            const resp = await fetch(this.baseURL + '/api/v1/watchlist/alerts/check', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error('Failed to check watchlist alerts');
             return resp.json();
         },
 
@@ -1190,6 +1247,9 @@ function createPageManager() {
 
         loadDashboardPage: async function() {
             const el = id => document.getElementById(id);
+
+            // Alerts banner loads independently (non-blocking).
+            loadDashboardAlerts();
 
             const fmtEur = (val) => {
                 const n = parseFloat(val) || 0;
@@ -2075,6 +2135,53 @@ async function loadAnalyticsDividends() {
                 </tr>`).join('')
             : '<tr><td colspan="4" class="text-center text-muted small">No dividend payers yet.</td></tr>';
 
+        // Forward income: each holding's trailing-12-month dividends as a
+        // forward estimate, + a 12-month calendar from the historical
+        // month-of-year pattern scaled to the projected annual total.
+        const ttmBySym = d.ttm_by_symbol || {};
+        const fwd = Object.entries(ttmBySym).map(([s, v]) => ({ s, name: names[s] || s, v: parseFloat(v) || 0 }))
+            .filter(x => x.v > 0).sort((a, b) => b.v - a.v);
+        const fwdTotal = fwd.reduce((acc, x) => acc + x.v, 0);
+        const fwdRows = fwd.length ? fwd.map(x => `
+            <tr>
+                <td><strong>${x.s}</strong></td>
+                <td class="text-truncate small text-muted" style="max-width:200px;" title="${x.name}">${x.name !== x.s ? x.name : ''}</td>
+                <td class="text-end">${anFmtEur2(x.v)}</td>
+                <td class="text-end text-muted">${fwdTotal > 0 ? (x.v / fwdTotal * 100).toFixed(1) + '%' : '—'}</td>
+            </tr>`).join('') : '<tr><td colspan="4" class="text-center text-muted small">No recurring dividends in the last 12 months.</td></tr>';
+        // Month-of-year pattern (calendar) from history
+        const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+        const moy = new Array(12).fill(0);
+        Object.entries(byMonth).forEach(([k, v]) => {
+            const m = parseInt(String(k).split('-')[1], 10) - 1;
+            if (m >= 0 && m < 12) moy[m] += parseFloat(v) || 0;
+        });
+        const moyMax = Math.max(...moy, 1);
+        const calBars = MONTHS.map((m, i) => `
+            <div class="text-center" style="flex:1 1 0;">
+                <div class="d-flex align-items-end justify-content-center" style="height:60px;">
+                    <div title="${m}: ${anFmtEur2(moy[i])} received historically" style="width:60%;background:#16a34a;border-radius:3px 3px 0 0;height:${(moy[i] / moyMax * 100).toFixed(0)}%;min-height:2px;"></div>
+                </div>
+                <div class="small text-muted">${m}</div>
+            </div>`).join('');
+        const forwardSection = `
+            <hr class="my-3">
+            <div class="row g-4">
+                <div class="col-12 col-lg-6">
+                    <h6 class="fw-semibold small text-muted text-uppercase mb-2">Projected forward annual income <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="Each holding's trailing-12-month dividends, used as a forward estimate. Total ≈ ${anFmtEur2(fwdTotal)}/yr."></i></h6>
+                    <div class="table-responsive" style="max-height:300px;overflow:auto;">
+                        <table class="table table-sm table-hover mb-0">
+                            <thead><tr><th>Symbol</th><th>Name</th><th class="text-end">€/yr</th><th class="text-end">Share</th></tr></thead>
+                            <tbody>${fwdRows}</tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="col-12 col-lg-6">
+                    <h6 class="fw-semibold small text-muted text-uppercase mb-2">Income by calendar month <span class="text-muted">(historical pattern)</span></h6>
+                    <div class="d-flex align-items-end gap-1" style="min-height:80px;">${calBars}</div>
+                </div>
+            </div>`;
+
         body.innerHTML = `
             <div class="row g-3 mb-3">
                 <div class="col-12 col-md-4">
@@ -2117,7 +2224,8 @@ async function loadAnalyticsDividends() {
                         </table>
                     </div>
                 </div>
-            </div>`;
+            </div>
+            ${forwardSection}`;
         initTooltips();
     } catch (err) {
         body.innerHTML = `<div class="text-danger small">Error loading dividends: ${err.message}</div>`;
@@ -2309,7 +2417,8 @@ async function loadAnalyticsTax() {
 const _ANALYTICS_LOADERS = {
     performance: () => { loadAnalyticsPerformance(); loadAnalyticsNetworth(); },
     dividends: () => { loadAnalyticsDividends(); },
-    tax: () => { loadAnalyticsTax(); },
+    gainloss: () => { loadAnalyticsGainLoss(); },
+    tax: () => { loadAnalyticsTax(); loadAnalyticsTaxReport(); },
     risk: () => { loadAnalyticsRisk(); _wireDiversificationButtons(); },
     fees: () => { loadAnalyticsFees(); },
 };
@@ -2346,6 +2455,133 @@ function setupAnalyticsTabs() {
     // Reset load state each time the page opens so data stays fresh per visit
     _analyticsLoaded = {};
     showAnalyticsTab(_analyticsActiveTab || 'performance');
+}
+
+// Gain / Loss leaderboard: top unrealised winners & losers (from holdings)
+// plus realised gains/losses this year (from the tax estimate).
+async function loadAnalyticsGainLoss() {
+    const body = document.getElementById('anGainLossBody');
+    if (!body) return;
+    body.innerHTML = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2"></div>Loading…</div>';
+    try {
+        const year = (document.getElementById('anTaxYear') || {}).value || new Date().getFullYear();
+        const [data, tax] = await Promise.all([
+            window.apiClient.getHoldings(),
+            window.apiClient.getTaxEstimate(year).catch(() => ({ realised_by_symbol: [] })),
+        ]);
+        const holdings = (data.holdings || []).filter(h => parseFloat(h.quantity || 0) > 0);
+        const hv = h => parseFloat(h.total_value_eur ?? h.total_value ?? 0) || 0;
+        const pnl = h => parseFloat(h.pnl_amount || 0);
+        const pnlpct = h => parseFloat(h.pnl_pct || 0);
+
+        const byAmt = holdings.slice().sort((a, b) => pnl(b) - pnl(a));
+        const byPct = holdings.slice().sort((a, b) => pnlpct(b) - pnlpct(a));
+        const winners = byAmt.filter(h => pnl(h) > 0).slice(0, 5);
+        const losers = byAmt.filter(h => pnl(h) < 0).reverse().slice(0, 5);
+        const bestPct = byPct.filter(h => pnlpct(h) > 0).slice(0, 5);
+        const worstPct = byPct.filter(h => pnlpct(h) < 0).reverse().slice(0, 5);
+
+        const row = h => {
+            const cls = pnl(h) >= 0 ? 'text-success' : 'text-danger';
+            return `<tr>
+                <td><strong>${h.symbol}</strong> <span class="small text-muted">${h.name || ''}</span></td>
+                <td class="text-end">${anFmtEur2(hv(h))}</td>
+                <td class="text-end ${cls}">${pnl(h) >= 0 ? '+' : ''}${anFmtEur2(pnl(h))}</td>
+                <td class="text-end ${cls}">${anFmtPct(pnlpct(h))}</td>
+            </tr>`;
+        };
+        const tbl = (title, rows) => `
+            <div class="col-12 col-lg-6">
+                <h6 class="fw-semibold small text-muted text-uppercase mb-2">${title}</h6>
+                <div class="table-responsive"><table class="table table-sm table-hover mb-3">
+                    <thead><tr><th>Holding</th><th class="text-end">Value</th><th class="text-end">P/L €</th><th class="text-end">P/L %</th></tr></thead>
+                    <tbody>${rows.length ? rows.map(row).join('') : '<tr><td colspan="4" class="text-center text-muted small">None.</td></tr>'}</tbody>
+                </table></div>
+            </div>`;
+
+        // Realised this year (from tax estimate's per-symbol FIFO)
+        const realised = (tax.realised_by_symbol || []).slice().sort((a, b) => (b.realised_eur || 0) - (a.realised_eur || 0));
+        const realisedRows = realised.length ? realised.map(r => {
+            const v = parseFloat(r.realised_eur || 0);
+            return `<tr><td><strong>${r.symbol}</strong> <span class="small text-muted">${r.name || ''}</span></td>
+                <td class="text-end ${v >= 0 ? 'text-success' : 'text-danger'}">${anFmtEur2(v)}</td></tr>`;
+        }).join('') : `<tr><td colspan="2" class="text-center text-muted small">No realised sales in ${year}.</td></tr>`;
+
+        body.innerHTML = `
+            <p class="text-muted small mb-3">Unrealised is mark-to-market on current holdings (EUR). Realised is locked-in FIFO gains/losses for ${year}.</p>
+            <div class="row g-3">
+                ${tbl('Top unrealised winners (€)', winners)}
+                ${tbl('Top unrealised losers (€)', losers)}
+                ${tbl('Best performers (%)', bestPct)}
+                ${tbl('Worst performers (%)', worstPct)}
+            </div>
+            <h6 class="fw-semibold small text-muted text-uppercase mb-2">Realised gains / losses ${year}</h6>
+            <div class="table-responsive" style="max-width:520px;"><table class="table table-sm table-hover mb-0">
+                <thead><tr><th>Holding</th><th class="text-end">Realised €</th></tr></thead>
+                <tbody>${realisedRows}</tbody>
+            </table></div>`;
+    } catch (err) {
+        body.innerHTML = `<div class="text-danger small">Error loading gain/loss: ${err.message}</div>`;
+    }
+}
+
+let _lastTaxReport = null;
+// Detailed per-lot FIFO tax report + dividend withholding for the selected year.
+async function loadAnalyticsTaxReport() {
+    const body = document.getElementById('anTaxReportBody');
+    if (!body) return;
+    const year = (document.getElementById('anTaxYear') || {}).value || new Date().getFullYear();
+    body.innerHTML = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2"></div>Loading…</div>';
+    try {
+        const d = await window.apiClient.getTaxReport(year);
+        _lastTaxReport = d;
+        const lots = d.realised_lots || [];
+        const lotRows = lots.length ? lots.map(l => `
+            <tr>
+                <td><strong>${l.symbol}</strong></td>
+                <td>${Fmt.date(l.sell_date)}</td>
+                <td class="text-end">${Fmt.num(l.quantity, 0, 4)}</td>
+                <td class="text-end">${anFmtEur2(l.proceeds)}</td>
+                <td class="text-end">${anFmtEur2(l.cost_basis)}</td>
+                <td class="text-end ${l.gain_loss >= 0 ? 'text-success' : 'text-danger'}">${anFmtEur2(l.gain_loss)}</td>
+                <td class="text-end text-muted">${l.holding_days != null ? l.holding_days + 'd' : '—'}</td>
+            </tr>`).join('') : `<tr><td colspan="7" class="text-center text-muted small">No sales realised in ${year}.</td></tr>`;
+        body.innerHTML = `
+            <div class="row g-3 mb-3">
+                <div class="col-6 col-md-3"><div class="border rounded p-3 h-100"><div class="small text-muted mb-1">Realised gain ${year}</div><div class="fw-bold ${d.realised_gain_total >= 0 ? 'text-success' : 'text-danger'}">${anFmtEur2(d.realised_gain_total)}</div></div></div>
+                <div class="col-6 col-md-3"><div class="border rounded p-3 h-100"><div class="small text-muted mb-1">Lots sold</div><div class="fw-bold">${d.lot_count}</div></div></div>
+                <div class="col-6 col-md-3"><div class="border rounded p-3 h-100"><div class="small text-muted mb-1">Dividends (gross)</div><div class="fw-bold">${anFmtEur2(d.dividends_gross_eur)}</div></div></div>
+                <div class="col-6 col-md-3"><div class="border rounded p-3 h-100"><div class="small text-muted mb-1">Withholding paid</div><div class="fw-bold">${anFmtEur2(d.dividend_withholding_eur)}</div></div></div>
+            </div>
+            <div class="table-responsive"><table class="table table-sm table-hover mb-2">
+                <thead><tr><th>Symbol</th><th>Sold</th><th class="text-end">Qty</th><th class="text-end">Proceeds</th><th class="text-end">Cost basis</th><th class="text-end">Gain/Loss</th><th class="text-end">Held</th></tr></thead>
+                <tbody>${lotRows}</tbody>
+            </table></div>
+            ${d.note ? `<p class="text-muted small mb-0"><em>${d.note}</em></p>` : ''}`;
+    } catch (err) {
+        body.innerHTML = `<div class="text-danger small">Error loading tax report: ${err.message}</div>`;
+    }
+}
+
+// Download the current tax report as CSV (built client-side from the JSON).
+function downloadTaxReportCsv() {
+    const d = _lastTaxReport;
+    if (!d) { alert('Open the Tax tab first.'); return; }
+    const rows = [['symbol', 'sell_date', 'quantity', 'proceeds', 'cost_basis', 'gain_loss', 'holding_days']];
+    (d.realised_lots || []).forEach(l => rows.push([l.symbol, l.sell_date, l.quantity, l.proceeds, l.cost_basis, l.gain_loss, l.holding_days]));
+    rows.push([]);
+    rows.push(['Realised gain total', d.realised_gain_total]);
+    rows.push(['Dividends gross (EUR)', d.dividends_gross_eur]);
+    rows.push(['Dividend withholding (EUR)', d.dividend_withholding_eur]);
+    const csv = '﻿' + rows.map(r => r.map(c => {
+        const s = c == null ? '' : String(c);
+        return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    }).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `tax_report_${d.year}.csv`; a.click();
+    URL.revokeObjectURL(url);
 }
 
 // Wire the two "Load diversification" triggers (header + inline) once.
@@ -5213,7 +5449,11 @@ document.addEventListener('DOMContentLoaded', function() {
     });
     const anTaxYear = document.getElementById('anTaxYear');
     if (anTaxYear) {
-        anTaxYear.addEventListener('change', () => loadAnalyticsTax());
+        anTaxYear.addEventListener('change', () => { loadAnalyticsTax(); loadAnalyticsTaxReport(); });
+    }
+    const anTaxReportCsvBtn = document.getElementById('anTaxReportCsvBtn');
+    if (anTaxReportCsvBtn) {
+        anTaxReportCsvBtn.addEventListener('click', downloadTaxReportCsv);
     }
     // Re-render the net worth chart on resize when the analytics page is visible
     window.addEventListener('resize', () => {

@@ -282,6 +282,9 @@
                         </button>
                     </div>
 
+                    <!-- Alerts banner (price targets crossed + watchlist buy zones); hidden when none -->
+                    <div id="dashAlerts" class="mb-3" style="display:none;"></div>
+
                     <!-- Row 1: KPI Cards -->
                     <div class="row g-3 mb-4">
                         <div class="col-6 col-md-3">
@@ -773,6 +776,7 @@
                     <ul class="nav nav-pills flex-wrap mb-3" id="analyticsTabs">
                         <li class="nav-item"><button type="button" class="nav-link active" data-an-tab="performance"><i class="bi bi-speedometer2 me-1"></i>Performance &amp; Net Worth</button></li>
                         <li class="nav-item"><button type="button" class="nav-link" data-an-tab="dividends"><i class="bi bi-cash-coin me-1"></i>Dividends</button></li>
+                        <li class="nav-item"><button type="button" class="nav-link" data-an-tab="gainloss"><i class="bi bi-trophy me-1"></i>Gain / Loss</button></li>
                         <li class="nav-item"><button type="button" class="nav-link" data-an-tab="tax"><i class="bi bi-receipt me-1"></i>Tax</button></li>
                         <li class="nav-item"><button type="button" class="nav-link" data-an-tab="risk"><i class="bi bi-shield-check me-1"></i>Risk &amp; Diversification</button></li>
                         <li class="nav-item"><button type="button" class="nav-link" data-an-tab="fees"><i class="bi bi-cash-stack me-1"></i>Fees &amp; Costs</button></li>
@@ -850,6 +854,18 @@
                     </div>
 
                     <!-- d) Tax estimate -->
+                    <!-- Gain / Loss leaderboard -->
+                    <div class="card mb-4" data-an-section="gainloss">
+                        <div class="card-header fw-semibold">
+                            <i class="bi bi-trophy me-2 text-warning"></i>Gain / Loss leaders
+                        </div>
+                        <div class="card-body" id="anGainLossBody">
+                            <div class="text-center text-muted py-4">
+                                <div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading…
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="card mb-4" data-an-section="tax">
                         <div class="card-header fw-semibold d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <span><i class="bi bi-receipt me-2 text-danger"></i>Tax Estimate (Spanish IRPF)</span>
@@ -859,6 +875,21 @@
                             </div>
                         </div>
                         <div class="card-body" id="anTaxBody">
+                            <div class="text-center text-muted py-4">
+                                <div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading…
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Detailed tax report (per-lot FIFO + dividend withholding) -->
+                    <div class="card mb-4" data-an-section="tax">
+                        <div class="card-header fw-semibold d-flex justify-content-between align-items-center flex-wrap gap-2">
+                            <span><i class="bi bi-file-earmark-spreadsheet me-2 text-secondary"></i>Detailed tax report
+                                <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="Per-lot realised gains (FIFO) for the selected year plus dividend gross income and withholding tax already paid at source — for your IRPF filing."></i>
+                            </span>
+                            <button class="btn btn-sm btn-outline-secondary" id="anTaxReportCsvBtn"><i class="bi bi-download me-1"></i>Download CSV</button>
+                        </div>
+                        <div class="card-body" id="anTaxReportBody">
                             <div class="text-center text-muted py-4">
                                 <div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading…
                             </div>
@@ -2414,6 +2445,6 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <script src="js/help_text.js?v=1780000006"></script>
 
     <!-- Custom JavaScript -->
-    <script src="js/portfolio_debug.js?v=1780000021"></script>
+    <script src="js/portfolio_debug.js?v=1780000022"></script>
 </body>
 </html>

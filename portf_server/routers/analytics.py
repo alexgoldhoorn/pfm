@@ -106,6 +106,7 @@ async def get_dividends(db=Depends(get_database), api_key_info: dict = Depends(_
     return {
         **income,
         "ttm": round(sum(ttm_by_symbol.values()), 2),
+        "ttm_by_symbol": {s: round(v, 2) for s, v in ttm_by_symbol.items()},
         "projected_annual": projected_annual,
         "yield_on_cost": yield_on_cost,
         "names": names,
