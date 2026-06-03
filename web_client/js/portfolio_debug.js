@@ -450,6 +450,25 @@ function createAPIClient() {
             return resp.json();
         },
 
+        async getNetworth() {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/', { headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error('Failed to load net worth');
+            return resp.json();
+        },
+        async createManualAsset(payload) {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(payload)
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to add');
+            return resp.json();
+        },
+        async deleteManualAsset(id) {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/' + id, { method: 'DELETE', headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error('Failed to delete');
+            return resp.json().catch(() => ({}));
+        },
+
         async getTaxReport(year) {
             const resp = await fetch(this.baseURL + '/api/v1/analytics/tax-report' + (year ? `?year=${year}` : ''), {
                 headers: { 'X-API-Key': this.apiKey }
@@ -1891,6 +1910,93 @@ function renderResourcesPage() {
 }
 window.renderResourcesPage = renderResourcesPage;
 
+// Net Worth page — brokerage value (auto) + manual assets/liabilities.
+const NW_CATEGORY_LABELS = {
+    cash: 'Cash / savings', investment_external: 'Investment (external)',
+    property: 'Property', vehicle: 'Vehicle', pension: 'Pension', other: 'Other',
+    mortgage: 'Mortgage', loan: 'Loan', credit: 'Credit / debt',
+};
+async function loadNetworthPage() {
+    const $ = id => document.getElementById(id);
+    _wireNetworthForm();
+    const body = $('nwItemsBody');
+    if (body) body.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm me-2"></span>Loading…</td></tr>';
+    try {
+        const d = await window.apiClient.getNetworth();
+        const eur = v => Fmt.amt('€' + Fmt.num(v, 0, 0));
+        $('nwBrokerage').innerHTML = eur(d.brokerage_eur);
+        $('nwAssets').innerHTML = eur(d.manual_assets_eur);
+        $('nwLiabilities').innerHTML = eur(d.manual_liabilities_eur);
+        $('nwTotal').innerHTML = eur(d.net_worth_eur);
+        const card = $('nwTotalCard');
+        if (card) card.style.background = d.net_worth_eur >= 0 ? '#0d6efd' : '#dc3545';
+        const items = d.items || [];
+        if (!items.length) {
+            body.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4">No off-brokerage items yet. Add cash, property, a mortgage… on the left.</td></tr>';
+        } else {
+            body.innerHTML = items.map(it => `
+                <tr>
+                    <td class="ps-3"><strong>${escapeForAttr(it.name)}</strong>${it.notes ? `<br><small class="text-muted">${escapeForAttr(it.notes)}</small>` : ''}</td>
+                    <td><span class="badge ${it.is_liability ? 'bg-danger' : 'bg-secondary'}">${NW_CATEGORY_LABELS[it.category] || it.category}</span></td>
+                    <td class="text-end">${Fmt.num(it.amount, 2, 2)} ${it.currency || ''}</td>
+                    <td class="text-end ${it.is_liability ? 'text-danger' : ''}">${it.is_liability ? '−' : ''}${Fmt.amt('€' + Fmt.num(it.amount_eur, 0, 0))}</td>
+                    <td class="pe-3 text-end"><button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteManualAsset(${it.id})"><i class="bi bi-trash"></i></button></td>
+                </tr>`).join('');
+        }
+    } catch (err) {
+        if (body) body.innerHTML = `<tr><td colspan="5" class="text-center text-danger py-3">${err.message}</td></tr>`;
+    }
+}
+window.loadNetworthPage = loadNetworthPage;
+
+function escapeForAttr(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function _wireNetworthForm() {
+    const form = document.getElementById('nwAddForm');
+    if (form && !form.dataset.wired) {
+        form.dataset.wired = '1';
+        const $ = id => document.getElementById(id);
+        const liabilityCats = new Set(['mortgage', 'loan', 'credit']);
+        // Auto-tick "debt" when a liability category is chosen
+        $('nwCategory').addEventListener('change', () => {
+            if (liabilityCats.has($('nwCategory').value)) $('nwIsLiability').checked = true;
+        });
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const status = $('nwAddStatus');
+            const payload = {
+                name: $('nwName').value.trim(),
+                category: $('nwCategory').value,
+                amount: parseFloat($('nwAmount').value) || 0,
+                currency: ($('nwCurrency').value || 'EUR').toUpperCase(),
+                is_liability: $('nwIsLiability').checked,
+                notes: $('nwNotes').value.trim() || null,
+            };
+            if (!payload.name) return;
+            status.className = 'small text-muted'; status.textContent = 'Adding…';
+            try {
+                await window.apiClient.createManualAsset(payload);
+                form.reset(); $('nwCurrency').value = 'EUR';
+                status.textContent = '';
+                loadNetworthPage();
+            } catch (err) { status.className = 'small text-danger'; status.textContent = err.message; }
+        });
+    }
+    const refresh = document.getElementById('refreshNetworth');
+    if (refresh && !refresh.dataset.wired) {
+        refresh.dataset.wired = '1';
+        refresh.addEventListener('click', () => loadNetworthPage());
+    }
+}
+
+window.confirmDeleteManualAsset = async function (id) {
+    if (!confirm('Delete this item?')) return;
+    try { await window.apiClient.deleteManualAsset(id); loadNetworthPage(); }
+    catch (err) { alert('Error: ' + err.message); }
+};
+
 // (Re)initialise Bootstrap tooltips on all [data-bs-toggle="tooltip"] elements.
 // Disposes any existing instance first so re-rendered tiles don't leak handlers.
 function initTooltips() {
@@ -3139,7 +3245,7 @@ function createNavigationManager() {
     return {
         currentPage: 'dashboard',
         showPage: function(pageName) {
-            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'holdingsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage', 'helpPage', 'versionPage', 'aboutPage', 'resourcesPage'];
+            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'holdingsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage', 'helpPage', 'versionPage', 'aboutPage', 'resourcesPage', 'networthPage'];
             pages.forEach(pageId => {
                 const page = document.getElementById(pageId);
                 if (page) page.style.display = 'none';
@@ -3183,6 +3289,7 @@ function createNavigationManager() {
                 case 'version':      break;
                 case 'about':        break;
                 case 'resources':    if (window.renderResourcesPage) window.renderResourcesPage(); break;
+                case 'networth':     if (window.loadNetworthPage) window.loadNetworthPage(); break;
             }
         },
 

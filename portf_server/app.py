@@ -43,6 +43,7 @@ from .routers import (
     watchlist,
     goals,
     public,
+    networth,
 )
 from .dependencies import get_database, get_auth_manager, get_api_key_manager
 
@@ -317,6 +318,12 @@ app.include_router(
     public.router,
     prefix="/api/v1/public",
     tags=["Public"],
+)
+
+app.include_router(
+    networth.router,
+    prefix="/api/v1/networth",
+    tags=["Net Worth"],
 )
 
 
