@@ -214,6 +214,23 @@ body {
     background-color: rgba(255, 255, 255, 0.05);
 }
 
+/* Cash-movement (booking) rows in the transactions table — subtle tint that
+   works in both themes (the old .table-light stayed white in dark mode). */
+.tx-cash-row > td {
+    background-color: rgba(13, 110, 253, 0.05);
+}
+[data-bs-theme="dark"] .tx-cash-row > td {
+    background-color: rgba(255, 255, 255, 0.04);
+}
+
+/* Donut centre total — themed (was hardcoded near-black, invisible on dark) */
+.donut-total {
+    fill: #1e293b;
+}
+[data-bs-theme="dark"] .donut-total {
+    fill: #e9ecef;
+}
+
 /* Chat: assistant bubble + markdown, themed for light/dark */
 .chat-bubble-assistant {
     background-color: #f1f3f5;
