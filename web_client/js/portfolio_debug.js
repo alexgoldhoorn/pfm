@@ -1579,18 +1579,11 @@ function createPageManager() {
         },
 
         loadAnalyticsPage: function() {
-            // Load the cheap, DB-backed sections immediately. Diversification is
-            // deliberately NOT auto-loaded: it does a blocking per-holding
-            // Yahoo Finance lookup (~25s) that would otherwise freeze the
-            // backend event loop and stall every other section (incl. the net
-            // worth chart). The user loads it on demand via its button.
-            loadAnalyticsPerformance();
-            loadAnalyticsNetworth();
-            loadAnalyticsDividends();
-            loadAnalyticsTax();
-            loadAnalyticsRisk();
-            loadAnalyticsFees();
-            _wireDiversificationButtons();
+            // Tabbed + lazy: only the active tab's sections load, so opening
+            // Analytics no longer fires every endpoint at once. Diversification
+            // stays on its own on-demand button inside the Risk tab (its
+            // per-holding Yahoo lookup is slow even though now cached/threaded).
+            setupAnalyticsTabs();
         },
 
         loadWatchlistPage: function() {
@@ -2191,6 +2184,51 @@ async function loadAnalyticsTax() {
     } catch (err) {
         body.innerHTML = `<div class="text-danger small">Error loading tax estimate: ${err.message}</div>`;
     }
+}
+
+// Analytics sub-navigation: show one tab's sections at a time and lazy-load
+// each tab's data on first activation. Loaders per tab reuse the existing
+// section render functions.
+const _ANALYTICS_LOADERS = {
+    performance: () => { loadAnalyticsPerformance(); loadAnalyticsNetworth(); },
+    dividends: () => { loadAnalyticsDividends(); },
+    tax: () => { loadAnalyticsTax(); },
+    risk: () => { loadAnalyticsRisk(); _wireDiversificationButtons(); },
+    fees: () => { loadAnalyticsFees(); },
+};
+let _analyticsLoaded = {};
+let _analyticsActiveTab = 'performance';
+
+function showAnalyticsTab(tab, forceReload) {
+    _analyticsActiveTab = tab;
+    // Toggle nav pill active state
+    document.querySelectorAll('#analyticsTabs [data-an-tab]').forEach(b =>
+        b.classList.toggle('active', b.dataset.anTab === tab));
+    // Show only this tab's section cards
+    document.querySelectorAll('#analyticsPage [data-an-section]').forEach(card => {
+        card.style.display = card.dataset.anSection === tab ? '' : 'none';
+    });
+    // Lazy-load (once) unless a refresh is forced
+    if (forceReload || !_analyticsLoaded[tab]) {
+        _analyticsLoaded[tab] = true;
+        (_ANALYTICS_LOADERS[tab] || (() => {}))();
+    }
+}
+
+function setupAnalyticsTabs() {
+    const tabs = document.getElementById('analyticsTabs');
+    if (tabs && !tabs.dataset.wired) {
+        tabs.dataset.wired = '1';
+        tabs.querySelectorAll('[data-an-tab]').forEach(btn => {
+            btn.addEventListener('click', () => showAnalyticsTab(btn.dataset.anTab));
+        });
+        // Note: the #refreshAnalytics button calls loadAnalyticsPage() (which
+        // re-enters here), so refresh is handled by the reset below — no extra
+        // listener needed.
+    }
+    // Reset load state each time the page opens so data stays fresh per visit
+    _analyticsLoaded = {};
+    showAnalyticsTab(_analyticsActiveTab || 'performance');
 }
 
 // Wire the two "Load diversification" triggers (header + inline) once.
