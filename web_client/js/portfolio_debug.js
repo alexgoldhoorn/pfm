@@ -1837,16 +1837,36 @@ const RESOURCE_LINKS = [
         ['Finviz', 'https://finviz.com', 'Stock screener, heatmaps and news.', 'bi-grid-3x3'],
         ['Koyfin', 'https://www.koyfin.com', 'Charts, dashboards and macro data.', 'bi-bar-chart'],
     ]},
+    { cat: 'Tools', items: [
+        ['Portfolio Dividend Tracker', 'https://app.portfoliodividendtracker.com/portfolio', 'Dividend tracking with broker auto-imports (your PDT account).', 'bi-cash-coin'],
+        ['Portfolio Visualizer', 'https://www.portfoliovisualizer.com', 'Backtesting, asset allocation and Monte Carlo.', 'bi-clipboard-data'],
+        ['Curvo', 'https://curvo.eu', 'European index-portfolio builder & backtester.', 'bi-graph-up-arrow'],
+        ['TradingView', 'https://www.tradingview.com', 'Advanced charting and ideas.', 'bi-graph-up-arrow'],
+        ['Google Finance', 'https://www.google.com/finance', 'Quick quotes and watchlists.', 'bi-google'],
+    ]},
     { cat: 'ETFs & funds', items: [
         ['JustETF', 'https://www.justetf.com', 'European ETF database and screener.', 'bi-collection'],
         ['ETF.com', 'https://www.etf.com', 'ETF research and comparisons.', 'bi-collection'],
     ]},
-    { cat: 'Dividends', items: [
-        ['Portfolio Dividend Tracker', 'https://app.portfoliodividendtracker.com/portfolio', 'Your PDT account (broker auto-imports).', 'bi-cash-coin'],
+    { cat: 'Brokers', items: [
+        ['Indexa Capital', 'https://indexacapital.com', 'Automated index-fund portfolios (ES).', 'bi-bank'],
+        ['MyInvestor', 'https://myinvestor.es', 'Spanish broker / neobank.', 'bi-bank'],
+        ['Coinbase', 'https://www.coinbase.com', 'Crypto exchange.', 'bi-currency-bitcoin'],
+        ['DEGIRO', 'https://www.degiro.com', 'Low-cost European broker.', 'bi-bank'],
+        ['Trade Republic', 'https://traderepublic.com', 'Mobile broker (EU).', 'bi-bank'],
+        ['Interactive Brokers', 'https://www.interactivebrokers.com', 'Global multi-asset broker.', 'bi-bank'],
     ]},
-    { cat: 'Markets & charts', items: [
-        ['TradingView', 'https://www.tradingview.com', 'Advanced charting and ideas.', 'bi-graph-up-arrow'],
-        ['Google Finance', 'https://www.google.com/finance', 'Quick quotes and watchlists.', 'bi-google'],
+    { cat: 'Books', items: [
+        ['The Intelligent Investor', 'https://en.wikipedia.org/wiki/The_Intelligent_Investor', 'Benjamin Graham — value investing classic.', 'bi-book'],
+        ['A Random Walk Down Wall Street', 'https://en.wikipedia.org/wiki/A_Random_Walk_Down_Wall_Street', 'Burton Malkiel — the case for index investing.', 'bi-book'],
+        ['Common Sense on Mutual Funds', 'https://en.wikipedia.org/wiki/John_C._Bogle', 'John Bogle — low-cost index investing.', 'bi-book'],
+        ['The Psychology of Money', 'https://en.wikipedia.org/wiki/The_Psychology_of_Money', 'Morgan Housel — behaviour & wealth.', 'bi-book'],
+    ]},
+    { cat: 'Courses & learning', items: [
+        ['Khan Academy — Finance', 'https://www.khanacademy.org/economics-finance-domain/core-finance', 'Free finance & capital-markets lessons.', 'bi-mortarboard'],
+        ['Coursera — Financial Markets (Yale)', 'https://www.coursera.org/learn/financial-markets-global', 'Robert Shiller\'s markets course.', 'bi-mortarboard'],
+        ['Bogleheads Wiki', 'https://www.bogleheads.org/wiki/Main_Page', 'Index-investing knowledge base & forum.', 'bi-mortarboard'],
+        ['Investopedia', 'https://www.investopedia.com', 'Definitions, tutorials and explainers.', 'bi-mortarboard'],
     ]},
 ];
 function renderResourcesPage() {
