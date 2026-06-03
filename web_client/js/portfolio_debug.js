@@ -477,6 +477,14 @@ function createAPIClient() {
             return resp.json();
         },
 
+        async getTaxOptimizer(year) {
+            const resp = await fetch(this.baseURL + '/api/v1/analytics/tax-optimizer' + (year ? `?year=${year}` : ''), {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error('Failed to load tax optimizer');
+            return resp.json();
+        },
+
         async getResearchAlerts() {
             const resp = await fetch(this.baseURL + '/api/v1/research/alerts/check', {
                 headers: { 'X-API-Key': this.apiKey }
@@ -2636,7 +2644,7 @@ const _ANALYTICS_LOADERS = {
     performance: () => { loadAnalyticsPerformance(); loadAnalyticsNetworth(); },
     dividends: () => { loadAnalyticsDividends(); },
     gainloss: () => { loadAnalyticsGainLoss(); },
-    tax: () => { loadAnalyticsTax(); loadAnalyticsTaxReport(); },
+    tax: () => { loadAnalyticsTax(); loadAnalyticsTaxReport(); loadTaxOptimizer(); },
     risk: () => { loadAnalyticsRisk(); _wireDiversificationButtons(); },
     fees: () => { loadAnalyticsFees(); },
 };
@@ -2800,6 +2808,47 @@ function downloadTaxReportCsv() {
     const a = document.createElement('a');
     a.href = url; a.download = `tax_report_${d.year}.csv`; a.click();
     URL.revokeObjectURL(url);
+}
+
+// Year-end tax optimizer: current vs after-harvest tax + candidate list.
+async function loadTaxOptimizer() {
+    const body = document.getElementById('anTaxOptimizerBody');
+    if (!body) return;
+    const year = (document.getElementById('anTaxYear') || {}).value || new Date().getFullYear();
+    body.innerHTML = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2"></div>Loading…</div>';
+    try {
+        const d = await window.apiClient.getTaxOptimizer(year);
+        const saved = d.estimated_tax_saved_eur || 0;
+        const cands = d.candidates || [];
+        const rows = cands.length ? cands.map(c => `
+            <tr class="${c.wash_sale_risk ? 'text-muted' : ''}">
+                <td><strong>${c.symbol}</strong> <span class="small text-muted">${c.name || ''}</span></td>
+                <td class="text-end text-danger">${anFmtEur2(c.unrealised_loss_eur)}</td>
+                <td>${c.last_buy ? Fmt.date(c.last_buy) : '—'}</td>
+                <td>${c.wash_sale_risk
+                    ? '<span class="badge bg-warning text-dark" title="Bought in the last 60 days — Spain disallows the loss within 2 months">2-month rule</span>'
+                    : '<span class="badge bg-success">harvestable</span>'}</td>
+            </tr>`).join('')
+            : '<tr><td colspan="4" class="text-center text-muted small">No positions at a loss to harvest.</td></tr>';
+        body.innerHTML = `
+            <div class="row g-3 mb-3">
+                <div class="col-6 col-md-3"><div class="border rounded p-3 h-100"><div class="small text-muted mb-1">Realised gains ${year}</div><div class="fw-bold ${d.realised_gain_eur >= 0 ? 'text-success' : 'text-danger'}">${anFmtEur2(d.realised_gain_eur)}</div></div></div>
+                <div class="col-6 col-md-3"><div class="border rounded p-3 h-100"><div class="small text-muted mb-1">Income (div + interest)</div><div class="fw-bold">${anFmtEur2(d.income_eur)}</div></div></div>
+                <div class="col-6 col-md-3"><div class="border rounded p-3 h-100"><div class="small text-muted mb-1" data-bs-toggle="tooltip" title="Sum of losses you can still harvest this year (excludes positions bought in the last 60 days).">Harvestable losses</div><div class="fw-bold text-danger">${anFmtEur2(d.harvestable_loss_eur)}</div></div></div>
+                <div class="col-6 col-md-3"><div class="border rounded p-3 h-100 ${saved > 0 ? 'bg-success-subtle' : ''}"><div class="small text-muted mb-1">Est. tax saved</div><div class="fw-bold ${saved > 0 ? 'text-success' : ''}">${anFmtEur2(saved)}</div></div></div>
+            </div>
+            <p class="small mb-3">Estimated IRPF now: <strong>${anFmtEur2(d.estimated_tax_now_eur)}</strong> → after harvesting eligible losses: <strong>${anFmtEur2(d.estimated_tax_after_harvest_eur)}</strong>.</p>
+            <div class="table-responsive">
+                <table class="table table-sm table-hover mb-2">
+                    <thead><tr><th>Position</th><th class="text-end">Unrealised loss</th><th>Last buy</th><th>Status</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+            ${d.note ? `<p class="text-muted small mb-0"><em>${d.note}</em></p>` : ''}`;
+        initTooltips();
+    } catch (err) {
+        body.innerHTML = `<div class="text-danger small">Error loading tax optimizer: ${err.message}</div>`;
+    }
 }
 
 // Wire the two "Load diversification" triggers (header + inline) once.
@@ -5673,7 +5722,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
     const anTaxYear = document.getElementById('anTaxYear');
     if (anTaxYear) {
-        anTaxYear.addEventListener('change', () => { loadAnalyticsTax(); loadAnalyticsTaxReport(); });
+        anTaxYear.addEventListener('change', () => { loadAnalyticsTax(); loadAnalyticsTaxReport(); loadTaxOptimizer(); });
     }
     const anTaxReportCsvBtn = document.getElementById('anTaxReportCsvBtn');
     if (anTaxReportCsvBtn) {

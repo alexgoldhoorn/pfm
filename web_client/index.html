@@ -881,6 +881,19 @@
                         </div>
                     </div>
 
+                    <!-- Year-end tax optimizer -->
+                    <div class="card mb-4" data-an-section="tax">
+                        <div class="card-header fw-semibold">
+                            <i class="bi bi-scissors me-2 text-success"></i>Year-end tax optimizer
+                            <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="Estimates the tax you could save by harvesting unrealised losses before year-end to offset realised gains and income. Flags positions you bought in the last 60 days (Spain's 2-month rule). Informational, not advice."></i>
+                        </div>
+                        <div class="card-body" id="anTaxOptimizerBody">
+                            <div class="text-center text-muted py-4">
+                                <div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading…
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- e) Diversification & concentration -->
                     <div class="card mb-4" data-an-section="risk">
                         <div class="card-header fw-semibold d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -2558,6 +2571,6 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <script src="js/help_text.js?v=1780000006"></script>
 
     <!-- Custom JavaScript -->
-    <script src="js/portfolio_debug.js?v=1780000030"></script>
+    <script src="js/portfolio_debug.js?v=1780000031"></script>
 </body>
 </html>
