@@ -2063,17 +2063,23 @@ function _wireBackfillButton() {
     });
 }
 
+// Bumped on every call so overlapping invocations (e.g. tab-load + a resize)
+// don't fight: only the latest one is allowed to touch the DOM after its await,
+// which is what kept the "Loading…" spinner up over an already-rendered chart.
+let _networthSeq = 0;
 async function loadAnalyticsNetworth() {
     _wireBackfillButton();
     const container = document.getElementById('anNetworthContainer');
     const placeholder = document.getElementById('anNetworthPlaceholder');
     const svg = document.getElementById('anNetworthSvg');
     if (!container || !svg) return;
+    const seq = ++_networthSeq;
     svg.style.display = 'none';
     placeholder.style.display = 'flex';
     placeholder.innerHTML = '<div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading…';
     try {
         const d = await window.apiClient.getNetworthHistory();
+        if (seq !== _networthSeq) return; // superseded by a newer call
         const snaps = (d.snapshots || []).slice().sort(
             (a, b) => new Date(a.snapshot_date) - new Date(b.snapshot_date)
         );
@@ -2087,6 +2093,7 @@ async function loadAnalyticsNetworth() {
         placeholder.style.display = 'none';
         svg.style.display = '';
     } catch (err) {
+        if (seq !== _networthSeq) return;
         svg.style.display = 'none';
         placeholder.style.display = 'flex';
         placeholder.innerHTML = `<span class="text-danger small">Error loading net worth history: ${err.message}</span>`;
@@ -5559,11 +5566,13 @@ document.addEventListener('DOMContentLoaded', function() {
     if (anTaxReportCsvBtn) {
         anTaxReportCsvBtn.addEventListener('click', downloadTaxReportCsv);
     }
-    // Re-render the net worth chart on resize when the analytics page is visible
+    // Re-render the net worth chart on resize when the analytics page is
+    // visible — debounced so a drag-resize doesn't fire a burst of reloads.
+    let _nwResizeTimer = null;
     window.addEventListener('resize', () => {
-        if (window.navigationManager && window.navigationManager.currentPage === 'analytics') {
-            loadAnalyticsNetworth();
-        }
+        if (!(window.navigationManager && window.navigationManager.currentPage === 'analytics')) return;
+        clearTimeout(_nwResizeTimer);
+        _nwResizeTimer = setTimeout(() => loadAnalyticsNetworth(), 300);
     });
 
     // Global 401 handling: when the API key expires or is rotated, every /api
