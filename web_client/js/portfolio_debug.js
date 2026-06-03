@@ -1528,14 +1528,18 @@ function createPageManager() {
         },
 
         loadAnalyticsPage: function() {
-            // Lazy-load each section independently (performance is slow ~3s)
+            // Load the cheap, DB-backed sections immediately. Diversification is
+            // deliberately NOT auto-loaded: it does a blocking per-holding
+            // Yahoo Finance lookup (~25s) that would otherwise freeze the
+            // backend event loop and stall every other section (incl. the net
+            // worth chart). The user loads it on demand via its button.
             loadAnalyticsPerformance();
             loadAnalyticsNetworth();
             loadAnalyticsDividends();
             loadAnalyticsTax();
-            loadAnalyticsDiversification();
             loadAnalyticsRisk();
             loadAnalyticsFees();
+            _wireDiversificationButtons();
         },
 
         loadWatchlistPage: function() {
@@ -2135,6 +2139,20 @@ async function loadAnalyticsTax() {
         initTooltips();
     } catch (err) {
         body.innerHTML = `<div class="text-danger small">Error loading tax estimate: ${err.message}</div>`;
+    }
+}
+
+// Wire the two "Load diversification" triggers (header + inline) once.
+function _wireDiversificationButtons() {
+    const btn = document.getElementById('anDiversificationBtn');
+    const inline = document.getElementById('anDiversificationLoadInline');
+    if (btn && !btn.dataset.wired) {
+        btn.dataset.wired = '1';
+        btn.addEventListener('click', () => loadAnalyticsDiversification());
+    }
+    if (inline && !inline.dataset.wired) {
+        inline.dataset.wired = '1';
+        inline.addEventListener('click', () => loadAnalyticsDiversification());
     }
 }
 
@@ -4427,20 +4445,116 @@ function setupResearchPage() {
         } catch (e) { $('rvHistory').innerHTML = '<div class="p-3 text-danger small">' + e.message + '</div>'; }
     }
 
+    const pnlCls = v => (v > 0 ? 'text-success' : v < 0 ? 'text-danger' : '');
+
+    function renderSellCalc() {
+        const d = R.pos || {};
+        const qtyHeld = d.quantity || 0, avg = d.avg_cost || 0, price = d.current_price || 0, cur = d.currency;
+        const out = $('rsSellResult');
+        if (!qtyHeld) { out.innerHTML = '<span class="text-muted">No position to sell.</span>'; return; }
+        let n = parseFloat($('rsSellQty').value);
+        const pct = parseFloat($('rsSellPct').value);
+        if ((isNaN(n) || n <= 0) && !isNaN(pct) && pct > 0) n = qtyHeld * pct / 100;
+        if (isNaN(n) || n <= 0) { out.innerHTML = '<span class="text-muted">Enter a quantity or % to see proceeds and gain/loss.</span>'; return; }
+        n = Math.min(n, qtyHeld);
+        const proceeds = n * price;
+        const costOfSold = n * avg;
+        const gain = proceeds - costOfSold;
+        const gainPct = costOfSold > 0 ? gain / costOfSold * 100 : 0;
+        out.innerHTML = `
+            <div class="d-flex justify-content-between"><span class="text-muted">Selling</span><strong>${Fmt.num(n, 0, 4)} sh (${(n / qtyHeld * 100).toFixed(1)}%)</strong></div>
+            <div class="d-flex justify-content-between"><span class="text-muted">Proceeds</span><span>${money(proceeds, cur)}</span></div>
+            <div class="d-flex justify-content-between"><span class="text-muted">Cost of sold shares</span><span>${money(costOfSold, cur)}</span></div>
+            <div class="d-flex justify-content-between"><span class="text-muted">Realised gain/loss</span><strong class="${pnlCls(gain)}">${money(gain, cur)} (${anFmtPct(gainPct)})</strong></div>
+            <div class="d-flex justify-content-between"><span class="text-muted">Remaining</span><span>${Fmt.num(qtyHeld - n, 0, 4)} sh</span></div>`;
+    }
+
+    function renderCostChart(evolution, price) {
+        const svg = $('rsCostChart');
+        const pts = (evolution || []).filter(p => p.avg_cost > 0);
+        if (pts.length < 1) { svg.innerHTML = '<text x="8" y="20" font-size="12" fill="#94a3b8">No cost history.</text>'; return; }
+        const W = svg.clientWidth || 460, H = 160, PAD = { t: 12, r: 12, b: 22, l: 48 };
+        const iW = W - PAD.l - PAD.r, iH = H - PAD.t - PAD.b;
+        const costs = pts.map(p => p.avg_cost).concat(price ? [price] : []);
+        const lo = Math.min(...costs), hi = Math.max(...costs), rng = (hi - lo) || 1;
+        const n = pts.length;
+        const x = i => PAD.l + (n === 1 ? iW / 2 : i / (n - 1) * iW);
+        const y = v => PAD.t + iH - (v - lo) / rng * iH;
+        const path = pts.map((p, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ',' + y(p.avg_cost).toFixed(1)).join(' ');
+        const priceLine = price ? `<line x1="${PAD.l}" y1="${y(price).toFixed(1)}" x2="${(PAD.l + iW).toFixed(1)}" y2="${y(price).toFixed(1)}" stroke="#16a34a" stroke-width="1.5" stroke-dasharray="4 3"/><text x="${(PAD.l + iW).toFixed(1)}" y="${(y(price) - 3).toFixed(1)}" text-anchor="end" font-size="10" fill="#16a34a">price ${Fmt.num(price, 0, 2)}</text>` : '';
+        const yTicks = [lo, (lo + hi) / 2, hi].map(v => `<text x="${PAD.l - 6}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="#64748b">${Fmt.num(v, 0, 2)}</text>`).join('');
+        svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+        svg.innerHTML = `${yTicks}
+            <line x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${PAD.t + iH}" stroke="#cbd5e1"/>
+            <line x1="${PAD.l}" y1="${PAD.t + iH}" x2="${PAD.l + iW}" y2="${PAD.t + iH}" stroke="#cbd5e1"/>
+            ${priceLine}
+            <path d="${path}" fill="none" stroke="#2563eb" stroke-width="2"/>
+            <circle cx="${x(n - 1).toFixed(1)}" cy="${y(pts[n - 1].avg_cost).toFixed(1)}" r="3.5" fill="#2563eb"/>
+            <text x="${PAD.l}" y="${H - 6}" font-size="10" fill="#64748b">avg cost (blue) vs current price (green)</text>`;
+    }
+
+    function renderTransactions(txns, cur) {
+        const tb = $('rsTxBody');
+        if (!txns || !txns.length) { tb.innerHTML = '<tr><td colspan="5" class="text-center text-muted small">No transactions.</td></tr>'; return; }
+        const badge = { buy: 'bg-success', sell: 'bg-danger', dividend: 'bg-info', split: 'bg-warning text-dark' };
+        tb.innerHTML = txns.map(t => `
+            <tr>
+                <td>${Fmt.date(t.date)}</td>
+                <td><span class="badge ${badge[t.type] || 'bg-secondary'}">${t.type}</span></td>
+                <td class="text-end">${Fmt.num(t.quantity, 0, 4)}</td>
+                <td class="text-end">${money(t.price, t.currency || cur)}</td>
+                <td class="text-end">${money(t.total, t.currency || cur)}</td>
+            </tr>`).join('');
+    }
+
+    function renderPosition(d) {
+        const card = $('rsPositionCard');
+        if (!d.held) { card.style.display = 'none'; return; }
+        card.style.display = '';
+        const cur = d.currency;
+        $('rsCostBasis').textContent = money(d.cost_basis, cur);
+        $('rsMarketValue').textContent = money(d.market_value, cur);
+        const u = d.unrealised_gain || 0;
+        $('rsUnrealised').innerHTML = `<span class="${pnlCls(u)}">${money(u, cur)}${d.unrealised_pct != null ? ` (${anFmtPct(d.unrealised_pct)})` : ''}</span>`;
+        const r = d.realised_gain || 0;
+        $('rsRealised').innerHTML = `<span class="${pnlCls(r)}">${money(r, cur)}</span>`;
+        $('rsSellQty').value = ''; $('rsSellPct').value = '';
+        renderSellCalc();
+        renderCostChart(d.cost_evolution, d.current_price);
+        renderTransactions(d.transactions, cur);
+    }
+
+    ['rsSellQty', 'rsSellPct'].forEach(id => {
+        const el = $(id);
+        if (el) el.addEventListener('input', () => {
+            // typing in one clears the other so they don't fight
+            if (id === 'rsSellQty') $('rsSellPct').value = '';
+            else $('rsSellQty').value = '';
+            renderSellCalc();
+        });
+    });
+
     async function load(sym) {
         sym = (sym || '').trim().toUpperCase();
         if (!sym) return;
         $('researchHint').textContent = 'Loading ' + sym + '…';
         try {
             const d = await window.apiClient.researchLookup(sym);
-            R = { symbol: sym, currency: d.currency, price: d.current_price, fundamentals: d.fundamentals || {}, llm: null };
+            R = { symbol: sym, currency: d.currency, price: d.current_price, fundamentals: d.fundamentals || {}, llm: null, pos: d };
             $('researchBody').style.display = '';
             $('rsName').textContent = `${sym} — ${d.name || ''}`;
             $('rsHeld').textContent = d.held ? 'held' : 'not held';
             $('rsHeld').className = 'badge ms-1 ' + (d.held ? 'bg-success' : 'bg-secondary');
+            // Watchlist badge (independent of holding)
+            const watch = $('rsWatch');
+            if (d.on_watchlist) {
+                watch.style.display = '';
+                watch.textContent = d.watch_buy_below != null ? `watchlist · buy < ${money(d.watch_buy_below, d.currency)}` : 'watchlist';
+            } else { watch.style.display = 'none'; }
             $('rsPrice').textContent = money(d.current_price, d.currency);
             $('rsAvgCost').textContent = d.avg_cost ? money(d.avg_cost, d.currency) : '—';
             $('rsQty').textContent = d.quantity || '—';
+            renderPosition(d);
             renderFundamentals(d.fundamentals);
             // Pre-fill calculator from fundamentals + any existing target.
             $('rvEps').value = d.fundamentals?.trailingEps ?? '';
