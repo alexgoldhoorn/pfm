@@ -496,6 +496,116 @@ async def get_tax_estimate(
     }
 
 
+@router.get("/tax-optimizer")
+def get_tax_optimizer(
+    year: Optional[int] = Query(None),
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Year-end tax optimisation: realised gains + income this year, the losses
+    you could still harvest (flagging recent buys that trip Spain's 2-month
+    rule), and the estimated tax saved by harvesting them. Informational only."""
+    yr = year or date.today().year
+    today = date.today()
+    start, end = date(yr, 1, 1), date(yr, 12, 31)
+
+    # Realised gains (FIFO) this year
+    realised_gain = 0.0
+    calc = TaxCalculator(db)
+    try:
+        report = calc.calculate_tax_report(user_id=1, start_date=start, end_date=end)
+        for _sym, txns in report.items():
+            realised_gain += sum(float(getattr(t, "gain_loss", 0) or 0) for t in txns)
+    except Exception as e:
+        logger.warning(f"Tax optimizer realised calc failed: {e}")
+
+    # Income this year (dividends + interest) — both in the savings base
+    all_txns = db.get_all_transactions()
+    div_this_year = dividend_income(all_txns)["by_year"].get(str(yr), 0.0)
+    interest_this_year = sum(
+        float(t.get("total_amount") or 0)
+        for t in all_txns
+        if (t.get("transaction_type") or "").lower() == "interest"
+        and str(t.get("transaction_date", ""))[:4] == str(yr)
+    )
+    income = div_this_year + interest_this_year
+
+    # Harvest candidates: held positions at an unrealised loss, with the most
+    # recent buy date so we can flag Spain's 2-month anti-application rule.
+    positions, _ = _compute_positions(db)
+    candidates = []
+    harvestable = 0.0  # sum of clean (non-wash) losses, negative
+    for aid, pos in positions.items():
+        if pos["quantity"] <= 0:
+            continue
+        asset = db.get_asset(aid)
+        if not asset:
+            continue
+        cur = asset.get("currency", "EUR")
+        pd_ = db.get_latest_price(aid)
+        price = float(pd_["price"]) if pd_ else 0.0
+        gain = (pos["quantity"] * price - pos["cost"]) * _fx(cur)
+        if gain >= -1:
+            continue
+        last_buy = None
+        for tx in db.get_transactions_by_asset(aid):
+            if (tx.get("transaction_type") or "").lower() == "buy":
+                d = str(tx.get("transaction_date", ""))[:10]
+                if d and (last_buy is None or d > last_buy):
+                    last_buy = d
+        wash = False
+        if last_buy:
+            try:
+                wash = (
+                    today - datetime.strptime(last_buy, "%Y-%m-%d").date()
+                ).days < 60
+            except ValueError:
+                wash = False
+        if not wash:
+            harvestable += gain
+        candidates.append(
+            {
+                "symbol": asset["symbol"],
+                "name": asset.get("name", asset["symbol"]),
+                "quantity": round(pos["quantity"], 4),
+                "unrealised_loss_eur": round(gain, 2),
+                "last_buy": last_buy,
+                "wash_sale_risk": wash,
+            }
+        )
+    candidates.sort(key=lambda x: x["unrealised_loss_eur"])
+
+    # Current vs after-harvest tax. Spanish savings base: capital gains/losses
+    # net together; a net capital LOSS offsets up to 25% of dividend/interest
+    # income, the rest carries forward (modelled simply here).
+    def savings_tax(capital_result, inc):
+        if capital_result >= 0:
+            return irpf_savings_tax(capital_result + inc)
+        offset = min(inc * 0.25, -capital_result)
+        return irpf_savings_tax(max(inc - offset, 0))
+
+    tax_current = savings_tax(realised_gain, income)
+    tax_after = savings_tax(realised_gain + harvestable, income)
+
+    return {
+        "year": yr,
+        "realised_gain_eur": round(realised_gain, 2),
+        "dividend_income_eur": round(div_this_year, 2),
+        "interest_income_eur": round(interest_this_year, 2),
+        "income_eur": round(income, 2),
+        "harvestable_loss_eur": round(harvestable, 2),
+        "estimated_tax_now_eur": tax_current,
+        "estimated_tax_after_harvest_eur": tax_after,
+        "estimated_tax_saved_eur": round(tax_current - tax_after, 2),
+        "candidates": candidates,
+        "note": (
+            "Estimate, not tax advice. Spain disallows a loss if you hold/rebuy "
+            "the same security within 2 months — candidates bought in the last "
+            "60 days are flagged; avoid rebuying harvested positions for 2 months."
+        ),
+    }
+
+
 # ── Diversification & Risk ─────────────────────────────────────────────────────
 
 
