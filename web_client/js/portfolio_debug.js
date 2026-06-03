@@ -1857,9 +1857,12 @@ const RESOURCE_LINKS = [
         ['Interactive Brokers', 'https://www.interactivebrokers.com', 'Global multi-asset broker.', 'bi-bank'],
     ]},
     { cat: 'Books', items: [
-        ['The Intelligent Investor', 'https://en.wikipedia.org/wiki/The_Intelligent_Investor', 'Benjamin Graham — value investing classic.', 'bi-book'],
+        ['One Up On Wall Street', 'https://en.wikipedia.org/wiki/One_Up_on_Wall_Street', 'Peter Lynch — invest in what you know. (read)', 'bi-bookmark-check'],
+        ['The Essays of Warren Buffett', 'https://www.google.com/search?q=The+Essays+of+Warren+Buffett+book', 'Buffett on business & investing, by L. Cunningham. (read)', 'bi-bookmark-check'],
+        ['The Little Book of Common Sense Investing', 'https://en.wikipedia.org/wiki/The_Little_Book_of_Common_Sense_Investing', 'John Bogle — low-cost index investing. (read)', 'bi-bookmark-check'],
+        ['The Wealthy Barber', 'https://en.wikipedia.org/wiki/The_Wealthy_Barber', 'David Chilton — personal-finance basics. (read)', 'bi-bookmark-check'],
+        ['The Intelligent Investor', 'https://en.wikipedia.org/wiki/The_Intelligent_Investor', 'Benjamin Graham — value-investing classic.', 'bi-book'],
         ['A Random Walk Down Wall Street', 'https://en.wikipedia.org/wiki/A_Random_Walk_Down_Wall_Street', 'Burton Malkiel — the case for index investing.', 'bi-book'],
-        ['Common Sense on Mutual Funds', 'https://en.wikipedia.org/wiki/John_C._Bogle', 'John Bogle — low-cost index investing.', 'bi-book'],
         ['The Psychology of Money', 'https://en.wikipedia.org/wiki/The_Psychology_of_Money', 'Morgan Housel — behaviour & wealth.', 'bi-book'],
     ]},
     { cat: 'Courses & learning', items: [
