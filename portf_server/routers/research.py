@@ -194,7 +194,7 @@ async def get_report(
 
 
 @router.post("/{symbol}/generate")
-async def generate_report(
+def generate_report(
     symbol: str, db=Depends(get_database), api_key_info: dict = Depends(_auth)
 ):
     """Run web-augmented LLM valuation. Works for any symbol (held or not)."""
@@ -243,9 +243,7 @@ async def generate_report(
 
 
 @router.get("/{symbol}/lookup")
-async def lookup(
-    symbol: str, db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+def lookup(symbol: str, db=Depends(get_database), api_key_info: dict = Depends(_auth)):
     """Snapshot for the research workbench (no LLM): price, position,
     fundamentals, news, existing targets and the latest saved research."""
     from portf_manager.services.research import fetch_fundamentals, fetch_recent_news
