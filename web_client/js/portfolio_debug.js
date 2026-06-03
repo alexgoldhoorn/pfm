@@ -4384,6 +4384,15 @@ function setupResearchPage() {
         totalCash: 'Total cash', totalDebt: 'Total debt', ebitda: 'EBITDA',
         enterpriseValue: 'Enterprise value', sector: 'Sector', industry: 'Industry',
         country: 'Country', longName: 'Name', shortName: 'Name', currency: 'Currency',
+        recommendationKey: 'Analyst consensus', recommendationMean: 'Analyst rating (1=buy,5=sell)',
+        targetMeanPrice: 'Analyst mean target', targetHighPrice: 'Analyst high target',
+        targetLowPrice: 'Analyst low target', numberOfAnalystOpinions: '# analysts',
+        previousClose: 'Previous close',
+    };
+    // Yahoo's recommendationKey is a code — show it human-readable.
+    const REC_LABELS = {
+        strong_buy: 'Strong buy', buy: 'Buy', hold: 'Hold',
+        underperform: 'Underperform', sell: 'Sell', none: 'No rating',
     };
     const FUND_PCT = new Set(['dividendYield', 'payoutRatio', 'profitMargins',
         'operatingMargins', 'grossMargins', 'returnOnEquity', 'returnOnAssets',
@@ -4406,6 +4415,7 @@ function setupResearchPage() {
         return Fmt.num(v, 0, 2);
     }
     function fmtFundVal(k, v) {
+        if (k === 'recommendationKey') return REC_LABELS[v] || String(v).replace(/_/g, ' ');
         if (typeof v !== 'number') return v;
         if (FUND_PCT.has(k)) return (v * 100).toFixed(2) + '%';
         if (FUND_BIG.has(k)) return compactNum(v);
@@ -4469,28 +4479,59 @@ function setupResearchPage() {
             <div class="d-flex justify-content-between"><span class="text-muted">Remaining</span><span>${Fmt.num(qtyHeld - n, 0, 4)} sh</span></div>`;
     }
 
-    function renderCostChart(evolution, price) {
+    function renderCostChart(evolution, price, cur) {
         const svg = $('rsCostChart');
         const pts = (evolution || []).filter(p => p.avg_cost > 0);
         if (pts.length < 1) { svg.innerHTML = '<text x="8" y="20" font-size="12" fill="#94a3b8">No cost history.</text>'; return; }
-        const W = svg.clientWidth || 460, H = 160, PAD = { t: 12, r: 12, b: 22, l: 48 };
+        const W = svg.clientWidth || 460, H = 180, PAD = { t: 14, r: 14, b: 38, l: 60 };
         const iW = W - PAD.l - PAD.r, iH = H - PAD.t - PAD.b;
-        const costs = pts.map(p => p.avg_cost).concat(price ? [price] : []);
-        const lo = Math.min(...costs), hi = Math.max(...costs), rng = (hi - lo) || 1;
+        // Scale across avg cost, the live price, AND every transaction price so
+        // entry points are visible even when the running average looks flat.
+        const txPrices = pts.map(p => p.tx_price).filter(v => v > 0);
+        const all = pts.map(p => p.avg_cost).concat(price ? [price] : []).concat(txPrices);
+        let lo = Math.min(...all), hi = Math.max(...all);
+        const pad = (hi - lo) * 0.08 || hi * 0.05 || 1;
+        lo -= pad; hi += pad;
+        const rng = (hi - lo) || 1;
         const n = pts.length;
         const x = i => PAD.l + (n === 1 ? iW / 2 : i / (n - 1) * iW);
         const y = v => PAD.t + iH - (v - lo) / rng * iH;
+        const cy = v => Math.max(PAD.t, Math.min(PAD.t + iH, y(v)));
+        const sym = ({ EUR: '€', USD: '$', GBP: '£' })[cur] || '';
+        const fmtY = v => sym + Fmt.num(v, 0, v >= 100 ? 0 : 2);
         const path = pts.map((p, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ',' + y(p.avg_cost).toFixed(1)).join(' ');
-        const priceLine = price ? `<line x1="${PAD.l}" y1="${y(price).toFixed(1)}" x2="${(PAD.l + iW).toFixed(1)}" y2="${y(price).toFixed(1)}" stroke="#16a34a" stroke-width="1.5" stroke-dasharray="4 3"/><text x="${(PAD.l + iW).toFixed(1)}" y="${(y(price) - 3).toFixed(1)}" text-anchor="end" font-size="10" fill="#16a34a">price ${Fmt.num(price, 0, 2)}</text>` : '';
-        const yTicks = [lo, (lo + hi) / 2, hi].map(v => `<text x="${PAD.l - 6}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="#64748b">${Fmt.num(v, 0, 2)}</text>`).join('');
+        // Transaction markers (buys green, sells red) at their actual price
+        const markers = pts.map((p, i) => {
+            if (!p.tx_price) return '';
+            const col = p.tx_type === 'sell' ? '#dc2626' : p.tx_type === 'buy' ? '#16a34a' : '#94a3b8';
+            return `<circle cx="${x(i).toFixed(1)}" cy="${cy(p.tx_price).toFixed(1)}" r="2.8" fill="${col}" opacity="0.8"><title>${p.tx_type} @ ${fmtY(p.tx_price)} (${p.date})</title></circle>`;
+        }).join('');
+        const priceLine = price ? `<line x1="${PAD.l}" y1="${y(price).toFixed(1)}" x2="${(PAD.l + iW).toFixed(1)}" y2="${y(price).toFixed(1)}" stroke="#16a34a" stroke-width="1.5" stroke-dasharray="4 3"/><text x="${(PAD.l + iW).toFixed(1)}" y="${(y(price) - 4).toFixed(1)}" text-anchor="end" font-size="10" fill="#16a34a">price ${fmtY(price)}</text>` : '';
+        // Y-axis ticks (currency) + gridlines
+        const yt = [lo + rng * 0.1, lo + rng * 0.5, hi - rng * 0.1];
+        const yTicks = yt.map(v => `
+            <line x1="${PAD.l}" y1="${y(v).toFixed(1)}" x2="${PAD.l + iW}" y2="${y(v).toFixed(1)}" stroke="#eef2f6"/>
+            <text x="${PAD.l - 6}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="#64748b">${fmtY(v)}</text>`).join('');
+        // X-axis date ticks (~4)
+        const step = Math.max(1, Math.floor((n - 1) / 3));
+        const xTicks = [];
+        for (let i = 0; i < n; i += step) xTicks.push(i);
+        if (xTicks[xTicks.length - 1] !== n - 1) xTicks.push(n - 1);
+        const xLabels = xTicks.map(i => {
+            const d = new Date(pts[i].date);
+            const lbl = isNaN(d) ? pts[i].date : d.toLocaleDateString(Fmt.loc(), { month: 'short', year: '2-digit' });
+            return `<text x="${x(i).toFixed(1)}" y="${(PAD.t + iH + 14).toFixed(1)}" text-anchor="middle" font-size="10" fill="#64748b">${lbl}</text>`;
+        }).join('');
         svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
         svg.innerHTML = `${yTicks}
             <line x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${PAD.t + iH}" stroke="#cbd5e1"/>
             <line x1="${PAD.l}" y1="${PAD.t + iH}" x2="${PAD.l + iW}" y2="${PAD.t + iH}" stroke="#cbd5e1"/>
+            ${xLabels}
             ${priceLine}
             <path d="${path}" fill="none" stroke="#2563eb" stroke-width="2"/>
+            ${markers}
             <circle cx="${x(n - 1).toFixed(1)}" cy="${y(pts[n - 1].avg_cost).toFixed(1)}" r="3.5" fill="#2563eb"/>
-            <text x="${PAD.l}" y="${H - 6}" font-size="10" fill="#64748b">avg cost (blue) vs current price (green)</text>`;
+            <text x="${PAD.l}" y="${H - 4}" font-size="10" fill="#64748b">avg cost (blue line) · buys (green) / sells (red) · current price (green dash)</text>`;
     }
 
     function renderTransactions(txns, cur) {
@@ -4520,7 +4561,7 @@ function setupResearchPage() {
         $('rsRealised').innerHTML = `<span class="${pnlCls(r)}">${money(r, cur)}</span>`;
         $('rsSellQty').value = ''; $('rsSellPct').value = '';
         renderSellCalc();
-        renderCostChart(d.cost_evolution, d.current_price);
+        renderCostChart(d.cost_evolution, d.current_price, cur);
         renderTransactions(d.transactions, cur);
     }
 
@@ -4568,6 +4609,7 @@ function setupResearchPage() {
             $('rvSaveMsg').textContent = '';
             loadHistory(sym);
             $('researchHint').textContent = '';
+            if (window.initTooltips) initTooltips();
         } catch (e) {
             $('researchHint').innerHTML = '<span class="text-danger">' + (e.message || 'lookup failed') + '</span>';
         }

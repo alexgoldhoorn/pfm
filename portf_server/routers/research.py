@@ -131,6 +131,9 @@ def _cost_evolution(db, asset: Optional[dict]) -> tuple[list, list]:
                 "quantity": round(qty, 6),
                 "avg_cost": round(cost / qty, 4) if qty > 0 else 0.0,
                 "invested": round(cost, 2),
+                # the price/type of THIS transaction, so the chart can mark entries
+                "tx_type": t,
+                "tx_price": float(tx["price"] or 0),
             }
         )
     return txns, series
@@ -205,7 +208,7 @@ async def generate_report(
     asset = db.get_asset_by_symbol(sym)  # may be None (research anything)
     pos = _position_stats(db, asset)
     current_price, currency = _current_price(db, asset, sym)
-    fundamentals = fetch_fundamentals(sym)
+    fundamentals = fetch_fundamentals(sym, db)
     news = fetch_recent_news(sym)
 
     result = generate_valuation_report(
@@ -284,7 +287,7 @@ async def lookup(
         "realised_gain": round(pos["realised"], 2),
         "current_price": round(price, 4),
         "currency": currency,
-        "fundamentals": fetch_fundamentals(sym),
+        "fundamentals": fetch_fundamentals(sym, db),
         "news": fetch_recent_news(sym),
         "targets": targets,
         "transactions": transactions,

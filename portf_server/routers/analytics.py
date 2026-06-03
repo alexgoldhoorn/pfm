@@ -22,6 +22,7 @@ from portf_manager.services.analytics_service import (
 )
 from portf_manager.tax_calculator import TaxCalculator
 from portf_manager.positions import compute_positions
+from portf_manager.cache import cached
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
@@ -179,7 +180,9 @@ async def get_performance(
         )
     bench_start = period_start_date(period)
 
-    # Benchmark: total return over the selected window (or full history for 'all')
+    # Benchmark: total return over the selected window (or full history for
+    # 'all'). Cached ~12h keyed by ticker+start — the historical close series
+    # is immutable except for the most recent day.
     benchmark_ret = None
     try:
         if bench_start is not None:
@@ -189,19 +192,30 @@ async def get_performance(
         else:
             start = None
         if start is not None:
-            hist = yf.download(
-                benchmark, start=start.isoformat(), progress=False, auto_adjust=True
-            )
-            if not hist.empty:
+
+            def _fetch_benchmark_ret(b=benchmark, s=start):
+                hist = yf.download(
+                    b, start=s.isoformat(), progress=False, auto_adjust=True
+                )
+                if hist.empty:
+                    return None
                 closes = hist["Close"]
                 # yfinance may return multi-index columns -> take the first column
                 if hasattr(closes, "columns"):
                     closes = closes.iloc[:, 0]
                 closes = closes.dropna()
-                if len(closes) > 1:
-                    first = float(closes.iloc[0])
-                    last = float(closes.iloc[-1])
-                    benchmark_ret = round((last - first) / first * 100, 2)
+                if len(closes) <= 1:
+                    return None
+                first = float(closes.iloc[0])
+                last = float(closes.iloc[-1])
+                return round((last - first) / first * 100, 2)
+
+            benchmark_ret = cached(
+                db,
+                f"yf:bench:{benchmark}:{start.isoformat()}",
+                12 * 3600,
+                _fetch_benchmark_ret,
+            )
     except Exception as e:
         logger.warning(f"Benchmark fetch failed: {e}")
 
@@ -513,14 +527,21 @@ def get_diversification(db=Depends(get_database), api_key_info: dict = Depends(_
             by_type.get(asset.get("asset_type", "other"), 0) + value
         )
         by_currency[cur] = by_currency.get(cur, 0) + value
-        # sector/country from yfinance (cached info)
-        sector = country = None
+
+        # sector/country from yfinance — cached ~7 days (these rarely change),
+        # which turns the ~25s per-holding .info sweep into a one-off cost.
+        def _fetch_sector_country(s=sym):
+            info = yf.Ticker(s).info
+            return {"sector": info.get("sector"), "country": info.get("country")}
+
         try:
-            info = yf.Ticker(asset["symbol"]).info
-            sector = info.get("sector")
-            country = info.get("country")
+            meta = cached(
+                db, f"yf:sectorcountry:{sym}", 7 * 86400, _fetch_sector_country
+            )
         except Exception:
-            pass
+            meta = {}
+        sector = (meta or {}).get("sector")
+        country = (meta or {}).get("country")
         by_sector[sector or "Unknown"] = by_sector.get(sector or "Unknown", 0) + value
         by_country[country or "Unknown"] = (
             by_country.get(country or "Unknown", 0) + value
