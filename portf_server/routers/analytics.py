@@ -131,12 +131,16 @@ def get_performance(
     """
     positions, realised = _compute_positions(db)
 
+    # Prefetch all assets once (avoids a get_asset() query per position AND per
+    # transaction — the latter was ~one query per trade in the IRR loop).
+    assets_by_id = {a["id"]: a for a in db.get_all_assets(active_only=False)}
+
     invested = 0.0
     current_value = 0.0
     for aid, pos in positions.items():
         if pos["quantity"] <= 0:
             continue
-        asset = db.get_asset(aid)
+        asset = assets_by_id.get(aid)
         if not asset:
             continue
         cur = asset.get("currency", "EUR")
@@ -153,7 +157,7 @@ def get_performance(
             dd = datetime.strptime(str(d)[:10], "%Y-%m-%d").date()
         except ValueError:
             continue
-        asset = db.get_asset(tx["asset_id"])
+        asset = assets_by_id.get(tx["asset_id"])
         cur = asset.get("currency", "EUR") if asset else "EUR"
         amount_eur = float(tx["total_amount"] or 0) * _fx(cur)
         t = tx["transaction_type"].lower()
