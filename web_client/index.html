@@ -16,7 +16,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <!-- Custom CSS -->
-    <link href="css/styles.css?v=1780000007" rel="stylesheet">
+    <link href="css/styles.css?v=1780000008" rel="stylesheet">
     <style>
         /* Privacy mode: blur monetary amounts until hovered */
         body.pfm-privacy .pfm-amt { filter: blur(0.45em); transition: filter .12s ease; user-select: none; }
@@ -125,41 +125,53 @@
         </div>
         <div class="offcanvas-body p-0">
             <nav class="nav flex-column py-2">
+                <div class="sidebar-section">Overview</div>
                 <a class="sidebar-nav-link active" href="#" data-page="dashboard">
                     <i class="bi bi-house-door me-2"></i>Dashboard
                 </a>
-                <a class="sidebar-nav-link" href="#" data-page="assets">
-                    <i class="bi bi-coin me-2"></i>Assets
+                <div class="sidebar-section">Portfolio</div>
+                <a class="sidebar-nav-link" href="#" data-page="holdings">
+                    <i class="bi bi-wallet2 me-2"></i>Holdings
                 </a>
                 <a class="sidebar-nav-link" href="#" data-page="transactions">
                     <i class="bi bi-arrow-left-right me-2"></i>Transactions
                 </a>
-                <a class="sidebar-nav-link" href="#" data-page="holdings">
-                    <i class="bi bi-bar-chart-line me-2"></i>Holdings
+                <a class="sidebar-nav-link" href="#" data-page="assets">
+                    <i class="bi bi-coin me-2"></i>Assets
                 </a>
+                <a class="sidebar-nav-link" href="#" data-page="portfolios">
+                    <i class="bi bi-briefcase me-2"></i>Brokers
+                </a>
+                <div class="sidebar-section">Insights</div>
                 <a class="sidebar-nav-link" href="#" data-page="analytics">
                     <i class="bi bi-bar-chart-line me-2"></i>Analytics
-                </a>
-                <a class="sidebar-nav-link" href="#" data-page="watchlist">
-                    <i class="bi bi-eye me-2"></i>Watchlist
                 </a>
                 <a class="sidebar-nav-link" href="#" data-page="research">
                     <i class="bi bi-search-heart me-2"></i>Research
                 </a>
+                <a class="sidebar-nav-link" href="#" data-page="watchlist">
+                    <i class="bi bi-eye me-2"></i>Watchlist
+                </a>
+                <div class="sidebar-section">Planning</div>
                 <a class="sidebar-nav-link" href="#" data-page="goals">
                     <i class="bi bi-bullseye me-2"></i>Goals
                 </a>
                 <a class="sidebar-nav-link" href="#" data-page="forecast">
                     <i class="bi bi-graph-up-arrow me-2"></i>Wealth Simulator
                 </a>
+                <div class="sidebar-section">Tools</div>
                 <a class="sidebar-nav-link" href="#" data-page="chat">
-                    <i class="bi bi-chat-dots me-2"></i>Chat
+                    <i class="bi bi-robot me-2"></i>AI Chat
                 </a>
                 <a class="sidebar-nav-link" href="#" data-page="importexport">
                     <i class="bi bi-box-arrow-in-down me-2"></i>Import / Export
                 </a>
-                <a class="sidebar-nav-link" href="#" data-page="portfolios">
-                    <i class="bi bi-briefcase me-2"></i>Portfolios
+                <div class="sidebar-section">About</div>
+                <a class="sidebar-nav-link" href="#" data-page="help">
+                    <i class="bi bi-question-circle me-2"></i>Help
+                </a>
+                <a class="sidebar-nav-link" href="#" data-page="version">
+                    <i class="bi bi-clock-history me-2"></i>What's New
                 </a>
                 <hr class="mx-3 my-2">
                 <a class="sidebar-nav-link" href="#" id="settingsBtnOffcanvas">
@@ -181,41 +193,53 @@
                 <i class="bi bi-graph-up me-2"></i>Portfolio Manager
             </div>
             <nav class="sidebar-nav flex-column py-2">
+                <div class="sidebar-section">Overview</div>
                 <a class="sidebar-nav-link active" href="#" data-page="dashboard">
                     <i class="bi bi-house-door me-2"></i>Dashboard
                 </a>
-                <a class="sidebar-nav-link" href="#" data-page="assets">
-                    <i class="bi bi-coin me-2"></i>Assets
+                <div class="sidebar-section">Portfolio</div>
+                <a class="sidebar-nav-link" href="#" data-page="holdings">
+                    <i class="bi bi-wallet2 me-2"></i>Holdings
                 </a>
                 <a class="sidebar-nav-link" href="#" data-page="transactions">
                     <i class="bi bi-arrow-left-right me-2"></i>Transactions
                 </a>
-                <a class="sidebar-nav-link" href="#" data-page="holdings">
-                    <i class="bi bi-bar-chart-line me-2"></i>Holdings
+                <a class="sidebar-nav-link" href="#" data-page="assets">
+                    <i class="bi bi-coin me-2"></i>Assets
                 </a>
+                <a class="sidebar-nav-link" href="#" data-page="portfolios">
+                    <i class="bi bi-briefcase me-2"></i>Brokers
+                </a>
+                <div class="sidebar-section">Insights</div>
                 <a class="sidebar-nav-link" href="#" data-page="analytics">
                     <i class="bi bi-bar-chart-line me-2"></i>Analytics
-                </a>
-                <a class="sidebar-nav-link" href="#" data-page="watchlist">
-                    <i class="bi bi-eye me-2"></i>Watchlist
                 </a>
                 <a class="sidebar-nav-link" href="#" data-page="research">
                     <i class="bi bi-search-heart me-2"></i>Research
                 </a>
+                <a class="sidebar-nav-link" href="#" data-page="watchlist">
+                    <i class="bi bi-eye me-2"></i>Watchlist
+                </a>
+                <div class="sidebar-section">Planning</div>
                 <a class="sidebar-nav-link" href="#" data-page="goals">
                     <i class="bi bi-bullseye me-2"></i>Goals
                 </a>
                 <a class="sidebar-nav-link" href="#" data-page="forecast">
                     <i class="bi bi-graph-up-arrow me-2"></i>Wealth Simulator
                 </a>
+                <div class="sidebar-section">Tools</div>
                 <a class="sidebar-nav-link" href="#" data-page="chat">
-                    <i class="bi bi-chat-dots me-2"></i>Chat
+                    <i class="bi bi-robot me-2"></i>AI Chat
                 </a>
                 <a class="sidebar-nav-link" href="#" data-page="importexport">
                     <i class="bi bi-box-arrow-in-down me-2"></i>Import / Export
                 </a>
-                <a class="sidebar-nav-link" href="#" data-page="portfolios">
-                    <i class="bi bi-briefcase me-2"></i>Portfolios
+                <div class="sidebar-section">About</div>
+                <a class="sidebar-nav-link" href="#" data-page="help">
+                    <i class="bi bi-question-circle me-2"></i>Help
+                </a>
+                <a class="sidebar-nav-link" href="#" data-page="version">
+                    <i class="bi bi-clock-history me-2"></i>What's New
                 </a>
             </nav>
             <div class="sidebar-footer">
@@ -1772,6 +1796,78 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                     </div>
                 </div>
 
+                <!-- Help Page -->
+                <div id="helpPage" class="page-content" style="display: none;">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div>
+                            <h4 class="mb-0"><i class="bi bi-question-circle me-2 text-primary"></i>Help &amp; Guide</h4>
+                            <p class="text-muted small mb-0">What each page does, where the numbers come from, and a glossary of the abbreviations used across the app.</p>
+                        </div>
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-12 col-lg-7">
+                            <div class="card">
+                                <div class="card-header fw-semibold"><i class="bi bi-book me-2"></i>Pages</div>
+                                <div class="card-body"><div class="accordion accordion-flush" id="helpAccordion"></div></div>
+                            </div>
+                        </div>
+                        <div class="col-12 col-lg-5">
+                            <div class="card">
+                                <div class="card-header fw-semibold"><i class="bi bi-translate me-2"></i>Glossary</div>
+                                <div class="card-body small" id="helpGlossary"></div>
+                            </div>
+                            <div class="card mt-3">
+                                <div class="card-header fw-semibold"><i class="bi bi-shield-lock me-2"></i>Data &amp; sources</div>
+                                <div class="card-body small text-muted">
+                                    <p class="mb-2">Prices, fundamentals and news come from <strong>Yahoo Finance</strong> (refreshed daily at 20:00 UTC; fundamentals/news are cached briefly).</p>
+                                    <p class="mb-2">Cost basis, gains and tax use your own <strong>transactions</strong> (FIFO). Tax is a Spanish IRPF <em>savings-base</em> estimate, not advice.</p>
+                                    <p class="mb-0">LLM/AI answers are generated from your data + cited news — informational, not financial advice.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- What's New / Version history -->
+                <div id="versionPage" class="page-content" style="display: none;">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div>
+                            <h4 class="mb-0"><i class="bi bi-clock-history me-2 text-primary"></i>What's New</h4>
+                            <p class="text-muted small mb-0">Recent improvements to Portfolio Manager.</p>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-body">
+                            <ul class="list-unstyled mb-0" id="versionList">
+                                <li class="mb-3">
+                                    <span class="badge bg-primary me-2">Research</span>
+                                    Workbench with autocomplete, your position (cost basis, P/L, sell calculator, average-cost chart), Yahoo fundamentals with sources, LLM analysis, and a downloadable Markdown report per ticker.
+                                </li>
+                                <li class="mb-3">
+                                    <span class="badge bg-primary me-2">AI Chat</span>
+                                    The assistant now reads your real portfolio (holdings, performance, history), renders Markdown, and works in dark mode.
+                                </li>
+                                <li class="mb-3">
+                                    <span class="badge bg-primary me-2">Analytics</span>
+                                    Split into lazy-loaded tabs (Performance &amp; Net Worth · Dividends · Tax · Risk &amp; Diversification · Fees); per-holding concentration; European benchmarks; clearer tooltips and source labels.
+                                </li>
+                                <li class="mb-3">
+                                    <span class="badge bg-primary me-2">Performance</span>
+                                    yfinance results cached (sector/country, fundamentals, benchmark, news) and slow lookups moved off the event loop — pages load much faster.
+                                </li>
+                                <li class="mb-3">
+                                    <span class="badge bg-primary me-2">Data</span>
+                                    New "Index fund" asset type; cash deposits/withdrawals shown inline in Transactions; dashboard shows positions per type.
+                                </li>
+                                <li class="mb-0">
+                                    <span class="badge bg-secondary me-2">UI</span>
+                                    Real dark mode across the app, grouped sidebar navigation, and this Help / What's New section.
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
             </div><!-- /.app-content -->
         </div><!-- /.app-main -->
     </div><!-- /.app-shell -->
@@ -2260,6 +2356,6 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <script src="js/help_text.js?v=1780000006"></script>
 
     <!-- Custom JavaScript -->
-    <script src="js/portfolio_debug.js?v=1780000018"></script>
+    <script src="js/portfolio_debug.js?v=1780000019"></script>
 </body>
 </html>

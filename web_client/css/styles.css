@@ -214,14 +214,9 @@ body {
     background-color: rgba(255, 255, 255, 0.05);
 }
 
-/* Cash-movement (booking) rows in the transactions table — subtle tint that
-   works in both themes (the old .table-light stayed white in dark mode). */
-.tx-cash-row > td {
-    background-color: rgba(13, 110, 253, 0.05);
-}
-[data-bs-theme="dark"] .tx-cash-row > td {
-    background-color: rgba(255, 255, 255, 0.04);
-}
+/* Cash-movement (booking) rows blend with normal rows in both themes; the
+   wallet icon, "Cash in/out" label and badge colour mark them as cash —
+   no row tint (which previously stayed white in dark mode). */
 
 /* Donut centre total — themed (was hardcoded near-black, invisible on dark) */
 .donut-total {
@@ -355,6 +350,20 @@ body {
 .sidebar-nav {
     display: flex;
     flex: 1 1 auto;
+}
+
+/* Small uppercase section labels grouping the nav links */
+.sidebar-section {
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.45);
+    padding: 0.6rem 1rem 0.2rem;
+}
+/* On the light offcanvas (mobile), section labels need a darker tint */
+.offcanvas .sidebar-section {
+    color: rgba(0, 0, 0, 0.4);
 }
 
 .sidebar-nav-link {
