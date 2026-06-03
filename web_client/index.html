@@ -148,6 +148,7 @@
                 <div class="sidebar-section-items" data-sect-items="planning">
                     <a class="sidebar-nav-link" href="#" data-page="goals"><i class="bi bi-bullseye me-2"></i>Goals</a>
                     <a class="sidebar-nav-link" href="#" data-page="forecast"><i class="bi bi-graph-up-arrow me-2"></i>Wealth Simulator</a>
+                    <a class="sidebar-nav-link" href="#" data-page="networth"><i class="bi bi-piggy-bank me-2"></i>Net Worth</a>
                 </div>
 
                 <button type="button" class="sidebar-section-toggle" data-sect="tools"><span>Tools</span><i class="bi bi-chevron-down sect-chevron"></i></button>
@@ -207,6 +208,7 @@
                 <div class="sidebar-section-items" data-sect-items="planning">
                     <a class="sidebar-nav-link" href="#" data-page="goals"><i class="bi bi-bullseye me-2"></i>Goals</a>
                     <a class="sidebar-nav-link" href="#" data-page="forecast"><i class="bi bi-graph-up-arrow me-2"></i>Wealth Simulator</a>
+                    <a class="sidebar-nav-link" href="#" data-page="networth"><i class="bi bi-piggy-bank me-2"></i>Net Worth</a>
                 </div>
 
                 <button type="button" class="sidebar-section-toggle" data-sect="tools"><span>Tools</span><i class="bi bi-chevron-down sect-chevron"></i></button>
@@ -1926,6 +1928,87 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                     <div class="row g-3" id="resourcesGrid"></div>
                 </div>
 
+                <!-- Net Worth Page -->
+                <div id="networthPage" class="page-content" style="display: none;">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div>
+                            <h4 class="mb-0"><i class="bi bi-piggy-bank me-2 text-primary"></i>Net Worth</h4>
+                            <p class="text-muted small mb-0">Your whole picture: tracked investments plus off-brokerage assets and liabilities (cash, property, pension, mortgage, loans). All shown in EUR.</p>
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary" id="refreshNetworth" title="Refresh"><i class="bi bi-arrow-clockwise me-1"></i>Refresh</button>
+                    </div>
+
+                    <!-- Summary tiles -->
+                    <div class="row g-3 mb-4">
+                        <div class="col-6 col-md-3"><div class="card h-100"><div class="card-body py-3"><div class="small text-muted mb-1">Investments</div><div class="fs-5 fw-bold" id="nwBrokerage">—</div></div></div></div>
+                        <div class="col-6 col-md-3"><div class="card h-100"><div class="card-body py-3"><div class="small text-muted mb-1">Other assets</div><div class="fs-5 fw-bold text-success" id="nwAssets">—</div></div></div></div>
+                        <div class="col-6 col-md-3"><div class="card h-100"><div class="card-body py-3"><div class="small text-muted mb-1">Liabilities</div><div class="fs-5 fw-bold text-danger" id="nwLiabilities">—</div></div></div></div>
+                        <div class="col-6 col-md-3"><div class="card h-100 text-white" id="nwTotalCard" style="background:#0d6efd;"><div class="card-body py-3"><div class="small opacity-75 mb-1">Net worth</div><div class="fs-5 fw-bold" id="nwTotal">—</div></div></div></div>
+                    </div>
+
+                    <div class="row g-3">
+                        <!-- Add form -->
+                        <div class="col-12 col-lg-4">
+                            <div class="card">
+                                <div class="card-header fw-semibold"><i class="bi bi-plus-lg me-2"></i>Add asset or liability</div>
+                                <div class="card-body">
+                                    <form id="nwAddForm" class="row g-2">
+                                        <div class="col-12">
+                                            <label class="form-label small mb-1">Name *</label>
+                                            <input class="form-control form-control-sm" id="nwName" placeholder="e.g. Emergency fund, Flat, Mortgage" required>
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="form-label small mb-1">Type</label>
+                                            <select class="form-select form-select-sm" id="nwCategory">
+                                                <option value="cash">Cash / savings</option>
+                                                <option value="investment_external">Investment (external)</option>
+                                                <option value="property">Property</option>
+                                                <option value="vehicle">Vehicle</option>
+                                                <option value="pension">Pension</option>
+                                                <option value="other">Other asset</option>
+                                                <option value="mortgage">Mortgage</option>
+                                                <option value="loan">Loan</option>
+                                                <option value="credit">Credit / other debt</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="form-label small mb-1">Amount</label>
+                                            <input type="number" step="any" class="form-control form-control-sm" id="nwAmount" placeholder="0.00" required>
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="form-label small mb-1">Currency</label>
+                                            <input class="form-control form-control-sm" id="nwCurrency" value="EUR" maxlength="3">
+                                        </div>
+                                        <div class="col-6 d-flex align-items-end">
+                                            <div class="form-check"><input class="form-check-input" type="checkbox" id="nwIsLiability"><label class="form-check-label small" for="nwIsLiability">It's a debt</label></div>
+                                        </div>
+                                        <div class="col-12">
+                                            <input class="form-control form-control-sm" id="nwNotes" placeholder="Notes (optional)">
+                                        </div>
+                                        <div class="col-12">
+                                            <button type="submit" class="btn btn-sm btn-primary w-100"><i class="bi bi-plus-lg me-1"></i>Add</button>
+                                        </div>
+                                        <div class="col-12"><div class="small" id="nwAddStatus"></div></div>
+                                    </form>
+                                    <p class="text-muted small mb-0 mt-2">Investments are pulled automatically from your tracked holdings — only add things <em>outside</em> the brokerage here.</p>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Items table -->
+                        <div class="col-12 col-lg-8">
+                            <div class="card">
+                                <div class="card-header fw-semibold"><i class="bi bi-list-ul me-2"></i>Assets &amp; liabilities</div>
+                                <div class="table-responsive">
+                                    <table class="table table-hover mb-0">
+                                        <thead><tr><th class="ps-3">Name</th><th>Type</th><th class="text-end">Amount</th><th class="text-end">EUR</th><th class="pe-3"></th></tr></thead>
+                                        <tbody id="nwItemsBody"><tr><td colspan="5" class="text-center text-muted py-4">Loading…</td></tr></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
             </div><!-- /.app-content -->
         </div><!-- /.app-main -->
     </div><!-- /.app-shell -->
@@ -2472,6 +2555,6 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <script src="js/help_text.js?v=1780000006"></script>
 
     <!-- Custom JavaScript -->
-    <script src="js/portfolio_debug.js?v=1780000028"></script>
+    <script src="js/portfolio_debug.js?v=1780000029"></script>
 </body>
 </html>

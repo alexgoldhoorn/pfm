@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 
 # Database version for migration tracking
-DATABASE_VERSION = 14
+DATABASE_VERSION = 15
 
 
 # black
@@ -436,6 +436,24 @@ class Database:
             )
         """)
 
+        # Manual assets & liabilities outside the brokerage (cash, property,
+        # pension, mortgage, loans …) so net worth can reflect the whole
+        # picture, not just tracked investments. amount is always positive;
+        # is_liability flips the sign when totalling net worth.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS manual_assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT 'other',
+                amount REAL NOT NULL DEFAULT 0,
+                currency TEXT NOT NULL DEFAULT 'EUR',
+                is_liability INTEGER NOT NULL DEFAULT 0,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         # Create triggers for updated_at timestamps
         for table in [
             "entities",
@@ -482,6 +500,8 @@ class Database:
             self._migrate_to_v13(conn)
         if current_version < 14:
             self._migrate_to_v14(conn)
+        if current_version < 15:
+            self._migrate_to_v15(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -933,6 +953,74 @@ class Database:
             )
             """)
         conn.commit()
+
+    def _migrate_to_v15(self, conn: sqlite3.Connection):
+        """Migrate from v14 to v15 — add manual_assets (off-brokerage net worth)."""
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS manual_assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                category TEXT NOT NULL DEFAULT 'other',
+                amount REAL NOT NULL DEFAULT 0,
+                currency TEXT NOT NULL DEFAULT 'EUR',
+                is_liability INTEGER NOT NULL DEFAULT 0,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """)
+        conn.commit()
+
+    # ── Manual assets & liabilities (off-brokerage net worth) ──────────────
+
+    def get_manual_assets(self) -> List[Dict]:
+        """All manual assets/liabilities, newest first."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM manual_assets ORDER BY is_liability, id"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def create_manual_asset(
+        self,
+        name: str,
+        category: str = "other",
+        amount: float = 0.0,
+        currency: str = "EUR",
+        is_liability: bool = False,
+        notes: str = None,
+    ) -> int:
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                "INSERT INTO manual_assets (name, category, amount, currency, "
+                "is_liability, notes) VALUES (?, ?, ?, ?, ?, ?)",
+                (name, category, amount, currency, 1 if is_liability else 0, notes),
+            )
+            conn.commit()
+            return cur.lastrowid
+
+    def update_manual_asset(self, asset_id: int, **fields) -> bool:
+        allowed = {"name", "category", "amount", "currency", "is_liability", "notes"}
+        sets = {k: v for k, v in fields.items() if k in allowed and v is not None}
+        if not sets:
+            return False
+        if "is_liability" in sets:
+            sets["is_liability"] = 1 if sets["is_liability"] else 0
+        cols = ", ".join(f"{k} = ?" for k in sets)
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                f"UPDATE manual_assets SET {cols}, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ?",
+                (*sets.values(), asset_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def delete_manual_asset(self, asset_id: int) -> bool:
+        with self.get_connection() as conn:
+            cur = conn.execute("DELETE FROM manual_assets WHERE id = ?", (asset_id,))
+            conn.commit()
+            return cur.rowcount > 0
 
     # ── Generic key/value cache ────────────────────────────────────────────
 
