@@ -16,7 +16,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <!-- Custom CSS -->
-    <link href="css/styles.css?v=1780000008" rel="stylesheet">
+    <link href="css/styles.css?v=1780000009" rel="stylesheet">
     <style>
         /* Privacy mode: blur monetary amounts until hovered */
         body.pfm-privacy .pfm-amt { filter: blur(0.45em); transition: filter .12s ease; user-select: none; }
@@ -125,57 +125,45 @@
         </div>
         <div class="offcanvas-body p-0">
             <nav class="nav flex-column py-2">
-                <div class="sidebar-section">Overview</div>
                 <a class="sidebar-nav-link active" href="#" data-page="dashboard">
                     <i class="bi bi-house-door me-2"></i>Dashboard
                 </a>
-                <div class="sidebar-section">Portfolio</div>
-                <a class="sidebar-nav-link" href="#" data-page="holdings">
-                    <i class="bi bi-wallet2 me-2"></i>Holdings
-                </a>
-                <a class="sidebar-nav-link" href="#" data-page="transactions">
-                    <i class="bi bi-arrow-left-right me-2"></i>Transactions
-                </a>
-                <a class="sidebar-nav-link" href="#" data-page="assets">
-                    <i class="bi bi-coin me-2"></i>Assets
-                </a>
-                <a class="sidebar-nav-link" href="#" data-page="portfolios">
-                    <i class="bi bi-briefcase me-2"></i>Brokers
-                </a>
-                <div class="sidebar-section">Insights</div>
-                <a class="sidebar-nav-link" href="#" data-page="analytics">
-                    <i class="bi bi-bar-chart-line me-2"></i>Analytics
-                </a>
-                <a class="sidebar-nav-link" href="#" data-page="research">
-                    <i class="bi bi-search-heart me-2"></i>Research
-                </a>
-                <a class="sidebar-nav-link" href="#" data-page="watchlist">
-                    <i class="bi bi-eye me-2"></i>Watchlist
-                </a>
-                <div class="sidebar-section">Planning</div>
-                <a class="sidebar-nav-link" href="#" data-page="goals">
-                    <i class="bi bi-bullseye me-2"></i>Goals
-                </a>
-                <a class="sidebar-nav-link" href="#" data-page="forecast">
-                    <i class="bi bi-graph-up-arrow me-2"></i>Wealth Simulator
-                </a>
-                <div class="sidebar-section">Tools</div>
-                <a class="sidebar-nav-link" href="#" data-page="chat">
-                    <i class="bi bi-robot me-2"></i>AI Chat
-                </a>
-                <a class="sidebar-nav-link" href="#" data-page="importexport">
-                    <i class="bi bi-box-arrow-in-down me-2"></i>Import / Export
-                </a>
-                <a class="sidebar-nav-link" href="https://app.portfoliodividendtracker.com/portfolio" target="_blank" rel="noopener" title="Open Portfolio Dividend Tracker in a new tab">
-                    <i class="bi bi-box-arrow-up-right me-2"></i>Dividend Tracker (PDT)
-                </a>
-                <div class="sidebar-section">About</div>
-                <a class="sidebar-nav-link" href="#" data-page="help">
-                    <i class="bi bi-question-circle me-2"></i>Help
-                </a>
-                <a class="sidebar-nav-link" href="#" data-page="version">
-                    <i class="bi bi-clock-history me-2"></i>What's New
-                </a>
+
+                <button type="button" class="sidebar-section-toggle" data-sect="portfolio"><span>Portfolio</span><i class="bi bi-chevron-down sect-chevron"></i></button>
+                <div class="sidebar-section-items" data-sect-items="portfolio">
+                    <a class="sidebar-nav-link" href="#" data-page="holdings"><i class="bi bi-wallet2 me-2"></i>Holdings</a>
+                    <a class="sidebar-nav-link" href="#" data-page="transactions"><i class="bi bi-arrow-left-right me-2"></i>Transactions</a>
+                    <a class="sidebar-nav-link" href="#" data-page="assets"><i class="bi bi-coin me-2"></i>Assets</a>
+                    <a class="sidebar-nav-link" href="#" data-page="portfolios"><i class="bi bi-briefcase me-2"></i>Brokers</a>
+                </div>
+
+                <button type="button" class="sidebar-section-toggle" data-sect="insights"><span>Insights</span><i class="bi bi-chevron-down sect-chevron"></i></button>
+                <div class="sidebar-section-items" data-sect-items="insights">
+                    <a class="sidebar-nav-link" href="#" data-page="analytics"><i class="bi bi-bar-chart-line me-2"></i>Analytics</a>
+                    <a class="sidebar-nav-link" href="#" data-page="research"><i class="bi bi-search-heart me-2"></i>Research</a>
+                    <a class="sidebar-nav-link" href="#" data-page="watchlist"><i class="bi bi-eye me-2"></i>Watchlist</a>
+                </div>
+
+                <button type="button" class="sidebar-section-toggle" data-sect="planning"><span>Planning</span><i class="bi bi-chevron-down sect-chevron"></i></button>
+                <div class="sidebar-section-items" data-sect-items="planning">
+                    <a class="sidebar-nav-link" href="#" data-page="goals"><i class="bi bi-bullseye me-2"></i>Goals</a>
+                    <a class="sidebar-nav-link" href="#" data-page="forecast"><i class="bi bi-graph-up-arrow me-2"></i>Wealth Simulator</a>
+                </div>
+
+                <button type="button" class="sidebar-section-toggle" data-sect="tools"><span>Tools</span><i class="bi bi-chevron-down sect-chevron"></i></button>
+                <div class="sidebar-section-items" data-sect-items="tools">
+                    <a class="sidebar-nav-link" href="#" data-page="chat"><i class="bi bi-robot me-2"></i>AI Chat</a>
+                    <a class="sidebar-nav-link" href="#" data-page="importexport"><i class="bi bi-box-arrow-in-down me-2"></i>Import / Export</a>
+                    <a class="sidebar-nav-link" href="#" data-page="resources"><i class="bi bi-link-45deg me-2"></i>Resources</a>
+                    <a class="sidebar-nav-link" href="https://app.portfoliodividendtracker.com/portfolio" target="_blank" rel="noopener" title="Open Portfolio Dividend Tracker in a new tab"><i class="bi bi-box-arrow-up-right me-2"></i>Dividend Tracker (PDT)</a>
+                </div>
+
+                <button type="button" class="sidebar-section-toggle" data-sect="help"><span>Help</span><i class="bi bi-chevron-down sect-chevron"></i></button>
+                <div class="sidebar-section-items" data-sect-items="help">
+                    <a class="sidebar-nav-link" href="#" data-page="help"><i class="bi bi-question-circle me-2"></i>Help &amp; Guide</a>
+                    <a class="sidebar-nav-link" href="#" data-page="version"><i class="bi bi-clock-history me-2"></i>What's New</a>
+                    <a class="sidebar-nav-link" href="#" data-page="about"><i class="bi bi-info-circle me-2"></i>About</a>
+                </div>
                 <hr class="mx-3 my-2">
                 <a class="sidebar-nav-link" href="#" id="settingsBtnOffcanvas">
                     <i class="bi bi-gear me-2"></i>Settings
@@ -196,57 +184,45 @@
                 <i class="bi bi-graph-up me-2"></i>Portfolio Manager
             </div>
             <nav class="sidebar-nav flex-column py-2">
-                <div class="sidebar-section">Overview</div>
                 <a class="sidebar-nav-link active" href="#" data-page="dashboard">
                     <i class="bi bi-house-door me-2"></i>Dashboard
                 </a>
-                <div class="sidebar-section">Portfolio</div>
-                <a class="sidebar-nav-link" href="#" data-page="holdings">
-                    <i class="bi bi-wallet2 me-2"></i>Holdings
-                </a>
-                <a class="sidebar-nav-link" href="#" data-page="transactions">
-                    <i class="bi bi-arrow-left-right me-2"></i>Transactions
-                </a>
-                <a class="sidebar-nav-link" href="#" data-page="assets">
-                    <i class="bi bi-coin me-2"></i>Assets
-                </a>
-                <a class="sidebar-nav-link" href="#" data-page="portfolios">
-                    <i class="bi bi-briefcase me-2"></i>Brokers
-                </a>
-                <div class="sidebar-section">Insights</div>
-                <a class="sidebar-nav-link" href="#" data-page="analytics">
-                    <i class="bi bi-bar-chart-line me-2"></i>Analytics
-                </a>
-                <a class="sidebar-nav-link" href="#" data-page="research">
-                    <i class="bi bi-search-heart me-2"></i>Research
-                </a>
-                <a class="sidebar-nav-link" href="#" data-page="watchlist">
-                    <i class="bi bi-eye me-2"></i>Watchlist
-                </a>
-                <div class="sidebar-section">Planning</div>
-                <a class="sidebar-nav-link" href="#" data-page="goals">
-                    <i class="bi bi-bullseye me-2"></i>Goals
-                </a>
-                <a class="sidebar-nav-link" href="#" data-page="forecast">
-                    <i class="bi bi-graph-up-arrow me-2"></i>Wealth Simulator
-                </a>
-                <div class="sidebar-section">Tools</div>
-                <a class="sidebar-nav-link" href="#" data-page="chat">
-                    <i class="bi bi-robot me-2"></i>AI Chat
-                </a>
-                <a class="sidebar-nav-link" href="#" data-page="importexport">
-                    <i class="bi bi-box-arrow-in-down me-2"></i>Import / Export
-                </a>
-                <a class="sidebar-nav-link" href="https://app.portfoliodividendtracker.com/portfolio" target="_blank" rel="noopener" title="Open Portfolio Dividend Tracker in a new tab">
-                    <i class="bi bi-box-arrow-up-right me-2"></i>Dividend Tracker (PDT)
-                </a>
-                <div class="sidebar-section">About</div>
-                <a class="sidebar-nav-link" href="#" data-page="help">
-                    <i class="bi bi-question-circle me-2"></i>Help
-                </a>
-                <a class="sidebar-nav-link" href="#" data-page="version">
-                    <i class="bi bi-clock-history me-2"></i>What's New
-                </a>
+
+                <button type="button" class="sidebar-section-toggle" data-sect="portfolio"><span>Portfolio</span><i class="bi bi-chevron-down sect-chevron"></i></button>
+                <div class="sidebar-section-items" data-sect-items="portfolio">
+                    <a class="sidebar-nav-link" href="#" data-page="holdings"><i class="bi bi-wallet2 me-2"></i>Holdings</a>
+                    <a class="sidebar-nav-link" href="#" data-page="transactions"><i class="bi bi-arrow-left-right me-2"></i>Transactions</a>
+                    <a class="sidebar-nav-link" href="#" data-page="assets"><i class="bi bi-coin me-2"></i>Assets</a>
+                    <a class="sidebar-nav-link" href="#" data-page="portfolios"><i class="bi bi-briefcase me-2"></i>Brokers</a>
+                </div>
+
+                <button type="button" class="sidebar-section-toggle" data-sect="insights"><span>Insights</span><i class="bi bi-chevron-down sect-chevron"></i></button>
+                <div class="sidebar-section-items" data-sect-items="insights">
+                    <a class="sidebar-nav-link" href="#" data-page="analytics"><i class="bi bi-bar-chart-line me-2"></i>Analytics</a>
+                    <a class="sidebar-nav-link" href="#" data-page="research"><i class="bi bi-search-heart me-2"></i>Research</a>
+                    <a class="sidebar-nav-link" href="#" data-page="watchlist"><i class="bi bi-eye me-2"></i>Watchlist</a>
+                </div>
+
+                <button type="button" class="sidebar-section-toggle" data-sect="planning"><span>Planning</span><i class="bi bi-chevron-down sect-chevron"></i></button>
+                <div class="sidebar-section-items" data-sect-items="planning">
+                    <a class="sidebar-nav-link" href="#" data-page="goals"><i class="bi bi-bullseye me-2"></i>Goals</a>
+                    <a class="sidebar-nav-link" href="#" data-page="forecast"><i class="bi bi-graph-up-arrow me-2"></i>Wealth Simulator</a>
+                </div>
+
+                <button type="button" class="sidebar-section-toggle" data-sect="tools"><span>Tools</span><i class="bi bi-chevron-down sect-chevron"></i></button>
+                <div class="sidebar-section-items" data-sect-items="tools">
+                    <a class="sidebar-nav-link" href="#" data-page="chat"><i class="bi bi-robot me-2"></i>AI Chat</a>
+                    <a class="sidebar-nav-link" href="#" data-page="importexport"><i class="bi bi-box-arrow-in-down me-2"></i>Import / Export</a>
+                    <a class="sidebar-nav-link" href="#" data-page="resources"><i class="bi bi-link-45deg me-2"></i>Resources</a>
+                    <a class="sidebar-nav-link" href="https://app.portfoliodividendtracker.com/portfolio" target="_blank" rel="noopener" title="Open Portfolio Dividend Tracker in a new tab"><i class="bi bi-box-arrow-up-right me-2"></i>Dividend Tracker (PDT)</a>
+                </div>
+
+                <button type="button" class="sidebar-section-toggle" data-sect="help"><span>Help</span><i class="bi bi-chevron-down sect-chevron"></i></button>
+                <div class="sidebar-section-items" data-sect-items="help">
+                    <a class="sidebar-nav-link" href="#" data-page="help"><i class="bi bi-question-circle me-2"></i>Help &amp; Guide</a>
+                    <a class="sidebar-nav-link" href="#" data-page="version"><i class="bi bi-clock-history me-2"></i>What's New</a>
+                    <a class="sidebar-nav-link" href="#" data-page="about"><i class="bi bi-info-circle me-2"></i>About</a>
+                </div>
             </nav>
             <div class="sidebar-footer">
                 <a class="sidebar-nav-link" href="#" id="settingsBtn">
@@ -1905,6 +1881,50 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                     </div>
                 </div>
 
+                <!-- About Page -->
+                <div id="aboutPage" class="page-content" style="display: none;">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div>
+                            <h4 class="mb-0"><i class="bi bi-info-circle me-2 text-primary"></i>About</h4>
+                            <p class="text-muted small mb-0">Portfolio Manager — a self-hosted portfolio &amp; dividend tracker.</p>
+                        </div>
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-12 col-lg-7">
+                            <div class="card">
+                                <div class="card-body">
+                                    <h5 class="mb-2"><i class="bi bi-graph-up me-2 text-primary"></i>Portfolio Manager</h5>
+                                    <p class="text-muted">Track stocks, ETFs, index funds and crypto across multiple brokers — with imports, dividend &amp; tax analytics, research, AI chat and Google Sheets (PDT) sync. Self-hosted; your data stays on your own server.</p>
+                                    <div class="d-flex flex-wrap gap-2 mt-3">
+                                        <a class="btn btn-primary btn-sm" href="https://pfm.goldhoorn.net" target="_blank" rel="noopener"><i class="bi bi-globe me-1"></i>pfm.goldhoorn.net</a>
+                                        <a class="btn btn-outline-secondary btn-sm" href="https://github.com/alexgoldhoorn/pfm" target="_blank" rel="noopener"><i class="bi bi-github me-1"></i>Source on GitHub</a>
+                                        <a class="btn btn-outline-secondary btn-sm" href="#" data-page="version"><i class="bi bi-clock-history me-1"></i>What's New</a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-12 col-lg-5">
+                            <div class="card">
+                                <div class="card-header fw-semibold"><i class="bi bi-shield-lock me-2"></i>Privacy</div>
+                                <div class="card-body small text-muted">
+                                    Self-hosted and single-tenant. Market data comes from Yahoo Finance; optional LLM features send only the prompt context you trigger. Nothing is shared with third parties.
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Resources Page -->
+                <div id="resourcesPage" class="page-content" style="display: none;">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div>
+                            <h4 class="mb-0"><i class="bi bi-link-45deg me-2 text-primary"></i>Resources</h4>
+                            <p class="text-muted small mb-0">Handy external financial sites — all open in a new tab.</p>
+                        </div>
+                    </div>
+                    <div class="row g-3" id="resourcesGrid"></div>
+                </div>
+
             </div><!-- /.app-content -->
         </div><!-- /.app-main -->
     </div><!-- /.app-shell -->
@@ -2451,6 +2471,6 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <script src="js/help_text.js?v=1780000006"></script>
 
     <!-- Custom JavaScript -->
-    <script src="js/portfolio_debug.js?v=1780000023"></script>
+    <script src="js/portfolio_debug.js?v=1780000024"></script>
 </body>
 </html>
