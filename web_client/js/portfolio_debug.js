@@ -94,6 +94,42 @@ function applyDefaultCurrency() {
 }
 window.applyDefaultCurrency = applyDefaultCurrency;
 
+// Collapsible sidebar sections — persisted in localStorage, defaulting to
+// Portfolio open and the rest collapsed. Applies to both the desktop sidebar
+// and the mobile offcanvas (matched by data-sect).
+const _NAV_SECTION_DEFAULTS = { portfolio: true, insights: false, planning: false, tools: false, help: false };
+function _applyNavSection(sect, open) {
+    document.querySelectorAll(`.sidebar-section-toggle[data-sect="${sect}"]`)
+        .forEach(b => b.classList.toggle('collapsed', !open));
+    document.querySelectorAll(`.sidebar-section-items[data-sect-items="${sect}"]`)
+        .forEach(d => d.classList.toggle('collapsed', !open));
+}
+function setupSidebarSections() {
+    let state = {};
+    try { state = JSON.parse(localStorage.getItem('pfm_nav_sections') || '{}'); } catch (e) { state = {}; }
+    Object.keys(_NAV_SECTION_DEFAULTS).forEach(sect => {
+        const open = (sect in state) ? state[sect] : _NAV_SECTION_DEFAULTS[sect];
+        _applyNavSection(sect, open);
+    });
+    document.querySelectorAll('.sidebar-section-toggle').forEach(btn => {
+        if (btn.dataset.wired) return;
+        btn.dataset.wired = '1';
+        btn.addEventListener('click', () => {
+            const sect = btn.dataset.sect;
+            const willOpen = btn.classList.contains('collapsed');
+            _applyNavSection(sect, willOpen);
+            state[sect] = willOpen;
+            try { localStorage.setItem('pfm_nav_sections', JSON.stringify(state)); } catch (e) { /* ignore */ }
+        });
+    });
+}
+// Expand whichever section contains the given page (so the active item shows).
+function expandNavSectionFor(pageName) {
+    const link = document.querySelector(`.sidebar-section-items [data-page="${pageName}"]`);
+    const items = link && link.closest('.sidebar-section-items');
+    if (items) _applyNavSection(items.dataset.sectItems, true);
+}
+
 // Preselect the user's default broker (by name) in a populated <select>.
 function selectDefaultBroker(selectEl) {
     const name = (window.PREFS && window.PREFS.defaultBroker) || '';
@@ -1792,6 +1828,46 @@ function renderHelpPage() {
 }
 window.renderHelpPage = renderHelpPage;
 
+// Curated external financial resources, rendered as a card grid.
+const RESOURCE_LINKS = [
+    { cat: 'Research & analysis', items: [
+        ['Yahoo Finance', 'https://finance.yahoo.com', 'Quotes, fundamentals, news — the app\'s own price source.', 'bi-graph-up'],
+        ['Simply Wall St', 'https://simplywall.st', 'Visual company analysis, fair value & snowflake.', 'bi-pie-chart'],
+        ['Morningstar', 'https://www.morningstar.com', 'Fund/ETF ratings and analysis.', 'bi-star'],
+        ['Finviz', 'https://finviz.com', 'Stock screener, heatmaps and news.', 'bi-grid-3x3'],
+        ['Koyfin', 'https://www.koyfin.com', 'Charts, dashboards and macro data.', 'bi-bar-chart'],
+    ]},
+    { cat: 'ETFs & funds', items: [
+        ['JustETF', 'https://www.justetf.com', 'European ETF database and screener.', 'bi-collection'],
+        ['ETF.com', 'https://www.etf.com', 'ETF research and comparisons.', 'bi-collection'],
+    ]},
+    { cat: 'Dividends', items: [
+        ['Portfolio Dividend Tracker', 'https://app.portfoliodividendtracker.com/portfolio', 'Your PDT account (broker auto-imports).', 'bi-cash-coin'],
+    ]},
+    { cat: 'Markets & charts', items: [
+        ['TradingView', 'https://www.tradingview.com', 'Advanced charting and ideas.', 'bi-graph-up-arrow'],
+        ['Google Finance', 'https://www.google.com/finance', 'Quick quotes and watchlists.', 'bi-google'],
+    ]},
+];
+function renderResourcesPage() {
+    const grid = document.getElementById('resourcesGrid');
+    if (!grid) return;
+    grid.innerHTML = RESOURCE_LINKS.map(group => `
+        <div class="col-12 col-lg-6">
+            <div class="card h-100">
+                <div class="card-header fw-semibold">${group.cat}</div>
+                <div class="list-group list-group-flush">
+                    ${group.items.map(([name, url, desc, icon]) => `
+                        <a class="list-group-item list-group-item-action d-flex align-items-start gap-2" href="${url}" target="_blank" rel="noopener">
+                            <i class="bi ${icon} mt-1"></i>
+                            <span><span class="fw-semibold">${name}</span> <i class="bi bi-box-arrow-up-right small text-muted"></i><br><span class="small text-muted">${desc}</span></span>
+                        </a>`).join('')}
+                </div>
+            </div>
+        </div>`).join('');
+}
+window.renderResourcesPage = renderResourcesPage;
+
 // (Re)initialise Bootstrap tooltips on all [data-bs-toggle="tooltip"] elements.
 // Disposes any existing instance first so re-rendered tiles don't leak handlers.
 function initTooltips() {
@@ -3033,7 +3109,7 @@ function createNavigationManager() {
     return {
         currentPage: 'dashboard',
         showPage: function(pageName) {
-            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'holdingsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage', 'helpPage', 'versionPage'];
+            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'holdingsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage', 'helpPage', 'versionPage', 'aboutPage', 'resourcesPage'];
             pages.forEach(pageId => {
                 const page = document.getElementById(pageId);
                 if (page) page.style.display = 'none';
@@ -3053,6 +3129,8 @@ function createNavigationManager() {
             document.querySelectorAll(`[data-page="${pageName}"]`).forEach(
                 link => link.classList.add('active')
             );
+            // Make sure the active item's section is expanded so it's visible.
+            if (typeof expandNavSectionFor === 'function') expandNavSectionFor(pageName);
 
             this.currentPage = pageName;
         },
@@ -3073,6 +3151,8 @@ function createNavigationManager() {
                 case 'forecast':     if (window._fcLoadStartValue) window._fcLoadStartValue(); break;
                 case 'help':         if (window.renderHelpPage) window.renderHelpPage(); break;
                 case 'version':      break;
+                case 'about':        break;
+                case 'resources':    if (window.renderResourcesPage) window.renderResourcesPage(); break;
             }
         },
 
@@ -5399,6 +5479,7 @@ document.addEventListener('DOMContentLoaded', function() {
     applyTheme();
     applyPrivacy();
     applyDefaultCurrency();
+    setupSidebarSections();
     setupSettings();
     setupAddTransaction();
     setupResearchPage();

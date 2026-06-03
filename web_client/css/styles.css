@@ -366,6 +366,44 @@ body {
     color: rgba(0, 0, 0, 0.4);
 }
 
+/* Collapsible section headers (clickable) */
+.sidebar-section-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    background: none;
+    border: none;
+    text-align: left;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.5);
+    padding: 0.6rem 1rem 0.25rem;
+    cursor: pointer;
+}
+.sidebar-section-toggle:hover {
+    color: #fff;
+}
+.offcanvas .sidebar-section-toggle {
+    color: rgba(0, 0, 0, 0.45);
+}
+.offcanvas .sidebar-section-toggle:hover {
+    color: var(--bs-primary, #0d6efd);
+}
+.sect-chevron {
+    font-size: 0.7rem;
+    transition: transform 0.15s ease;
+}
+/* Collapsed: hide the items and rotate the chevron */
+.sidebar-section-items.collapsed {
+    display: none;
+}
+.sidebar-section-toggle.collapsed .sect-chevron {
+    transform: rotate(-90deg);
+}
+
 .sidebar-nav-link {
     display: block;
     color: rgba(255, 255, 255, 0.85);
