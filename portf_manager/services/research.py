@@ -56,16 +56,33 @@ _FUNDAMENTAL_FIELDS = [
 ]
 
 
-def fetch_fundamentals(symbol: str) -> dict[str, Any]:
-    """Pull key fundamentals from yfinance for *symbol*."""
+def fetch_fundamentals(symbol: str, db=None) -> dict[str, Any]:
+    """Pull key fundamentals from yfinance for *symbol*.
+
+    When *db* is supplied the result is cached for ~6h (fundamentals change
+    roughly quarterly), so repeated research lookups don't re-hit yfinance.
+    """
+    if db is not None:
+        try:
+            hit = db.cache_get(f"yf:fund:{symbol}")
+            if hit is not None:
+                return hit
+        except Exception as e:
+            logger.warning(f"fundamentals cache_get failed for {symbol}: {e}")
     try:
         info = yf.Ticker(symbol).info
         data = {k: info.get(k) for k in _FUNDAMENTAL_FIELDS if info.get(k) is not None}
         data["symbol"] = symbol
-        return data
     except Exception as e:
         logger.warning(f"Could not fetch fundamentals for {symbol}: {e}")
         return {"symbol": symbol}
+    # Only cache a genuine hit (more than just the symbol key).
+    if db is not None and len(data) > 1:
+        try:
+            db.cache_set(f"yf:fund:{symbol}", data, 6 * 3600)
+        except Exception as e:
+            logger.warning(f"fundamentals cache_set failed for {symbol}: {e}")
+    return data
 
 
 def fetch_recent_news(symbol: str, limit: int = 6) -> list[dict]:

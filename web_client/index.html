@@ -1117,7 +1117,12 @@
                                             <div class="d-flex justify-content-between"><span class="text-muted">Your avg cost</span><span id="rsAvgCost">—</span></div>
                                             <div class="d-flex justify-content-between"><span class="text-muted">Position</span><span id="rsQty">—</span></div>
                                             <hr>
-                                            <div class="small text-muted mb-1">Fundamentals</div>
+                                            <div class="small text-muted mb-1 d-flex justify-content-between align-items-center">
+                                                <span>Fundamentals
+                                                    <i class="bi bi-info-circle" style="cursor:help;" data-bs-toggle="tooltip" title="Source: Yahoo Finance (via yfinance). Valuation ratios are trailing-twelve-month. 'Analyst consensus' / targets are Yahoo's aggregate of sell-side analyst ratings — see '# analysts' for the sample size."></i>
+                                                </span>
+                                                <span class="badge bg-light text-secondary border"><i class="bi bi-database me-1"></i>Yahoo Finance</span>
+                                            </div>
                                             <div id="rsFundamentals" class="small" style="max-height:220px;overflow:auto;"></div>
                                         </div>
                                     </div>
@@ -1183,7 +1188,10 @@
                                 <!-- Your position (held only) -->
                                 <div class="col-12" id="rsPositionCard" style="display:none;">
                                     <div class="card">
-                                        <div class="card-header fw-semibold"><i class="bi bi-wallet2 me-2"></i>Your position</div>
+                                        <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+                                            <span><i class="bi bi-wallet2 me-2"></i>Your position</span>
+                                            <span class="badge bg-light text-secondary border" data-bs-toggle="tooltip" title="Computed from your own transactions: cost basis and average cost use FIFO; current value uses the latest stored price. Nothing here comes from an estimate."><i class="bi bi-calculator me-1"></i>From your transactions (FIFO)</span>
+                                        </div>
                                         <div class="card-body">
                                             <div class="row g-2 text-center mb-3">
                                                 <div class="col-6 col-md-3"><div class="border rounded p-2"><div class="small text-muted">You paid (cost basis)</div><div class="fw-bold" id="rsCostBasis">—</div></div></div>
@@ -1231,7 +1239,9 @@
                                 <div class="col-12">
                                     <div class="card">
                                         <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
-                                            <span><i class="bi bi-magic me-2"></i>LLM analysis <span class="text-muted small">(live news context + citations)</span></span>
+                                            <span><i class="bi bi-magic me-2"></i>LLM analysis
+                                                <span class="badge bg-warning text-dark ms-1" data-bs-toggle="tooltip" title="AI-generated from the fundamentals above + recent Yahoo Finance news headlines (cited below). It is an opinion, not financial advice — always check the linked sources.">AI · not advice</span>
+                                            </span>
                                             <button class="btn btn-sm btn-outline-primary" id="rvGenerateBtn"><i class="bi bi-stars me-1"></i>Research with web</button>
                                         </div>
                                         <div class="card-body" id="rvLlmBody"><span class="text-muted small">Click “Research with web” for an LLM read on fundamentals + recent news. You can pull its fair value into the calculator.</span></div>
@@ -2234,9 +2244,9 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 
     <!-- Centralized help text (must load before portfolio_debug.js) -->
-    <script src="js/help_text.js?v=1780000003"></script>
+    <script src="js/help_text.js?v=1780000004"></script>
 
     <!-- Custom JavaScript -->
-    <script src="js/portfolio_debug.js?v=1780000013"></script>
+    <script src="js/portfolio_debug.js?v=1780000014"></script>
 </body>
 </html>

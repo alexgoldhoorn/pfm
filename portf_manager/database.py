@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 
 # Database version for migration tracking
-DATABASE_VERSION = 13
+DATABASE_VERSION = 14
 
 
 # black
@@ -424,6 +424,18 @@ class Database:
             )
         """)
 
+        # Generic key/value cache (yfinance sector/country, fundamentals,
+        # benchmark history) — persists across restarts. expires_at is epoch
+        # seconds; NULL = never expires.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS kv_cache (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                expires_at REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         # Create triggers for updated_at timestamps
         for table in [
             "entities",
@@ -468,6 +480,8 @@ class Database:
             self._migrate_to_v12(conn)
         if current_version < 13:
             self._migrate_to_v13(conn)
+        if current_version < 14:
+            self._migrate_to_v14(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -903,6 +917,68 @@ class Database:
         conn.commit()
         conn.execute("PRAGMA legacy_alter_table=OFF")
         conn.execute("PRAGMA foreign_keys=ON")
+
+    def _migrate_to_v14(self, conn: sqlite3.Connection):
+        """Migrate from v13 to v14 — add the kv_cache table.
+
+        Backs the yfinance cache (sector/country, fundamentals, benchmark
+        history) so repeated/expensive lookups survive restarts.
+        """
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS kv_cache (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL,
+                expires_at REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """)
+        conn.commit()
+
+    # ── Generic key/value cache ────────────────────────────────────────────
+
+    def cache_get(self, key: str) -> Any:
+        """Return the cached JSON value for *key*, or None if missing/expired."""
+        import json
+        import time
+
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT value, expires_at FROM kv_cache WHERE key = ?", (key,)
+            ).fetchone()
+        if not row:
+            return None
+        if row["expires_at"] is not None and row["expires_at"] < time.time():
+            return None
+        try:
+            return json.loads(row["value"])
+        except (ValueError, TypeError):
+            return None
+
+    def cache_set(self, key: str, value: Any, ttl_seconds: Optional[float] = None):
+        """Cache *value* (JSON-serialisable) under *key* with an optional TTL."""
+        import json
+        import time
+
+        expires = time.time() + ttl_seconds if ttl_seconds else None
+        with self.get_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO kv_cache (key, value, expires_at, created_at) "
+                "VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+                (key, json.dumps(value), expires),
+            )
+            conn.commit()
+
+    def cache_clear(self, prefix: Optional[str] = None) -> int:
+        """Delete cache entries (all, or those whose key starts with *prefix*)."""
+        with self.get_connection() as conn:
+            if prefix:
+                cur = conn.execute(
+                    "DELETE FROM kv_cache WHERE key LIKE ?", (prefix + "%",)
+                )
+            else:
+                cur = conn.execute("DELETE FROM kv_cache")
+            conn.commit()
+            return cur.rowcount
 
     # CRUD Operations for Users
     def create_user(
