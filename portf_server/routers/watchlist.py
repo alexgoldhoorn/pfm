@@ -31,7 +31,7 @@ async def _auth(
 
 
 @router.get("/")
-async def list_watchlist(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def list_watchlist(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
     """List watchlist entries with current price + distance to buy target."""
     entries = db.get_watchlist()
     for e in entries:
@@ -91,7 +91,7 @@ async def delete_watchlist(
 
 
 @router.get("/alerts/check")
-async def check_watchlist_alerts(
+def check_watchlist_alerts(
     db=Depends(get_database), api_key_info: dict = Depends(_auth)
 ):
     """Return watchlist symbols that have dropped into their buy zone."""

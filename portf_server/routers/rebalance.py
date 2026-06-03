@@ -59,7 +59,7 @@ async def set_targets(
 
 
 @router.get("/analysis")
-async def get_rebalance_analysis(
+def get_rebalance_analysis(
     db=Depends(get_database), api_key_info: dict = Depends(_auth)
 ):
     """

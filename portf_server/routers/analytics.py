@@ -116,7 +116,7 @@ async def get_dividends(db=Depends(get_database), api_key_info: dict = Depends(_
 
 
 @router.get("/performance")
-async def get_performance(
+def get_performance(
     benchmark: str = Query("^GSPC", description="Benchmark ticker for comparison"),
     period: str = Query("all", description="Return window: ytd | 1m | 1y | all"),
     db=Depends(get_database),
@@ -244,7 +244,7 @@ async def get_networth_history(
 
 
 @router.post("/snapshot")
-async def take_snapshot(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def take_snapshot(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
     """Record today's portfolio value/cost snapshot (called by the price cron)."""
     positions, _ = _compute_positions(db)
     value = cost = 0.0
