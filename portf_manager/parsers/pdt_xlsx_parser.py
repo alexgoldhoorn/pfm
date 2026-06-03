@@ -143,6 +143,7 @@ def _asset_type_to_pdt_type(asset_type: str) -> str:
     mapping = {
         "stock": "Stock market",
         "etf": "Stock market",
+        "index": "Stock market",
         "mutual_fund": "Stock market",
         "bond": "Stock market",
         "crypto": "Crypto",

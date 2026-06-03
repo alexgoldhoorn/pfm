@@ -1188,7 +1188,7 @@ function createPageManager() {
                 if (sorted.length === 0) {
                     topBody.innerHTML = '<tr><td colspan="4" class="text-center text-muted ps-3 py-3">No positions yet. Add buy transactions to see them here.</td></tr>';
                 } else {
-                    const typeBadge = t => ({ stock: 'bg-primary', etf: 'bg-info', crypto: 'bg-warning text-dark', bond: 'bg-secondary', p2p: 'bg-dark' }[t] || 'bg-secondary');
+                    const typeBadge = t => ({ stock: 'bg-primary', etf: 'bg-info', index: 'bg-success', crypto: 'bg-warning text-dark', bond: 'bg-secondary', p2p: 'bg-dark' }[t] || 'bg-secondary');
                     topBody.innerHTML = sorted.map(h => {
                         const pnlPct  = parseFloat(h.pnl_pct || 0);
                         const valEur  = parseFloat(h.total_value_eur || h.total_value || 0);
@@ -1405,7 +1405,7 @@ function createPageManager() {
                 } else {
                     tableBody.innerHTML = holdings.map(h => {
                         const pnlClass = h.pnl_amount >= 0 ? 'text-success' : 'text-danger';
-                        const typeBadge = { stock: 'bg-primary', etf: 'bg-info', crypto: 'bg-warning text-dark', bond: 'bg-secondary', p2p: 'bg-dark' }[h.asset_type] || 'bg-secondary';
+                        const typeBadge = { stock: 'bg-primary', etf: 'bg-info', index: 'bg-success', crypto: 'bg-warning text-dark', bond: 'bg-secondary', p2p: 'bg-dark' }[h.asset_type] || 'bg-secondary';
                         const symEsc = (h.symbol || '').replace(/'/g, "\\'");
                         return `
                         <tr>
@@ -2369,7 +2369,7 @@ async function loadWatchlist() {
             tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">Your watchlist is empty. Add a symbol above to start tracking it.</td></tr>';
             return;
         }
-        const typeBadge = t => ({ stock: 'bg-primary', etf: 'bg-info', crypto: 'bg-warning text-dark', bond: 'bg-secondary', commodity: 'bg-dark' }[t] || 'bg-secondary');
+        const typeBadge = t => ({ stock: 'bg-primary', etf: 'bg-info', index: 'bg-success', crypto: 'bg-warning text-dark', bond: 'bg-secondary', commodity: 'bg-dark' }[t] || 'bg-secondary');
         tbody.innerHTML = items.map(w => {
             const price = w.current_price != null ? parseFloat(w.current_price) : null;
             const buyBelow = w.buy_below != null ? parseFloat(w.buy_below) : null;
@@ -3870,7 +3870,7 @@ function setupForecastPage() {
 
 // Friendly label for an asset type code
 function rebalanceTypeLabel(type) {
-    const labels = { stock: 'Stocks', etf: 'ETFs', crypto: 'Crypto', bond: 'Bonds', commodity: 'Commodities', p2p: 'P2P' };
+    const labels = { stock: 'Stocks', etf: 'ETFs', index: 'Index funds', crypto: 'Crypto', bond: 'Bonds', commodity: 'Commodities', p2p: 'P2P' };
     return labels[type] || (type ? type.charAt(0).toUpperCase() + type.slice(1) : 'Other');
 }
 

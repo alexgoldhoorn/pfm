@@ -139,6 +139,7 @@ body {
 .badge-stock     { background-color: var(--primary-color); }
 .badge-bond      { background-color: var(--success-color); }
 .badge-etf       { background-color: var(--info-color); }
+.badge-index     { background-color: var(--success-color); }
 .badge-crypto    { background-color: var(--warning-color); color: var(--dark-color); }
 .badge-commodity { background-color: var(--danger-color); }
 

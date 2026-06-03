@@ -166,7 +166,7 @@ class Asset(Base):
     # Constraints
     __table_args__ = (
         CheckConstraint(
-            "asset_type IN ('stock', 'bond', 'crypto', 'etf', 'mutual_fund', 'commodity', 'cash')",
+            "asset_type IN ('stock', 'bond', 'crypto', 'etf', 'index', 'mutual_fund', 'commodity', 'cash')",
             name="check_asset_type",
         ),
         Index("idx_assets_symbol", "symbol"),

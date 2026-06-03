@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 
 # Database version for migration tracking
-DATABASE_VERSION = 12
+DATABASE_VERSION = 13
 
 
 # black
@@ -195,7 +195,7 @@ class Database:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 symbol TEXT NOT NULL UNIQUE,
                 name TEXT NOT NULL,
-                asset_type TEXT NOT NULL CHECK (asset_type IN ('stock', 'bond', 'crypto', 'etf', 'mutual_fund', 'commodity', 'cash')),
+                asset_type TEXT NOT NULL CHECK (asset_type IN ('stock', 'bond', 'crypto', 'etf', 'index', 'mutual_fund', 'commodity', 'cash')),
                 exchange TEXT,
                 currency TEXT NOT NULL DEFAULT 'USD',
                 sector TEXT,
@@ -466,6 +466,8 @@ class Database:
             self._migrate_to_v11(conn)
         if current_version < 12:
             self._migrate_to_v12(conn)
+        if current_version < 13:
+            self._migrate_to_v13(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -835,6 +837,72 @@ class Database:
             "ON research_notes (symbol, created_at)"
         )
         conn.commit()
+
+    def _migrate_to_v13(self, conn: sqlite3.Connection):
+        """Migrate from v12 to v13 — add an 'index' asset_type and use it.
+
+        Index mutual funds (e.g. the Vanguard/Amundi/iShares funds an Indexa
+        Capital portfolio is built from) were imported as 'stock' or 'etf'.
+        We split them into their own 'index' bucket so they show separately in
+        the diversification "By Asset Type" breakdown.
+
+        The assets table has a CHECK constraint on asset_type that doesn't
+        include 'index'; SQLite can't ALTER a CHECK in place, so we rebuild the
+        table with the widened constraint (preserving ids/FKs) and then
+        reclassify the index funds.
+        """
+        # Nothing to do if the assets table was never created (e.g. a partial
+        # legacy DB migrating up). A real DB always has it by this point.
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='assets'"
+        ).fetchone()
+        if not exists:
+            return
+        # Widen the asset_type CHECK constraint by rebuilding the table.
+        # legacy_alter_table=ON stops SQLite from rewriting child tables' FK
+        # references (transactions, prices, …) to point at the renamed table —
+        # otherwise they'd reference "assets_old" and dangle once it's dropped.
+        # PRAGMAs must run outside a transaction, so commit any pending work
+        # first. (foreign_keys is OFF on these connections by default.)
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("PRAGMA legacy_alter_table=ON")
+        conn.execute("ALTER TABLE assets RENAME TO assets_old")
+        conn.execute("""
+            CREATE TABLE assets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                asset_type TEXT NOT NULL CHECK (asset_type IN ('stock', 'bond', 'crypto', 'etf', 'index', 'mutual_fund', 'commodity', 'cash')),
+                exchange TEXT,
+                currency TEXT NOT NULL DEFAULT 'USD',
+                sector TEXT,
+                description TEXT,
+                is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                auto_price INTEGER NOT NULL DEFAULT 1
+            )
+            """)
+        # Copy only the columns present in BOTH tables — when migrating from a
+        # very old schema the source may lack some (exchange, sector,
+        # auto_price, …); those take their column defaults in the new table.
+        new_cols = [r[1] for r in conn.execute("PRAGMA table_info(assets)")]
+        old_cols = {r[1] for r in conn.execute("PRAGMA table_info(assets_old)")}
+        common = [c for c in new_cols if c in old_cols]
+        col_list = ", ".join(common)
+        conn.execute(
+            f"INSERT INTO assets ({col_list}) SELECT {col_list} FROM assets_old"
+        )
+        conn.execute("DROP TABLE assets_old")
+        # Reclassify index funds (names carry the "Idx" marker).
+        conn.execute(
+            "UPDATE assets SET asset_type = 'index' "
+            "WHERE name LIKE '%Idx%' AND asset_type IN ('stock', 'etf')"
+        )
+        conn.commit()
+        conn.execute("PRAGMA legacy_alter_table=OFF")
+        conn.execute("PRAGMA foreign_keys=ON")
 
     # CRUD Operations for Users
     def create_user(
