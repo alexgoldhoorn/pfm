@@ -14,6 +14,9 @@ const PREFS_DEFAULTS = {
     landingPage: 'dashboard',
     rowsPerPage: 50,
     defaultCurrency: 'EUR',   // pre-fills currency on new assets/transactions/bookings
+    defaultBroker: '',        // portfolio/broker name to preselect on new entries
+    holdingsSort: 'value',    // value | pnl | pnlpct | name
+    hideBelowEur: 0,          // hide holdings below this EUR value (0 = show all)
 };
 window.PREFS = Object.assign({}, PREFS_DEFAULTS, (() => {
     try { return JSON.parse(localStorage.getItem(PREFS_KEY) || '{}'); } catch (e) { return {}; }
@@ -57,6 +60,16 @@ function applyDefaultCurrency() {
     });
 }
 window.applyDefaultCurrency = applyDefaultCurrency;
+
+// Preselect the user's default broker (by name) in a populated <select>.
+function selectDefaultBroker(selectEl) {
+    const name = (window.PREFS && window.PREFS.defaultBroker) || '';
+    if (!selectEl || !name) return;
+    for (const opt of selectEl.options) {
+        if (opt.textContent === name) { selectEl.value = opt.value; break; }
+    }
+}
+window.selectDefaultBroker = selectDefaultBroker;
 
 function applyTheme() {
     let t = window.PREFS.theme;
@@ -1499,10 +1512,25 @@ function createPageManager() {
                     pnlCard.className = `card text-white ${pnl >= 0 ? 'bg-success' : 'bg-danger'}`;
                 }
 
-                if (holdings.length === 0) {
-                    tableBody.innerHTML = '<tr><td colspan="12" class="text-center text-muted">No holdings found. Add buy transactions to see your positions here.</td></tr>';
+                // Apply the user's "hide tiny positions" threshold + sort pref.
+                // Summary cards above stay on the full set; only the table view
+                // is filtered/sorted.
+                const hideBelow = parseFloat(window.PREFS.hideBelowEur) || 0;
+                const hVal = h => parseFloat(h.total_value_eur ?? h.total_value ?? 0) || 0;
+                let view = holdings.slice();
+                if (hideBelow > 0) view = view.filter(h => hVal(h) >= hideBelow);
+                const sortKey = window.PREFS.holdingsSort || 'value';
+                view.sort((a, b) => {
+                    if (sortKey === 'name') return String(a.name || a.symbol).localeCompare(String(b.name || b.symbol));
+                    if (sortKey === 'pnl') return (parseFloat(b.pnl_amount) || 0) - (parseFloat(a.pnl_amount) || 0);
+                    if (sortKey === 'pnlpct') return (parseFloat(b.pnl_pct) || 0) - (parseFloat(a.pnl_pct) || 0);
+                    return hVal(b) - hVal(a); // value (default)
+                });
+
+                if (view.length === 0) {
+                    tableBody.innerHTML = `<tr><td colspan="12" class="text-center text-muted">${holdings.length ? 'All positions are below your “hide tiny positions” threshold.' : 'No holdings found. Add buy transactions to see your positions here.'}</td></tr>`;
                 } else {
-                    tableBody.innerHTML = holdings.map(h => {
+                    tableBody.innerHTML = view.map(h => {
                         const pnlClass = h.pnl_amount >= 0 ? 'text-success' : 'text-danger';
                         const typeBadge = { stock: 'bg-primary', etf: 'bg-info', index: 'bg-success', crypto: 'bg-warning text-dark', bond: 'bg-secondary', p2p: 'bg-dark' }[h.asset_type] || 'bg-secondary';
                         const symEsc = (h.symbol || '').replace(/'/g, "\\'");
@@ -3581,6 +3609,7 @@ function setupImportExportPage() {
                     opt.value = p.id; opt.textContent = p.name;
                     addBookingPortfolio.appendChild(opt);
                 });
+                selectDefaultBroker(addBookingPortfolio);
             } catch (e) { /* silent */ }
         })();
     }
@@ -4468,6 +4497,7 @@ function setupAddTransaction() {
                 o.value = p.id; o.textContent = p.name;
                 $('transactionPortfolio').appendChild(o);
             });
+            selectDefaultBroker($('transactionPortfolio'));
         } catch (e) { /* ignore */ }
     }
     modalEl.addEventListener('show.bs.modal', populate);
@@ -5037,11 +5067,23 @@ function setupSettings() {
         $('setLandingPage').value = PREFS.landingPage;
         $('setDefaultCurrency').value = PREFS.defaultCurrency || 'EUR';
         $('setRowsPerPage').value = PREFS.rowsPerPage;
+        $('setHoldingsSort').value = PREFS.holdingsSort || 'value';
+        $('setHideBelowEur').value = PREFS.hideBelowEur || 0;
+        // Populate the broker select from the user's portfolios (by name)
+        (async () => {
+            try {
+                const sel = $('setDefaultBroker');
+                const pfs = await window.apiClient.getPortfolios();
+                sel.innerHTML = '<option value="">— none —</option>' +
+                    (pfs || []).map(p => `<option value="${p.name}">${p.name}</option>`).join('');
+                sel.value = PREFS.defaultBroker || '';
+            } catch (e) { /* ignore */ }
+        })();
         // Pre-fill the username for the password form from the last login
         const u = localStorage.getItem('pfm_username');
         if (u && $('setPwUser')) $('setPwUser').value = u;
     }
-    function openModal(e) { if (e) e.preventDefault(); load(); bs.show(); }
+    function openModal(e) { if (e) e.preventDefault(); load(); bs.show(); if (window.initTooltips) initTooltips(); }
 
     ['settingsBtn', 'settingsBtnOffcanvas'].forEach(id => {
         const el = $(id);
@@ -5058,6 +5100,9 @@ function setupSettings() {
         PREFS.landingPage = $('setLandingPage').value;
         PREFS.defaultCurrency = $('setDefaultCurrency').value || 'EUR';
         PREFS.rowsPerPage = Math.max(10, Math.min(500, parseInt($('setRowsPerPage').value) || 50));
+        PREFS.defaultBroker = $('setDefaultBroker').value || '';
+        PREFS.holdingsSort = $('setHoldingsSort').value || 'value';
+        PREFS.hideBelowEur = Math.max(0, parseFloat($('setHideBelowEur').value) || 0);
         savePrefs();
         applyTheme();
         applyPrivacy();
