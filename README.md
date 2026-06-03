@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.13%2B-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Code Style](https://img.shields.io/badge/Code%20Style-Black-000000.svg)](https://github.com/psf/black)
-[![Testing](https://img.shields.io/badge/Tests-394%20passing-brightgreen.svg)](https://pytest.org)
+[![Testing](https://img.shields.io/badge/Tests-407%20passing-brightgreen.svg)](https://pytest.org)
 
 Python CLI + FastAPI server + web client for tracking stocks, ETFs, funds, bonds, crypto and commodities across multiple brokers. Features LLM-powered import, full Portfolio Dividend Tracker (PDT) v2 compatibility, Google Sheets sync, and Spanish IRPF tax reporting.
 
@@ -30,23 +30,26 @@ Python CLI + FastAPI server + web client for tracking stocks, ETFs, funds, bonds
 
 ## Features
 
-- **Multi-broker tracking**: IndexaCapital, Coinbase, PDT XLSX — parsers with European number/date format support
+- **Multi-broker tracking**: IndexaCapital, Coinbase, PDT XLSX — parsers with European number/date format support. Asset types include a distinct **index fund** type alongside stocks/ETFs/crypto/bonds
 - **Full PDT v2 compatibility**: import/export Transactions, Dividends, and Bookings (deposits/withdrawals) with correct per-transaction currencies
 - **Google Sheets sync**: pull from / push to a PDT-format Google Spreadsheet via service account
 - **LLM-powered import**: paste any transaction text; Ollama, Gemini, or OpenRouter parses it automatically (extracts fees, dedupes duplicates, assigns to a portfolio)
-- **Daily prices in EUR**: yfinance prices updated daily via cron, GBX→GBP normalized, all values FX-converted to EUR
-- **Analytics**: dividend income (yield-on-cost, projected annual), performance (total return, money-weighted IRR, benchmark comparison, YTD/1M/1Y/all), net-worth-over-time chart, diversification + concentration (HHI), risk (drawdown/volatility/Sharpe), fee drag
+- **AI chat**: ask about your portfolio in natural language — the assistant reads your real holdings, performance and history (Markdown answers, dark-mode aware)
+- **Daily prices in EUR**: yfinance prices updated daily via cron, GBX→GBP normalized, all values FX-converted to EUR. yfinance lookups (sector/country, fundamentals, news, benchmarks) are cached for speed
+- **Analytics** (tabbed, lazy-loaded): performance (total return, money-weighted IRR, benchmark vs S&P/AEX/IBEX/CAC/FTSE/DAX, YTD/1M/1Y/all) + net-worth chart; dividend income with **forward income & calendar**; **gain/loss leaderboard** (top winners/losers by € and %); tax estimate + **per-lot tax report with CSV export**; diversification + concentration (HHI over holdings); risk (drawdown/volatility/Sharpe); fee drag
+- **Research workbench**: ticker autocomplete, your position (cost basis, P/L, **sell calculator**, average-cost chart), Yahoo fundamentals with sources, LLM valuation (fair value, BUY/HOLD/SELL), and a **downloadable Markdown research report** per ticker; price-target alerts to Telegram
 - **Rebalancing calculator**: set target % per asset type → buy/sell actions to rebalance
-- **Research & valuation agent**: yfinance fundamentals + LLM → fair value, BUY/HOLD/SELL, with per-position price-target alerts to Telegram
-- **Watchlist**: track not-yet-owned tickers with buy-zone Telegram alerts
+- **Alerts**: in-app dashboard banner + Telegram for price targets crossed and watchlist buy zones
+- **Watchlist**: track not-yet-owned tickers with buy-zone alerts
 - **Goals / FIRE tracker**: target net worth + date with on-track projection
 - **Wealth Simulator**: GBM wealth projection (cash/stocks/bonds + mortgage) with confidence bands
 - **Tax reporting**: Spanish IRPF FIFO cost-basis export, savings-base tax estimate, per-lot realised-gains report, withholding summary, tax-loss-harvesting candidates
 - **Telegram reports**: daily portfolio section + monthly summary + price/watchlist alerts
 - **Public view**: optional shareable %-only page (no amounts), like PDT's public view
+- **Per-user settings** (browser-local): theme/dark mode, number & date format, default currency, default broker, holdings sort, hide-tiny-positions, benchmark, landing page; plus in-app **change password**
 - **Authentication**: username/password login (web) + API-key (machine); external HTTPS via nginx-proxy-manager (`portfolio.example.com`)
-- **Web client**: Bootstrap 5 responsive sidebar UI with per-page help + metric tooltips (static, no build step)
-- **FastAPI backend**: REST API with API-key auth, 60+ endpoints
+- **Web client**: Bootstrap 5 responsive UI with a grouped, collapsible sidebar, per-page Help + glossary, About and Resources pages, and metric tooltips (static, no build step)
+- **FastAPI backend**: REST API with API-key auth, 70+ endpoints
 - **Dual-mode CLI**: direct SQLite access (local mode) or REST API (server mode)
 - **PostgreSQL support**: drop-in via `DATABASE_URL` env var
 

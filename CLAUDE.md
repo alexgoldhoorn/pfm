@@ -24,7 +24,7 @@ Portfolio Manager: a Python CLI + FastAPI server + web client for tracking stock
 ### Database
 SQLite by default (`portfolio.db`), PostgreSQL via `DATABASE_URL` env var. Use `portf_manager/database.py` for SQLite, `database_factory.py` for auto-detection.
 
-**Current schema version: 13.** Migrations run automatically on startup.
+**Current schema version: 14.** Migrations run automatically on startup.
 
 Key fields added in recent migrations:
 - v5: `tax REAL DEFAULT 0` on `transactions`; new `bookings` table (deposits/withdrawals)
@@ -36,6 +36,20 @@ Key fields added in recent migrations:
 - v11: `auto_price INTEGER DEFAULT 1` on `assets` (0 = price cron skips it, preserving manual prices)
 - v12: `research_notes` table (versioned research: thesis, conviction, method, assumptions, fair/buy/sell, llm_summary, sources)
 - v13: `'index'` added to the `assets.asset_type` CHECK; funds whose name carries the `Idx` marker reclassified `stock`/`etf` → `index`. Rebuilding a table with a CHECK requires `PRAGMA legacy_alter_table=ON` around the `RENAME` so child FK references aren't rewritten to the temp table — see `_migrate_to_v13`. `asset_type` is also a Pydantic enum (`portf_server/schemas/assets.py`) and a `models.py` enum — add new types to BOTH or the assets list 500s.
+- v14: `kv_cache` table (`key, value JSON, expires_at` epoch). DB-backed TTL cache via `portf_manager/cache.py` `cached(db, key, ttl, producer)`. Used to memoise slow/stable yfinance lookups: sector/country (~7d) in diversification, fundamentals (~6h) and news (~30m) in research, benchmark history (~12h) in performance. Degrades to a live call on miss/error.
+
+### Performance / event loop
+- Endpoints doing blocking yfinance I/O are plain `def` (not `async`) so FastAPI runs them in a threadpool — an `async` handler calling `yf` blocks the event loop and stalls every other request. Applies to: diversification, performance, snapshot, rebalance analysis, research generate/lookup, watchlist list/alerts. Keep new blocking-IO endpoints sync.
+- The `.venv` is root-owned (Docker-created); run tooling with `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run …`.
+
+### Recent feature surface (web)
+- **AI Chat** reads the real portfolio: `_build_portfolio_context` in `routers/llm.py` builds positions/totals/recent-tx from the DB (was a stub). Web renders Markdown via marked.js; themed for dark mode.
+- **Research** workbench: autocomplete, position panel (cost basis, P/L, sell calculator, avg-cost chart), fundamentals with source labels, LLM analysis, and `GET /research/{symbol}/report?format=md&download=true` (archivable Markdown dossier).
+- **Analytics** is tabbed + lazy-loaded (Performance/Dividends/Gain-Loss/Tax/Risk/Fees); diversification loads on demand. Adds: gain/loss leaderboard, dividend forward income + calendar (`ttm_by_symbol`), tax report UI + CSV (`/analytics/tax-report`).
+- **Dashboard** alerts banner (price targets + watchlist buy zones); cash bookings shown inline in Transactions.
+- **Settings** (browser-local PREFS): theme, number/date format, default currency (prefills new entries), default broker, holdings sort, hide-tiny-positions, benchmark, landing page; plus **change password** via `POST /auth/change-password-key` (key-auth model — current password is the gate).
+- **Pages**: Help (PAGE_HELP + glossary), What's New, About (links pfm.goldhoorn.net), Resources (curated external links). Sidebar is grouped + collapsible (state in localStorage).
+- Static assets are cache-busted with `?v=` query strings in `index.html` (bump on every web change); nginx serves JS/CSS `no-cache`, images/fonts immutable.
 
 All transaction SELECT queries use `COALESCE(t.currency, a.currency) AS currency` with an explicit column list (NOT `t.*`) because `sqlite3.Row` dict uses the first column when names collide.
 

@@ -1,6 +1,8 @@
 # Portfolio Manager — Project Status
 
-Last updated: 2026-04-23
+Last updated: 2026-06-03
+
+**Recent (v2.0):** AI chat reads the real portfolio; research workbench (position panel, sell calculator, cost chart, downloadable report); analytics split into lazy tabs with a gain/loss leaderboard, dividend forward-income/calendar, and a per-lot tax report + CSV; dashboard alerts banner; `index` asset type; yfinance caching (`kv_cache`, schema v14); per-user settings (default currency/broker, holdings sort, hide-tiny, change password); grouped/collapsible sidebar with Help/About/Resources pages. Tests: 407 passing.
 
 ## Architecture Overview
 

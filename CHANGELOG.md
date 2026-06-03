@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-06
+
+### Added
+- **AI chat with real portfolio access**: the assistant reads your holdings, performance and recent transactions from the database and renders Markdown answers (dark-mode aware).
+- **Research workbench**: ticker autocomplete (name + exchange), a "Your position" panel (cost basis, unrealised/realised P/L, a sell calculator, average-cost-vs-price chart), Yahoo fundamentals with explicit source labels, LLM valuation, and a downloadable Markdown research report per ticker (`/research/{symbol}/report`).
+- **Analytics tabs**: split into lazy-loaded tabs (Performance & Net Worth, Dividends, Gain/Loss, Tax, Risk & Diversification, Fees) so only the active tab loads.
+  - **Gain/Loss leaderboard**: top unrealised winners/losers by € and %, plus realised gains/losses per holding.
+  - **Dividend forward income & calendar**: projected annual income per holding + income-by-calendar-month.
+  - **Detailed tax report**: per-lot FIFO realised gains + dividend gross/withholding, with CSV export for IRPF filing.
+- **Dashboard alerts banner**: price targets crossed and watchlist buy zones, in-app.
+- **Index fund asset type** (`index`) distinct from ETFs; cash deposits/withdrawals shown inline in Transactions.
+- **Per-user settings**: default currency, default broker, holdings sort, hide-tiny-positions, plus in-app change password (`/auth/change-password-key`).
+- **New pages**: Help (guides + glossary), What's New, About, and a curated Resources page; grouped, collapsible sidebar.
+
+### Changed
+- **yfinance caching** (`kv_cache`, DB schema v14): sector/country, fundamentals, news and benchmark history are cached, cutting the diversification load from ~25s to sub-second when warm.
+- Blocking-yfinance endpoints run as sync handlers (FastAPI threadpool) so a slow Yahoo call no longer freezes the event loop.
+- Real dark mode across the app (keyed off `data-bs-theme`), themed sidebar and chat.
+
 ## [1.3.0] - 2024-08-27
 
 ### Added
