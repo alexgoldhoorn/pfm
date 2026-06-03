@@ -1626,6 +1626,47 @@ function showPageHelp(key) {
 }
 window.showPageHelp = showPageHelp;
 
+// Render the Help page: an accordion of per-page guides (from PAGE_HELP) plus
+// a glossary of the abbreviations used across the app.
+const HELP_GLOSSARY = [
+    ['FIRE', 'Financial Independence, Retire Early — a savings/investing target where assets cover your living costs.'],
+    ['IRR', 'Internal Rate of Return — the money-weighted annual return that accounts for the timing and size of your buys/sells.'],
+    ['TWR', 'Time-Weighted Return — return that strips out the effect of deposits/withdrawals, for comparing to a benchmark.'],
+    ['FIFO', 'First-In, First-Out — the oldest shares are sold first when computing cost basis and realised gains.'],
+    ['HHI', 'Herfindahl-Hirschman Index — a 0–10000 concentration score; lower means more diversified.'],
+    ['IRPF', 'Impuesto sobre la Renta de las Personas Físicas — Spanish personal income tax; investment income sits in the “savings base”.'],
+    ['PDT', 'Portfolio Dividend Tracker — the spreadsheet format this app imports/exports and syncs with Google Sheets.'],
+    ['GBM', 'Geometric Brownian Motion — the stochastic model the Wealth Simulator uses to project future value.'],
+    ['Yield on cost', 'Trailing-12-month dividends from a position divided by what you paid for it.'],
+    ['Max drawdown', 'The largest peak-to-trough drop in portfolio value over the recorded history.'],
+    ['ETF / Index', 'ETF = exchange-traded fund; Index = index mutual fund (e.g. Indexa Capital holdings). Tracked as separate asset types.'],
+    ['GBX', 'UK pence — some London-listed prices are quoted in pence (÷100 for GBP).'],
+];
+
+function renderHelpPage() {
+    const acc = document.getElementById('helpAccordion');
+    if (acc && window.PAGE_HELP) {
+        acc.innerHTML = Object.entries(window.PAGE_HELP).map(([key, h], i) => `
+            <div class="accordion-item">
+                <h2 class="accordion-header">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#help_${key}">
+                        ${h.title || key}
+                    </button>
+                </h2>
+                <div id="help_${key}" class="accordion-collapse collapse" data-bs-parent="#helpAccordion">
+                    <div class="accordion-body">${h.body || ''}</div>
+                </div>
+            </div>`).join('');
+    }
+    const gl = document.getElementById('helpGlossary');
+    if (gl) {
+        gl.innerHTML = HELP_GLOSSARY.map(([term, def]) =>
+            `<div class="mb-2"><strong>${term}</strong><div class="text-muted">${def}</div></div>`
+        ).join('');
+    }
+}
+window.renderHelpPage = renderHelpPage;
+
 // (Re)initialise Bootstrap tooltips on all [data-bs-toggle="tooltip"] elements.
 // Disposes any existing instance first so re-rendered tiles don't leak handlers.
 function initTooltips() {
@@ -2691,7 +2732,7 @@ function createNavigationManager() {
     return {
         currentPage: 'dashboard',
         showPage: function(pageName) {
-            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'holdingsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage'];
+            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'holdingsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage', 'helpPage', 'versionPage'];
             pages.forEach(pageId => {
                 const page = document.getElementById(pageId);
                 if (page) page.style.display = 'none';
@@ -2729,6 +2770,8 @@ function createNavigationManager() {
                 case 'portfolios':   window.pageManager.loadPortfoliosPage(); break;
                 case 'research':     if (window.loadResearchPage) window.loadResearchPage(); break;
                 case 'forecast':     if (window._fcLoadStartValue) window._fcLoadStartValue(); break;
+                case 'help':         if (window.renderHelpPage) window.renderHelpPage(); break;
+                case 'version':      break;
             }
         },
 
