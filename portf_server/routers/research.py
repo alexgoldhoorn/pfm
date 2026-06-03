@@ -10,10 +10,12 @@ GET    /api/v1/research/alerts/check        — check all targets vs latest pric
 
 import json
 import logging
+from datetime import date, datetime
 from typing import Optional
 
 import yfinance as yf
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from ..auth_middleware import APIKeyManager, require_api_key
@@ -209,7 +211,7 @@ def generate_report(
     pos = _position_stats(db, asset)
     current_price, currency = _current_price(db, asset, sym)
     fundamentals = fetch_fundamentals(sym, db)
-    news = fetch_recent_news(sym)
+    news = fetch_recent_news(sym, db=db)
 
     result = generate_valuation_report(
         symbol=sym,
@@ -286,7 +288,7 @@ def lookup(symbol: str, db=Depends(get_database), api_key_info: dict = Depends(_
         "current_price": round(price, 4),
         "currency": currency,
         "fundamentals": fetch_fundamentals(sym, db),
-        "news": fetch_recent_news(sym),
+        "news": fetch_recent_news(sym, db=db),
         "targets": targets,
         "transactions": transactions,
         "cost_evolution": cost_evolution,
@@ -348,6 +350,184 @@ async def history(
             except (TypeError, ValueError):
                 pass
     return notes
+
+
+def _build_report(db, symbol: str) -> dict:
+    """Assemble the full research dossier for a symbol from stored data.
+
+    Pulls together everything we already keep: position economics (from your
+    transactions), current fundamentals, price targets, the latest cached LLM
+    valuation, and the full version history of saved research notes.
+    """
+    from portf_manager.services.research import fetch_fundamentals
+
+    sym = symbol.upper()
+    asset = db.get_asset_by_symbol(sym)
+    pos = _position_stats(db, asset)
+    price, currency = _current_price(db, asset, sym)
+    transactions, _ = _cost_evolution(db, asset)
+    qty = pos["quantity"]
+    market_value = qty * price
+    unrealised = market_value - pos["cost_basis"] if qty > 0 else 0.0
+
+    notes = db.get_research_notes(sym)
+    for n in notes:
+        for k in ("assumptions", "sources"):
+            if n.get(k):
+                try:
+                    n[k] = json.loads(n[k])
+                except (TypeError, ValueError):
+                    pass
+
+    report = db.get_research_report(asset["id"]) if asset else None
+    if report and report.get("report_json"):
+        try:
+            report["details"] = json.loads(report["report_json"])
+        except (TypeError, ValueError):
+            pass
+
+    return {
+        "symbol": sym,
+        "name": asset.get("name") if asset else sym,
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "currency": currency,
+        "held": bool(asset and qty > 0),
+        "position": {
+            "quantity": round(qty, 6),
+            "avg_cost": round(pos["avg_cost"], 4),
+            "cost_basis": round(pos["cost_basis"], 2),
+            "current_price": round(price, 4),
+            "market_value": round(market_value, 2),
+            "unrealised_gain": round(unrealised, 2),
+            "realised_gain": round(pos["realised"], 2),
+        },
+        "fundamentals": fetch_fundamentals(sym, db),
+        "targets": db.get_price_target(asset["id"]) if asset else None,
+        "latest_llm_report": report,
+        "notes": notes,
+        "transactions": transactions,
+    }
+
+
+def _report_markdown(r: dict) -> str:
+    """Render the assembled report dict as an archivable Markdown document."""
+    cur = r.get("currency") or ""
+
+    def m(v):
+        return "—" if v is None else f"{v:,.2f} {cur}".strip()
+
+    lines = [
+        f"# Research report — {r['symbol']} ({r.get('name') or ''})",
+        f"_Generated {r['generated_at']}_",
+        "",
+        "## Position (from your transactions, FIFO)",
+    ]
+    p = r["position"]
+    if r["held"]:
+        lines += [
+            f"- Quantity held: **{p['quantity']}**",
+            f"- Average cost: **{m(p['avg_cost'])}**",
+            f"- Cost basis: **{m(p['cost_basis'])}**",
+            f"- Current price: **{m(p['current_price'])}**",
+            f"- Market value: **{m(p['market_value'])}**",
+            f"- Unrealised P/L: **{m(p['unrealised_gain'])}**",
+            f"- Realised P/L: **{m(p['realised_gain'])}**",
+        ]
+    else:
+        lines.append("- Not currently held.")
+
+    t = r.get("targets")
+    if t:
+        lines += [
+            "",
+            "## Price targets",
+            f"- Buy below: {m(t.get('buy_below'))}",
+            f"- Fair value: {m(t.get('fair_value'))}",
+            f"- Sell above: {m(t.get('sell_above'))}",
+        ]
+
+    f = r.get("fundamentals") or {}
+    keys = [k for k in f if k != "symbol"]
+    if keys:
+        lines += ["", "## Fundamentals (source: Yahoo Finance, TTM)"]
+        lines += [f"- {k}: {f[k]}" for k in keys]
+
+    llm = r.get("latest_llm_report")
+    if llm:
+        d = llm.get("details") or {}
+        lines += [
+            "",
+            "## Latest LLM analysis (AI — not advice)",
+            f"- Recommendation: **{llm.get('recommendation') or d.get('recommendation') or '—'}**",
+            f"- Fair value: {m(llm.get('fair_value') or d.get('fair_value'))}",
+            f"- Confidence: {llm.get('confidence') or d.get('confidence') or '—'}",
+            "",
+            (llm.get("summary") or d.get("summary") or "").strip(),
+        ]
+        for src in d.get("sources") or []:
+            lines.append(
+                f"  - source: {src.get('title') or src.get('url')} ({src.get('url')})"
+            )
+
+    notes = r.get("notes") or []
+    if notes:
+        lines += ["", f"## Saved research history ({len(notes)} entries)"]
+        for n in notes:
+            lines += [
+                "",
+                f"### {str(n.get('created_at'))[:19]} — conviction {n.get('conviction') or '—'}/5",
+                f"- Method: {n.get('method') or '—'} · fair {m(n.get('fair_value'))}"
+                f" · buy<{m(n.get('buy_below'))} · sell>{m(n.get('sell_above'))}",
+            ]
+            if n.get("assumptions"):
+                lines.append(f"- Assumptions: {n['assumptions']}")
+            if n.get("thesis"):
+                lines += ["", n["thesis"].strip()]
+
+    txns = r.get("transactions") or []
+    if txns:
+        lines += [
+            "",
+            "## Transactions",
+            "",
+            "| Date | Type | Qty | Price | Total |",
+            "|---|---|--:|--:|--:|",
+        ]
+        for tx in txns:
+            lines.append(
+                f"| {tx['date']} | {tx['type']} | {tx['quantity']:g} | "
+                f"{tx['price']:,.2f} | {tx['total']:,.2f} |"
+            )
+
+    lines += [
+        "",
+        "---",
+        "_Portfolio Manager research report. Figures from your own transactions "
+        "(FIFO) and Yahoo Finance; LLM commentary is AI-generated, not advice._",
+    ]
+    return "\n".join(lines)
+
+
+@router.get("/{symbol}/report")
+def research_report(
+    symbol: str,
+    format: str = "json",
+    download: bool = False,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Full research dossier for a symbol (position, fundamentals, targets,
+    LLM analysis, and saved-note history). ``format=md`` returns an archivable
+    Markdown document; ``download=true`` sets a file-download header."""
+    r = _build_report(db, symbol)
+    if format.lower() in ("md", "markdown"):
+        md = _report_markdown(r)
+        headers = {}
+        if download:
+            fname = f"research_{r['symbol']}_{date.today().isoformat()}.md"
+            headers["Content-Disposition"] = f'attachment; filename="{fname}"'
+        return PlainTextResponse(md, media_type="text/markdown", headers=headers)
+    return r
 
 
 @router.get("/{symbol}/targets")

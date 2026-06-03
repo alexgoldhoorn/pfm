@@ -85,12 +85,21 @@ def fetch_fundamentals(symbol: str, db=None) -> dict[str, Any]:
     return data
 
 
-def fetch_recent_news(symbol: str, limit: int = 6) -> list[dict]:
+def fetch_recent_news(symbol: str, limit: int = 6, db=None) -> list[dict]:
     """Recent news headlines + links for *symbol* (web context + citations).
 
     Uses yfinance's news feed — live, no API key — so the LLM analysis is
     grounded in current news and we can store the article URLs as sources.
+    When *db* is given the result is cached ~30min (news moves, but not by the
+    minute) so repeated lookups don't re-hit yfinance.
     """
+    if db is not None:
+        try:
+            hit = db.cache_get(f"yf:news:{symbol}")
+            if hit is not None:
+                return hit
+        except Exception as e:
+            logger.warning(f"news cache_get failed for {symbol}: {e}")
     out = []
     try:
         for item in (yf.Ticker(symbol).news or [])[:limit]:
@@ -111,6 +120,11 @@ def fetch_recent_news(symbol: str, limit: int = 6) -> list[dict]:
                 out.append({"title": title, "url": link, "publisher": pub})
     except Exception as e:
         logger.warning(f"Could not fetch news for {symbol}: {e}")
+    if db is not None and out:
+        try:
+            db.cache_set(f"yf:news:{symbol}", out, 30 * 60)
+        except Exception as e:
+            logger.warning(f"news cache_set failed for {symbol}: {e}")
     return out
 
 
