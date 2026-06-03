@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 
 # Database version for migration tracking
-DATABASE_VERSION = 15
+DATABASE_VERSION = 16
 
 
 # black
@@ -214,7 +214,7 @@ class Database:
                 asset_id INTEGER NOT NULL,
                 portfolio_id INTEGER,
                 user_id INTEGER,
-                transaction_type TEXT NOT NULL CHECK (transaction_type IN ('buy', 'sell', 'dividend', 'split', 'transfer_in', 'transfer_out')),
+                transaction_type TEXT NOT NULL CHECK (transaction_type IN ('buy', 'sell', 'dividend', 'interest', 'split', 'transfer_in', 'transfer_out')),
                 quantity REAL NOT NULL,
                 price REAL NOT NULL,
                 total_amount REAL NOT NULL,
@@ -502,6 +502,8 @@ class Database:
             self._migrate_to_v14(conn)
         if current_version < 15:
             self._migrate_to_v15(conn)
+        if current_version < 16:
+            self._migrate_to_v16(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -970,6 +972,65 @@ class Database:
             )
             """)
         conn.commit()
+
+    def _migrate_to_v16(self, conn: sqlite3.Connection):
+        """Migrate from v15 to v16 — add 'interest' to the transaction_type CHECK.
+
+        For P2P / savings interest (e.g. Mintos), taxed like dividends in the
+        Spanish savings base. SQLite can't ALTER a CHECK, so rebuild the table
+        with the widened constraint (legacy_alter_table=ON so the rename leaves
+        other objects alone), copying common columns and re-creating the
+        updated_at trigger that gets dropped with the old table.
+        """
+        exists = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='transactions'"
+        ).fetchone()
+        if not exists:
+            return
+        conn.commit()
+        conn.execute("PRAGMA foreign_keys=OFF")
+        conn.execute("PRAGMA legacy_alter_table=ON")
+        conn.execute("DROP TRIGGER IF EXISTS update_transactions_timestamp")
+        conn.execute("ALTER TABLE transactions RENAME TO transactions_old")
+        conn.execute("""
+            CREATE TABLE transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                asset_id INTEGER NOT NULL,
+                portfolio_id INTEGER,
+                user_id INTEGER,
+                transaction_type TEXT NOT NULL CHECK (transaction_type IN ('buy', 'sell', 'dividend', 'interest', 'split', 'transfer_in', 'transfer_out')),
+                quantity REAL NOT NULL,
+                price REAL NOT NULL,
+                total_amount REAL NOT NULL,
+                fees REAL DEFAULT 0,
+                tax REAL DEFAULT 0,
+                currency TEXT,
+                transaction_date DATE NOT NULL,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (asset_id) REFERENCES assets (id) ON DELETE CASCADE,
+                FOREIGN KEY (portfolio_id) REFERENCES portfolios (id) ON DELETE SET NULL,
+                FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+            )
+            """)
+        new_cols = [r[1] for r in conn.execute("PRAGMA table_info(transactions)")]
+        old_cols = {r[1] for r in conn.execute("PRAGMA table_info(transactions_old)")}
+        common = ", ".join(c for c in new_cols if c in old_cols)
+        conn.execute(
+            f"INSERT INTO transactions ({common}) SELECT {common} FROM transactions_old"
+        )
+        conn.execute("DROP TABLE transactions_old")
+        conn.execute("""
+            CREATE TRIGGER update_transactions_timestamp
+            AFTER UPDATE ON transactions
+            BEGIN
+                UPDATE transactions SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+            END
+            """)
+        conn.commit()
+        conn.execute("PRAGMA legacy_alter_table=OFF")
+        conn.execute("PRAGMA foreign_keys=ON")
 
     # ── Manual assets & liabilities (off-brokerage net worth) ──────────────
 

@@ -205,7 +205,7 @@ class Transaction(Base):
     # Constraints
     __table_args__ = (
         CheckConstraint(
-            "transaction_type IN ('buy', 'sell', 'dividend', 'split', 'transfer_in', 'transfer_out')",
+            "transaction_type IN ('buy', 'sell', 'dividend', 'interest', 'split', 'transfer_in', 'transfer_out')",
             name="check_transaction_type",
         ),
         Index("idx_transactions_asset_id", "asset_id"),

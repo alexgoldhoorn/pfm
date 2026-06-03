@@ -438,10 +438,20 @@ async def get_tax_estimate(
         logger.warning(f"Tax report calc failed: {e}")
 
     # Dividend income this year
-    div = dividend_income(db.get_all_transactions())
+    all_txns = db.get_all_transactions()
+    div = dividend_income(all_txns)
     div_this_year = div["by_year"].get(str(yr), 0.0)
 
-    savings_base = realised_gain + div_this_year
+    # Interest income this year (P2P / savings — taxed in the savings base too)
+    interest_this_year = 0.0
+    for tx in all_txns:
+        if (tx.get("transaction_type") or "").lower() != "interest":
+            continue
+        d = str(tx.get("transaction_date", ""))[:10]
+        if d[:4] == str(yr):
+            interest_this_year += float(tx.get("total_amount") or 0)
+
+    savings_base = realised_gain + div_this_year + interest_this_year
     estimated_tax = irpf_savings_tax(savings_base)
 
     # Unrealised gains + tax-loss harvesting candidates
@@ -477,6 +487,7 @@ async def get_tax_estimate(
         "realised_gain_eur": round(realised_gain, 2),
         "realised_by_symbol": realised_by_symbol,
         "dividend_income_eur": round(div_this_year, 2),
+        "interest_income_eur": round(interest_this_year, 2),
         "savings_base_eur": round(savings_base, 2),
         "estimated_tax_eur": estimated_tax,
         "unrealised_gain_eur": round(unrealised, 2),

@@ -32,6 +32,7 @@ class TransactionType(Enum):
     BUY = "buy"
     SELL = "sell"
     DIVIDEND = "dividend"
+    INTEREST = "interest"
     SPLIT = "split"
     TRANSFER_IN = "transfer_in"
     TRANSFER_OUT = "transfer_out"
