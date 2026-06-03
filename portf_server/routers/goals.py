@@ -10,6 +10,8 @@ from pydantic import BaseModel
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
+from .networth import _brokerage_value_eur
+from .portfolios import _get_fx_rate as _fx
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -30,11 +32,20 @@ async def _auth(
 
 
 def _current_networth(db) -> float:
-    """Latest snapshot value, or compute from holdings if none."""
-    snaps = db.get_snapshots(limit=1)
-    if snaps:
-        return snaps[-1]["total_value_eur"]
-    return 0.0
+    """Total net worth = brokerage value + manual assets − liabilities (EUR).
+
+    Uses the live brokerage value (same basis as the Net Worth page) plus any
+    off-brokerage assets/liabilities, so FIRE projections start from the whole
+    picture rather than just tracked investments.
+    """
+    total = _brokerage_value_eur(db)
+    try:
+        for it in db.get_manual_assets():
+            amt = float(it.get("amount") or 0) * _fx(it.get("currency", "EUR"))
+            total += -amt if it.get("is_liability") else amt
+    except Exception as e:
+        logger.warning(f"Manual assets net-worth sum failed: {e}")
+    return total
 
 
 def _project(
