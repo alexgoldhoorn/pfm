@@ -170,6 +170,7 @@ def complete_command(text: str, state: int) -> Optional[str]:
         "stock",
         "bond",
         "etf",
+        "index",
         "crypto",
         "mutual_fund",
         "commodity",

@@ -20,6 +20,7 @@ class AssetType(Enum):
     BOND = "bond"
     CRYPTO = "crypto"
     ETF = "etf"
+    INDEX = "index"
     MUTUAL_FUND = "mutual_fund"
     COMMODITY = "commodity"
     CASH = "cash"
