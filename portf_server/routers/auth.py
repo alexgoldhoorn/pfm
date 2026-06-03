@@ -8,7 +8,7 @@ import os
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from portf_manager.auth import AuthManager, AuthenticationError
 from portf_manager.database import Database
@@ -56,6 +56,35 @@ async def login_for_api_key(
             detail="Server API key is not configured",
         )
     return LoginKeyResponse(api_key=api_key, username=login_data.username)
+
+
+class ChangePasswordKeyRequest(BaseModel):
+    """Change-password for the API-key (web) auth model: the current password
+    itself is the gate, so no Bearer session token is required."""
+
+    username: str
+    current_password: str
+    new_password: str = Field(..., min_length=8, description="New password (min 8)")
+
+
+@router.post("/change-password-key", response_model=MessageResponse)
+async def change_password_with_key(
+    data: ChangePasswordKeyRequest,
+    auth_manager: AuthManager = Depends(get_auth_manager),
+):
+    """Change a user's password from the web client.
+
+    The web logs in via ``/login-key`` (shared API key), so the session-based
+    ``/change-password`` doesn't apply. Here, knowing the current password is
+    the authorisation: we verify it via ``login`` (which sets the session),
+    then update to the new password.
+    """
+    try:
+        auth_manager.login(data.username, data.current_password)
+        auth_manager.change_password(data.current_password, data.new_password)
+    except AuthenticationError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    return MessageResponse(message="Password changed successfully")
 
 
 @router.post(
