@@ -24,7 +24,7 @@ Portfolio Manager: a Python CLI + FastAPI server + web client for tracking stock
 ### Database
 SQLite by default (`portfolio.db`), PostgreSQL via `DATABASE_URL` env var. Use `portf_manager/database.py` for SQLite, `database_factory.py` for auto-detection.
 
-**Current schema version: 10.** Migrations run automatically on startup.
+**Current schema version: 13.** Migrations run automatically on startup.
 
 Key fields added in recent migrations:
 - v5: `tax REAL DEFAULT 0` on `transactions`; new `bookings` table (deposits/withdrawals)
@@ -33,6 +33,9 @@ Key fields added in recent migrations:
 - v8: `portfolio_snapshots` (daily value/cost for the net-worth chart, recorded by the price cron)
 - v9: `watchlist` (tracked tickers + buy_below), `goals` (FIRE targets + projection)
 - v10: `website TEXT` on `portfolios` (broker website; `description` already existed)
+- v11: `auto_price INTEGER DEFAULT 1` on `assets` (0 = price cron skips it, preserving manual prices)
+- v12: `research_notes` table (versioned research: thesis, conviction, method, assumptions, fair/buy/sell, llm_summary, sources)
+- v13: `'index'` added to the `assets.asset_type` CHECK; funds whose name carries the `Idx` marker reclassified `stock`/`etf` → `index`. Rebuilding a table with a CHECK requires `PRAGMA legacy_alter_table=ON` around the `RENAME` so child FK references aren't rewritten to the temp table — see `_migrate_to_v13`. `asset_type` is also a Pydantic enum (`portf_server/schemas/assets.py`) and a `models.py` enum — add new types to BOTH or the assets list 500s.
 
 All transaction SELECT queries use `COALESCE(t.currency, a.currency) AS currency` with an explicit column list (NOT `t.*`) because `sqlite3.Row` dict uses the first column when names collide.
 
@@ -227,10 +230,10 @@ Signature: `saveImportedTransactions(transactions, bookings = [], portfolioId = 
 - PDT parser tests: `tests/test_pdt_xlsx_parser.py` (42 tests)
 - PDT Sheets sync tests: `tests/test_pdt_sheets_sync.py` (40 tests — all mocked, no real API calls)
 - Import/export + sync API tests: `tests/unit/test_imports_exports.py` (30 tests)
-- DB tests: `tests/test_database.py` — version assertion is `== 10` (bump it with `DATABASE_VERSION`)
+- DB tests: `tests/test_database.py` — version assertion is `== 13` (bump it with `DATABASE_VERSION`)
 
 ## Git
-- Main development branch: `develop` (ahead of `main`). Current feature branch: `pdt-format`.
+- Public repo `github.com:alexgoldhoorn/pfm` — develop and push on `main`. Push with `GIT_SSH_COMMAND="ssh -o IdentitiesOnly=no" git push origin main`.
 - Use `--no-pager` with all git commands (note: some git versions don't support `--no-pager` as a flag; use `git -P` or `GIT_PAGER=cat` instead).
 - Commit messages: conventional commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`).
 - Co-author line: `Co-Authored-By: Oz <oz-agent@warp.dev>`.

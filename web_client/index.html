@@ -834,13 +834,16 @@
 
                     <!-- e) Diversification & concentration -->
                     <div class="card mb-4">
-                        <div class="card-header fw-semibold">
-                            <i class="bi bi-pie-chart-fill me-2 text-primary"></i>Diversification &amp; Concentration
+                        <div class="card-header fw-semibold d-flex justify-content-between align-items-center flex-wrap gap-2">
+                            <span><i class="bi bi-pie-chart-fill me-2 text-primary"></i>Diversification &amp; Concentration</span>
+                            <button class="btn btn-sm btn-outline-primary" id="anDiversificationBtn" title="Fetches sector/country data from Yahoo Finance — takes ~20-30s">
+                                <i class="bi bi-arrow-clockwise me-1"></i>Load
+                            </button>
                         </div>
                         <div class="card-body" id="anDiversificationBody">
                             <div class="text-center text-muted py-4">
-                                <div class="spinner-border spinner-border-sm me-2" role="status"></div>
-                                Loading diversification (fetching sector / country data, may take a few seconds)…
+                                Sector / country breakdown is fetched live from Yahoo Finance and takes ~20-30s.
+                                <div class="mt-2"><button class="btn btn-sm btn-primary" id="anDiversificationLoadInline"><i class="bi bi-pie-chart me-1"></i>Load diversification</button></div>
                             </div>
                         </div>
                     </div>
@@ -1108,7 +1111,7 @@
                                 <!-- Snapshot + fundamentals -->
                                 <div class="col-12 col-lg-5">
                                     <div class="card h-100">
-                                        <div class="card-header fw-semibold"><i class="bi bi-info-circle me-2"></i><span id="rsName">—</span> <span id="rsHeld" class="badge bg-secondary ms-1"></span></div>
+                                        <div class="card-header fw-semibold"><i class="bi bi-info-circle me-2"></i><span id="rsName">—</span> <span id="rsHeld" class="badge bg-secondary ms-1"></span><span id="rsWatch" class="badge bg-info ms-1" style="display:none;"></span></div>
                                         <div class="card-body">
                                             <div class="d-flex justify-content-between"><span class="text-muted">Current price</span><strong id="rsPrice">—</strong></div>
                                             <div class="d-flex justify-content-between"><span class="text-muted">Your avg cost</span><span id="rsAvgCost">—</span></div>
@@ -1172,6 +1175,53 @@
                                                 <span class="d-block mt-1">Fair value = EPS × target&nbsp;P/E (or dividend ÷ target&nbsp;yield) ·
                                                 Buy&nbsp;below = fair × (1 − margin&nbsp;of&nbsp;safety) ·
                                                 Sell&nbsp;above = fair × (1 + take-profit&nbsp;premium).</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Your position (held only) -->
+                                <div class="col-12" id="rsPositionCard" style="display:none;">
+                                    <div class="card">
+                                        <div class="card-header fw-semibold"><i class="bi bi-wallet2 me-2"></i>Your position</div>
+                                        <div class="card-body">
+                                            <div class="row g-2 text-center mb-3">
+                                                <div class="col-6 col-md-3"><div class="border rounded p-2"><div class="small text-muted">You paid (cost basis)</div><div class="fw-bold" id="rsCostBasis">—</div></div></div>
+                                                <div class="col-6 col-md-3"><div class="border rounded p-2"><div class="small text-muted">Current value</div><div class="fw-bold" id="rsMarketValue">—</div></div></div>
+                                                <div class="col-6 col-md-3"><div class="border rounded p-2"><div class="small text-muted">Unrealised P/L</div><div class="fw-bold" id="rsUnrealised">—</div></div></div>
+                                                <div class="col-6 col-md-3"><div class="border rounded p-2"><div class="small text-muted">Realised P/L</div><div class="fw-bold" id="rsRealised">—</div></div></div>
+                                            </div>
+
+                                            <div class="row g-3">
+                                                <!-- Sell calculator -->
+                                                <div class="col-12 col-lg-5">
+                                                    <h6 class="fw-semibold small text-muted text-uppercase mb-2">Sell calculator</h6>
+                                                    <div class="d-flex align-items-end gap-2 mb-2 flex-wrap">
+                                                        <div>
+                                                            <label class="form-label small mb-1">Shares to sell</label>
+                                                            <input type="number" step="any" class="form-control form-control-sm" id="rsSellQty" style="max-width:130px;">
+                                                        </div>
+                                                        <div>
+                                                            <label class="form-label small mb-1">or % of position</label>
+                                                            <input type="number" step="any" class="form-control form-control-sm" id="rsSellPct" style="max-width:110px;" placeholder="e.g. 25">
+                                                        </div>
+                                                    </div>
+                                                    <div class="border rounded p-2 small" id="rsSellResult"><span class="text-muted">Enter a quantity or % to see proceeds and gain/loss.</span></div>
+                                                </div>
+
+                                                <!-- Cost evolution chart -->
+                                                <div class="col-12 col-lg-7">
+                                                    <h6 class="fw-semibold small text-muted text-uppercase mb-2">Average cost vs price over time</h6>
+                                                    <svg id="rsCostChart" width="100%" height="160" style="overflow:visible;"></svg>
+                                                </div>
+                                            </div>
+
+                                            <h6 class="fw-semibold small text-muted text-uppercase mt-3 mb-2">Transactions</h6>
+                                            <div class="table-responsive" style="max-height:240px;overflow:auto;">
+                                                <table class="table table-sm table-hover mb-0">
+                                                    <thead><tr><th>Date</th><th>Type</th><th class="text-end">Qty</th><th class="text-end">Price</th><th class="text-end">Total</th></tr></thead>
+                                                    <tbody id="rsTxBody"></tbody>
+                                                </table>
                                             </div>
                                         </div>
                                     </div>
@@ -2184,9 +2234,9 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 
     <!-- Centralized help text (must load before portfolio_debug.js) -->
-    <script src="js/help_text.js?v=1780000002"></script>
+    <script src="js/help_text.js?v=1780000003"></script>
 
     <!-- Custom JavaScript -->
-    <script src="js/portfolio_debug.js?v=1780000012"></script>
+    <script src="js/portfolio_debug.js?v=1780000013"></script>
 </body>
 </html>

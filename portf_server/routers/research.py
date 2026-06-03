@@ -57,14 +57,65 @@ def _resolve_asset(db, symbol: str) -> dict:
 
 
 def _position_stats(db, asset: Optional[dict]) -> dict:
-    """Current quantity + average cost for a held asset (zeros if not held)."""
+    """Current quantity, average cost and remaining cost basis for a held asset.
+
+    Walks transactions chronologically (the DB returns them DESC, so reverse).
+    ``cost_basis`` is the cost of the shares still held; ``realised`` is the
+    realised P&L from sells (FIFO-ish proportional cost reduction).
+    """
     if not asset:
-        return {"quantity": 0.0, "avg_cost": 0.0}
-    qty = cost = 0.0
-    for tx in db.get_transactions_by_asset(asset["id"]):
+        return {"quantity": 0.0, "avg_cost": 0.0, "cost_basis": 0.0, "realised": 0.0}
+    qty = cost = realised = 0.0
+    for tx in reversed(db.get_transactions_by_asset(asset["id"])):
         t = tx["transaction_type"].lower()
         q = float(tx["quantity"])
         total = float(tx["total_amount"])
+        if t == "buy":
+            qty += q
+            cost += total
+        elif t == "sell":
+            if qty > 0:
+                avg = cost / qty
+                realised += total - avg * q
+                cost *= (qty - q) / qty
+            qty -= q
+        elif t == "split" and q > 0:
+            qty *= q
+    return {
+        "quantity": qty,
+        "avg_cost": cost / qty if qty > 0 else 0.0,
+        "cost_basis": cost,
+        "realised": realised,
+    }
+
+
+def _cost_evolution(db, asset: Optional[dict]) -> tuple[list, list]:
+    """Return (transactions, cost_evolution_series) for the research panel.
+
+    transactions: most-recent-first list of {date, type, quantity, price,
+    total, currency}. cost_evolution: chronological points of
+    {date, quantity, avg_cost, invested} after each buy/sell/split.
+    """
+    if not asset:
+        return [], []
+    rows = db.get_transactions_by_asset(asset["id"])
+    txns = [
+        {
+            "date": str(tx["transaction_date"])[:10],
+            "type": tx["transaction_type"].lower(),
+            "quantity": float(tx["quantity"]),
+            "price": float(tx["price"] or 0),
+            "total": float(tx["total_amount"] or 0),
+            "currency": tx.get("currency", "EUR"),
+        }
+        for tx in rows
+    ]
+    qty = cost = 0.0
+    series = []
+    for tx in reversed(rows):
+        t = tx["transaction_type"].lower()
+        q = float(tx["quantity"])
+        total = float(tx["total_amount"] or 0)
         if t == "buy":
             qty += q
             cost += total
@@ -74,7 +125,15 @@ def _position_stats(db, asset: Optional[dict]) -> dict:
             qty -= q
         elif t == "split" and q > 0:
             qty *= q
-    return {"quantity": qty, "avg_cost": cost / qty if qty > 0 else 0.0}
+        series.append(
+            {
+                "date": str(tx["transaction_date"])[:10],
+                "quantity": round(qty, 6),
+                "avg_cost": round(cost / qty, 4) if qty > 0 else 0.0,
+                "invested": round(cost, 2),
+            }
+        )
+    return txns, series
 
 
 def _current_price(db, asset: Optional[dict], symbol: str) -> tuple[float, str]:
@@ -194,17 +253,42 @@ async def lookup(
     price, currency = _current_price(db, asset, sym)
     targets = db.get_price_target(asset["id"]) if asset else None
     notes = db.get_research_notes(sym)
+    transactions, cost_evolution = _cost_evolution(db, asset)
+
+    # Watchlist status (independent of whether we hold it)
+    watch = next(
+        (w for w in db.get_watchlist() if (w.get("symbol") or "").upper() == sym), None
+    )
+
+    # Position economics
+    qty = pos["quantity"]
+    cost_basis = pos["cost_basis"]
+    market_value = qty * price
+    unrealised = market_value - cost_basis if qty > 0 else 0.0
+    unrealised_pct = (unrealised / cost_basis * 100) if cost_basis > 0 else None
+
     return {
         "symbol": sym,
         "name": asset.get("name") if asset else sym,
-        "held": bool(asset and pos["quantity"] > 0),
-        "quantity": round(pos["quantity"], 6),
+        "held": bool(asset and qty > 0),
+        "on_watchlist": bool(watch),
+        "watch_buy_below": watch.get("buy_below") if watch else None,
+        "quantity": round(qty, 6),
         "avg_cost": round(pos["avg_cost"], 4),
+        "cost_basis": round(cost_basis, 2),
+        "market_value": round(market_value, 2),
+        "unrealised_gain": round(unrealised, 2),
+        "unrealised_pct": (
+            round(unrealised_pct, 2) if unrealised_pct is not None else None
+        ),
+        "realised_gain": round(pos["realised"], 2),
         "current_price": round(price, 4),
         "currency": currency,
         "fundamentals": fetch_fundamentals(sym),
         "news": fetch_recent_news(sym),
         "targets": targets,
+        "transactions": transactions,
+        "cost_evolution": cost_evolution,
         "latest_note": notes[0] if notes else None,
     }
 

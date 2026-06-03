@@ -474,10 +474,13 @@ async def get_tax_estimate(
 
 
 @router.get("/diversification")
-async def get_diversification(
-    db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
-    """Sector / country / currency / asset-type concentration + Herfindahl index."""
+def get_diversification(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+    """Sector / country / currency / asset-type concentration + Herfindahl index.
+
+    Defined as a sync handler (not async) so FastAPI runs it in a threadpool:
+    the per-holding yfinance ``.info`` lookups are blocking and would freeze
+    the event loop — stalling every other request — if awaited inline.
+    """
     positions, _ = _compute_positions(db)
 
     by_type: dict[str, float] = {}
