@@ -2268,6 +2268,27 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                             <label class="form-label" for="setRowsPerPage">Rows per page</label>
                             <input type="number" class="form-control" id="setRowsPerPage" min="10" max="500" step="10">
                         </div>
+                        <div class="col-sm-4">
+                            <label class="form-label" for="setDefaultBroker">Default broker
+                                <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="Pre-selects this broker when adding a transaction or cash booking."></i>
+                            </label>
+                            <select class="form-select" id="setDefaultBroker"><option value="">— none —</option></select>
+                        </div>
+                        <div class="col-sm-4">
+                            <label class="form-label" for="setHoldingsSort">Holdings sorted by</label>
+                            <select class="form-select" id="setHoldingsSort">
+                                <option value="value">Value (largest first)</option>
+                                <option value="pnl">Profit/Loss €</option>
+                                <option value="pnlpct">Profit/Loss %</option>
+                                <option value="name">Name (A→Z)</option>
+                            </select>
+                        </div>
+                        <div class="col-sm-4">
+                            <label class="form-label" for="setHideBelowEur">Hide positions below (EUR)
+                                <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="Hide tiny holdings worth less than this in the Holdings table. 0 = show all."></i>
+                            </label>
+                            <input type="number" class="form-control" id="setHideBelowEur" min="0" step="1">
+                        </div>
 
                         <div class="col-12 mt-3"><h6 class="text-muted text-uppercase small mb-1">Account</h6></div>
                         <div class="col-12">
@@ -2393,6 +2414,6 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <script src="js/help_text.js?v=1780000006"></script>
 
     <!-- Custom JavaScript -->
-    <script src="js/portfolio_debug.js?v=1780000020"></script>
+    <script src="js/portfolio_debug.js?v=1780000021"></script>
 </body>
 </html>
