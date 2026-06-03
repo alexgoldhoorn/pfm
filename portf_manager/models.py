@@ -604,8 +604,8 @@ class Portfolio:
         if not self._db_adapter:
             raise ValueError("Database adapter not set")
 
-        # This would need to be implemented in the database adapter
-        # For now, we'll use a placeholder that gets assets with positions
+        # The adapter exposes positions rather than a raw asset list, so this
+        # returns the assets that currently have a position.
         return self._get_assets_with_positions()
 
     def _get_assets_with_positions(self) -> List[Asset]:

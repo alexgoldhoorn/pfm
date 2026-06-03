@@ -59,11 +59,6 @@ def _append_history(session_id: str, role: str, content: str):
         _chat_sessions[session_id] = _chat_sessions[session_id][-10:]
 
 
-def _simple_ddg_search(query: str, max_results: int = 3) -> List[Dict[str, str]]:
-    """Placeholder for web search - would integrate with actual search API"""
-    return []
-
-
 # API Key authentication dependency
 async def get_api_key_auth_for_llm(
     request: Request, api_key_manager: APIKeyManager = Depends(get_api_key_manager)
@@ -100,7 +95,6 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None
     symbols: Optional[List[str]] = None
     live: bool = True
-    search: bool = False
 
 
 class ChatResponse(BaseModel):
@@ -249,7 +243,6 @@ class EnhancedChatEngine:
                 user_id=1,
                 symbols_hint=request.symbols,
                 live=request.live,
-                search=request.search,
             )
             context.update(portfolio_context)
 
@@ -378,7 +371,6 @@ class EnhancedChatEngine:
         user_id: int,
         symbols_hint: Optional[List[str]] = None,
         live: bool = True,
-        search: bool = False,
     ) -> Dict[str, Any]:
         """Build portfolio context from the database so the assistant can answer
         questions about the user's actual holdings, performance and history."""
@@ -479,20 +471,12 @@ class EnhancedChatEngine:
                 except Exception:
                     warnings.append("live_price_fetch_failed")
 
-            web_snippets = {}
-            if search and symbols_hint:
-                for symbol in symbols_hint[:3]:  # Limit search
-                    items = _simple_ddg_search(f"{symbol} company latest news")
-                    if items:
-                        web_snippets[symbol] = items
-
             context = {
                 "portfolios": portfolios,
                 "positions": positions,
                 "recent_transactions": recent_transactions,
                 "prices": prices,
                 "metadata": metadata,
-                "web": web_snippets or None,
             }
 
             if warnings:
