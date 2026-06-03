@@ -740,13 +740,22 @@
                             <h4 class="mb-0"><i class="bi bi-bar-chart-line me-2 text-primary"></i>Analytics<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('analytics')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
                             <p class="text-muted small mb-0">Performance vs benchmark, net worth history, dividend income and a Spanish IRPF tax estimate.</p>
                         </div>
-                        <button class="btn btn-sm btn-outline-secondary" id="refreshAnalytics" title="Refresh analytics data">
+                        <button class="btn btn-sm btn-outline-secondary" id="refreshAnalytics" title="Refresh the current tab">
                             <i class="bi bi-arrow-clockwise me-1"></i>Refresh
                         </button>
                     </div>
 
+                    <!-- Sub-navigation: each tab lazy-loads only its own sections -->
+                    <ul class="nav nav-pills flex-wrap mb-3" id="analyticsTabs">
+                        <li class="nav-item"><button type="button" class="nav-link active" data-an-tab="performance"><i class="bi bi-speedometer2 me-1"></i>Performance &amp; Net Worth</button></li>
+                        <li class="nav-item"><button type="button" class="nav-link" data-an-tab="dividends"><i class="bi bi-cash-coin me-1"></i>Dividends</button></li>
+                        <li class="nav-item"><button type="button" class="nav-link" data-an-tab="tax"><i class="bi bi-receipt me-1"></i>Tax</button></li>
+                        <li class="nav-item"><button type="button" class="nav-link" data-an-tab="risk"><i class="bi bi-shield-check me-1"></i>Risk &amp; Diversification</button></li>
+                        <li class="nav-item"><button type="button" class="nav-link" data-an-tab="fees"><i class="bi bi-cash-stack me-1"></i>Fees &amp; Costs</button></li>
+                    </ul>
+
                     <!-- a) Performance -->
-                    <div class="card mb-4">
+                    <div class="card mb-4" data-an-section="performance">
                         <div class="card-header fw-semibold d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <span><i class="bi bi-speedometer2 me-2 text-primary"></i>Performance</span>
                             <div class="d-flex align-items-center gap-2 flex-wrap">
@@ -783,7 +792,7 @@
                     </div>
 
                     <!-- b) Net worth over time -->
-                    <div class="card mb-4">
+                    <div class="card mb-4" data-an-section="performance">
                         <div class="card-header fw-semibold d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <span><i class="bi bi-graph-up me-2 text-primary"></i>Net Worth Over Time</span>
                             <div class="d-flex gap-3 align-items-center" style="font-size:0.8rem;">
@@ -805,7 +814,7 @@
                     </div>
 
                     <!-- c) Dividend income -->
-                    <div class="card mb-4">
+                    <div class="card mb-4" data-an-section="dividends">
                         <div class="card-header fw-semibold">
                             <i class="bi bi-cash-coin me-2 text-success"></i>Dividend Income
                         </div>
@@ -817,7 +826,7 @@
                     </div>
 
                     <!-- d) Tax estimate -->
-                    <div class="card mb-4">
+                    <div class="card mb-4" data-an-section="tax">
                         <div class="card-header fw-semibold d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <span><i class="bi bi-receipt me-2 text-danger"></i>Tax Estimate (Spanish IRPF)</span>
                             <div class="d-flex align-items-center gap-2">
@@ -833,7 +842,7 @@
                     </div>
 
                     <!-- e) Diversification & concentration -->
-                    <div class="card mb-4">
+                    <div class="card mb-4" data-an-section="risk">
                         <div class="card-header fw-semibold d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <span><i class="bi bi-pie-chart-fill me-2 text-primary"></i>Diversification &amp; Concentration</span>
                             <button class="btn btn-sm btn-outline-primary" id="anDiversificationBtn" title="Fetches sector/country data from Yahoo Finance — takes ~20-30s">
@@ -849,7 +858,7 @@
                     </div>
 
                     <!-- f) Risk metrics -->
-                    <div class="card mb-4">
+                    <div class="card mb-4" data-an-section="risk">
                         <div class="card-header fw-semibold">
                             <i class="bi bi-shield-exclamation me-2 text-danger"></i>Risk
                         </div>
@@ -861,7 +870,7 @@
                     </div>
 
                     <!-- g) Fees & costs -->
-                    <div class="card mb-4">
+                    <div class="card mb-4" data-an-section="fees">
                         <div class="card-header fw-semibold">
                             <i class="bi bi-cash-stack me-2 text-warning"></i>Fees &amp; Costs
                         </div>
@@ -2251,6 +2260,6 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <script src="js/help_text.js?v=1780000006"></script>
 
     <!-- Custom JavaScript -->
-    <script src="js/portfolio_debug.js?v=1780000016"></script>
+    <script src="js/portfolio_debug.js?v=1780000017"></script>
 </body>
 </html>
