@@ -448,7 +448,7 @@ class PortfolioManagerCLI:
             if self.config.is_local_mode and not self.auth_manager.is_authenticated():
                 raise AuthenticationRequiredError()
 
-            # Get all assets (this would need to be implemented in DatabaseManager)
+            # Get all assets via the configured backend (local DB or API)
             assets = self._get_all_assets(active_only)
 
             if not assets:
