@@ -340,6 +340,15 @@ function createAPIClient() {
             return resp.json();
         },
 
+        async deleteBooking(id) {
+            const resp = await fetch(this.baseURL + '/api/v1/bookings/' + id, {
+                method: 'DELETE',
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error('Failed to delete booking');
+            return resp.json().catch(() => ({}));
+        },
+
         async createTransaction(payload) {
             const resp = await fetch(this.baseURL + '/api/v1/transactions/', {
                 method: 'POST',
@@ -1339,11 +1348,22 @@ function createPageManager() {
             const selectedPortfolioId = portfolioFilter ? (portfolioFilter.value || null) : null;
 
             try {
-                const transactions = await window.apiClient.getTransactions(500, selectedPortfolioId);
-                if (transactions.length === 0) {
-                    tableBody.innerHTML = '<tr><td colspan="10" class="text-center text-muted">No transactions found.</td></tr>';
-                } else {
-                    tableBody.innerHTML = transactions.map(tx => `
+                // Fetch trades and cash bookings together; cash movements
+                // to/from the broker are shown inline with the trades.
+                const [transactions, allBookings] = await Promise.all([
+                    window.apiClient.getTransactions(500, selectedPortfolioId),
+                    window.apiClient.getBookings().catch(() => []),
+                ]);
+                let bookings = Array.isArray(allBookings) ? allBookings : [];
+                if (selectedPortfolioId) {
+                    bookings = bookings.filter(b => String(b.portfolio_id) === String(selectedPortfolioId));
+                }
+
+                // Unify into one date-sorted list (trades + cash bookings).
+                const rows = [];
+                transactions.forEach(tx => rows.push({
+                    date: tx.transaction_date,
+                    html: `
                         <tr>
                             <td>${Fmt.date(tx.transaction_date)}</td>
                             <td><small>${tx.portfolio_name || ''}</small></td>
@@ -1364,8 +1384,39 @@ function createPageManager() {
                                     <i class="bi bi-trash"></i>
                                 </button>
                             </td>
-                        </tr>
-                    `).join('');
+                        </tr>`
+                }));
+                bookings.forEach(b => {
+                    const isDep = b.action === 'Deposit';
+                    rows.push({
+                        date: b.date,
+                        html: `
+                        <tr class="table-light">
+                            <td>${Fmt.date(b.date)}</td>
+                            <td><small>${b.portfolio_name || ''}</small></td>
+                            <td><i class="bi bi-cash-coin me-1 text-muted"></i><span class="text-muted">Cash ${isDep ? 'in' : 'out'} (broker)</span></td>
+                            <td><span class="badge bg-${isDep ? 'success' : 'warning text-dark'}">${b.action.toUpperCase()}</span></td>
+                            <td class="text-end">—</td>
+                            <td class="text-end">—</td>
+                            <td>${b.currency || ''}</td>
+                            <td class="text-end">${isDep ? '+' : '−'}${fmtPrice(Math.abs(parseFloat(b.amount || 0)), b.currency)}</td>
+                            <td class="text-end">—</td>
+                            <td class="text-nowrap">
+                                <button class="btn btn-sm btn-outline-danger"
+                                    onclick="confirmDeleteBooking(${b.id})" title="Delete cash booking">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </td>
+                        </tr>`
+                    });
+                });
+
+                if (rows.length === 0) {
+                    tableBody.innerHTML = '<tr><td colspan="10" class="text-center text-muted">No transactions or cash movements found.</td></tr>';
+                } else {
+                    // Newest first; fall back to stable order when dates match
+                    rows.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+                    tableBody.innerHTML = rows.map(r => r.html).join('');
                 }
             } catch (error) {
                 console.error('Error loading transactions:', error);
@@ -2815,14 +2866,32 @@ function setupChatPage() {
         if (empty) empty.remove();
     }
 
-    function appendMessage(role, html) {
+    function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, c => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[c]));
+    }
+
+    function appendMessage(role, text) {
         removeEmpty();
         const isUser = role === 'user';
+        // Assistant replies are markdown → render to HTML; user input is escaped.
+        let body, extraStyle;
+        if (isUser) {
+            body = escapeHtml(text);
+            extraStyle = 'white-space:pre-wrap;';
+        } else if (window.marked) {
+            body = marked.parse(String(text || ''), { breaks: true });
+            extraStyle = '';
+        } else {
+            body = escapeHtml(text);
+            extraStyle = 'white-space:pre-wrap;';
+        }
         const div = document.createElement('div');
         div.className = `d-flex ${isUser ? 'justify-content-end' : 'justify-content-start'}`;
         div.innerHTML = `
-            <div class="px-3 py-2 rounded-3 ${isUser ? 'bg-primary text-white' : 'bg-light text-dark border'}"
-                 style="max-width:80%;white-space:pre-wrap;word-break:break-word;">${html}</div>`;
+            <div class="px-3 py-2 rounded-3 chat-bubble ${isUser ? 'bg-primary text-white' : 'chat-bubble-assistant border'}"
+                 style="max-width:80%;word-break:break-word;${extraStyle}">${body}</div>`;
         messagesEl.appendChild(div);
         scrollBottom();
     }
@@ -3003,6 +3072,16 @@ window.confirmDeleteTransaction = async function(id, symbol) {
         window.pageManager.loadTransactionsPage();
     } catch (err) {
         alert('Error deleting transaction: ' + err.message);
+    }
+};
+
+window.confirmDeleteBooking = async function(id) {
+    if (!confirm('Delete this cash booking? This cannot be undone.')) return;
+    try {
+        await window.apiClient.deleteBooking(id);
+        window.pageManager.loadTransactionsPage();
+    } catch (err) {
+        alert('Error deleting booking: ' + err.message);
     }
 };
 

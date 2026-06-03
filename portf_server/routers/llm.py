@@ -380,16 +380,87 @@ class EnhancedChatEngine:
         live: bool = True,
         search: bool = False,
     ) -> Dict[str, Any]:
-        """Build original portfolio context (from existing implementation)."""
-        # This is the original implementation from the existing LLM router
-        # Simplified version for this integration
+        """Build portfolio context from the database so the assistant can answer
+        questions about the user's actual holdings, performance and history."""
         warnings = []
 
         try:
-            # Get basic portfolio data - would need actual DB queries here
-            portfolios = []
+            from portf_manager.positions import compute_positions
+
+            try:
+                from .portfolios import _get_fx_rate as _fx
+            except Exception:
+
+                def _fx(_cur):
+                    return 1.0
+
+            # Current open positions (chronological, split-aware)
+            all_txns = db.get_all_transactions()
+            pos_map, realised = compute_positions(all_txns)
             positions = []
-            recent_transactions = []
+            total_value_eur = total_cost_eur = 0.0
+            for aid, p in pos_map.items():
+                if p["quantity"] <= 0:
+                    continue
+                asset = db.get_asset(aid)
+                if not asset:
+                    continue
+                cur = asset.get("currency", "EUR")
+                pd_ = db.get_latest_price(aid)
+                price = float(pd_["price"]) if pd_ else 0.0
+                fx = _fx(cur)
+                value_eur = p["quantity"] * price * fx
+                cost_eur = p["cost"] * fx
+                total_value_eur += value_eur
+                total_cost_eur += cost_eur
+                positions.append(
+                    {
+                        "symbol": asset["symbol"],
+                        "name": asset.get("name"),
+                        "asset_type": asset.get("asset_type"),
+                        "quantity": round(p["quantity"], 6),
+                        "avg_cost": round(p["cost"] / p["quantity"], 4),
+                        "currency": cur,
+                        "current_price": round(price, 4),
+                        "value_eur": round(value_eur, 2),
+                        "cost_eur": round(cost_eur, 2),
+                        "unrealised_gain_eur": round(value_eur - cost_eur, 2),
+                    }
+                )
+            positions.sort(key=lambda x: x["value_eur"], reverse=True)
+
+            # Cash bookings (deposits − withdrawals)
+            net_deposits = 0.0
+            try:
+                for b in db.get_all_bookings():
+                    amt = float(b.get("amount") or 0) * _fx(b.get("currency", "EUR"))
+                    net_deposits += amt if b.get("action") == "Deposit" else -amt
+            except Exception:
+                pass
+
+            # Recent transactions (already DESC by date)
+            recent_transactions = [
+                {
+                    "date": str(t.get("transaction_date"))[:10],
+                    "type": t.get("transaction_type"),
+                    "symbol": t.get("symbol"),
+                    "quantity": t.get("quantity"),
+                    "price": t.get("price"),
+                    "currency": t.get("currency"),
+                }
+                for t in all_txns[:15]
+            ]
+
+            portfolios = [
+                {
+                    "total_value_eur": round(total_value_eur, 2),
+                    "invested_eur": round(total_cost_eur, 2),
+                    "unrealised_gain_eur": round(total_value_eur - total_cost_eur, 2),
+                    "realised_gain_eur": round(realised, 2),
+                    "net_deposits_eur": round(net_deposits, 2),
+                    "holdings_count": len(positions),
+                }
+            ]
 
             # Get market data for any symbols
             prices = {}
@@ -452,19 +523,17 @@ class EnhancedChatEngine:
     ) -> str:
         """Build enhanced prompt combining portfolio and stock analysis context."""
 
-        base_prompt = """You are a professional financial advisor and portfolio management assistant.
+        base_prompt = """You are the portfolio assistant for THIS user's own Portfolio Manager app.
 
-Your capabilities include:
-- Portfolio analysis and performance tracking
-- Comprehensive stock analysis (technical, fundamental, screening)
-- Investment recommendations based on data
-- Market insights and trends
+IMPORTANT: The user's real portfolio data (current holdings, values, cost
+basis, gains, recent transactions and cash deposits) is provided below under
+PORTFOLIO CONTEXT. You DO have access to it — use it directly to answer. Never
+claim you lack access to the user's accounts or data; the data below IS their
+portfolio. All monetary values are in EUR unless a currency is stated.
 
-Always provide:
-- Data-driven analysis with specific numbers when available
-- Clear explanations of your reasoning
-- Balanced perspectives on opportunities and risks
-- Actionable insights tailored to the user's question
+When asked about holdings, top positions, performance or history, answer from
+PORTFOLIO CONTEXT with specific numbers. Be concise, data-driven, and balanced
+about risks. This is informational, not regulated financial advice.
 
 """
 
