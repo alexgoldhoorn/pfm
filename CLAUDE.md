@@ -24,7 +24,7 @@ Portfolio Manager: a Python CLI + FastAPI server + web client for tracking stock
 ### Database
 SQLite by default (`portfolio.db`), PostgreSQL via `DATABASE_URL` env var. Use `portf_manager/database.py` for SQLite, `database_factory.py` for auto-detection.
 
-**Current schema version: 14.** Migrations run automatically on startup.
+**Current schema version: 16.** Migrations run automatically on startup.
 
 Key fields added in recent migrations:
 - v5: `tax REAL DEFAULT 0` on `transactions`; new `bookings` table (deposits/withdrawals)
@@ -37,6 +37,8 @@ Key fields added in recent migrations:
 - v12: `research_notes` table (versioned research: thesis, conviction, method, assumptions, fair/buy/sell, llm_summary, sources)
 - v13: `'index'` added to the `assets.asset_type` CHECK; funds whose name carries the `Idx` marker reclassified `stock`/`etf` → `index`. Rebuilding a table with a CHECK requires `PRAGMA legacy_alter_table=ON` around the `RENAME` so child FK references aren't rewritten to the temp table — see `_migrate_to_v13`. `asset_type` is also a Pydantic enum (`portf_server/schemas/assets.py`) and a `models.py` enum — add new types to BOTH or the assets list 500s.
 - v14: `kv_cache` table (`key, value JSON, expires_at` epoch). DB-backed TTL cache via `portf_manager/cache.py` `cached(db, key, ttl, producer)`. Used to memoise slow/stable yfinance lookups: sector/country (~7d) in diversification, fundamentals (~6h) and news (~30m) in research, benchmark history (~12h) in performance. Degrades to a live call on miss/error.
+- v15: `manual_assets` table (off-brokerage net worth: cash/property/pension/mortgage/loans). CRUD on `Database`; `/api/v1/networth` returns brokerage value (from positions) + manual assets/liabilities + total net worth (EUR). Web: "Net Worth" page under Planning.
+- v16: `'interest'` added to the `transactions.transaction_type` CHECK (table rebuild via `legacy_alter_table=ON`, common-column copy, `update_transactions_timestamp` trigger re-created). First-class P2P/savings interest; the tax-estimate sums interest into the IRPF savings base (`interest_income_eur`). `transaction_type` is also `models.py` `TransactionType` + the SQLAlchemy CHECK — update all three. Tax tools: `/analytics/tax-report` (per-lot FIFO + withholding, CSV in UI), `/analytics/tax-optimizer` (harvestable losses + 2-month wash-sale flag + est. tax saved).
 
 ### Performance / event loop
 - Endpoints doing blocking yfinance I/O are plain `def` (not `async`) so FastAPI runs them in a threadpool — an `async` handler calling `yf` blocks the event loop and stalls every other request. Applies to: diversification, performance, snapshot, rebalance analysis, research generate/lookup, watchlist list/alerts. Keep new blocking-IO endpoints sync.
@@ -244,7 +246,7 @@ Signature: `saveImportedTransactions(transactions, bookings = [], portfolioId = 
 - PDT parser tests: `tests/test_pdt_xlsx_parser.py` (42 tests)
 - PDT Sheets sync tests: `tests/test_pdt_sheets_sync.py` (40 tests — all mocked, no real API calls)
 - Import/export + sync API tests: `tests/unit/test_imports_exports.py` (30 tests)
-- DB tests: `tests/test_database.py` — version assertion is `== 14` (bump it with `DATABASE_VERSION`)
+- DB tests: `tests/test_database.py` — version assertion is `== 16` (bump it with `DATABASE_VERSION`)
 
 ## Git
 - Public repo `github.com:alexgoldhoorn/pfm` — develop and push on `main`. Push with `GIT_SSH_COMMAND="ssh -o IdentitiesOnly=no" git push origin main`.
