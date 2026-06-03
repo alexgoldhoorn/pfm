@@ -1183,8 +1183,19 @@ function createPageManager() {
                 pnlCard.style.background = totalPnl >= 0 ? '#198754' : '#dc3545';
             }
 
-            if (el('totalAssets'))       el('totalAssets').textContent       = openPositions;
-            if (el('totalTransactions')) el('totalTransactions').textContent = openPositions === 1 ? '1 position' : openPositions + ' positions';
+            if (el('totalAssets')) el('totalAssets').textContent = openPositions;
+            // Per-asset-type breakdown (e.g. "12 stock · 19 etf · 4 index · 10 crypto")
+            if (el('totalTransactions')) {
+                const byType = {};
+                holdings.filter(h => parseFloat(h.quantity || 0) > 0).forEach(h => {
+                    const t = (h.asset_type || 'other');
+                    byType[t] = (byType[t] || 0) + 1;
+                });
+                const parts = Object.entries(byType).sort((a, b) => b[1] - a[1])
+                    .map(([t, n]) => `${n} ${t}`);
+                el('totalTransactions').textContent = parts.length ? parts.join(' · ')
+                    : (openPositions === 1 ? '1 position' : openPositions + ' positions');
+            }
 
             // --- Top 5 positions table ---
             const topBody = document.querySelector('#dashTopPositionsTable tbody');
@@ -1240,9 +1251,9 @@ function createPageManager() {
                         if (otherVal > 0) slices.push(['other', otherVal]);
                     }
 
-                    const R = 56;
-                    const CX = 70;
-                    const CY = 70;
+                    const R = 64;
+                    const CX = 80;
+                    const CY = 80;
                     const CIRC = 2 * Math.PI * R;
 
                     let offset = 0;
@@ -1255,7 +1266,7 @@ function createPageManager() {
                         offset += pct;
                         const colour  = COLOURS[i % COLOURS.length];
                         return `<circle cx="${CX}" cy="${CY}" r="${R}" fill="none"
-                                    stroke="${colour}" stroke-width="22"
+                                    stroke="${colour}" stroke-width="26"
                                     stroke-dasharray="${dashStr}"
                                     stroke-dashoffset="${offStr}"
                                     transform="rotate(-90 ${CX} ${CY})"/>`;
@@ -1271,10 +1282,10 @@ function createPageManager() {
                     }).join('');
 
                     donutArea.innerHTML = `
-                        <svg width="140" height="140" viewBox="0 0 140 140" style="flex-shrink:0;">
+                        <svg viewBox="0 0 160 160" style="flex:0 0 auto;width:100%;max-width:200px;height:auto;">
                             ${svgSlices}
-                            <text x="${CX}" y="${CY - 6}" text-anchor="middle" font-size="11" fill="#64748b">Total</text>
-                            <text x="${CX}" y="${CY + 10}" text-anchor="middle" font-size="12" font-weight="bold" fill="#1e293b">${(grandTotal / 1000).toFixed(1)}k</text>
+                            <text x="${CX}" y="${CY - 8}" text-anchor="middle" font-size="12" fill="#94a3b8">Total</text>
+                            <text x="${CX}" y="${CY + 12}" text-anchor="middle" font-size="16" font-weight="bold" class="donut-total">${(grandTotal / 1000).toFixed(1)}k</text>
                         </svg>
                         <div class="d-flex flex-column justify-content-center">${legendItems}</div>
                     `;
@@ -1391,11 +1402,11 @@ function createPageManager() {
                     rows.push({
                         date: b.date,
                         html: `
-                        <tr class="table-light">
+                        <tr class="tx-cash-row">
                             <td>${Fmt.date(b.date)}</td>
                             <td><small>${b.portfolio_name || ''}</small></td>
                             <td><i class="bi bi-cash-coin me-1 text-muted"></i><span class="text-muted">Cash ${isDep ? 'in' : 'out'} (broker)</span></td>
-                            <td><span class="badge bg-${isDep ? 'success' : 'warning text-dark'}">${b.action.toUpperCase()}</span></td>
+                            <td><span class="badge ${isDep ? 'bg-info text-dark' : 'bg-warning text-dark'}">${b.action.toUpperCase()}</span></td>
                             <td class="text-end">—</td>
                             <td class="text-end">—</td>
                             <td>${b.currency || ''}</td>
