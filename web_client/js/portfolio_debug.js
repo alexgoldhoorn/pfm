@@ -4583,6 +4583,7 @@ function setupResearchPage() {
             const d = await window.apiClient.researchLookup(sym);
             R = { symbol: sym, currency: d.currency, price: d.current_price, fundamentals: d.fundamentals || {}, llm: null, pos: d };
             $('researchBody').style.display = '';
+            $('researchReportBtn').style.display = '';
             $('rsName').textContent = `${sym} — ${d.name || ''}`;
             $('rsHeld').textContent = d.held ? 'held' : 'not held';
             $('rsHeld').className = 'badge ms-1 ' + (d.held ? 'bg-success' : 'bg-secondary');
@@ -4686,6 +4687,19 @@ function setupResearchPage() {
     });
 
     $('researchLoadBtn').addEventListener('click', () => { hideSuggest(); load(tickerInput.value); });
+
+    // Download an archivable Markdown research report for the loaded ticker.
+    $('researchReportBtn').addEventListener('click', async () => {
+        if (!R.symbol) return;
+        const btn = $('researchReportBtn'); const orig = btn.innerHTML;
+        btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Preparing…';
+        try {
+            const url = window.apiClient.baseURL + `/api/v1/research/${encodeURIComponent(R.symbol)}/report?format=md&download=true`;
+            await window.apiClient.downloadBlob(url, `research_${R.symbol}_${new Date().toISOString().slice(0, 10)}.md`);
+        } catch (e) {
+            alert('Could not generate report: ' + (e.message || e));
+        } finally { btn.disabled = false; btn.innerHTML = orig; }
+    });
 
     $('rvGenerateBtn').addEventListener('click', async () => {
         if (!R.symbol) return;
