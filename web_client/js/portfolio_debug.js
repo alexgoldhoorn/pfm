@@ -2564,6 +2564,12 @@ async function loadAnalyticsTax() {
                         <div class="fs-6 fw-bold">${anFmtEur2(d.dividend_income_eur)}</div>
                     </div>
                 </div>
+                ${(d.interest_income_eur || 0) ? `<div class="col-6 col-md-4">
+                    <div class="border rounded p-3 h-100">
+                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="P2P / savings interest received in ${year} (e.g. Mintos). Taxed in the savings base like dividends.">Interest Income ${year}</div>
+                        <div class="fs-6 fw-bold">${anFmtEur2(d.interest_income_eur)}</div>
+                    </div>
+                </div>` : ''}
                 <div class="col-6 col-md-4">
                     <div class="border rounded p-3 h-100">
                         <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.savingsBase}">Savings Base</div>
