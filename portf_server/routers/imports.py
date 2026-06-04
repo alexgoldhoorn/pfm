@@ -35,6 +35,11 @@ from portf_manager.parsers.indexacapital_csv_parser import parse_indexacapital_c
 from portf_manager.parsers.coinbase_csv_parser import parse_coinbase_csv
 from portf_manager.parsers.bookings_csv_parser import parse_bookings_csv
 from portf_manager.parsers.myinvestor_csv_parser import parse_myinvestor_csv
+from portf_manager.parsers.mintos_csv_parser import (
+    parse_mintos_csv,
+    MINTOS_SYMBOL,
+    MINTOS_NAME,
+)
 from portf_manager.parsers.pdt_xlsx_parser import (
     PDTXLSXParser,
     _detect_asset_type,
@@ -48,7 +53,14 @@ from ..dependencies import get_api_key_manager
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-SUPPORTED_BROKERS = ["indexacapital", "coinbase", "pdt", "bookings", "myinvestor"]
+SUPPORTED_BROKERS = [
+    "indexacapital",
+    "coinbase",
+    "pdt",
+    "bookings",
+    "myinvestor",
+    "mintos",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +269,45 @@ def _parse_myinvestor(
     return previews, bookings, skipped
 
 
+def _parse_mintos(
+    content: str,
+) -> tuple[List[PreviewTransaction], List[PreviewBooking], List[dict]]:
+    """Mintos statement → monthly aggregated P2P interest (savings-base income).
+
+    The thousands of loan/principal/secondary-market rows are ignored (they net
+    out); only interest + withholding are kept, summed per month and booked as
+    'interest' transactions against a synthetic MINTOS asset.
+    """
+    result = parse_mintos_csv(content)
+    previews = [
+        PreviewTransaction(
+            symbol=MINTOS_SYMBOL,
+            name=MINTOS_NAME,
+            asset_type="bond",
+            tx_type="interest",
+            date=e["date"],
+            quantity=1.0,
+            price=e["amount"],
+            tax=e["tax"],
+            currency=e.get("currency", "EUR"),
+            broker="Mintos",
+            notes=f"Mintos P2P interest for {e['date'][:7]} (aggregated from {e['count']} rows)",
+        )
+        for e in result.interest
+    ]
+    # Surface the ignored internal activity as informational "skipped" rows.
+    skipped = [
+        {
+            "type": ptype,
+            "reason": f"internal P2P activity ({n} rows, {eur:.2f} EUR) — not imported",
+        }
+        for ptype, (n, eur) in sorted(
+            result.ignored_summary.items(), key=lambda x: -x[1][0]
+        )
+    ]
+    return previews, [], skipped
+
+
 def _parse_pdt(
     file_bytes: bytes,
 ) -> tuple[List[PreviewTransaction], List[PreviewBooking], List[dict]]:
@@ -419,6 +470,9 @@ async def upload_broker_file(
         elif broker == "myinvestor":
             content = file_bytes.decode("utf-8-sig")
             previews, bookings, skipped = _parse_myinvestor(content)
+        elif broker == "mintos":
+            content = file_bytes.decode("utf-8-sig")
+            previews, bookings, skipped = _parse_mintos(content)
         elif broker == "pdt":
             previews, bookings, skipped = _parse_pdt(file_bytes)
         elif broker == "bookings":
