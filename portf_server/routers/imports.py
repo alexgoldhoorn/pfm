@@ -10,9 +10,12 @@ Supported brokers:
   - pdt             — XLSX (Portfolio Dividend Tracker template)
 """
 
+import csv
 import logging
+import re
 import tempfile
 import os
+from io import StringIO
 from typing import List, Literal, Optional
 
 from fastapi import (
@@ -31,6 +34,7 @@ from portf_manager.currency_utils import normalize_gbx_amounts
 from portf_manager.parsers.indexacapital_csv_parser import parse_indexacapital_csv
 from portf_manager.parsers.coinbase_csv_parser import parse_coinbase_csv
 from portf_manager.parsers.bookings_csv_parser import parse_bookings_csv
+from portf_manager.parsers.myinvestor_csv_parser import parse_myinvestor_csv
 from portf_manager.parsers.pdt_xlsx_parser import (
     PDTXLSXParser,
     _detect_asset_type,
@@ -44,7 +48,7 @@ from ..dependencies import get_api_key_manager
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-SUPPORTED_BROKERS = ["indexacapital", "coinbase", "pdt", "bookings"]
+SUPPORTED_BROKERS = ["indexacapital", "coinbase", "pdt", "bookings", "myinvestor"]
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +130,57 @@ async def _auth(
 # ---------------------------------------------------------------------------
 
 
-def _parse_indexacapital(content: str) -> tuple[List[PreviewTransaction], List[dict]]:
+def _eur_amount(raw: str) -> float:
+    """Parse a Spanish-formatted EUR amount like '-1.500,20 €' → -1500.20."""
+    s = re.sub(r"[^0-9,.\-]", "", (raw or "").strip())
+    if "," in s and "." in s:
+        s = s.replace(".", "").replace(",", ".")
+    elif "," in s:
+        s = s.replace(",", ".")
+    return float(s) if s not in ("", "-") else 0.0
+
+
+def _parse_indexacapital_movimientos(
+    content: str,
+) -> tuple[List[PreviewBooking], List[dict]]:
+    """IndexaCapital 'Movimientos' cash statement (Fecha;Movimiento;Importe;Saldo):
+    SEPA transfers → deposit/withdrawal bookings. Fund subscriptions carry no
+    unit/fund detail (the funds export has that), so they're skipped."""
+    bookings: List[PreviewBooking] = []
+    skipped: List[dict] = []
+    reader = csv.reader(StringIO(content.strip()), delimiter=";")
+    rows = list(reader)
+    for i, row in enumerate(rows[1:], start=2):  # skip header
+        if len(row) < 3:
+            continue
+        date, movimiento, importe_raw = row[0].strip(), row[1].strip(), row[2]
+        if "SEPA" in movimiento.upper() or "TRANSFEREN" in movimiento.upper():
+            amt = _eur_amount(importe_raw)
+            bookings.append(
+                PreviewBooking(
+                    broker="Indexa Capital",
+                    date=date[:10],
+                    action="Deposit" if amt >= 0 else "Withdrawal",
+                    amount=abs(amt),
+                    currency="EUR",
+                )
+            )
+        else:
+            skipped.append(
+                {"type": f"Row {i}", "reason": f"not a cash transfer: {movimiento}"}
+            )
+    return bookings, skipped
+
+
+def _parse_indexacapital(
+    content: str,
+) -> tuple[List[PreviewTransaction], List[PreviewBooking], List[dict]]:
+    # Auto-detect the cash "Movimientos" export vs the ISIN trades export.
+    first = content.splitlines()[0] if content.strip() else ""
+    if "Movimiento" in first and "Saldo" in first:
+        bookings, skipped = _parse_indexacapital_movimientos(content)
+        return [], bookings, skipped
+
     result = parse_indexacapital_csv(content)
     previews = [
         PreviewTransaction(
@@ -144,7 +198,7 @@ def _parse_indexacapital(content: str) -> tuple[List[PreviewTransaction], List[d
         for tx in result.importable
     ]
     skipped = [{"type": t, "reason": r} for t, r in result.skipped]
-    return previews, skipped
+    return previews, [], skipped
 
 
 def _parse_coinbase(content: str) -> tuple[List[PreviewTransaction], List[dict]]:
@@ -166,6 +220,41 @@ def _parse_coinbase(content: str) -> tuple[List[PreviewTransaction], List[dict]]
     ]
     skipped = [{"type": t, "reason": r} for t, r in result.skipped]
     return previews, skipped
+
+
+def _parse_myinvestor(
+    content: str,
+) -> tuple[List[PreviewTransaction], List[PreviewBooking], List[dict]]:
+    """MyInvestor 'Movimientos' → trades + dividends + deposit bookings.
+
+    Buy/sell rows are approximate (no ISIN, EUR amount only, no fee detail), so
+    they're surfaced for the user to review rather than trusted blindly.
+    """
+    result = parse_myinvestor_csv(content)
+    previews = [
+        PreviewTransaction(
+            symbol=tx.symbol,
+            name=tx.asset_name,
+            asset_type=_detect_asset_type(tx.asset_name, ""),
+            tx_type=tx.tx_type,
+            date=tx.date,
+            quantity=tx.quantity,
+            price=tx.price,
+            currency=tx.currency or "EUR",
+            fees=tx.fees,
+            broker="MyInvestor",
+            notes=(tx.raw_text or "")
+            + (
+                " · review: MyInvestor gives no ISIN/fees"
+                if tx.tx_type in ("buy", "sell")
+                else ""
+            ),
+        )
+        for tx in result.transactions
+    ]
+    bookings = [PreviewBooking(**bk) for bk in result.bookings]
+    skipped = [{"type": t, "reason": r} for t, r in result.skipped]
+    return previews, bookings, skipped
 
 
 def _parse_pdt(
@@ -322,12 +411,14 @@ async def upload_broker_file(
     try:
         if broker == "indexacapital":
             content = file_bytes.decode("utf-8-sig")
-            previews, skipped = _parse_indexacapital(content)
-            bookings: List[PreviewBooking] = []
+            previews, bookings, skipped = _parse_indexacapital(content)
         elif broker == "coinbase":
             content = file_bytes.decode("utf-8-sig")
             previews, skipped = _parse_coinbase(content)
             bookings = []
+        elif broker == "myinvestor":
+            content = file_bytes.decode("utf-8-sig")
+            previews, bookings, skipped = _parse_myinvestor(content)
         elif broker == "pdt":
             previews, bookings, skipped = _parse_pdt(file_bytes)
         elif broker == "bookings":
