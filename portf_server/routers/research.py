@@ -565,6 +565,12 @@ async def check_alerts(db=Depends(get_database), api_key_info: dict = Depends(_a
     Compare all price targets against latest stored prices.
     Returns triggered alerts (does NOT send Telegram — use the cron for that).
     """
+    from portf_manager.positions import compute_positions
+
+    # Current positions (quantity + cost basis) keyed by asset_id, so each alert
+    # can report how much is held and the unrealised P&L if acted on.
+    positions, _ = compute_positions(db.get_all_transactions())
+
     alerts = []
     for pt in db.get_all_price_targets():
         asset_id = pt["asset_id"]
@@ -583,5 +589,29 @@ async def check_alerts(db=Depends(get_database), api_key_info: dict = Depends(_a
                 {"type": "SELL", "threshold": pt["sell_above"], "price": price}
             )
         if triggered:
-            alerts.append({"symbol": symbol, "triggers": triggered})
+            asset = db.get_asset(asset_id) or {}
+            pos = positions.get(asset_id, {"quantity": 0.0, "cost": 0.0})
+            qty = round(pos["quantity"], 6) if pos["quantity"] > 0 else 0.0
+            cost_basis = round(pos["cost"], 2) if qty else 0.0
+            value = round(qty * price, 2)
+            unrealized = round(value - cost_basis, 2) if qty else 0.0
+            unrealized_pct = (
+                round((value - cost_basis) / cost_basis * 100, 2)
+                if cost_basis > 0
+                else 0.0
+            )
+            alerts.append(
+                {
+                    "symbol": symbol,
+                    "name": pt.get("name") or asset.get("name") or "",
+                    "currency": asset.get("currency", "EUR"),
+                    "quantity": qty,
+                    "avg_price": round(cost_basis / qty, 4) if qty else 0.0,
+                    "cost_basis": cost_basis,
+                    "value": value,
+                    "unrealized_pnl": unrealized,
+                    "unrealized_pnl_pct": unrealized_pct,
+                    "triggers": triggered,
+                }
+            )
     return {"alerts": alerts, "total": len(alerts)}
