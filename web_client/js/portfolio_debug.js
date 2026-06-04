@@ -63,9 +63,22 @@ async function loadDashboardAlerts() {
         ]);
         const items = [];
         (targets.alerts || []).forEach(a => {
+            const cur = a.currency || 'EUR';
+            // Position context: how much is held and the unrealised P&L if sold now.
+            let posInfo = '';
+            if (a.quantity > 0) {
+                const pnl = a.unrealized_pnl || 0;
+                const pnlCls = pnl >= 0 ? 'text-success' : 'text-danger';
+                const pnlSign = pnl >= 0 ? '+' : '';
+                posInfo = ` <span class="text-muted">— ${Fmt.num(a.quantity, 0, 4)} sh · ${Fmt.num(a.value, 2, 2)} ${cur} `
+                    + `(<span class="${pnlCls}">${pnlSign}${Fmt.num(pnl, 2, 2)} ${cur}, ${pnlSign}${Fmt.num(a.unrealized_pnl_pct || 0, 2, 2)}%</span>)</span>`;
+            } else {
+                posInfo = ` <span class="text-muted">— not held</span>`;
+            }
             (a.triggers || []).forEach(t => {
                 const buy = t.type === 'BUY';
-                items.push(`<li class="mb-1"><span class="badge bg-${buy ? 'success' : 'danger'} me-2">${t.type}</span><strong>${a.symbol}</strong> at ${Fmt.num(t.price, 2, 2)} ${buy ? '≤ buy-below' : '≥ sell-above'} ${Fmt.num(t.threshold, 2, 2)}</li>`);
+                const nameTxt = a.name ? ` <span class="text-muted">· ${a.name}</span>` : '';
+                items.push(`<li class="mb-1"><span class="badge bg-${buy ? 'success' : 'danger'} me-2">${t.type}</span><strong>${a.symbol}</strong>${nameTxt} at ${Fmt.num(t.price, 2, 2)} ${cur} ${buy ? '≤ buy-below' : '≥ sell-above'} ${Fmt.num(t.threshold, 2, 2)} ${cur}${posInfo}</li>`);
             });
         });
         (watch.alerts || []).forEach(a => {
