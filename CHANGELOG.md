@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Index fund asset type** (`index`) distinct from ETFs; cash deposits/withdrawals shown inline in Transactions.
 - **Per-user settings**: default currency, default broker, holdings sort, hide-tiny-positions, plus in-app change password (`/auth/change-password-key`).
 - **New pages**: Help (guides + glossary), What's New, About, and a curated Resources page; grouped, collapsible sidebar.
+- **More broker imports**: MyInvestor CSV (deposits, dividends, buy/sell), Mintos P2P (interest aggregated per month into the savings base), and IndexaCapital's "Movimientos" cash statement (SEPA → bookings). nginx upload limit raised to 25 MB for large statements.
 
 ### Changed
 - **yfinance caching** (`kv_cache`, DB schema v14): sector/country, fundamentals, news and benchmark history are cached, cutting the diversification load from ~25s to sub-second when warm.
