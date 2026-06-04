@@ -1869,6 +1869,14 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         <div class="card-body">
                             <ul class="list-unstyled mb-0" id="versionList">
                                 <li class="mb-3">
+                                    <span class="badge bg-success me-2">Net Worth</span>
+                                    New page tracking your whole picture — investments (auto) plus off-brokerage cash, property, pension, mortgage and loans → total net worth. FIRE goals now project from this total, not just the brokerage.
+                                </li>
+                                <li class="mb-3">
+                                    <span class="badge bg-success me-2">Tax</span>
+                                    Per-lot FIFO tax report with CSV export, and a year-end tax optimizer (harvestable losses, estimated tax saved, Spain's 2-month wash-sale flag). P2P/savings interest is now a first-class transaction type counted in the IRPF savings base.
+                                </li>
+                                <li class="mb-3">
                                     <span class="badge bg-primary me-2">Research</span>
                                     Workbench with autocomplete, your position (cost basis, P/L, sell calculator, average-cost chart), Yahoo fundamentals with sources, LLM analysis, and a downloadable Markdown report per ticker.
                                 </li>
@@ -1878,11 +1886,11 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                 </li>
                                 <li class="mb-3">
                                     <span class="badge bg-primary me-2">Analytics</span>
-                                    Split into lazy-loaded tabs (Performance &amp; Net Worth · Dividends · Tax · Risk &amp; Diversification · Fees); per-holding concentration; European benchmarks; clearer tooltips and source labels.
+                                    Split into lazy-loaded tabs (Performance &amp; Net Worth · Dividends · Gain/Loss · Tax · Risk &amp; Diversification · Fees); a gain/loss leaderboard, dividend forward income &amp; calendar, per-holding concentration, European benchmarks, and clearer tooltips and source labels.
                                 </li>
                                 <li class="mb-3">
                                     <span class="badge bg-primary me-2">Performance</span>
-                                    yfinance results cached (sector/country, fundamentals, benchmark, news) and slow lookups moved off the event loop — pages load much faster.
+                                    yfinance results cached (sector/country, fundamentals, benchmark, news), slow lookups moved off the event loop, and per-transaction DB lookups removed — pages load much faster. Plus a dashboard alerts banner (price targets &amp; watchlist buy zones).
                                 </li>
                                 <li class="mb-3">
                                     <span class="badge bg-primary me-2">Data</span>
@@ -2571,6 +2579,6 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <script src="js/help_text.js?v=1780000006"></script>
 
     <!-- Custom JavaScript -->
-    <script src="js/portfolio_debug.js?v=1780000032"></script>
+    <script src="js/portfolio_debug.js?v=1780000033"></script>
 </body>
 </html>
