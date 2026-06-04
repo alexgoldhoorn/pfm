@@ -30,7 +30,7 @@ Python CLI + FastAPI server + web client for tracking stocks, ETFs, funds, bonds
 
 ## Features
 
-- **Multi-broker tracking**: IndexaCapital, Coinbase, PDT XLSX — parsers with European number/date format support. Asset types include a distinct **index fund** type alongside stocks/ETFs/crypto/bonds
+- **Multi-broker tracking**: IndexaCapital (trades + cash "Movimientos"), MyInvestor, Mintos (P2P), Coinbase, PDT XLSX, and a generic cash-CSV — parsers with European number/date format support. Asset types: stocks, ETFs, a distinct **index fund** type, crypto, bonds, commodities, cash — plus first-class **interest** income (P2P/savings) that feeds the tax savings base
 - **Full PDT v2 compatibility**: import/export Transactions, Dividends, and Bookings (deposits/withdrawals) with correct per-transaction currencies
 - **Google Sheets sync**: pull from / push to a PDT-format Google Spreadsheet via service account
 - **LLM-powered import**: paste any transaction text; Ollama, Gemini, or OpenRouter parses it automatically (extracts fees, dedupes duplicates, assigns to a portfolio)
@@ -232,7 +232,7 @@ Three ways to import from the **Transactions** page:
 
 | Button | How it works |
 |---|---|
-| **Import file** | Upload IndexaCapital CSV, Coinbase CSV, or PDT XLSX. Parsed server-side, previewed with checkboxes. PDT imports also show bookings summary. |
+| **Import file** | Upload IndexaCapital, MyInvestor, Mintos, Coinbase CSV or PDT XLSX. Parsed server-side, previewed with checkboxes. Imports show a bookings (cash deposits/withdrawals) summary too. |
 | **Import text** | Paste any broker statement text. LLM extracts transactions, previewed before saving. |
 | **Chat → Extract & Import** | Paste text in the Chat page, click "Extract & Import". |
 
@@ -242,8 +242,9 @@ Import/Export page also has direct **Pull/Push** buttons for Google Sheets sync.
 
 | Broker | Format | Module | CLI | Web |
 |--------|--------|--------|-----|-----|
-| IndexaCapital | CSV (`;` sep, ISIN, EUR) | `indexacapital_csv_parser.py` | ✅ | ✅ |
-| MyInvestor | CSV (`;` sep, Spanish) | inline in `import_csv()` | ✅ | via text/LLM |
+| IndexaCapital | CSV — ISIN trades export, **and** the "Movimientos" cash statement (SEPA → bookings; auto-detected) | `indexacapital_csv_parser.py` | ✅ | ✅ |
+| MyInvestor | CSV "Movimientos Mi Cuenta" — deposits, dividends, buy/sell (flagged for review: no ISIN/fees) | `myinvestor_csv_parser.py` | ✅ | ✅ |
+| Mintos (P2P) | CSV account statement — interest aggregated **per month** into `interest` income + withholding; loan/principal churn ignored | `mintos_csv_parser.py` | — | ✅ |
 | Coinbase | CSV (Advanced Trade) | `coinbase_csv_parser.py` | ✅ | ✅ |
 | PDT (Portfolio Dividend Tracker) | XLSX | `pdt_xlsx_parser.py` | ✅ | ✅ |
 | PDT Google Sheets | Sheets API | `pdt_sheets_sync.py` | ✅ | ✅ |
