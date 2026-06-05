@@ -2720,6 +2720,9 @@ class PortfolioManagerCLI:
             # Get API client
             api_client = get_client()
 
+            # Track run timing for the Diagnostics history.
+            run_started = datetime.now()
+
             # Determine which assets to update
             if symbols:
                 # Get specific assets by symbols
@@ -2753,23 +2756,52 @@ class PortfolioManagerCLI:
 
             try:
                 # Fetch latest prices in batch.
-                # Crypto assets need the yfinance "{SYM}-EUR" format.
-                # A few tokens use a different base ticker on Yahoo Finance.
-                _CRYPTO_YF_OVERRIDES = {"UNI": "UNI1"}
+                # Crypto assets need an explicit yfinance ticker; the default is
+                # "{SYM}-EUR". A few tokens only resolve under a numeric-suffixed,
+                # USD-quoted Yahoo symbol (the bare "{SYM}-EUR" is missing or
+                # points at a delisted look-alike coin). For those we fetch the
+                # USD price and convert to EUR below, since crypto assets are
+                # stored in EUR. Map: db symbol -> (yf ticker, quote currency).
+                _CRYPTO_YF_OVERRIDES = {
+                    "UNI": ("UNI7083-USD", "USD"),
+                    "SUI": ("SUI20947-USD", "USD"),
+                }
                 yf_to_db: dict[str, str] = {}
+                # yf ticker -> currency it is quoted in (None = asset-native, no
+                # conversion); used to bring USD-quoted crypto back to EUR.
+                yf_quote_ccy: dict[str, str] = {}
                 for asset in assets_to_update:
                     sym = asset["symbol"]
                     if asset.get("asset_type") == "crypto":
-                        base = _CRYPTO_YF_OVERRIDES.get(sym, sym)
-                        yf_to_db[f"{base}-EUR"] = sym
+                        yf_ticker, quote_ccy = _CRYPTO_YF_OVERRIDES.get(
+                            sym, (f"{sym}-EUR", "EUR")
+                        )
+                        yf_to_db[yf_ticker] = sym
+                        yf_quote_ccy[yf_ticker] = quote_ccy
                     else:
                         yf_to_db[sym] = sym
+                        yf_quote_ccy[sym] = None
 
                 print("📡 Fetching latest prices from API...")
                 prices_raw = api_client.fetch_latest_prices(list(yf_to_db.keys()))
-                # Re-key results by original DB symbol
+
+                # Convert any non-EUR crypto quotes to EUR (prices are stored in
+                # the asset currency, which is EUR for crypto). FX rate per
+                # currency is fetched once and reused.
+                _fx_cache: dict[str, float] = {}
+
+                def _to_eur(price: float, quote_ccy: str) -> float:
+                    if not quote_ccy or quote_ccy == "EUR":
+                        return price
+                    if quote_ccy not in _fx_cache:
+                        rate = api_client.get_fx_rate(quote_ccy, "EUR")
+                        _fx_cache[quote_ccy] = float(rate) if rate else None
+                    rate = _fx_cache[quote_ccy]
+                    return price * rate if rate else price
+
+                # Re-key results by original DB symbol, converting to EUR.
                 prices_data = {
-                    yf_to_db[yf_sym]: price
+                    yf_to_db[yf_sym]: _to_eur(price, yf_quote_ccy.get(yf_sym))
                     for yf_sym, price in prices_raw.items()
                     if yf_sym in yf_to_db
                 }
@@ -2861,12 +2893,44 @@ class PortfolioManagerCLI:
                 success_rate = (successful_updates / total_processed) * 100
                 print(f"   📈 Success rate: {success_rate:.1f}%")
 
+            # Persist the run for the Diagnostics page (best-effort; never let a
+            # bookkeeping failure mask the actual update result).
+            try:
+                self.db_manager.record_price_update_run(
+                    started_at=run_started.strftime("%Y-%m-%d %H:%M:%S"),
+                    duration_seconds=round(
+                        (datetime.now() - run_started).total_seconds(), 1
+                    ),
+                    updated_count=successful_updates,
+                    skipped_count=len(skipped_symbols),
+                    error_count=len(error_symbols),
+                    skipped_symbols=skipped_symbols,
+                    error_symbols=error_symbols,
+                    api_errors=api_errors,
+                    source="manual" if symbols else "cron",
+                )
+            except Exception as e:
+                tqdm.write(f"⚠️  Could not record update run: {e}")
+
+            # Exit non-zero on real failures so cron wrappers alert instead of
+            # silently reporting success. DB write errors or API errors are real
+            # problems; "skipped" assets (no Yahoo data) are expected and don't
+            # count. SystemExit bypasses the broad `except Exception` below.
+            if error_symbols or api_errors:
+                print(
+                    f"   ⛔ {len(error_symbols)} DB error(s), "
+                    f"{len(api_errors)} API error(s) — exiting non-zero."
+                )
+                sys.exit(1)
+
         except Exception as e:
             print(f"❌ Error updating prices: {e}")
             # Log the full traceback for debugging
             import traceback
 
             tqdm.write(f"Full error traceback: {traceback.format_exc()}")
+            # A crash mid-update is a failure too — signal it to the caller.
+            sys.exit(1)
 
 
 def handle_export_to_sheets(args):

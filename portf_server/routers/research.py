@@ -43,6 +43,10 @@ class ResearchSaveBody(BaseModel):
     llm_summary: Optional[str] = None
     sources: Optional[list] = None
     current_price: Optional[float] = None
+    # When False, the note is saved but existing alert targets are left untouched
+    # (the web client sets this after asking the user whether to overwrite a
+    # differing target). None/True keeps the legacy "always push targets" behaviour.
+    update_targets: Optional[bool] = None
 
 
 async def _auth(
@@ -321,15 +325,39 @@ async def save_research(
         llm_summary=body.llm_summary,
         sources=json.dumps(body.sources) if body.sources else None,
     )
-    if asset and (body.buy_below or body.sell_above or body.fair_value):
-        db.upsert_price_target(
-            asset_id=asset["id"],
-            buy_below=body.buy_below,
-            sell_above=body.sell_above,
-            fair_value=body.fair_value,
-            notes=(body.thesis or "")[:500] or None,
+    # Saved research can drive price alerts for both held assets (price_targets,
+    # buy + sell) and watchlisted-but-not-held symbols (watchlist.buy_below).
+    # The client passes update_targets=False to save the note only (e.g. the user
+    # declined to overwrite an existing, differing target).
+    has_targets = bool(body.buy_below or body.sell_above or body.fair_value)
+    do_update = has_targets and body.update_targets is not False
+    targets_updated = False
+    watchlist_updated = False
+    if do_update:
+        if asset:
+            db.upsert_price_target(
+                asset_id=asset["id"],
+                buy_below=body.buy_below,
+                sell_above=body.sell_above,
+                fair_value=body.fair_value,
+                notes=(body.thesis or "")[:500] or None,
+            )
+            targets_updated = True
+        # If the symbol is on the watchlist, sync its buy zone too so the
+        # watchlist alert fires off the researched buy price.
+        on_watch = any(
+            (w.get("symbol") or "").upper() == sym for w in db.get_watchlist()
         )
-    return {"id": note_id, "symbol": sym, "targets_updated": bool(asset)}
+        if on_watch and body.buy_below:
+            db.add_watchlist(symbol=sym, buy_below=body.buy_below)
+            watchlist_updated = True
+    return {
+        "id": note_id,
+        "symbol": sym,
+        "targets_updated": targets_updated,
+        "watchlist_updated": watchlist_updated,
+        "held": bool(asset),
+    }
 
 
 @router.get("/{symbol}/history")
@@ -605,6 +633,7 @@ async def check_alerts(db=Depends(get_database), api_key_info: dict = Depends(_a
                     "symbol": symbol,
                     "name": pt.get("name") or asset.get("name") or "",
                     "currency": asset.get("currency", "EUR"),
+                    "price_date": price_data.get("price_date"),
                     "quantity": qty,
                     "avg_price": round(cost_basis / qty, 4) if qty else 0.0,
                     "cost_basis": cost_basis,

@@ -403,6 +403,37 @@ class PortfolioHTTPClient:
         )
         return result.get("id", 0)
 
+    def record_price_update_run(
+        self,
+        started_at: str,
+        duration_seconds: float,
+        updated_count: int,
+        skipped_count: int,
+        error_count: int,
+        skipped_symbols: Optional[list] = None,
+        error_symbols: Optional[list] = None,
+        api_errors: Optional[list] = None,
+        source: str = "cron",
+    ) -> int:
+        """Record a price-update run via the REST API (server-mode equivalent
+        of db.record_price_update_run)."""
+        result = self._make_request(
+            "POST",
+            "/api/v1/analytics/update-runs",
+            json={
+                "started_at": started_at,
+                "duration_seconds": duration_seconds,
+                "updated_count": updated_count,
+                "skipped_count": skipped_count,
+                "error_count": error_count,
+                "skipped_symbols": skipped_symbols or [],
+                "error_symbols": error_symbols or [],
+                "api_errors": api_errors or [],
+                "source": source,
+            },
+        )
+        return result.get("id", 0)
+
     # LLM chat operations
     def chat(
         self,

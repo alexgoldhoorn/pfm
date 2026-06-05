@@ -24,7 +24,7 @@ Portfolio Manager: a Python CLI + FastAPI server + web client for tracking stock
 ### Database
 SQLite by default (`portfolio.db`), PostgreSQL via `DATABASE_URL` env var. Use `portf_manager/database.py` for SQLite, `database_factory.py` for auto-detection.
 
-**Current schema version: 16.** Migrations run automatically on startup.
+**Current schema version: 17.** Migrations run automatically on startup.
 
 Key fields added in recent migrations:
 - v5: `tax REAL DEFAULT 0` on `transactions`; new `bookings` table (deposits/withdrawals)
@@ -39,6 +39,7 @@ Key fields added in recent migrations:
 - v14: `kv_cache` table (`key, value JSON, expires_at` epoch). DB-backed TTL cache via `portf_manager/cache.py` `cached(db, key, ttl, producer)`. Used to memoise slow/stable yfinance lookups: sector/country (~7d) in diversification, fundamentals (~6h) and news (~30m) in research, benchmark history (~12h) in performance. Degrades to a live call on miss/error.
 - v15: `manual_assets` table (off-brokerage net worth: cash/property/pension/mortgage/loans). CRUD on `Database`; `/api/v1/networth` returns brokerage value (from positions) + manual assets/liabilities + total net worth (EUR). Web: "Net Worth" page under Planning.
 - v16: `'interest'` added to the `transactions.transaction_type` CHECK (table rebuild via `legacy_alter_table=ON`, common-column copy, `update_transactions_timestamp` trigger re-created). First-class P2P/savings interest; the tax-estimate sums interest into the IRPF savings base (`interest_income_eur`). `transaction_type` is also `models.py` `TransactionType` + the SQLAlchemy CHECK — update all three. Tax tools: `/analytics/tax-report` (per-lot FIFO + withholding, CSV in UI), `/analytics/tax-optimizer` (harvestable losses + 2-month wash-sale flag + est. tax saved).
+- v17: `price_update_runs` table (each price-refresh run: timing, updated/skipped/error counts, JSON symbol lists). **New schema tables must be added in BOTH `_create_all_tables` (fresh DBs) AND a `_migrate_to_vN` (existing DBs)** — a migration-only add breaks fresh installs/tests with "no such table". Recorded by `cli.update_prices` (via `db.record_price_update_run`, mirrored on `http_client.PortfolioHTTPClient` → `POST /analytics/update-runs` in server mode); read by `GET /analytics/update-runs`. Powers the **Diagnostics** web page (sidebar Tools → `diagnosticsPage`, `loadDiagnosticsPage()`): freshness summary + stale/unpriced table + update history.
 
 ### Performance / event loop
 - Endpoints doing blocking yfinance I/O are plain `def` (not `async`) so FastAPI runs them in a threadpool — an `async` handler calling `yf` blocks the event loop and stalls every other request. Applies to: diversification, performance, snapshot, rebalance analysis, research generate/lookup, watchlist list/alerts. Keep new blocking-IO endpoints sync.
@@ -154,6 +155,7 @@ The **Research workbench** (web page `researchPage`, `setupResearchPage()`): pic
 - `GET /api/v1/analytics/risk` — max drawdown, volatility, Sharpe from snapshots (needs ≥3)
 - `GET /api/v1/analytics/fees` — total fees/tax per broker, fee drag % of invested
 - `GET /api/v1/analytics/tax-report?year=` — per-lot FIFO realised gains + dividend withholding summary
+- `GET /api/v1/analytics/data-freshness?stale_days=4` — price-data freshness behind value/gain-loss: `last_refresh` (max `prices.created_at`), `prices_as_of` (max `price_date`), `refresh_age_hours`, and held **auto-priced** assets whose latest price is older than `stale_days` or missing. Powers the dashboard freshness chip (`loadDataFreshness`) + a "DATA" item in the alerts banner.
 - `services/tax_rates.py` — progressive savings-base brackets per jurisdiction (Spain default); `irpf_savings_tax` delegates here
 - `GET /api/v1/public/summary` (router `public.py`) — %-only allocation + return, NO amounts; off unless `PORTF_PUBLIC_VIEW=true`. Standalone page: `web_client/public.html`
 - Web client is **same-origin**: calls `/api/...` proxied by the web container's nginx to `portf_backend_dev:8000` (see `web_client/nginx.conf`). External access via nginx-proxy-manager → `docs/EXTERNAL_ACCESS.md`
@@ -194,7 +196,7 @@ Daily cron at **20:00 UTC** via `~/scripts/portf-update-prices.sh` (reads API ke
 Manual: `docker exec -e PORTF_API_KEY=... portf_backend_dev python3 -m portf_manager.cli update-prices`
 
 - yfinance returns UK-listed securities in **GBX (pence)**, not GBP. `fetch_latest_prices` auto-converts when `fast_info.currency == "GBp"` (÷100). Never store raw yfinance prices for UK ISINs without this check.
-- Crypto uses `{SYM}-EUR` format (e.g. `BTC-EUR`). Some tickers need a Yahoo-specific suffix (e.g. `UNI` → `UNI1-EUR`); a few assets have no Yahoo price data at all and are skipped on price refresh.
+- Crypto uses `{SYM}-EUR` format (e.g. `BTC-EUR`). A few tokens only resolve under a numeric-suffixed, **USD-quoted** Yahoo symbol (the bare `{SYM}-EUR` is missing or points at a delisted look-alike). `cli.update_prices._CRYPTO_YF_OVERRIDES` maps `symbol → (yf_ticker, quote_ccy)` (e.g. `SUI → ("SUI20947-USD", "USD")`, `UNI → ("UNI7083-USD", "USD")`); USD results are converted to EUR via `api_client.get_fx_rate` before storing (crypto assets are stored in EUR). A few assets (most EU fund ISINs, delisted tokens) have no Yahoo data at all and are skipped — visible on the Diagnostics page.
 - `GET /api/v1/portfolios/holdings` summary is EUR-converted via `XYZEUR=X` FX tickers. Per-holding `total_value_eur` is available; `total_value` is in the asset's native currency.
 
 ### Portfolio Value History
@@ -248,7 +250,7 @@ Signature: `saveImportedTransactions(transactions, bookings = [], portfolioId = 
 - PDT parser tests: `tests/test_pdt_xlsx_parser.py` (42 tests)
 - PDT Sheets sync tests: `tests/test_pdt_sheets_sync.py` (40 tests — all mocked, no real API calls)
 - Import/export + sync API tests: `tests/unit/test_imports_exports.py` (30 tests)
-- DB tests: `tests/test_database.py` — version assertion is `== 16` (bump it with `DATABASE_VERSION`)
+- DB tests: `tests/test_database.py` — version assertion is `== 17` (bump it with `DATABASE_VERSION`)
 
 ## Git
 - Public repo `github.com:alexgoldhoorn/pfm` — develop and push on `main`. Push with `GIT_SSH_COMMAND="ssh -o IdentitiesOnly=no" git push origin main`.
