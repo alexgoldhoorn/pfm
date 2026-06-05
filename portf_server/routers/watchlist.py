@@ -3,7 +3,8 @@ Watchlist Router — track tickers you don't own yet, with buy-price alerts.
 """
 
 import logging
-from typing import Optional
+from datetime import datetime, timezone
+from typing import Optional, Tuple
 
 import yfinance as yf
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -14,6 +15,26 @@ from ..dependencies import get_api_key_manager, get_database
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+_PRICE_CACHE_TTL = 600  # seconds — 10 minutes
+
+
+def _fetch_price_cached(db, symbol: str) -> Tuple[Optional[float], Optional[str]]:
+    """Return (price, fetched_at_iso) for *symbol*, using kv_cache to avoid
+    repeated yfinance calls within the same 10-minute window."""
+    cache_key = f"watchlist_price:{symbol}"
+    cached = db.cache_get(cache_key)
+    if cached:
+        return cached["price"], cached["fetched_at"]
+    try:
+        price = float(yf.Ticker(symbol).fast_info.last_price)
+    except Exception:
+        return None, None
+    fetched_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    db.cache_set(
+        cache_key, {"price": price, "fetched_at": fetched_at}, _PRICE_CACHE_TTL
+    )
+    return price, fetched_at
 
 
 class WatchlistAdd(BaseModel):
@@ -35,12 +56,9 @@ def list_watchlist(db=Depends(get_database), api_key_info: dict = Depends(_auth)
     """List watchlist entries with current price + distance to buy target."""
     entries = db.get_watchlist()
     for e in entries:
-        price = None
-        try:
-            price = float(yf.Ticker(e["symbol"]).fast_info.last_price)
-        except Exception:
-            pass
+        price, fetched_at = _fetch_price_cached(db, e["symbol"])
         e["current_price"] = round(price, 2) if price else None
+        e["price_fetched_at"] = fetched_at
         if price and e.get("buy_below"):
             e["distance_to_buy_pct"] = round(
                 (price - e["buy_below"]) / e["buy_below"] * 100, 1
@@ -99,9 +117,8 @@ def check_watchlist_alerts(
     for e in db.get_watchlist():
         if not e.get("buy_below"):
             continue
-        try:
-            price = float(yf.Ticker(e["symbol"]).fast_info.last_price)
-        except Exception:
+        price, fetched_at = _fetch_price_cached(db, e["symbol"])
+        if price is None:
             continue
         if price <= e["buy_below"]:
             alerts.append(
@@ -110,6 +127,7 @@ def check_watchlist_alerts(
                     "name": e.get("name"),
                     "price": round(price, 2),
                     "buy_below": e["buy_below"],
+                    "price_fetched_at": fetched_at,
                 }
             )
     return {"alerts": alerts, "total": len(alerts)}

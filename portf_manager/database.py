@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 
 # Database version for migration tracking
-DATABASE_VERSION = 16
+DATABASE_VERSION = 17
 
 
 # black
@@ -454,6 +454,23 @@ class Database:
             )
         """)
 
+        # Price-update run history (Diagnostics page). See _migrate_to_v17.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS price_update_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at TIMESTAMP,
+                finished_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                duration_seconds REAL,
+                source TEXT DEFAULT 'cron',
+                updated_count INTEGER DEFAULT 0,
+                skipped_count INTEGER DEFAULT 0,
+                error_count INTEGER DEFAULT 0,
+                skipped_symbols TEXT,
+                error_symbols TEXT,
+                api_errors TEXT
+            )
+        """)
+
         # Create triggers for updated_at timestamps
         for table in [
             "entities",
@@ -504,6 +521,8 @@ class Database:
             self._migrate_to_v15(conn)
         if current_version < 16:
             self._migrate_to_v16(conn)
+        if current_version < 17:
+            self._migrate_to_v17(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -1031,6 +1050,88 @@ class Database:
         conn.commit()
         conn.execute("PRAGMA legacy_alter_table=OFF")
         conn.execute("PRAGMA foreign_keys=ON")
+
+    def _migrate_to_v17(self, conn: sqlite3.Connection):
+        """Migrate from v16 to v17 — add the price_update_runs table.
+
+        Records each price-refresh run (the daily cron + manual runs) so the
+        Diagnostics page can show update timings, success/skip counts and the
+        per-symbol skip reasons instead of that detail being lost to stdout.
+        """
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS price_update_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at TIMESTAMP,
+                finished_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                duration_seconds REAL,
+                source TEXT DEFAULT 'cron',
+                updated_count INTEGER DEFAULT 0,
+                skipped_count INTEGER DEFAULT 0,
+                error_count INTEGER DEFAULT 0,
+                skipped_symbols TEXT,
+                error_symbols TEXT,
+                api_errors TEXT
+            )
+            """)
+        conn.commit()
+
+    # ── Price-update run history (Diagnostics) ─────────────────────────────
+
+    def record_price_update_run(
+        self,
+        started_at: str,
+        duration_seconds: float,
+        updated_count: int,
+        skipped_count: int,
+        error_count: int,
+        skipped_symbols: List[str] = None,
+        error_symbols: List[str] = None,
+        api_errors: List[str] = None,
+        source: str = "cron",
+    ) -> int:
+        """Persist the outcome of one price-update run. Lists stored as JSON."""
+        import json
+
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                "INSERT INTO price_update_runs (started_at, duration_seconds, "
+                "source, updated_count, skipped_count, error_count, "
+                "skipped_symbols, error_symbols, api_errors) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    started_at,
+                    duration_seconds,
+                    source,
+                    updated_count,
+                    skipped_count,
+                    error_count,
+                    json.dumps(skipped_symbols or []),
+                    json.dumps(error_symbols or []),
+                    json.dumps(api_errors or []),
+                ),
+            )
+            conn.commit()
+            return cur.lastrowid
+
+    def get_price_update_runs(self, limit: int = 20) -> List[Dict]:
+        """Most-recent price-update runs first, with JSON lists decoded."""
+        import json
+
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM price_update_runs ORDER BY id DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            out = []
+            for r in rows:
+                d = dict(r)
+                for k in ("skipped_symbols", "error_symbols", "api_errors"):
+                    try:
+                        d[k] = json.loads(d.get(k) or "[]")
+                    except (ValueError, TypeError):
+                        d[k] = []
+                out.append(d)
+            return out
 
     # ── Manual assets & liabilities (off-brokerage net worth) ──────────────
 

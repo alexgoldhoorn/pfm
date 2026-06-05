@@ -16,7 +16,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 
     <!-- Custom CSS -->
-    <link href="css/styles.css?v=1780000009" rel="stylesheet">
+    <link href="css/styles.css?v=1780000011" rel="stylesheet">
     <style>
         /* Privacy mode: blur monetary amounts until hovered */
         body.pfm-privacy .pfm-amt { filter: blur(0.45em); transition: filter .12s ease; user-select: none; }
@@ -155,6 +155,7 @@
                 <div class="sidebar-section-items" data-sect-items="tools">
                     <a class="sidebar-nav-link" href="#" data-page="chat"><i class="bi bi-robot me-2"></i>AI Chat</a>
                     <a class="sidebar-nav-link" href="#" data-page="importexport"><i class="bi bi-box-arrow-in-down me-2"></i>Import / Export</a>
+                    <a class="sidebar-nav-link" href="#" data-page="diagnostics"><i class="bi bi-activity me-2"></i>Diagnostics</a>
                     <a class="sidebar-nav-link" href="#" data-page="resources"><i class="bi bi-link-45deg me-2"></i>Resources</a>
                     <a class="sidebar-nav-link" href="https://app.portfoliodividendtracker.com/portfolio" target="_blank" rel="noopener" title="Portfolio Dividend Tracker — open in a new tab"><i class="bi bi-box-arrow-up-right me-2"></i>PDT</a>
                 </div>
@@ -215,6 +216,7 @@
                 <div class="sidebar-section-items" data-sect-items="tools">
                     <a class="sidebar-nav-link" href="#" data-page="chat"><i class="bi bi-robot me-2"></i>AI Chat</a>
                     <a class="sidebar-nav-link" href="#" data-page="importexport"><i class="bi bi-box-arrow-in-down me-2"></i>Import / Export</a>
+                    <a class="sidebar-nav-link" href="#" data-page="diagnostics"><i class="bi bi-activity me-2"></i>Diagnostics</a>
                     <a class="sidebar-nav-link" href="#" data-page="resources"><i class="bi bi-link-45deg me-2"></i>Resources</a>
                     <a class="sidebar-nav-link" href="https://app.portfoliodividendtracker.com/portfolio" target="_blank" rel="noopener" title="Portfolio Dividend Tracker — open in a new tab"><i class="bi bi-box-arrow-up-right me-2"></i>PDT</a>
                 </div>
@@ -261,9 +263,13 @@
                             <h4 class="mb-0"><i class="bi bi-speedometer2 me-2 text-primary"></i>Dashboard<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('dashboard')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
                             <p class="text-muted small mb-0">Portfolio overview and recent activity</p>
                         </div>
-                        <button class="btn btn-sm btn-outline-secondary" id="refreshTransactions" title="Refresh dashboard data">
-                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
-                        </button>
+                        <div class="d-flex align-items-center gap-2">
+                            <!-- Price-data freshness chip (populated by loadDataFreshness) -->
+                            <span id="dataFreshness" class="badge rounded-pill bg-secondary" style="display:none; cursor:default;"></span>
+                            <button class="btn btn-sm btn-outline-secondary" id="refreshTransactions" title="Refresh dashboard data">
+                                <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                            </button>
+                        </div>
                     </div>
 
                     <!-- Alerts banner (price targets crossed + watchlist buy zones); hidden when none -->
@@ -1952,6 +1958,53 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                     <div class="row g-3" id="resourcesGrid"></div>
                 </div>
 
+                <!-- Diagnostics Page -->
+                <div id="diagnosticsPage" class="page-content" style="display: none;">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div>
+                            <h4 class="mb-0"><i class="bi bi-activity me-2 text-primary"></i>Diagnostics</h4>
+                            <p class="text-muted small mb-0">Price-data freshness and the daily price-update history — when prices last refreshed, what was skipped, and why.</p>
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary" id="refreshDiagnostics" title="Refresh diagnostics">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                    </div>
+
+                    <!-- Price-data freshness -->
+                    <div class="card mb-3">
+                        <div class="card-header fw-semibold"><i class="bi bi-clock-history me-2"></i>Price data freshness</div>
+                        <div class="card-body" id="diagFreshness">
+                            <div class="text-muted small">Loading…</div>
+                        </div>
+                    </div>
+
+                    <!-- Stale / unpriced holdings -->
+                    <div class="card mb-3">
+                        <div class="card-header fw-semibold"><i class="bi bi-exclamation-triangle me-2"></i>Stale &amp; unpriced holdings</div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-sm mb-0 align-middle">
+                                    <thead><tr><th>Symbol</th><th>Name</th><th class="text-end">Age</th><th>Reason</th></tr></thead>
+                                    <tbody id="diagStaleBody"><tr><td colspan="4" class="text-muted small">Loading…</td></tr></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Update history -->
+                    <div class="card mb-3">
+                        <div class="card-header fw-semibold"><i class="bi bi-list-check me-2"></i>Price-update history</div>
+                        <div class="card-body p-0">
+                            <div class="table-responsive">
+                                <table class="table table-sm mb-0 align-middle">
+                                    <thead><tr><th>When</th><th>Source</th><th class="text-end">Duration</th><th class="text-end">Updated</th><th class="text-end">Skipped</th><th class="text-end">Errors</th><th>Skipped symbols</th></tr></thead>
+                                    <tbody id="diagRunsBody"><tr><td colspan="7" class="text-muted small">Loading…</td></tr></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Net Worth Page -->
                 <div id="networthPage" class="page-content" style="display: none;">
                     <div class="d-flex align-items-center justify-content-between mb-3">
@@ -2583,6 +2636,6 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <script src="js/help_text.js?v=1780000006"></script>
 
     <!-- Custom JavaScript -->
-    <script src="js/portfolio_debug.js?v=1780000035"></script>
+    <script src="js/portfolio_debug.js?v=1780000039"></script>
 </body>
 </html>

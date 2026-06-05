@@ -11,6 +11,7 @@ from typing import Optional
 
 import yfinance as yf
 from fastapi import APIRouter, Depends, Query, Request
+from pydantic import BaseModel
 
 from portf_manager.services.analytics_service import (
     dividend_income,
@@ -882,3 +883,154 @@ async def get_tax_report(
         "dividend_withholding_eur": round(withholding, 2),
         "note": "FIFO realised gains. Withholding is the tax already paid at source on dividends.",
     }
+
+
+@router.get("/data-freshness")
+async def get_data_freshness(
+    stale_days: int = Query(
+        4,
+        description=(
+            "Flag held auto-priced assets whose latest price is older than this "
+            "many calendar days (4 covers a normal weekend)."
+        ),
+    ),
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Freshness of the external price data behind value / gain-loss figures.
+
+    Reports when prices were last fetched, the market date they are 'as of',
+    and any currently-held auto-priced assets whose price has gone stale (or was
+    never available). Manual-price assets (auto_price=0) are excluded from the
+    stale check since their prices are intentionally hand-maintained.
+    """
+    positions, _ = _compute_positions(db)
+    held_ids = [aid for aid, d in positions.items() if d["quantity"] > 0]
+
+    today = date.today()
+    # Most recent fetch time (prices.created_at) and market date (price_date).
+    last_refresh = None
+    prices_as_of = None
+    stale = []
+    checked = 0
+
+    for aid in held_ids:
+        asset = db.get_asset(aid)
+        if not asset:
+            continue
+        auto = bool(asset.get("auto_price", 1))
+        price_data = db.get_latest_price(aid)
+
+        if not price_data:
+            # Held but never priced (e.g. an ISIN/P2P asset with no Yahoo data).
+            if auto:
+                stale.append(
+                    {
+                        "symbol": asset.get("symbol", ""),
+                        "name": asset.get("name", ""),
+                        "price_date": None,
+                        "age_days": None,
+                        "reason": "no price data",
+                    }
+                )
+            continue
+
+        checked += 1
+        created = price_data.get("created_at")
+        if created and (last_refresh is None or str(created) > str(last_refresh)):
+            last_refresh = created
+        pdate = price_data.get("price_date")
+        if pdate and (prices_as_of is None or str(pdate) > str(prices_as_of)):
+            prices_as_of = pdate
+
+        if not auto:
+            continue
+        try:
+            d = datetime.strptime(str(pdate)[:10], "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            continue
+        age = (today - d).days
+        if age > stale_days:
+            stale.append(
+                {
+                    "symbol": asset.get("symbol", ""),
+                    "name": asset.get("name", ""),
+                    "price_date": str(pdate)[:10],
+                    "age_days": age,
+                    "reason": "stale price",
+                }
+            )
+
+    # SQLite CURRENT_TIMESTAMP is UTC "YYYY-MM-DD HH:MM:SS".
+    refresh_age_hours = None
+    if last_refresh:
+        try:
+            dt = datetime.strptime(str(last_refresh)[:19], "%Y-%m-%d %H:%M:%S")
+            refresh_age_hours = round(
+                (datetime.utcnow() - dt).total_seconds() / 3600.0, 1
+            )
+        except ValueError:
+            pass
+
+    # Worst offenders first; "no price" rows (age_days None) sort to the end.
+    stale.sort(key=lambda x: (x["age_days"] is None, -(x["age_days"] or 0)))
+
+    return {
+        "last_refresh": str(last_refresh) if last_refresh else None,
+        "refresh_age_hours": refresh_age_hours,
+        "prices_as_of": str(prices_as_of)[:10] if prices_as_of else None,
+        "stale_days_threshold": stale_days,
+        "checked": checked,
+        "stale_count": len(stale),
+        "stale": stale,
+    }
+
+
+@router.get("/update-runs")
+async def get_update_runs(
+    limit: int = Query(20, ge=1, le=100, description="Max runs to return."),
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Recent price-update runs (timings, success/skip/error counts, symbols).
+
+    Powers the Diagnostics page's update-history table so the daily cron's
+    outcome — which assets were skipped and why prices may be stale — is
+    visible in the app instead of being lost to the cron's stdout.
+    """
+    return {"runs": db.get_price_update_runs(limit=limit)}
+
+
+class UpdateRunIn(BaseModel):
+    """Outcome of one price-update run, posted by the CLI in server mode."""
+
+    started_at: str
+    duration_seconds: float = 0.0
+    updated_count: int = 0
+    skipped_count: int = 0
+    error_count: int = 0
+    skipped_symbols: list[str] = []
+    error_symbols: list[str] = []
+    api_errors: list[str] = []
+    source: str = "cron"
+
+
+@router.post("/update-runs")
+async def record_update_run(
+    run: UpdateRunIn,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Persist a price-update run (server-mode path for the CLI cron)."""
+    run_id = db.record_price_update_run(
+        started_at=run.started_at,
+        duration_seconds=run.duration_seconds,
+        updated_count=run.updated_count,
+        skipped_count=run.skipped_count,
+        error_count=run.error_count,
+        skipped_symbols=run.skipped_symbols,
+        error_symbols=run.error_symbols,
+        api_errors=run.api_errors,
+        source=run.source,
+    )
+    return {"id": run_id}

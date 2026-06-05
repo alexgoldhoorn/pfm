@@ -57,44 +57,227 @@ async function loadDashboardAlerts() {
     const box = document.getElementById('dashAlerts');
     if (!box) return;
     try {
-        const [targets, watch] = await Promise.all([
+        const [targets, watch, fresh] = await Promise.all([
             window.apiClient.getResearchAlerts().catch(() => ({ alerts: [] })),
             window.apiClient.getWatchlistAlerts().catch(() => ({ alerts: [] })),
+            window.apiClient.getDataFreshness().catch(() => null),
         ]);
         const items = [];
+        // Stale price-data warning: prices feed value & gain/loss, so flag when
+        // the last refresh is old or some holdings have gone stale/unpriced.
+        if (fresh) {
+            const ageH = fresh.refresh_age_hours;
+            const oldRefresh = (ageH == null) || (ageH > 30);
+            if (oldRefresh || fresh.stale_count > 0) {
+                const bits = [];
+                if (ageH == null) bits.push('prices never refreshed');
+                else if (oldRefresh) bits.push(`prices last refreshed ${relAge(ageH)}`);
+                if (fresh.stale_count > 0) {
+                    const names = (fresh.stale || []).slice(0, 6)
+                        .map(s => {
+                            // ISIN/P2P symbols are unreadable; prefer the asset name.
+                            const lbl = (s.name && s.name !== s.symbol) ? s.name : s.symbol;
+                            return s.age_days != null ? `${lbl} (${s.age_days}d)` : `${lbl} (no price)`;
+                        })
+                        .join(', ');
+                    const more = fresh.stale_count > 6 ? ` +${fresh.stale_count - 6} more` : '';
+                    bits.push(`${fresh.stale_count} holding${fresh.stale_count > 1 ? 's' : ''} with stale prices: ${names}${more}`);
+                }
+                items.push(`<li class="mb-1"><span class="badge bg-warning text-dark me-2">DATA</span>`
+                    + `<strong>Price data</strong> — ${bits.join('; ')}. Gain/loss may be out of date.</li>`);
+            }
+        }
         (targets.alerts || []).forEach(a => {
             const cur = a.currency || 'EUR';
-            // Position context: how much is held and the unrealised P&L if sold now.
+            // Position context: quantity, value, and P&L vs weighted-average cost.
             let posInfo = '';
             if (a.quantity > 0) {
                 const pnl = a.unrealized_pnl || 0;
                 const pnlCls = pnl >= 0 ? 'text-success' : 'text-danger';
                 const pnlSign = pnl >= 0 ? '+' : '';
+                const avgCostTxt = a.avg_price ? ` vs avg cost ${Fmt.num(a.avg_price, 2, 2)} ${cur}` : '';
                 posInfo = ` <span class="text-muted">— ${Fmt.num(a.quantity, 0, 4)} sh · ${Fmt.num(a.value, 2, 2)} ${cur} `
-                    + `(<span class="${pnlCls}">${pnlSign}${Fmt.num(pnl, 2, 2)} ${cur}, ${pnlSign}${Fmt.num(a.unrealized_pnl_pct || 0, 2, 2)}%</span>)</span>`;
+                    + `(<span class="${pnlCls}">${pnlSign}${Fmt.num(pnl, 2, 2)} ${cur}, ${pnlSign}${Fmt.num(a.unrealized_pnl_pct || 0, 2, 2)}%${avgCostTxt}</span>)</span>`;
             } else {
                 posInfo = ` <span class="text-muted">— not held</span>`;
             }
+            const priceDateTxt = a.price_date ? ` <small class="text-muted">[${a.price_date}]</small>` : '';
             (a.triggers || []).forEach(t => {
                 const buy = t.type === 'BUY';
                 const nameTxt = a.name ? ` <span class="text-muted">· ${a.name}</span>` : '';
-                items.push(`<li class="mb-1"><span class="badge bg-${buy ? 'success' : 'danger'} me-2">${t.type}</span><strong>${a.symbol}</strong>${nameTxt} at ${Fmt.num(t.price, 2, 2)} ${cur} ${buy ? '≤ buy-below' : '≥ sell-above'} ${Fmt.num(t.threshold, 2, 2)} ${cur}${posInfo}</li>`);
+                items.push(`<li class="mb-1"><span class="badge bg-${buy ? 'success' : 'danger'} me-2">${t.type}</span><strong>${a.symbol}</strong>${nameTxt} at ${Fmt.num(t.price, 2, 2)} ${cur} ${buy ? '≤ buy-below' : '≥ sell-above'} ${Fmt.num(t.threshold, 2, 2)} ${cur}${posInfo}${priceDateTxt}</li>`);
             });
         });
         (watch.alerts || []).forEach(a => {
-            items.push(`<li class="mb-1"><span class="badge bg-info text-dark me-2">WATCH</span><strong>${a.symbol}</strong> ${a.name ? '· ' + a.name : ''} at ${Fmt.num(a.price, 2, 2)} entered buy zone (≤ ${Fmt.num(a.buy_below, 2, 2)})</li>`);
+            const fetchedTxt = a.price_fetched_at ? ` <small class="text-muted">[${fmtFetchedAt(a.price_fetched_at)}]</small>` : '';
+            items.push(`<li class="mb-1"><span class="badge bg-info text-dark me-2">WATCH</span><strong>${a.symbol}</strong> ${a.name ? '· ' + a.name : ''} at ${Fmt.num(a.price, 2, 2)} entered buy zone (≤ ${Fmt.num(a.buy_below, 2, 2)})${fetchedTxt}</li>`);
         });
         if (!items.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+        // Dismissal is keyed by the alert content so a *new* alert reappears even
+        // after the user closed the previous set; the same set stays hidden.
+        const sig = hashStr(items.join(''));
+        if (localStorage.getItem('pfmAlertsDismissed') === sig) {
+            box.style.display = 'none'; box.innerHTML = ''; return;
+        }
         box.style.display = '';
         box.innerHTML = `
-            <div class="alert alert-warning mb-0">
+            <div class="alert alert-warning alert-dismissible mb-0">
+                <button type="button" class="btn-close" id="dashAlertsClose" aria-label="Dismiss"></button>
                 <div class="fw-semibold mb-1"><i class="bi bi-bell-fill me-2"></i>${items.length} alert${items.length > 1 ? 's' : ''}</div>
                 <ul class="list-unstyled mb-0 small">${items.join('')}</ul>
             </div>`;
+        const closeBtn = document.getElementById('dashAlertsClose');
+        if (closeBtn) closeBtn.addEventListener('click', () => {
+            localStorage.setItem('pfmAlertsDismissed', sig);
+            box.style.display = 'none'; box.innerHTML = '';
+        });
     } catch (e) {
         box.style.display = 'none';
     }
 }
+
+// Format a UTC ISO timestamp as "Xm ago" / "Xh ago" for alert freshness labels.
+function fmtFetchedAt(iso) {
+    if (!iso) return '';
+    try {
+        const mins = Math.round((Date.now() - new Date(iso)) / 60000);
+        if (mins < 1) return 'just now';
+        if (mins < 60) return `${mins}m ago`;
+        return `${Math.round(mins / 60)}h ago`;
+    } catch { return ''; }
+}
+
+// Tiny stable string hash (djb2) for keying dismissed-alert state.
+function hashStr(str) {
+    let h = 5381;
+    for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+    return String(h >>> 0);
+}
+
+// Human-friendly "x ago" for an age given in hours.
+function relAge(hours) {
+    if (hours == null) return 'never';
+    if (hours < 1) return `${Math.round(hours * 60)}m ago`;
+    if (hours < 48) return `${Math.round(hours)}h ago`;
+    return `${Math.round(hours / 24)}d ago`;
+}
+
+// Price-data freshness chip in the dashboard header. External prices back the
+// value & gain/loss figures, so we surface how recently they were refreshed and
+// whether any held assets have gone stale. Green = fresh, amber = aging/stale,
+// red = very old or never refreshed.
+async function loadDataFreshness() {
+    const chip = document.getElementById('dataFreshness');
+    if (!chip) return;
+    let f;
+    try {
+        f = await window.apiClient.getDataFreshness();
+    } catch (e) {
+        chip.style.display = 'none';
+        return;
+    }
+    const ageH = f.refresh_age_hours;
+    let cls = 'bg-success';
+    if (ageH == null || ageH > 48) cls = 'bg-danger';
+    else if (ageH > 30 || f.stale_count > 0) cls = 'bg-warning text-dark';
+
+    const asOf = f.prices_as_of ? Fmt.date(f.prices_as_of) : '—';
+    let label = `Prices ${relAge(ageH)}`;
+    if (f.stale_count > 0) label += ` · ${f.stale_count} stale`;
+
+    const staleList = (f.stale || [])
+        .map(s => {
+            const lbl = (s.name && s.name !== s.symbol) ? `${s.symbol} (${s.name})` : s.symbol;
+            return s.age_days != null ? `${lbl}: ${s.age_days}d old` : `${lbl}: no price`;
+        })
+        .join('\n');
+    const title = `Prices as of ${asOf}\nLast refreshed ${relAge(ageH)}`
+        + `\n${f.checked} priced holding${f.checked === 1 ? '' : 's'}`
+        + (staleList ? `\n\nStale / unpriced:\n${staleList}` : '');
+
+    chip.className = `badge rounded-pill ${cls}`;
+    chip.innerHTML = `<i class="bi bi-clock-history me-1"></i>${label}`;
+    chip.title = title;
+    chip.style.display = '';
+}
+window.loadDataFreshness = loadDataFreshness;
+
+// Diagnostics page: price-data freshness + the daily update-run history.
+// Surfaces *why* a price may be stale (no Yahoo data vs. just old) and what
+// the cron actually did, so it isn't lost to stdout.
+async function loadDiagnosticsPage() {
+    const freshBox = document.getElementById('diagFreshness');
+    const staleBody = document.getElementById('diagStaleBody');
+    const runsBody = document.getElementById('diagRunsBody');
+    if (!freshBox) return;
+
+    // Wire the refresh button once.
+    const refreshBtn = document.getElementById('refreshDiagnostics');
+    if (refreshBtn && !refreshBtn._wired) {
+        refreshBtn._wired = true;
+        refreshBtn.addEventListener('click', () => loadDiagnosticsPage());
+    }
+
+    const esc = s => String(s == null ? '' : s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+    const [fresh, runsResp] = await Promise.all([
+        window.apiClient.getDataFreshness().catch(() => null),
+        window.apiClient.getUpdateRuns(20).catch(() => ({ runs: [] })),
+    ]);
+
+    // --- Freshness summary ---
+    if (fresh) {
+        const ageH = fresh.refresh_age_hours;
+        let badge = 'bg-success', txt = 'Fresh';
+        if (ageH == null || ageH > 48) { badge = 'bg-danger'; txt = 'Very stale'; }
+        else if (ageH > 30 || fresh.stale_count > 0) { badge = 'bg-warning text-dark'; txt = 'Aging'; }
+        freshBox.innerHTML = `
+            <div class="row g-3 small">
+                <div class="col-6 col-md-3"><div class="text-muted">Status</div><span class="badge ${badge}">${txt}</span></div>
+                <div class="col-6 col-md-3"><div class="text-muted">Last refreshed</div><div class="fw-semibold">${relAge(ageH)}</div></div>
+                <div class="col-6 col-md-3"><div class="text-muted">Prices as of</div><div class="fw-semibold">${fresh.prices_as_of ? Fmt.date(fresh.prices_as_of) : '—'}</div></div>
+                <div class="col-6 col-md-3"><div class="text-muted">Priced holdings</div><div class="fw-semibold">${fresh.checked} priced · ${fresh.stale_count} stale</div></div>
+            </div>`;
+    } else {
+        freshBox.innerHTML = '<div class="text-danger small">Could not load freshness data.</div>';
+    }
+
+    // --- Stale / unpriced holdings ---
+    if (staleBody) {
+        const stale = (fresh && fresh.stale) || [];
+        if (!stale.length) {
+            staleBody.innerHTML = '<tr><td colspan="4" class="text-success small"><i class="bi bi-check-circle me-1"></i>All auto-priced holdings are up to date.</td></tr>';
+        } else {
+            staleBody.innerHTML = stale.map(s => {
+                const age = s.age_days != null ? `${s.age_days}d` : '—';
+                const reasonCls = s.reason === 'no price data' ? 'text-muted' : 'text-warning';
+                return `<tr><td><code>${esc(s.symbol)}</code></td><td class="small">${esc(s.name)}</td>`
+                    + `<td class="text-end">${age}</td><td class="small ${reasonCls}">${esc(s.reason)}</td></tr>`;
+            }).join('');
+        }
+    }
+
+    // --- Update history ---
+    if (runsBody) {
+        const runs = (runsResp && runsResp.runs) || [];
+        if (!runs.length) {
+            runsBody.innerHTML = '<tr><td colspan="7" class="text-muted small">No update runs recorded yet. The first run will appear after the next price update.</td></tr>';
+        } else {
+            runsBody.innerHTML = runs.map(r => {
+                const when = r.finished_at ? Fmt.date(String(r.finished_at).replace(' ', 'T')) : '—';
+                const dur = r.duration_seconds != null ? `${r.duration_seconds}s` : '—';
+                const errCls = r.error_count > 0 ? 'text-danger fw-semibold' : '';
+                const skipList = (r.skipped_symbols || []).join(', ');
+                const skipCell = skipList ? `<span class="small text-muted" title="${esc(skipList)}">${esc(skipList.length > 60 ? skipList.slice(0, 60) + '…' : skipList)}</span>` : '';
+                return `<tr><td class="small">${esc(when)}</td><td class="small">${esc(r.source)}</td>`
+                    + `<td class="text-end small">${dur}</td><td class="text-end">${r.updated_count}</td>`
+                    + `<td class="text-end">${r.skipped_count}</td><td class="text-end ${errCls}">${r.error_count}</td>`
+                    + `<td>${skipCell}</td></tr>`;
+            }).join('');
+        }
+    }
+}
+window.loadDiagnosticsPage = loadDiagnosticsPage;
 
 // Apply the user's default currency to the static "new entry" form fields
 // (Add booking, new broker). Add-asset is handled on modal-show.
@@ -511,6 +694,22 @@ function createAPIClient() {
                 headers: { 'X-API-Key': this.apiKey }
             });
             if (!resp.ok) throw new Error('Failed to check watchlist alerts');
+            return resp.json();
+        },
+
+        async getDataFreshness() {
+            const resp = await fetch(this.baseURL + '/api/v1/analytics/data-freshness', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error('Failed to check data freshness');
+            return resp.json();
+        },
+
+        async getUpdateRuns(limit = 20) {
+            const resp = await fetch(this.baseURL + '/api/v1/analytics/update-runs?limit=' + limit, {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error('Failed to load update runs');
             return resp.json();
         },
 
@@ -1324,8 +1523,9 @@ function createPageManager() {
         loadDashboardPage: async function() {
             const el = id => document.getElementById(id);
 
-            // Alerts banner loads independently (non-blocking).
+            // Alerts banner + price-data freshness chip load independently (non-blocking).
             loadDashboardAlerts();
+            loadDataFreshness();
 
             const fmtEur = (val) => {
                 const n = parseFloat(val) || 0;
@@ -3313,7 +3513,7 @@ function createNavigationManager() {
     return {
         currentPage: 'dashboard',
         showPage: function(pageName) {
-            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'holdingsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage', 'helpPage', 'versionPage', 'aboutPage', 'resourcesPage', 'networthPage'];
+            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'holdingsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage', 'helpPage', 'versionPage', 'aboutPage', 'resourcesPage', 'networthPage', 'diagnosticsPage'];
             pages.forEach(pageId => {
                 const page = document.getElementById(pageId);
                 if (page) page.style.display = 'none';
@@ -3358,6 +3558,7 @@ function createNavigationManager() {
                 case 'about':        break;
                 case 'resources':    if (window.renderResourcesPage) window.renderResourcesPage(); break;
                 case 'networth':     if (window.loadNetworthPage) window.loadNetworthPage(); break;
+                case 'diagnostics':  if (window.loadDiagnosticsPage) window.loadDiagnosticsPage(); break;
             }
         },
 
@@ -5079,8 +5280,33 @@ function setupResearchPage() {
     const $ = id => document.getElementById(id);
     const money = (v, cur) => (v == null ? '—' : Fmt.num(v, 2, 2) + (cur ? ' ' + cur : ''));
     let R = { symbol: null, currency: '', price: 0, fundamentals: {}, llm: null };
-    // Autocomplete suggestions: {symbol, name, currency, source} — populated on page open.
+    // Autocomplete suggestions: {symbol, name, currency, source, acronym, aliases}
+    // — populated on page open.
     let suggestions = [];
+
+    // Curated nicknames for names that don't reduce to a clean acronym (acronyms
+    // like "Advanced Micro Devices" → "AMD" are derived automatically below).
+    // Maps an alias the user might type → a lowercase fragment of the asset name.
+    const TICKER_ALIASES = {
+        AMD: 'advanced micro devices',
+        GOOGL: 'alphabet', GOOG: 'alphabet', GOOGLE: 'alphabet',
+        META: 'meta platforms', FB: 'meta platforms', FACEBOOK: 'meta platforms',
+        BRK: 'berkshire', BERKSHIRE: 'berkshire',
+        NVDA: 'nvidia', AMZN: 'amazon', MSFT: 'microsoft', AAPL: 'apple',
+        TSLA: 'tesla', NFLX: 'netflix', PYPL: 'paypal', DIS: 'walt disney',
+    };
+
+    // First letter of each word → "International Business Machines" → "IBM".
+    function acronymOf(name) {
+        const words = (name || '').replace(/[^A-Za-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+        if (words.length < 2) return '';
+        return words.map(w => w[0]).join('').toUpperCase();
+    }
+    // Curated aliases whose target fragment appears in this asset's name.
+    function aliasesFor(name) {
+        const n = (name || '').toLowerCase();
+        return Object.keys(TICKER_ALIASES).filter(a => n.includes(TICKER_ALIASES[a]));
+    }
 
     // Tabs
     page.querySelectorAll('#researchTabs [data-rtab]').forEach(a => {
@@ -5340,7 +5566,7 @@ function setupResearchPage() {
         $('researchHint').textContent = 'Loading ' + sym + '…';
         try {
             const d = await window.apiClient.researchLookup(sym);
-            R = { symbol: sym, currency: d.currency, price: d.current_price, fundamentals: d.fundamentals || {}, llm: null, pos: d };
+            R = { symbol: sym, currency: d.currency, price: d.current_price, fundamentals: d.fundamentals || {}, llm: null, pos: d, held: d.held, targets: d.targets || null, onWatchlist: d.on_watchlist, watchBuyBelow: d.watch_buy_below };
             $('researchBody').style.display = '';
             $('researchReportBtn').style.display = '';
             $('rsName').textContent = `${sym} — ${d.name || ''}`;
@@ -5385,16 +5611,21 @@ function setupResearchPage() {
     function matchSuggestions(q) {
         q = (q || '').trim().toLowerCase();
         if (!q) return [];
-        // Match on symbol OR name; symbol-prefix matches rank first.
+        // Match on symbol, name, auto-acronym, or curated alias; symbol-prefix
+        // matches rank first, then acronym/alias, then name.
         const scored = suggestions
             .map(s => {
                 const sym = (s.symbol || '').toLowerCase();
                 const name = (s.name || '').toLowerCase();
+                const acr = (s.acronym || '').toLowerCase();
+                const aliases = (s.aliases || []).map(a => a.toLowerCase());
                 let score = -1;
                 if (sym.startsWith(q)) score = 0;
-                else if (name.startsWith(q)) score = 1;
-                else if (sym.includes(q)) score = 2;
-                else if (name.includes(q)) score = 3;
+                else if (acr === q || aliases.includes(q)) score = 1;
+                else if (name.startsWith(q)) score = 2;
+                else if (acr.startsWith(q) || aliases.some(a => a.startsWith(q))) score = 2.5;
+                else if (sym.includes(q)) score = 3;
+                else if (name.includes(q)) score = 4;
                 return { s, score };
             })
             .filter(x => x.score >= 0)
@@ -5506,6 +5737,32 @@ function setupResearchPage() {
             margin_of_safety: parseFloat($('rvMos').value) || null,
             premium: parseFloat($('rvPremium').value) || null,
         };
+        // Whether saving these values would change an existing alert target.
+        // Held assets compare against price_targets (buy + sell); watchlisted
+        // symbols against their buy_below. If a different target already exists,
+        // ask before overwriting (the user may have set it deliberately).
+        let updateTargets = true;
+        const hasNew = c.buy != null || c.sell != null || c.fair != null;
+        if (hasNew) {
+            const t = R.targets || {};
+            const near = (a, b) => a != null && b != null && Math.abs(a - b) <= Math.max(0.01, Math.abs(b) * 0.005);
+            const existingBuy = R.held ? t.buy_below : (R.onWatchlist ? R.watchBuyBelow : null);
+            const existingSell = R.held ? t.sell_above : null;
+            const hasExisting = existingBuy != null || existingSell != null;
+            const differs = (existingBuy != null && !near(c.buy, existingBuy)) ||
+                            (existingSell != null && !near(c.sell, existingSell));
+            if (hasExisting && differs) {
+                const cur = R.currency || '';
+                const fmt = v => v == null ? '—' : Fmt.num(v, 2, 2) + (cur ? ' ' + cur : '');
+                updateTargets = confirm(
+                    `${R.symbol} already has an alert target:\n` +
+                    `  buy ${fmt(existingBuy)} · sell ${fmt(existingSell)}\n\n` +
+                    `Overwrite with your researched values?\n` +
+                    `  buy ${fmt(c.buy)} · sell ${fmt(c.sell)}\n\n` +
+                    `OK = overwrite (alerts use new values)\n` +
+                    `Cancel = keep existing target, save research note only`);
+            }
+        }
         try {
             const res = await window.apiClient.researchSave(R.symbol, {
                 thesis: $('rvThesis').value || null,
@@ -5516,8 +5773,23 @@ function setupResearchPage() {
                 current_price: R.price,
                 llm_summary: R.llm ? R.llm.summary : null,
                 sources: R.llm ? R.llm.sources : null,
+                update_targets: updateTargets,
             });
-            $('rvSaveMsg').innerHTML = `<span class="text-success">Saved.${res.targets_updated ? ' Targets updated (alerts active).' : ' (Not held — saved as research only.)'}</span>`;
+            let msg;
+            if (res.targets_updated || res.watchlist_updated) {
+                const where = [res.targets_updated ? 'price target' : null, res.watchlist_updated ? 'watchlist buy zone' : null].filter(Boolean).join(' + ');
+                msg = `<span class="text-success">Saved. Updated ${where} — alerts active.</span>`;
+            } else if (hasNew && !updateTargets) {
+                msg = '<span class="text-success">Saved as research note. Existing alert target kept.</span>';
+            } else if (!res.held && !res.watchlist_updated) {
+                msg = '<span class="text-success">Saved as research only (not held / not watchlisted — add to watchlist to get alerts).</span>';
+            } else {
+                msg = '<span class="text-success">Saved.</span>';
+            }
+            $('rvSaveMsg').innerHTML = msg;
+            // Reflect the new target locally so a second save doesn't re-prompt.
+            if (res.targets_updated) R.targets = { buy_below: c.buy, sell_above: c.sell, fair_value: c.fair };
+            if (res.watchlist_updated) R.watchBuyBelow = c.buy;
             loadHistory(R.symbol);
         } catch (e) { $('rvSaveMsg').innerHTML = '<span class="text-danger">' + e.message + '</span>'; }
     });
@@ -5556,14 +5828,18 @@ function setupResearchPage() {
                 window.apiClient.getWatchlist().catch(() => []),
             ]);
             const bySym = new Map();
+            const mk = (symbol, name, currency, source) => ({
+                symbol, name: name || '', currency: currency || '', source,
+                acronym: acronymOf(name), aliases: aliasesFor(name),
+            });
             (holdings.holdings || []).forEach(h => {
                 if (h.symbol && !bySym.has(h.symbol)) {
-                    bySym.set(h.symbol, { symbol: h.symbol, name: h.name || '', currency: h.currency || '', source: 'held' });
+                    bySym.set(h.symbol, mk(h.symbol, h.name, h.currency, 'held'));
                 }
             });
             (Array.isArray(watch) ? watch : (watch.watchlist || [])).forEach(w => {
                 if (w.symbol && !bySym.has(w.symbol)) {
-                    bySym.set(w.symbol, { symbol: w.symbol, name: w.name || '', currency: w.currency || '', source: 'watchlist' });
+                    bySym.set(w.symbol, mk(w.symbol, w.name, w.currency, 'watchlist'));
                 }
             });
             suggestions = [...bySym.values()];

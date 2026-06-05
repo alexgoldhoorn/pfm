@@ -38,7 +38,7 @@ class TestDatabase:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             result = cursor.fetchone()
-            assert result[0] == 16  # Current schema version
+            assert result[0] == 17  # Current schema version
 
     def test_database_tables_exist(self):
         """Test that all required tables are created."""
@@ -917,7 +917,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 16
+            assert version == 17
 
             # Assert columns exist
             for table in ["entities", "portfolios", "transactions"]:
@@ -947,7 +947,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 16
+            assert version == 17
 
             # Check all tables exist
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -1010,7 +1010,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 16
+            assert version == 17
 
             # Check new tables exist
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")

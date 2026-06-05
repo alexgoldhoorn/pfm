@@ -340,9 +340,10 @@ body {
 }
 
 .sidebar-brand {
-    font-size: 1.05rem;
+    font-size: 0.95rem;
     font-weight: 700;
-    padding: 1rem 1rem 0.75rem;
+    line-height: 1.5;
+    padding: 1rem 0.75rem 0.75rem;
     border-bottom: 1px solid rgba(255, 255, 255, 0.15);
     white-space: nowrap;
 }

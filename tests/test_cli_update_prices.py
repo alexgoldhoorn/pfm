@@ -245,8 +245,11 @@ class TestUpdatePricesCLI:
             side_effect=Exception("DB error")
         )
 
+        # A DB write failure is a real error: update_prices exits non-zero so
+        # the cron wrapper alerts instead of silently reporting success.
         with patch("sys.stdout", new_callable=StringIO) as mock_stdout:
-            self.cli.update_prices(symbols=["AAPL"])
+            with pytest.raises(SystemExit):
+                self.cli.update_prices(symbols=["AAPL"])
 
         # Verify the output
         output = mock_stdout.getvalue()
