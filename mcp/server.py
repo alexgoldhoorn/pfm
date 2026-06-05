@@ -10,6 +10,7 @@ symlink to this file, so the existing Claude registration (which points at the
 
 Credentials are read from ~/repos/pfm/.env.local at startup.
 """
+
 import json
 import os
 import urllib.request
@@ -136,7 +137,9 @@ def list_assets(asset_type: Optional[str] = None) -> str:
         return f"Error fetching assets: {e}"
 
     if asset_type:
-        data = [a for a in data if a.get("asset_type", "").lower() == asset_type.lower()]
+        data = [
+            a for a in data if a.get("asset_type", "").lower() == asset_type.lower()
+        ]
 
     if not data:
         return f"No assets found{' for type ' + asset_type if asset_type else ''}."
@@ -145,7 +148,9 @@ def list_assets(asset_type: Optional[str] = None) -> str:
     for a in sorted(data, key=lambda x: x.get("symbol", "")):
         price_str = ""
         if a.get("latest_price"):
-            price_str = f"  price {_fmt_currency(a['latest_price'], a.get('currency', 'EUR'))}"
+            price_str = (
+                f"  price {_fmt_currency(a['latest_price'], a.get('currency', 'EUR'))}"
+            )
         lines.append(
             f"  {a.get('symbol', '?'):12s} [{a.get('asset_type', '?'):6s}]"
             f"  {a.get('name', ''):30s}{price_str}"
@@ -178,7 +183,12 @@ def list_transactions(
 
     if asset_symbol:
         sym = asset_symbol.upper()
-        data = [t for t in data if t.get("symbol", "").upper() == sym or t.get("asset_symbol", "").upper() == sym]
+        data = [
+            t
+            for t in data
+            if t.get("symbol", "").upper() == sym
+            or t.get("asset_symbol", "").upper() == sym
+        ]
 
     if not data:
         return "No transactions found."
