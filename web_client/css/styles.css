@@ -476,7 +476,7 @@ body {
 
 /* Offcanvas sidebar nav links reuse the same look on a dark background */
 .offcanvas .sidebar-nav-link {
-    color: var(--bs-body-color, #212529);
+    color: var(--bs-body-color);
     border-left-color: transparent;
 }
 .offcanvas .sidebar-nav-link:hover,
@@ -484,4 +484,26 @@ body {
     background: rgba(13, 110, 253, 0.1);
     color: var(--bs-primary, #0d6efd);
     border-left-color: var(--bs-primary, #0d6efd);
+}
+
+/* Dark mode: offcanvas section toggles were hardcoded dark — invisible on dark bg */
+[data-bs-theme="dark"] .offcanvas .sidebar-section-toggle {
+    color: rgba(255, 255, 255, 0.55);
+}
+[data-bs-theme="dark"] .offcanvas .sidebar-section-toggle:hover {
+    color: rgba(255, 255, 255, 0.9);
+}
+[data-bs-theme="dark"] .offcanvas .sidebar-nav-link {
+    color: rgba(255, 255, 255, 0.85);
+}
+[data-bs-theme="dark"] .offcanvas .sidebar-nav-link:hover,
+[data-bs-theme="dark"] .offcanvas .sidebar-nav-link.active {
+    background: rgba(13, 110, 253, 0.2);
+    color: #6ea8fe;
+    border-left-color: #6ea8fe;
+}
+
+/* Dark mode: desktop sidebar section toggles — bump opacity for legibility */
+[data-bs-theme="dark"] .app-sidebar .sidebar-section-toggle {
+    color: rgba(255, 255, 255, 0.65);
 }
