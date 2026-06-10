@@ -82,13 +82,16 @@ async function setupDashTopControls() {
     elType.innerHTML = '<option value="all">All</option>' +
         types.map(t => `<option value="${esc(t)}">${esc(t.toUpperCase())}</option>`).join('');
 
-    // Broker options from portfolios.
-    try {
-        const ps = await window.apiClient.getPortfolios();
-        const list = Array.isArray(ps) ? ps : (ps.portfolios || []);
-        elBroker.innerHTML = '<option value="all">All</option>' +
-            list.map(p => `<option value="${esc(String(p.id))}">${esc(p.name || '')}</option>`).join('');
-    } catch (e) { /* keep just "All" */ }
+    // Broker options from portfolios (fetch once — the select keeps its options
+    // across dashboard re-visits since the page div is never destroyed).
+    if (elBroker.options.length <= 1) {
+        try {
+            const ps = await window.apiClient.getPortfolios();
+            const list = Array.isArray(ps) ? ps : (ps.portfolios || []);
+            elBroker.innerHTML = '<option value="all">All</option>' +
+                list.map(p => `<option value="${esc(String(p.id))}">${esc(p.name || '')}</option>`).join('');
+        } catch (e) { /* keep just "All" */ }
+    }
 
     // Apply saved values (fall back to defaults if an option no longer exists).
     elN.value = String(cfg.n);
