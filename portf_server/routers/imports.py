@@ -227,6 +227,11 @@ def _parse_coinbase(content: str) -> tuple[List[PreviewTransaction], List[dict]]
             currency=tx.currency or "USD",
             fees=tx.fees,
             notes=tx.raw_text or "",
+            # Tag with the broker so the save step resolves the Coinbase
+            # portfolio (get_or_create_portfolio). Without this the rows save
+            # with portfolio_id=NULL and vanish under the broker filter — the
+            # other parsers all set this; Coinbase was the omission.
+            broker="Coinbase",
         )
         for tx in result.importable
     ]

@@ -2,7 +2,6 @@
 Unit tests for the import and export routers, and OpenRouterLLMClient.
 """
 
-import io
 import os
 from unittest.mock import MagicMock, patch
 
@@ -183,6 +182,10 @@ class TestImportUpload:
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["transactions"][0]["asset_type"] == "crypto"
+        # Coinbase previews must carry the broker so the save step tags them to
+        # the Coinbase portfolio (else they land with portfolio_id=NULL and are
+        # invisible under the broker filter). Regression guard for that bug.
+        assert data["transactions"][0]["broker"] == "Coinbase"
         assert data["skipped_count"] == 1
 
     @pytest.mark.asyncio
