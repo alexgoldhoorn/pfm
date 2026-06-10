@@ -55,6 +55,31 @@ class TestDatabase:
         asset = self.db.get_asset(asset_id)
         assert asset["ticker"] == "NVDA"
 
+    def test_wal_mode_enabled(self):
+        """Connections run in WAL journal mode for concurrent reader/writer."""
+        with self.db.get_connection() as conn:
+            mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
+        assert mode.lower() == "wal"
+
+    def test_purge_expired_cache(self):
+        """purge_expired_cache removes only expired rows and returns the count."""
+        # Unexpired (long TTL) + already-expired (negative TTL) + no-expiry.
+        self.db.cache_set("fresh", {"v": 1}, ttl_seconds=3600)
+        self.db.cache_set("stale", {"v": 2}, ttl_seconds=-1)
+        self.db.cache_set("forever", {"v": 3}, ttl_seconds=None)
+
+        removed = self.db.purge_expired_cache()
+
+        assert removed == 1
+        assert self.db.cache_get("fresh") == {"v": 1}
+        assert self.db.cache_get("forever") == {"v": 3}
+        # The stale row is gone from storage (not just hidden on read).
+        with self.db.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT key FROM kv_cache WHERE key = 'stale'"
+            ).fetchall()
+        assert rows == []
+
     def test_database_tables_exist(self):
         """Test that all required tables are created."""
         expected_tables = [
