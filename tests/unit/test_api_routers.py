@@ -495,20 +495,18 @@ class TestErrorHandling:
     @pytest.mark.api
     @pytest.mark.asyncio
     async def test_unauthorized_access(self, async_test_client: AsyncClient):
-        """Test unauthorized access to protected endpoints."""
+        """Protected data endpoints reject requests with no API key."""
         response = await async_test_client.get("/api/v1/assets")
-        # API currently allows access without auth, so expect 200 instead of 401
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     @pytest.mark.unit
     @pytest.mark.api
     @pytest.mark.asyncio
     async def test_invalid_api_key(self, async_test_client: AsyncClient):
-        """Test access with invalid API key."""
+        """Protected data endpoints reject requests with an invalid API key."""
         headers = {"X-API-Key": "invalid-key"}
         response = await async_test_client.get("/api/v1/assets", headers=headers)
-        # API currently allows access with invalid key, so expect 200 instead of 401
-        assert response.status_code == status.HTTP_200_OK
+        assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     @pytest.mark.unit
     @pytest.mark.api

@@ -15,7 +15,7 @@ This module provides the main FastAPI application with mounted routers for all d
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, status
+from fastapi import Depends, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -45,7 +45,12 @@ from .routers import (
     public,
     networth,
 )
-from .dependencies import get_database, get_auth_manager, get_api_key_manager
+from .dependencies import (
+    get_database,
+    get_auth_manager,
+    get_api_key_manager,
+    require_api_key_dep,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -211,107 +216,21 @@ async def root():
     }
 
 
-# Mount all domain routers
+# Mount all domain routers.
+#
+# Every data router is protected at the router level with a single shared API
+# key dependency, so no individual endpoint can accidentally ship without auth
+# (a router-level dep can't be forgotten the way a per-endpoint one can). The
+# only exceptions are ``auth`` (the login/registration surface itself) and
+# ``public`` (the %-only summary, separately gated by ``PORTF_PUBLIC_VIEW``).
+# ``tests/unit/test_auth_coverage.py`` enforces this allowlist permanently.
+_PROTECTED = [Depends(require_api_key_dep)]
+
+# Auth + public are intentionally not behind the global API key dependency.
 app.include_router(
     auth.router,
     prefix="/api/v1/auth",
     tags=["Authentication"],
-)
-
-app.include_router(
-    assets.router,
-    prefix="/api/v1/assets",
-    tags=["Assets"],
-)
-
-app.include_router(
-    transactions.router,
-    prefix="/api/v1/transactions",
-    tags=["Transactions"],
-)
-
-app.include_router(
-    portfolios.router,
-    prefix="/api/v1/portfolios",
-    tags=["Portfolios"],
-)
-
-app.include_router(
-    entities.router,
-    prefix="/api/v1/entities",
-    tags=["Entities"],
-)
-
-app.include_router(
-    sectors.router,
-    prefix="/api/v1/sectors",
-    tags=["Sectors"],
-)
-
-app.include_router(
-    llm.router,
-    prefix="/api/v1/llm",
-    tags=["LLM"],
-)
-
-app.include_router(
-    tax.router,
-    prefix="/api/v1/tax",
-    tags=["Tax"],
-)
-
-app.include_router(
-    imports.router,
-    prefix="/api/v1/import",
-    tags=["Import"],
-)
-
-app.include_router(
-    exports.router,
-    prefix="/api/v1/export",
-    tags=["Export"],
-)
-
-app.include_router(
-    bookings.router,
-    prefix="/api/v1/bookings",
-    tags=["Bookings"],
-)
-
-app.include_router(
-    sync.router,
-    prefix="/api/v1/sync",
-    tags=["Sync"],
-)
-
-app.include_router(
-    rebalance.router,
-    prefix="/api/v1/rebalance",
-    tags=["Rebalance"],
-)
-
-app.include_router(
-    research.router,
-    prefix="/api/v1/research",
-    tags=["Research"],
-)
-
-app.include_router(
-    analytics.router,
-    prefix="/api/v1/analytics",
-    tags=["Analytics"],
-)
-
-app.include_router(
-    watchlist.router,
-    prefix="/api/v1/watchlist",
-    tags=["Watchlist"],
-)
-
-app.include_router(
-    goals.router,
-    prefix="/api/v1/goals",
-    tags=["Goals"],
 )
 
 app.include_router(
@@ -321,9 +240,122 @@ app.include_router(
 )
 
 app.include_router(
+    assets.router,
+    prefix="/api/v1/assets",
+    tags=["Assets"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    transactions.router,
+    prefix="/api/v1/transactions",
+    tags=["Transactions"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    portfolios.router,
+    prefix="/api/v1/portfolios",
+    tags=["Portfolios"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    entities.router,
+    prefix="/api/v1/entities",
+    tags=["Entities"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    sectors.router,
+    prefix="/api/v1/sectors",
+    tags=["Sectors"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    llm.router,
+    prefix="/api/v1/llm",
+    tags=["LLM"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    tax.router,
+    prefix="/api/v1/tax",
+    tags=["Tax"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    imports.router,
+    prefix="/api/v1/import",
+    tags=["Import"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    exports.router,
+    prefix="/api/v1/export",
+    tags=["Export"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    bookings.router,
+    prefix="/api/v1/bookings",
+    tags=["Bookings"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    sync.router,
+    prefix="/api/v1/sync",
+    tags=["Sync"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    rebalance.router,
+    prefix="/api/v1/rebalance",
+    tags=["Rebalance"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    research.router,
+    prefix="/api/v1/research",
+    tags=["Research"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    analytics.router,
+    prefix="/api/v1/analytics",
+    tags=["Analytics"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    watchlist.router,
+    prefix="/api/v1/watchlist",
+    tags=["Watchlist"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    goals.router,
+    prefix="/api/v1/goals",
+    tags=["Goals"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
     networth.router,
     prefix="/api/v1/networth",
     tags=["Net Worth"],
+    dependencies=_PROTECTED,
 )
 
 
