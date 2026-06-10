@@ -418,19 +418,20 @@ class TestTaxReport:
 
     @pytest.mark.asyncio
     async def test_tax_report_invalid_date_range_returns_400(
-        self, async_test_client: AsyncClient
+        self, async_test_client: AsyncClient, auth_headers
     ):
         """start_date > end_date → 400."""
         resp = await async_test_client.get(
             "/api/v1/tax/report",
             params={"start_date": "2025-12-31", "end_date": "2025-01-01"},
+            headers=auth_headers,
         )
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
         assert "start date" in resp.json()["detail"].lower()
 
     @pytest.mark.asyncio
     async def test_tax_report_invalid_format_returns_400(
-        self, async_test_client: AsyncClient
+        self, async_test_client: AsyncClient, auth_headers
     ):
         """format=xml → 400."""
         resp = await async_test_client.get(
@@ -440,13 +441,14 @@ class TestTaxReport:
                 "end_date": "2025-12-31",
                 "format": "xml",
             },
+            headers=auth_headers,
         )
         assert resp.status_code == status.HTTP_400_BAD_REQUEST
         assert "format" in resp.json()["detail"].lower()
 
     @pytest.mark.asyncio
     async def test_tax_report_no_transactions_returns_404(
-        self, async_test_client: AsyncClient
+        self, async_test_client: AsyncClient, auth_headers
     ):
         """When calculator returns empty dict → 404."""
         with patch("portf_server.routers.tax.TaxCalculator") as MockCalc:
@@ -454,11 +456,14 @@ class TestTaxReport:
             resp = await async_test_client.get(
                 "/api/v1/tax/report",
                 params={"start_date": "2025-01-01", "end_date": "2025-12-31"},
+                headers=auth_headers,
             )
         assert resp.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.asyncio
-    async def test_tax_report_csv_success(self, async_test_client: AsyncClient):
+    async def test_tax_report_csv_success(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
         """Valid request with mocked data returns CSV file."""
         from portf_manager.tax_calculator import TaxTransaction
 
@@ -499,6 +504,7 @@ class TestTaxReport:
                     "end_date": "2025-12-31",
                     "format": "csv",
                 },
+                headers=auth_headers,
             )
 
         assert resp.status_code == status.HTTP_200_OK
@@ -507,7 +513,9 @@ class TestTaxReport:
         assert len(resp.content) > 0
 
     @pytest.mark.asyncio
-    async def test_tax_report_with_symbol_filter(self, async_test_client: AsyncClient):
+    async def test_tax_report_with_symbol_filter(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
         """symbols query param is parsed and forwarded to the calculator."""
         from portf_manager.tax_calculator import TaxTransaction
 
@@ -549,6 +557,7 @@ class TestTaxReport:
                     "symbols": "MSFT",
                     "format": "csv",
                 },
+                headers=auth_headers,
             )
 
         assert resp.status_code == status.HTTP_200_OK
@@ -557,9 +566,11 @@ class TestTaxReport:
         assert call_kwargs.kwargs.get("symbols") == ["MSFT"]
 
     @pytest.mark.asyncio
-    async def test_tax_info_endpoint(self, async_test_client: AsyncClient):
+    async def test_tax_info_endpoint(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
         """GET /api/v1/tax/ returns info dict."""
-        resp = await async_test_client.get("/api/v1/tax/")
+        resp = await async_test_client.get("/api/v1/tax/", headers=auth_headers)
         assert resp.status_code == status.HTTP_200_OK
         data = resp.json()
         assert "methodology" in data
