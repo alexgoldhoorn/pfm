@@ -316,6 +316,67 @@ class TestPortfolioHoldings:
         symbols_in_holdings = [h["symbol"] for h in data["holdings"]]
         assert sample_asset_data["symbol"] in symbols_in_holdings
 
+    @pytest.mark.asyncio
+    async def test_holdings_filtered_by_portfolio_id(
+        self, async_test_client: AsyncClient, auth_headers, sample_asset_data
+    ):
+        """holdings?portfolio_id= returns only that broker's positions."""
+        # Two brokers.
+        pa = await async_test_client.post(
+            "/api/v1/portfolios",
+            json={"name": "BrokerA", "base_currency": "EUR"},
+            headers=auth_headers,
+        )
+        pb = await async_test_client.post(
+            "/api/v1/portfolios",
+            json={"name": "BrokerB", "base_currency": "EUR"},
+            headers=auth_headers,
+        )
+        pa_id, pb_id = pa.json()["id"], pb.json()["id"]
+
+        # One asset, bought in BOTH brokers.
+        asset = await async_test_client.post(
+            "/api/v1/assets", json=sample_asset_data, headers=auth_headers
+        )
+        asset_id = asset.json()["id"]
+        for pid, qty in ((pa_id, 5.0), (pb_id, 3.0)):
+            await async_test_client.post(
+                "/api/v1/transactions",
+                json={
+                    "asset_id": asset_id,
+                    "portfolio_id": pid,
+                    "transaction_type": "buy",
+                    "quantity": qty,
+                    "price": 100.0,
+                    "total_amount": qty * 100.0,
+                    "transaction_date": "2024-06-01",
+                },
+                headers=auth_headers,
+            )
+
+        # Aggregated (no filter) = 5 + 3 = 8 units.
+        all_resp = await async_test_client.get(
+            "/api/v1/portfolios/holdings", headers=auth_headers
+        )
+        all_qty = next(
+            h["quantity"]
+            for h in all_resp.json()["holdings"]
+            if h["asset_id"] == asset_id
+        )
+        assert all_qty == 8.0
+
+        # Filtered to BrokerA = only 5 units.
+        a_resp = await async_test_client.get(
+            f"/api/v1/portfolios/holdings?portfolio_id={pa_id}",
+            headers=auth_headers,
+        )
+        a_qty = next(
+            h["quantity"]
+            for h in a_resp.json()["holdings"]
+            if h["asset_id"] == asset_id
+        )
+        assert a_qty == 5.0
+
 
 # ---------------------------------------------------------------------------
 # Portfolios — update / delete  (lines 217-246)
