@@ -1,0 +1,1644 @@
+// pfm_core.js — part of the portfolio_debug.js split.
+// Core: prefs, formatters, esc, dashboard/diagnostics helpers, AssetSearch, API + modal managers, import modals.
+// Classic script (no build step): these files share one global scope
+// and MUST load in this order: pfm_core, pfm_pages, pfm_analytics,
+// pfm_features. See index.html.
+
+// Portfolio Manager — Web Client
+
+// ---------------------------------------------------------------------------
+// User preferences (browser-local) + central formatting
+// ---------------------------------------------------------------------------
+const PREFS_KEY = 'pfmPrefs';
+const PREFS_DEFAULTS = {
+    numberLocale: '',      // '' = browser default; e.g. 'en-US', 'es-ES', 'de-DE', 'nl-NL', 'en-GB'
+    decimals: 2,
+    dateFormat: 'iso',     // 'iso' (2026-05-28) | 'dmy' (28-05-2026) | 'mdy' (05-28-2026)
+    theme: 'auto',         // 'auto' | 'light' | 'dark'
+    privacy: false,        // blur monetary amounts
+    benchmark: '^GSPC',
+    landingPage: 'dashboard',
+    rowsPerPage: 50,
+    defaultCurrency: 'EUR',   // pre-fills currency on new assets/transactions/bookings
+    defaultBroker: '',        // portfolio/broker name to preselect on new entries
+    holdingsSort: 'value',    // value | pnl | pnlpct | name
+    hideBelowEur: 0,          // hide holdings below this EUR value (0 = show all)
+};
+window.PREFS = Object.assign({}, PREFS_DEFAULTS, (() => {
+    try { return JSON.parse(localStorage.getItem(PREFS_KEY) || '{}'); } catch (e) { return {}; }
+})());
+function savePrefs() { localStorage.setItem(PREFS_KEY, JSON.stringify(window.PREFS)); }
+
+const Fmt = {
+    loc() { return window.PREFS.numberLocale || undefined; },
+    num(v, min, max) {
+        const d = (window.PREFS.decimals != null) ? window.PREFS.decimals : 2;
+        return parseFloat(v || 0).toLocaleString(this.loc(), {
+            minimumFractionDigits: (min != null ? min : d),
+            maximumFractionDigits: (max != null ? max : d),
+        });
+    },
+    // Wrap money text so the privacy toggle can blur it (hover to reveal).
+    amt(text) { return `<span class="pfm-amt">${text}</span>`; },
+    date(s) {
+        if (!s) return '';
+        const str = String(s);
+        const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(str);
+        if (!m) return str;
+        const [, y, mo, d] = m;
+        const time = str.length > 10 ? str.replace('T', ' ').slice(11, 16) : '';
+        let out;
+        if (window.PREFS.dateFormat === 'dmy') out = `${d}-${mo}-${y}`;
+        else if (window.PREFS.dateFormat === 'mdy') out = `${mo}-${d}-${y}`;
+        else out = `${y}-${mo}-${d}`;
+        return time ? `${out} ${time}` : out;
+    },
+};
+window.Fmt = Fmt;
+
+// Escape text before interpolating it into innerHTML. Asset names, symbols,
+// notes and broker names come from imported broker files and LLM extraction —
+// untrusted — and the API key lives in localStorage, so an unescaped value
+// could script-inject and exfiltrate it. Use this for any such field.
+function esc(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+}
+window.esc = esc;
+
+// Dashboard alerts banner: price targets crossed + watchlist buy zones.
+// Loaded async so it never blocks the dashboard (watchlist check hits live
+// prices). Hidden entirely when nothing is triggered.
+async function loadDashboardAlerts() {
+    const box = document.getElementById('dashAlerts');
+    if (!box) return;
+    try {
+        const [targets, watch, fresh] = await Promise.all([
+            window.apiClient.getResearchAlerts().catch(() => ({ alerts: [] })),
+            window.apiClient.getWatchlistAlerts().catch(() => ({ alerts: [] })),
+            window.apiClient.getDataFreshness().catch(() => null),
+        ]);
+        const items = [];
+        // Stale price-data warning: prices feed value & gain/loss, so flag when
+        // the last refresh is old or some holdings have gone stale/unpriced.
+        if (fresh) {
+            const ageH = fresh.refresh_age_hours;
+            const oldRefresh = (ageH == null) || (ageH > 30);
+            if (oldRefresh || fresh.stale_count > 0) {
+                const bits = [];
+                if (ageH == null) bits.push('prices never refreshed');
+                else if (oldRefresh) bits.push(`prices last refreshed ${relAge(ageH)}`);
+                if (fresh.stale_count > 0) {
+                    const names = (fresh.stale || []).slice(0, 6)
+                        .map(s => {
+                            // ISIN/P2P symbols are unreadable; prefer the asset name.
+                            const lbl = (s.name && s.name !== s.symbol) ? s.name : s.symbol;
+                            return s.age_days != null ? `${esc(lbl)} (${s.age_days}d)` : `${esc(lbl)} (no price)`;
+                        })
+                        .join(', ');
+                    const more = fresh.stale_count > 6 ? ` +${fresh.stale_count - 6} more` : '';
+                    bits.push(`${fresh.stale_count} holding${fresh.stale_count > 1 ? 's' : ''} with stale prices: ${names}${more}`);
+                }
+                items.push(`<li class="mb-1"><span class="badge bg-warning text-dark me-2">DATA</span>`
+                    + `<strong>Price data</strong> — ${bits.join('; ')}. Gain/loss may be out of date.</li>`);
+            }
+        }
+        (targets.alerts || []).forEach(a => {
+            const cur = a.currency || 'EUR';
+            // Position context: quantity, value, and P&L vs weighted-average cost.
+            let posInfo = '';
+            if (a.quantity > 0) {
+                const pnl = a.unrealized_pnl || 0;
+                const pnlCls = pnl >= 0 ? 'text-success' : 'text-danger';
+                const pnlSign = pnl >= 0 ? '+' : '';
+                const avgCostTxt = a.avg_price ? ` vs avg cost ${Fmt.num(a.avg_price, 2, 2)} ${cur}` : '';
+                posInfo = ` <span class="text-muted">— ${Fmt.num(a.quantity, 0, 4)} sh · ${Fmt.num(a.value, 2, 2)} ${cur} `
+                    + `(<span class="${pnlCls}">${pnlSign}${Fmt.num(pnl, 2, 2)} ${cur}, ${pnlSign}${Fmt.num(a.unrealized_pnl_pct || 0, 2, 2)}%${avgCostTxt}</span>)</span>`;
+            } else {
+                posInfo = ` <span class="text-muted">— not held</span>`;
+            }
+            const priceDateTxt = a.price_date ? ` <small class="text-muted">[${a.price_date}]</small>` : '';
+            (a.triggers || []).forEach(t => {
+                const buy = t.type === 'BUY';
+                const nameTxt = a.name ? ` <span class="text-muted">· ${esc(a.name)}</span>` : '';
+                items.push(`<li class="mb-1"><span class="badge bg-${buy ? 'success' : 'danger'} me-2">${t.type}</span><strong>${esc(a.symbol)}</strong>${nameTxt} at ${Fmt.num(t.price, 2, 2)} ${cur} ${buy ? '≤ buy-below' : '≥ sell-above'} ${Fmt.num(t.threshold, 2, 2)} ${cur}${posInfo}${priceDateTxt}</li>`);
+            });
+        });
+        (watch.alerts || []).forEach(a => {
+            const fetchedTxt = a.price_fetched_at ? ` <small class="text-muted">[${fmtFetchedAt(a.price_fetched_at)}]</small>` : '';
+            items.push(`<li class="mb-1"><span class="badge bg-info text-dark me-2">WATCH</span><strong>${esc(a.symbol)}</strong> ${a.name ? '· ' + esc(a.name) : ''} at ${Fmt.num(a.price, 2, 2)} entered buy zone (≤ ${Fmt.num(a.buy_below, 2, 2)})${fetchedTxt}</li>`);
+        });
+        if (!items.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+        // Dismissal is keyed by the alert content so a *new* alert reappears even
+        // after the user closed the previous set; the same set stays hidden.
+        const sig = hashStr(items.join(''));
+        if (localStorage.getItem('pfmAlertsDismissed') === sig) {
+            box.style.display = 'none'; box.innerHTML = ''; return;
+        }
+        box.style.display = '';
+        box.innerHTML = `
+            <div class="alert alert-warning alert-dismissible mb-0">
+                <button type="button" class="btn-close" id="dashAlertsClose" aria-label="Dismiss"></button>
+                <div class="fw-semibold mb-1"><i class="bi bi-bell-fill me-2"></i>${items.length} alert${items.length > 1 ? 's' : ''}</div>
+                <ul class="list-unstyled mb-0 small">${items.join('')}</ul>
+            </div>`;
+        const closeBtn = document.getElementById('dashAlertsClose');
+        if (closeBtn) closeBtn.addEventListener('click', () => {
+            localStorage.setItem('pfmAlertsDismissed', sig);
+            box.style.display = 'none'; box.innerHTML = '';
+        });
+    } catch (e) {
+        box.style.display = 'none';
+    }
+}
+
+// Format a UTC ISO timestamp as "Xm ago" / "Xh ago" for alert freshness labels.
+function fmtFetchedAt(iso) {
+    if (!iso) return '';
+    try {
+        const mins = Math.round((Date.now() - new Date(iso)) / 60000);
+        if (mins < 1) return 'just now';
+        if (mins < 60) return `${mins}m ago`;
+        return `${Math.round(mins / 60)}h ago`;
+    } catch { return ''; }
+}
+
+// Tiny stable string hash (djb2) for keying dismissed-alert state.
+function hashStr(str) {
+    let h = 5381;
+    for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+    return String(h >>> 0);
+}
+
+// Human-friendly "x ago" for an age given in hours.
+function relAge(hours) {
+    if (hours == null) return 'never';
+    if (hours < 1) return `${Math.round(hours * 60)}m ago`;
+    if (hours < 48) return `${Math.round(hours)}h ago`;
+    return `${Math.round(hours / 24)}d ago`;
+}
+
+// Price-data freshness chip in the dashboard header. External prices back the
+// value & gain/loss figures, so we surface how recently they were refreshed and
+// whether any held assets have gone stale. Green = fresh, amber = aging/stale,
+// red = very old or never refreshed.
+async function loadDataFreshness() {
+    const chip = document.getElementById('dataFreshness');
+    if (!chip) return;
+    let f;
+    try {
+        f = await window.apiClient.getDataFreshness();
+    } catch (e) {
+        chip.style.display = 'none';
+        return;
+    }
+    const ageH = f.refresh_age_hours;
+    let cls = 'bg-success';
+    if (ageH == null || ageH > 48) cls = 'bg-danger';
+    else if (ageH > 30 || f.stale_count > 0) cls = 'bg-warning text-dark';
+
+    const asOf = f.prices_as_of ? Fmt.date(f.prices_as_of) : '—';
+    let label = `Prices ${relAge(ageH)}`;
+    if (f.stale_count > 0) label += ` · ${f.stale_count} stale`;
+
+    const staleList = (f.stale || [])
+        .map(s => {
+            const lbl = (s.name && s.name !== s.symbol) ? `${esc(s.symbol)} (${esc(s.name)})` : s.symbol;
+            return s.age_days != null ? `${lbl}: ${s.age_days}d old` : `${lbl}: no price`;
+        })
+        .join('\n');
+    const title = `Prices as of ${asOf}\nLast refreshed ${relAge(ageH)}`
+        + `\n${f.checked} priced holding${f.checked === 1 ? '' : 's'}`
+        + (staleList ? `\n\nStale / unpriced:\n${staleList}` : '');
+
+    chip.className = `badge rounded-pill ${cls}`;
+    chip.innerHTML = `<i class="bi bi-clock-history me-1"></i>${label}`;
+    chip.title = title;
+    chip.style.display = '';
+}
+window.loadDataFreshness = loadDataFreshness;
+
+// Diagnostics page: price-data freshness + the daily update-run history.
+// Surfaces *why* a price may be stale (no Yahoo data vs. just old) and what
+// the cron actually did, so it isn't lost to stdout.
+async function loadDiagnosticsPage() {
+    const freshBox = document.getElementById('diagFreshness');
+    const staleBody = document.getElementById('diagStaleBody');
+    const runsBody = document.getElementById('diagRunsBody');
+    if (!freshBox) return;
+
+    // Wire the refresh button once.
+    const refreshBtn = document.getElementById('refreshDiagnostics');
+    if (refreshBtn && !refreshBtn._wired) {
+        refreshBtn._wired = true;
+        refreshBtn.addEventListener('click', () => loadDiagnosticsPage());
+    }
+
+    const esc = s => String(s == null ? '' : s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+    const [fresh, runsResp] = await Promise.all([
+        window.apiClient.getDataFreshness().catch(() => null),
+        window.apiClient.getUpdateRuns(20).catch(() => ({ runs: [] })),
+    ]);
+
+    // --- Freshness summary ---
+    if (fresh) {
+        const ageH = fresh.refresh_age_hours;
+        let badge = 'bg-success', txt = 'Fresh';
+        if (ageH == null || ageH > 48) { badge = 'bg-danger'; txt = 'Very stale'; }
+        else if (ageH > 30 || fresh.stale_count > 0) { badge = 'bg-warning text-dark'; txt = 'Aging'; }
+        freshBox.innerHTML = `
+            <div class="row g-3 small">
+                <div class="col-6 col-md-3"><div class="text-muted">Status</div><span class="badge ${badge}">${txt}</span></div>
+                <div class="col-6 col-md-3"><div class="text-muted">Last refreshed</div><div class="fw-semibold">${relAge(ageH)}</div></div>
+                <div class="col-6 col-md-3"><div class="text-muted">Prices as of</div><div class="fw-semibold">${fresh.prices_as_of ? Fmt.date(fresh.prices_as_of) : '—'}</div></div>
+                <div class="col-6 col-md-3"><div class="text-muted">Priced holdings</div><div class="fw-semibold">${fresh.checked} priced · ${fresh.stale_count} stale</div></div>
+            </div>`;
+    } else {
+        freshBox.innerHTML = '<div class="text-danger small">Could not load freshness data.</div>';
+    }
+
+    // --- Stale / unpriced holdings ---
+    if (staleBody) {
+        const stale = (fresh && fresh.stale) || [];
+        if (!stale.length) {
+            staleBody.innerHTML = '<tr><td colspan="4" class="text-success small"><i class="bi bi-check-circle me-1"></i>All auto-priced holdings are up to date.</td></tr>';
+        } else {
+            staleBody.innerHTML = stale.map(s => {
+                const age = s.age_days != null ? `${s.age_days}d` : '—';
+                const reasonCls = s.reason === 'no price data' ? 'text-muted' : 'text-warning';
+                return `<tr><td><code>${esc(s.symbol)}</code></td><td class="small">${esc(s.name)}</td>`
+                    + `<td class="text-end">${age}</td><td class="small ${reasonCls}">${esc(s.reason)}</td></tr>`;
+            }).join('');
+        }
+    }
+
+    // --- Update history ---
+    if (runsBody) {
+        const runs = (runsResp && runsResp.runs) || [];
+        if (!runs.length) {
+            runsBody.innerHTML = '<tr><td colspan="7" class="text-muted small">No update runs recorded yet. The first run will appear after the next price update.</td></tr>';
+        } else {
+            runsBody.innerHTML = runs.map(r => {
+                const when = r.finished_at ? Fmt.date(String(r.finished_at).replace(' ', 'T')) : '—';
+                const dur = r.duration_seconds != null ? `${r.duration_seconds}s` : '—';
+                const errCls = r.error_count > 0 ? 'text-danger fw-semibold' : '';
+                const skipList = (r.skipped_symbols || []).join(', ');
+                const skipCell = skipList ? `<span class="small text-muted" title="${esc(skipList)}">${esc(skipList.length > 60 ? skipList.slice(0, 60) + '…' : skipList)}</span>` : '';
+                return `<tr><td class="small">${esc(when)}</td><td class="small">${esc(r.source)}</td>`
+                    + `<td class="text-end small">${dur}</td><td class="text-end">${r.updated_count}</td>`
+                    + `<td class="text-end">${r.skipped_count}</td><td class="text-end ${errCls}">${r.error_count}</td>`
+                    + `<td>${skipCell}</td></tr>`;
+            }).join('');
+        }
+    }
+}
+window.loadDiagnosticsPage = loadDiagnosticsPage;
+
+// Apply the user's default currency to the static "new entry" form fields
+// (Add booking, new broker). Add-asset is handled on modal-show.
+function applyDefaultCurrency() {
+    const cur = (window.PREFS && window.PREFS.defaultCurrency) || 'EUR';
+    ['addBookingCurrency', 'portfolioCurrency'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = cur;
+    });
+}
+window.applyDefaultCurrency = applyDefaultCurrency;
+
+// Collapsible sidebar sections — persisted in localStorage, defaulting to
+// Portfolio open and the rest collapsed. Applies to both the desktop sidebar
+// and the mobile offcanvas (matched by data-sect).
+const _NAV_SECTION_DEFAULTS = { portfolio: true, insights: false, planning: false, tools: false, help: false };
+function _applyNavSection(sect, open) {
+    document.querySelectorAll(`.sidebar-section-toggle[data-sect="${sect}"]`)
+        .forEach(b => b.classList.toggle('collapsed', !open));
+    document.querySelectorAll(`.sidebar-section-items[data-sect-items="${sect}"]`)
+        .forEach(d => d.classList.toggle('collapsed', !open));
+}
+function setupSidebarSections() {
+    let state = {};
+    try { state = JSON.parse(localStorage.getItem('pfm_nav_sections') || '{}'); } catch (e) { state = {}; }
+    Object.keys(_NAV_SECTION_DEFAULTS).forEach(sect => {
+        const open = (sect in state) ? state[sect] : _NAV_SECTION_DEFAULTS[sect];
+        _applyNavSection(sect, open);
+    });
+    document.querySelectorAll('.sidebar-section-toggle').forEach(btn => {
+        if (btn.dataset.wired) return;
+        btn.dataset.wired = '1';
+        btn.addEventListener('click', () => {
+            const sect = btn.dataset.sect;
+            const willOpen = btn.classList.contains('collapsed');
+            _applyNavSection(sect, willOpen);
+            state[sect] = willOpen;
+            try { localStorage.setItem('pfm_nav_sections', JSON.stringify(state)); } catch (e) { /* ignore */ }
+        });
+    });
+}
+// Expand whichever section contains the given page (so the active item shows).
+function expandNavSectionFor(pageName) {
+    const link = document.querySelector(`.sidebar-section-items [data-page="${pageName}"]`);
+    const items = link && link.closest('.sidebar-section-items');
+    if (items) _applyNavSection(items.dataset.sectItems, true);
+}
+
+// Preselect the user's default broker (by name) in a populated <select>.
+function selectDefaultBroker(selectEl) {
+    const name = (window.PREFS && window.PREFS.defaultBroker) || '';
+    if (!selectEl || !name) return;
+    for (const opt of selectEl.options) {
+        if (opt.textContent === name) { selectEl.value = opt.value; break; }
+    }
+}
+window.selectDefaultBroker = selectDefaultBroker;
+
+function applyTheme() {
+    let t = window.PREFS.theme;
+    if (t === 'auto') {
+        t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+    }
+    document.documentElement.setAttribute('data-bs-theme', t);
+}
+function applyPrivacy() {
+    if (document.body) document.body.classList.toggle('pfm-privacy', !!window.PREFS.privacy);
+}
+applyTheme();  // before first paint
+
+// ---------------------------------------------------------------------------
+// AssetSearch — shared asset autocomplete matching used by all search inputs
+// ---------------------------------------------------------------------------
+const AssetSearch = (() => {
+    // Maps a term the user might type → lowercase fragment that must appear in the
+    // asset name. Covers popular tickers with non-obvious Yahoo symbols, class-share
+    // variants, and common company nicknames. `acronymOf` (below) derives first-letter
+    // acronyms automatically, so this table only needs hand-crafted entries.
+    const ALIASES = {
+        // US Tech
+        GOOGL: 'alphabet', GOOG: 'alphabet', GOOGLE: 'alphabet',
+        META: 'meta platforms', FB: 'meta platforms', FACEBOOK: 'meta platforms',
+        AMZN: 'amazon', MSFT: 'microsoft', AAPL: 'apple', NVDA: 'nvidia',
+        TSLA: 'tesla', NFLX: 'netflix', PYPL: 'paypal', DIS: 'walt disney',
+        AMD: 'advanced micro devices', INTC: 'intel corporation',
+        AVGO: 'broadcom', QCOM: 'qualcomm',
+        ORCL: 'oracle', CRM: 'salesforce', NOW: 'servicenow',
+        ADBE: 'adobe', INTU: 'intuit',
+        // Class-share / exchange variants
+        ISRG: 'intuitive surgical',   // Yahoo may suffix with A (ISRGA)
+        BRKB: 'berkshire', BRKA: 'berkshire', BRK: 'berkshire', BERKSHIRE: 'berkshire',
+        // US Finance
+        JPM: 'jpmorgan', GS: 'goldman sachs', MS: 'morgan stanley',
+        WFC: 'wells fargo', BAC: 'bank of america', C: 'citigroup',
+        V: 'visa', MA: 'mastercard', AXP: 'american express',
+        BLK: 'blackrock', SCHW: 'charles schwab',
+        // US Healthcare / Pharma
+        JNJ: 'johnson', UNH: 'unitedhealth', LLY: 'eli lilly',
+        ABBV: 'abbvie', MRK: 'merck', PFE: 'pfizer', CVS: 'cvs health',
+        // US Consumer / Industrial
+        NKE: 'nike', SBUX: 'starbucks', MCD: 'mcdonalds',
+        KO: 'coca-cola', PEP: 'pepsico', PG: 'procter', PROCTER: 'procter',
+        HD: 'home depot', LOW: 'lowe', TGT: 'target', WMT: 'walmart',
+        BA: 'boeing', GE: 'general electric', MMM: '3m company', CAT: 'caterpillar',
+        // European
+        LVMH: 'lvmh', 'LOUIS VUITTON': 'lvmh', MOET: 'moet',
+        LOREAL: "l'oreal", LOR: "l'oreal",
+        NESTLE: 'nestle', NOVARTIS: 'novartis', ROCHE: 'roche',
+        SIEMENS: 'siemens', ALLIANZ: 'allianz', BASF: 'basf',
+        VW: 'volkswagen', VOLKSWAGEN: 'volkswagen',
+        AIRBUS: 'airbus',
+        // Semiconductors / Global
+        TSM: 'taiwan semiconductor', TSMC: 'taiwan semiconductor',
+        NVO: 'novo nordisk', NOVO: 'novo nordisk',
+        ASML: 'asml',
+    };
+
+    // Strips exchange and currency-pair suffixes so users can omit them:
+    // "ASML.AS" → "ASML",  "BTC-EUR" → "BTC",  "BRK.B" → "BRK"
+    function baseTicker(symbol) {
+        return (symbol || '').replace(/[.\-][A-Z0-9]+$/i, '').toUpperCase();
+    }
+
+    // First letter of each word in the name → "Advanced Micro Devices" → "AMD"
+    function acronymOf(name) {
+        const words = (name || '').replace(/[^A-Za-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+        if (words.length < 2) return '';
+        return words.map(w => w[0]).join('').toUpperCase();
+    }
+
+    // Returns ALIASES keys whose target fragment appears in this asset's name.
+    function aliasesFor(name) {
+        const n = (name || '').toLowerCase();
+        return Object.keys(ALIASES).filter(a => n.includes(ALIASES[a]));
+    }
+
+    // Produce a search-ready asset object. Pass extra fields (currency, source, …) as extras.
+    function enrich(symbol, name, extras = {}) {
+        return {
+            symbol, name: name || '', ...extras,
+            acronym: acronymOf(name),
+            aliases: aliasesFor(name),
+            base: baseTicker(symbol),
+        };
+    }
+
+    // Score and rank assets against query. Returns up to `limit` best matches.
+    function match(query, assets, limit = 10) {
+        const q = (query || '').trim().toLowerCase();
+        if (!q) return [];
+        const scored = assets.map(s => {
+            const sym  = (s.symbol  || '').toLowerCase();
+            const name = (s.name    || '').toLowerCase();
+            const acr  = (s.acronym || acronymOf(s.name)).toLowerCase();
+            const base = (s.base    || baseTicker(s.symbol)).toLowerCase();
+            const al   = (s.aliases || aliasesFor(s.name)).map(a => a.toLowerCase());
+            let score = -1;
+            if (sym === q)                                         score = 0;    // exact symbol
+            else if (base === q)                                   score = 0.5;  // exact base (ASML ↔ ASML.AS)
+            else if (sym.startsWith(q))                            score = 1;    // symbol prefix
+            else if (base.startsWith(q))                           score = 1.5;  // base prefix
+            else if (acr === q || al.some(a => a === q))           score = 2;    // exact acronym/alias
+            else if (name.startsWith(q))                           score = 3;    // name prefix
+            else if (acr.startsWith(q) || al.some(a => a.startsWith(q))) score = 3.5;
+            else if (sym.includes(q))                              score = 4;
+            else if (name.includes(q))                             score = 5;
+            return { s, score };
+        }).filter(x => x.score >= 0).sort((a, b) => a.score - b.score).slice(0, limit);
+        return scored.map(x => x.s);
+    }
+
+    // Wire a full autocomplete UI on an input+dropdown pair.
+    // opts: { getSuggestions, onSelect, onInput, renderItem, limit, clearOnEscape }
+    function buildAutocomplete(inputEl, suggestEl, opts = {}) {
+        const { getSuggestions, onSelect, onInput, limit = 10, clearOnEscape = false } = opts;
+        const renderItem = opts.renderItem || (s => `
+            <button type="button" class="list-group-item list-group-item-action py-1 px-2" data-sym="${s.symbol}">
+                <strong>${esc(s.symbol)}</strong>
+                ${s.name ? `<div class="small text-muted text-truncate">${esc(s.name)}</div>` : ''}
+            </button>`);
+        let activeIdx = -1;
+        const hideSuggest = () => { suggestEl.style.display = 'none'; activeIdx = -1; };
+        const showSuggest = (q) => {
+            const assets = getSuggestions ? getSuggestions() : [];
+            const hits = match(q, assets, limit);
+            if (!hits.length) { hideSuggest(); return; }
+            suggestEl.innerHTML = hits.map(renderItem).join('');
+            suggestEl.querySelectorAll('[data-sym]').forEach(b => {
+                b.addEventListener('mousedown', e => {
+                    e.preventDefault();
+                    const asset = hits.find(h => h.symbol === b.dataset.sym) || { symbol: b.dataset.sym };
+                    inputEl.value = asset.symbol;
+                    hideSuggest();
+                    if (onSelect) onSelect(asset);
+                });
+            });
+            activeIdx = -1;
+            suggestEl.style.display = '';
+        };
+        inputEl.addEventListener('input', () => { showSuggest(inputEl.value); if (onInput) onInput(inputEl.value); });
+        inputEl.addEventListener('focus', () => { if (inputEl.value) showSuggest(inputEl.value); });
+        inputEl.addEventListener('blur', () => setTimeout(hideSuggest, 150));
+        inputEl.addEventListener('keydown', e => {
+            const items = suggestEl.querySelectorAll('[data-sym]');
+            if (suggestEl.style.display !== 'none' && items.length) {
+                if (e.key === 'ArrowDown') { e.preventDefault(); activeIdx = Math.min(activeIdx + 1, items.length - 1); }
+                else if (e.key === 'ArrowUp') { e.preventDefault(); activeIdx = Math.max(activeIdx - 1, 0); }
+                else if (e.key === 'Enter' && activeIdx >= 0) { e.preventDefault(); items[activeIdx].dispatchEvent(new Event('mousedown')); return; }
+                items.forEach((it, i) => it.classList.toggle('active', i === activeIdx));
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') return;
+            }
+            if (e.key === 'Escape') { hideSuggest(); if (clearOnEscape) { inputEl.value = ''; if (onInput) onInput(''); } }
+        });
+    }
+
+    return { enrich, match, buildAutocomplete, baseTicker, acronymOf, aliasesFor };
+})();
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+function fmtPrice(amount, currency) {
+    const n = Fmt.num(amount, 2, 2);
+    return currency ? `${n} ${currency}` : n;
+}
+
+// Build Yahoo Finance + Wall Street Journal quote links for a symbol
+function assetLinks(symbol) {
+    if (!symbol) return '';
+    const s = encodeURIComponent(symbol);
+    return `
+      <a href="https://finance.yahoo.com/quote/${s}" target="_blank" rel="noopener" class="text-decoration-none me-1" title="View on Yahoo Finance"><i class="bi bi-graph-up"></i></a>
+      <a href="https://www.wsj.com/market-data/quotes/${s}" target="_blank" rel="noopener" class="text-decoration-none" title="View on Wall Street Journal"><i class="bi bi-newspaper"></i></a>`;
+}
+
+// ---------------------------------------------------------------------------
+// API Client
+// ---------------------------------------------------------------------------
+function createAPIClient() {
+    return {
+        // Same-origin: API calls go to /api/... and are proxied to the backend
+        // by the web container's nginx. Works for LAN (host:8080) and external
+        // HTTPS (your domain) alike. Override via window.PORTF_API_BASE if
+        // ever serving the API from a different origin.
+        baseURL: (typeof window !== 'undefined' && window.PORTF_API_BASE) || '',
+        apiKey: localStorage.getItem('apiKey'),
+
+        setApiKey: function(key) {
+            this.apiKey = key;
+            localStorage.setItem('apiKey', key);
+        },
+
+        clearApiKey: function() {
+            this.apiKey = null;
+            localStorage.removeItem('apiKey');
+        },
+
+        validateApiKey: async function(key) {
+            try {
+                const response = await fetch(this.baseURL + '/api/v1/transactions/?limit=1', {
+                    method: 'GET',
+                    headers: { 'X-API-Key': key }
+                });
+                return response.status === 200;
+            } catch (error) {
+                console.error('API validation error:', error);
+                return false;
+            }
+        },
+
+        // Username/password login → returns the API key the data endpoints need
+        loginWithPassword: async function(username, password) {
+            const resp = await fetch(this.baseURL + '/api/v1/auth/login-key', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password })
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.detail || 'Login failed');
+            }
+            // Remember username so the Settings → Change password form can prefill it
+            try { localStorage.setItem('pfm_username', username); } catch (e) { /* ignore */ }
+            return (await resp.json()).api_key;
+        },
+
+        // Change password (web/shared-key model: current password is the gate)
+        changePassword: async function(username, currentPassword, newPassword) {
+            const resp = await fetch(this.baseURL + '/api/v1/auth/change-password-key', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, current_password: currentPassword, new_password: newPassword })
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.detail || 'Password change failed');
+            }
+            return resp.json();
+        },
+
+        // First-time account creation
+        registerUser: async function(username, email, password) {
+            const resp = await fetch(this.baseURL + '/api/v1/auth/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, email, password })
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                const detail = Array.isArray(err.detail)
+                    ? err.detail.map(d => d.msg).join(', ')
+                    : (err.detail || 'Registration failed');
+                throw new Error(detail);
+            }
+            return resp.json();
+        },
+
+        async getAssets() {
+            try {
+                const response = await fetch(this.baseURL + '/api/v1/assets/', {
+                    headers: { 'X-API-Key': this.apiKey }
+                });
+                const data = await response.json();
+                return Array.isArray(data) ? data : [];
+            } catch (error) {
+                console.error('Error loading assets:', error);
+                return [];
+            }
+        },
+
+        async getTransactions(limit = 100, portfolioId = null) {
+            try {
+                let url = this.baseURL + `/api/v1/transactions/?limit=${limit}`;
+                if (portfolioId) url += `&portfolio_id=${portfolioId}`;
+                const response = await fetch(url, {
+                    headers: { 'X-API-Key': this.apiKey }
+                });
+                const data = await response.json();
+                return Array.isArray(data) ? data : [];
+            } catch (error) {
+                console.error('Error loading transactions:', error);
+                return [];
+            }
+        },
+
+        async getPortfolioValues() {
+            const response = await fetch(this.baseURL + '/api/v1/portfolios/values', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) throw new Error(await response.text());
+            return response.json();
+        },
+
+        async getPortfolios() {
+            try {
+                const response = await fetch(this.baseURL + '/api/v1/portfolios/', {
+                    headers: { 'X-API-Key': this.apiKey }
+                });
+                const data = await response.json();
+                return Array.isArray(data) ? data : [];
+            } catch (error) {
+                console.error('Error loading portfolios:', error);
+                return [];
+            }
+        },
+
+        async createPortfolio(data) {
+            const response = await fetch(this.baseURL + '/api/v1/portfolios/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(data)
+            });
+            if (!response.ok) throw new Error(await response.text());
+            return response.json();
+        },
+
+        async updatePortfolio(id, data) {
+            const response = await fetch(this.baseURL + `/api/v1/portfolios/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(data)
+            });
+            if (!response.ok) throw new Error(await response.text());
+            return response.json();
+        },
+
+        async deleteTransaction(id) {
+            const response = await fetch(this.baseURL + `/api/v1/transactions/${id}`, {
+                method: 'DELETE',
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) throw new Error(await response.text());
+        },
+
+        async updateTransaction(id, data) {
+            const response = await fetch(this.baseURL + `/api/v1/transactions/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(data)
+            });
+            if (!response.ok) throw new Error(await response.text());
+            return response.json();
+        },
+
+        async deletePortfolio(id) {
+            const response = await fetch(this.baseURL + `/api/v1/portfolios/${id}`, {
+                method: 'DELETE',
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) throw new Error(await response.text());
+        },
+
+        async getHoldings() {
+            try {
+                const response = await fetch(this.baseURL + '/api/v1/portfolios/holdings', {
+                    headers: { 'X-API-Key': this.apiKey }
+                });
+                const data = await response.json();
+                return data;
+            } catch (error) {
+                console.error('Error loading holdings:', error);
+                return { holdings: [], summary: {} };
+            }
+        },
+
+        async extractTransactions(text) {
+            const response = await fetch(this.baseURL + '/api/v1/llm/extract-transactions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify({ text })
+            });
+            if (!response.ok) {
+                const err = await response.text();
+                throw new Error(`Extraction failed: ${err}`);
+            }
+            return response.json();
+        },
+
+        async uploadBrokerFile(broker, file) {
+            const form = new FormData();
+            form.append('broker', broker);
+            form.append('file', file);
+            const response = await fetch(this.baseURL + '/api/v1/import/upload', {
+                method: 'POST',
+                headers: { 'X-API-Key': this.apiKey },
+                body: form
+            });
+            if (!response.ok) {
+                const err = await response.text();
+                throw new Error(`Parse failed: ${err}`);
+            }
+            return response.json();
+        },
+
+        async saveImportedTransactions(transactions, bookings = [], portfolioId = null, duplicateAction = 'skip') {
+            const response = await fetch(this.baseURL + '/api/v1/import/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify({ transactions, bookings, portfolio_id: portfolioId, duplicate_action: duplicateAction })
+            });
+            if (!response.ok) {
+                const err = await response.text();
+                throw new Error(`Save failed: ${err}`);
+            }
+            return response.json();
+        },
+
+        async sendChat(message, sessionId) {
+            const response = await fetch(this.baseURL + '/api/v1/llm/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify({ message, session_id: sessionId, live: false })
+            });
+            if (!response.ok) {
+                const err = await response.text();
+                throw new Error(`Chat failed: ${err}`);
+            }
+            return response.json();
+        },
+
+        exportUrl(format) {
+            return `${this.baseURL}/api/v1/export/${format}`;
+        },
+
+        async createAsset(assetData) {
+            try {
+                const response = await fetch(this.baseURL + '/api/v1/assets/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-API-Key': this.apiKey
+                    },
+                    body: JSON.stringify(assetData)
+                });
+
+                if (response.status === 201) {
+                    return response.json();
+                } else {
+                    const error = await response.text();
+                    throw new Error(`Failed to create asset: ${error}`);
+                }
+            } catch (error) {
+                console.error('Error creating asset:', error);
+                throw error;
+            }
+        },
+
+        async getBookings() {
+            const resp = await fetch(this.baseURL + '/api/v1/bookings/', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error('Failed to load bookings');
+            return resp.json();
+        },
+
+        async getNetworth() {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/', { headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error('Failed to load net worth');
+            return resp.json();
+        },
+        async createManualAsset(payload) {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(payload)
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to add');
+            return resp.json();
+        },
+        async deleteManualAsset(id) {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/' + id, { method: 'DELETE', headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error('Failed to delete');
+            return resp.json().catch(() => ({}));
+        },
+
+        async getTaxReport(year) {
+            const resp = await fetch(this.baseURL + '/api/v1/analytics/tax-report' + (year ? `?year=${year}` : ''), {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error('Failed to load tax report');
+            return resp.json();
+        },
+
+        async getTaxOptimizer(year) {
+            const resp = await fetch(this.baseURL + '/api/v1/analytics/tax-optimizer' + (year ? `?year=${year}` : ''), {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error('Failed to load tax optimizer');
+            return resp.json();
+        },
+
+        async getResearchAlerts() {
+            const resp = await fetch(this.baseURL + '/api/v1/research/alerts/check', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error('Failed to check alerts');
+            return resp.json();
+        },
+
+        async getWatchlistAlerts() {
+            const resp = await fetch(this.baseURL + '/api/v1/watchlist/alerts/check', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error('Failed to check watchlist alerts');
+            return resp.json();
+        },
+
+        async getDataFreshness() {
+            const resp = await fetch(this.baseURL + '/api/v1/analytics/data-freshness', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error('Failed to check data freshness');
+            return resp.json();
+        },
+
+        async getUpdateRuns(limit = 20) {
+            const resp = await fetch(this.baseURL + '/api/v1/analytics/update-runs?limit=' + limit, {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error('Failed to load update runs');
+            return resp.json();
+        },
+
+        async deleteBooking(id) {
+            const resp = await fetch(this.baseURL + '/api/v1/bookings/' + id, {
+                method: 'DELETE',
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error('Failed to delete booking');
+            return resp.json().catch(() => ({}));
+        },
+
+        async createTransaction(payload) {
+            const resp = await fetch(this.baseURL + '/api/v1/transactions/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(payload)
+            });
+            if (!resp.ok) {
+                const e = await resp.json().catch(() => ({}));
+                throw new Error(e.detail || 'Failed to create transaction');
+            }
+            return resp.json();
+        },
+
+        async setAssetPrice(assetId, price) {
+            const today = new Date().toISOString().slice(0, 10);
+            const resp = await fetch(this.baseURL + `/api/v1/assets/${assetId}/prices`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify({ price, price_date: today, price_type: 'close', source: 'manual' })
+            });
+            if (!resp.ok) {
+                const e = await resp.json().catch(() => ({}));
+                throw new Error(e.detail || 'Failed to set price');
+            }
+            return resp.json();
+        },
+
+        async createBooking(booking) {
+            const resp = await fetch(this.baseURL + '/api/v1/bookings/', {
+                method: 'POST',
+                headers: { 'X-API-Key': this.apiKey, 'Content-Type': 'application/json' },
+                body: JSON.stringify(booking)
+            });
+            if (!resp.ok) {
+                const e = await resp.json().catch(() => ({}));
+                throw new Error(e.detail || 'Failed to create booking');
+            }
+            return resp.json();
+        },
+
+        async extractAsync(text) {
+            const response = await fetch(this.baseURL + '/api/v1/llm/extract-async', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify({ text })
+            });
+            if (!response.ok) throw new Error('Could not start extraction');
+            return response.json();
+        },
+
+        async getExtractStatus(jobId) {
+            const response = await fetch(this.baseURL + '/api/v1/llm/extract-status/' + encodeURIComponent(jobId), {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) throw new Error('Lost track of the extraction job');
+            return response.json();
+        },
+
+        // Submit text, then poll until the extraction job finishes (or times out).
+        async extractTransactionsAndBookings(text, onProgress) {
+            const { job_id } = await this.extractAsync(text);
+            const started = Date.now();
+            const maxMs = 180000; // 3 min ceiling
+            while (Date.now() - started < maxMs) {
+                await new Promise(r => setTimeout(r, 1800));
+                const s = await this.getExtractStatus(job_id);
+                if (onProgress) onProgress(Math.round((Date.now() - started) / 1000));
+                if (s.status === 'done') return { transactions: s.transactions || [], bookings: s.bookings || [] };
+                if (s.status === 'error') throw new Error(s.error || 'Extraction failed');
+            }
+            throw new Error('Extraction is taking too long — try a shorter statement or split it.');
+        },
+
+        async startBackfill(force = false) {
+            const r = await fetch(this.baseURL + '/api/v1/analytics/backfill-snapshots' + (force ? '?force=true' : ''), {
+                method: 'POST', headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!r.ok) throw new Error('Could not start backfill');
+            return r.json();
+        },
+        async getBackfillStatus() {
+            const r = await fetch(this.baseURL + '/api/v1/analytics/backfill-status', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!r.ok) throw new Error('status failed');
+            return r.json();
+        },
+
+        async checkDuplicates(transactions, bookings = [], portfolioId = null) {
+            const response = await fetch(this.baseURL + '/api/v1/import/check-duplicates', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify({ transactions, bookings, portfolio_id: portfolioId })
+            });
+            if (!response.ok) throw new Error('Duplicate check failed');
+            return response.json();
+        },
+
+        async extractBookings(text) {
+            const resp = await fetch(this.baseURL + '/api/v1/llm/extract-bookings', {
+                method: 'POST',
+                headers: { 'X-API-Key': this.apiKey, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ text })
+            });
+            if (!resp.ok) {
+                const e = await resp.json().catch(() => ({}));
+                throw new Error(e.detail || 'Failed to extract bookings');
+            }
+            return resp.json();
+        },
+
+        async getSyncConfig() {
+            const resp = await fetch(this.baseURL + '/api/v1/sync/pdt-config', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error('Config fetch failed');
+            return resp.json();
+        },
+
+        async syncPull(sheetId) {
+            const url = this.baseURL + '/api/v1/sync/pdt-pull'
+                + (sheetId ? `?spreadsheet_id=${encodeURIComponent(sheetId)}` : '');
+            const resp = await fetch(url, { method: 'POST', headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) { const t = await resp.text(); throw new Error(t); }
+            return resp.json();
+        },
+
+        async syncPush(sheetId) {
+            const url = this.baseURL + '/api/v1/sync/pdt-push'
+                + (sheetId ? `?spreadsheet_id=${encodeURIComponent(sheetId)}` : '');
+            const resp = await fetch(url, { method: 'POST', headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) { const t = await resp.text(); throw new Error(t); }
+            return resp.json();
+        },
+
+        // Fetch a URL and trigger a file download in the browser
+        async downloadBlob(url, filename) {
+            const r = await fetch(url, { headers: { 'X-API-Key': this.apiKey } });
+            if (!r.ok) throw new Error('Export failed: ' + r.status);
+            const blob = await r.blob();
+            const objectUrl = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = objectUrl;
+            link.download = filename;
+            link.click();
+            URL.revokeObjectURL(objectUrl);
+        },
+
+        async getRebalanceTargets() {
+            const resp = await fetch(this.baseURL + '/api/v1/rebalance/targets', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async setRebalanceTargets(targets) {
+            const resp = await fetch(this.baseURL + '/api/v1/rebalance/targets', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(targets)
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async getRebalanceAnalysis() {
+            const resp = await fetch(this.baseURL + '/api/v1/rebalance/analysis', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async getResearchReport(symbol) {
+            const resp = await fetch(this.baseURL + `/api/v1/research/${encodeURIComponent(symbol)}`, {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (resp.status === 404) return null;
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async generateResearchReport(symbol) {
+            const resp = await fetch(this.baseURL + `/api/v1/research/${encodeURIComponent(symbol)}/generate`, {
+                method: 'POST',
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async researchLookup(symbol) {
+            const r = await fetch(this.baseURL + `/api/v1/research/${encodeURIComponent(symbol)}/lookup`, { headers: { 'X-API-Key': this.apiKey } });
+            if (!r.ok) throw new Error(await r.text());
+            return r.json();
+        },
+        async researchSave(symbol, body) {
+            const r = await fetch(this.baseURL + `/api/v1/research/${encodeURIComponent(symbol)}/save`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey }, body: JSON.stringify(body)
+            });
+            if (!r.ok) throw new Error(await r.text());
+            return r.json();
+        },
+        async researchHistory(symbol) {
+            const r = await fetch(this.baseURL + `/api/v1/research/${encodeURIComponent(symbol)}/history`, { headers: { 'X-API-Key': this.apiKey } });
+            if (!r.ok) throw new Error(await r.text());
+            return r.json();
+        },
+        async researchCompare() {
+            const r = await fetch(this.baseURL + '/api/v1/research/compare', { headers: { 'X-API-Key': this.apiKey } });
+            if (!r.ok) throw new Error(await r.text());
+            return r.json();
+        },
+
+        async getPriceTargets(symbol) {
+            const resp = await fetch(this.baseURL + `/api/v1/research/${encodeURIComponent(symbol)}/targets`, {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async setPriceTargets(symbol, body) {
+            const resp = await fetch(this.baseURL + `/api/v1/research/${encodeURIComponent(symbol)}/targets`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(body)
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async getDividends() {
+            const resp = await fetch(this.baseURL + '/api/v1/analytics/dividends', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async getPerformance(benchmark, period = 'all') {
+            const params = [];
+            if (benchmark) params.push(`benchmark=${encodeURIComponent(benchmark)}`);
+            params.push(`period=${encodeURIComponent(period || 'all')}`);
+            const url = this.baseURL + '/api/v1/analytics/performance?' + params.join('&');
+            const resp = await fetch(url, {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async getNetworthHistory() {
+            const resp = await fetch(this.baseURL + '/api/v1/analytics/networth-history', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async getTaxEstimate(year) {
+            const url = this.baseURL + '/api/v1/analytics/tax-estimate'
+                + (year ? `?year=${encodeURIComponent(year)}` : '');
+            const resp = await fetch(url, {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async getDiversification() {
+            const resp = await fetch(this.baseURL + '/api/v1/analytics/diversification', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async getRisk() {
+            const resp = await fetch(this.baseURL + '/api/v1/analytics/risk', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async getFees() {
+            const resp = await fetch(this.baseURL + '/api/v1/analytics/fees', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async getWatchlist() {
+            const resp = await fetch(this.baseURL + '/api/v1/watchlist/', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async addWatchlist(body) {
+            const resp = await fetch(this.baseURL + '/api/v1/watchlist/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(body)
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async deleteWatchlist(symbol) {
+            const resp = await fetch(this.baseURL + `/api/v1/watchlist/${encodeURIComponent(symbol)}`, {
+                method: 'DELETE',
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+        },
+
+        async getGoals() {
+            const resp = await fetch(this.baseURL + '/api/v1/goals/', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async createGoal(body) {
+            const resp = await fetch(this.baseURL + '/api/v1/goals/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(body)
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async deleteGoal(id) {
+            const resp = await fetch(this.baseURL + `/api/v1/goals/${id}`, {
+                method: 'DELETE',
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+        }
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Modal Manager
+// ---------------------------------------------------------------------------
+function createModalManager() {
+    return {
+        setupAddAssetModal: function() {
+            const form = document.getElementById('addAssetForm');
+            if (!form) {
+                console.error('Add Asset form not found!');
+                return;
+            }
+
+            // Pre-fill the currency from the user's default each time it opens.
+            const addAssetModalEl = document.getElementById('addAssetModal');
+            if (addAssetModalEl) {
+                addAssetModalEl.addEventListener('show.bs.modal', () => {
+                    const c = document.getElementById('assetCurrency');
+                    if (c) c.value = (window.PREFS && window.PREFS.defaultCurrency) || 'EUR';
+                });
+            }
+
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+
+                const symbolEl   = document.getElementById('assetSymbol');
+                const nameEl     = document.getElementById('assetName');
+                const typeEl     = document.getElementById('assetType');
+                const exchangeEl = document.getElementById('assetExchange');
+                const currencyEl = document.getElementById('assetCurrency');
+                const sectorEl   = document.getElementById('assetSector');
+                const descEl     = document.getElementById('assetDescription');
+
+                if (!symbolEl || !nameEl || !typeEl) {
+                    alert('Form elements not found. Please refresh the page.');
+                    return;
+                }
+
+                const assetData = {
+                    symbol:      symbolEl.value || null,
+                    name:        nameEl.value || null,
+                    asset_type:  typeEl.value || null,
+                    exchange:    exchangeEl ? (exchangeEl.value || null) : null,
+                    currency:    currencyEl ? (currencyEl.value || 'USD') : 'USD',
+                    sector:      sectorEl ? (sectorEl.value || null) : null,
+                    description: descEl ? (descEl.value || null) : null
+                };
+
+                if (!assetData.symbol || !assetData.name || !assetData.asset_type) {
+                    alert('Please fill in all required fields (Symbol, Name, Asset Type)');
+                    return;
+                }
+
+                try {
+                    await window.apiClient.createAsset(assetData);
+                    alert('Asset created successfully!');
+
+                    const modal = bootstrap.Modal.getInstance(document.getElementById('addAssetModal'));
+                    if (modal) modal.hide();
+
+                    if (window.navigationManager.currentPage === 'assets') {
+                        window.pageManager.loadAssetsPage();
+                    }
+
+                    form.reset();
+                } catch (error) {
+                    console.error('Asset creation failed:', error);
+                    alert('Error creating asset: ' + error.message);
+                }
+            });
+        }
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Import helpers
+// ---------------------------------------------------------------------------
+
+const BROKER_HINTS = {
+    indexacapital: 'Export from IndexaCapital → "Mis fondos" → Download CSV.',
+    coinbase: 'Export from Coinbase → Reports → Generate → Transaction History CSV.',
+    pdt: 'Export from Portfolio Dividend Tracker (app.portfoliodividendtracker.com) → Download XLSX.',
+    bookings: 'Generic cash CSV with columns: date, action (deposit/withdrawal), amount, currency, broker (optional). Delimiter and decimal style are auto-detected.',
+};
+
+// Shown above an import preview when some rows already exist in the DB. The
+// <select id="ioDupAction"> value is read by the save handlers.
+function _dupControl(transactions, bookings) {
+    const dupTx = (transactions || []).filter(t => t.is_duplicate).length;
+    const dupBk = (bookings || []).filter(b => b.is_duplicate).length;
+    const total = dupTx + dupBk;
+    if (total === 0) return '';
+    return `
+        <div class="alert alert-warning py-2 small d-flex flex-wrap align-items-center gap-2 mb-2">
+            <span><i class="bi bi-exclamation-triangle me-1"></i><strong>${total}</strong> row(s) already exist (marked <span class="badge bg-warning text-dark">dup</span> below).</span>
+            <label class="ms-auto mb-0 d-flex align-items-center">On duplicates:
+                <select id="ioDupAction" class="form-select form-select-sm d-inline-block w-auto ms-1">
+                    <option value="skip">Skip them</option>
+                    <option value="add">Import anyway (add copy)</option>
+                    <option value="overwrite">Overwrite existing</option>
+                </select>
+            </label>
+        </div>`;
+}
+
+function _dupAction() {
+    const el = document.getElementById('ioDupAction');
+    return el ? el.value : 'skip';
+}
+
+function _buildPreviewTable(transactions, bookings) {
+    bookings = bookings || [];
+    let bookingsSummary = '';
+    if (bookings.length > 0) {
+        const totalDeposits = bookings.filter(b => b.action === 'Deposit').reduce((s, b) => s + b.amount, 0);
+        const totalWithdrawals = bookings.filter(b => b.action === 'Withdrawal').reduce((s, b) => s + b.amount, 0);
+        const parts = [];
+        if (totalDeposits > 0) parts.push(`${bookings.filter(b=>b.action==='Deposit').length} deposit(s) totalling ${totalDeposits.toFixed(2)}`);
+        if (totalWithdrawals > 0) parts.push(`${bookings.filter(b=>b.action==='Withdrawal').length} withdrawal(s) totalling ${totalWithdrawals.toFixed(2)}`);
+        bookingsSummary = `<div class="alert alert-info py-1 mb-2 small"><i class="bi bi-bank me-1"></i><strong>Bookings:</strong> ${parts.join(' + ')} — will be saved automatically.</div>`;
+    }
+    const dupControl = _dupControl(transactions, bookings);
+    if (transactions.length === 0) {
+        return bookingsSummary + dupControl + '<div class="alert alert-warning">No importable transactions found in this file.</div>';
+    }
+    const hasBroker = transactions.some(tx => tx.broker);
+    const dupBadge = '<span class="badge bg-warning text-dark ms-1">dup</span>';
+    const rows = transactions.map((tx, i) => `
+        <tr class="${tx.is_duplicate ? 'table-warning' : ''}">
+            <td><input class="form-check-input file-tx-select" type="checkbox" checked data-idx="${i}"></td>
+            ${hasBroker ? `<td><small>${tx.broker || ''}</small></td>` : ''}
+            <td>${tx.date || ''}${tx.is_duplicate ? dupBadge : ''}</td>
+            <td><strong>${esc(tx.symbol || '')}</strong><br><small class="text-muted">${esc(tx.name || '')}</small></td>
+            <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : tx.tx_type === 'sell' ? 'danger' : 'secondary'}">${(tx.tx_type || '').toUpperCase()}</span></td>
+            <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(Fmt.loc(), {maximumFractionDigits: 4})}</td>
+            <td class="text-end">${parseFloat(tx.price || 0).toFixed(4)}</td>
+            <td>${tx.currency || ''}</td>
+            <td class="text-end">${parseFloat(tx.fees || 0).toFixed(2)}</td>
+        </tr>
+    `).join('');
+    return bookingsSummary + dupControl + `
+        <p class="text-muted small mb-2">Found <strong>${transactions.length}</strong> transaction(s). Uncheck any to skip.
+        ${hasBroker ? ' <span class="badge bg-info">Broker column detected — portfolios will be auto-assigned.</span>' : ''}</p>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover">
+                <thead><tr><th></th>${hasBroker ? '<th>Portfolio</th>' : ''}<th>Date</th><th>Asset</th><th>Type</th><th class="text-end">Qty</th><th class="text-end">Price</th><th>Currency</th><th class="text-end">Fees</th></tr></thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
+    `;
+}
+
+// ---------------------------------------------------------------------------
+// File Import Modal (Transactions page)
+// ---------------------------------------------------------------------------
+
+function setupFileImportModal() {
+    const modal = document.getElementById('fileImportModal');
+    if (!modal) return;
+
+    const step1 = document.getElementById('fileImportStep1');
+    const step2 = document.getElementById('fileImportStep2');
+    const parseBtn = document.getElementById('fileImportParseBtn');
+    const saveBtn = document.getElementById('fileImportSaveBtn');
+    const backBtn = document.getElementById('fileImportBackBtn');
+    const brokerSelect = document.getElementById('fileImportBroker');
+    const fileInput = document.getElementById('fileImportFile');
+    const hint = document.getElementById('fileImportHint');
+    const results = document.getElementById('fileImportResults');
+
+    let parsedTransactions = [];
+    let parsedBookings = [];
+
+    brokerSelect.addEventListener('change', () => {
+        const h = BROKER_HINTS[brokerSelect.value];
+        if (h) { hint.textContent = h; hint.style.display = ''; }
+        else hint.style.display = 'none';
+    });
+
+    function showStep1() {
+        step1.style.display = '';
+        step2.style.display = 'none';
+        parseBtn.style.display = '';
+        saveBtn.style.display = 'none';
+        backBtn.style.display = 'none';
+    }
+
+    function showStep2(transactions, bookings, skippedCount) {
+        step1.style.display = 'none';
+        step2.style.display = '';
+        parseBtn.style.display = 'none';
+        saveBtn.style.display = (transactions.length > 0 || bookings.length > 0) ? '' : 'none';
+        backBtn.style.display = '';
+        let html = _buildPreviewTable(transactions, bookings);
+        if (skippedCount > 0) {
+            html += `<p class="text-muted small mt-2"><i class="bi bi-info-circle me-1"></i>${skippedCount} row(s) skipped (non-trade entries, incomplete data, etc.)</p>`;
+        }
+        results.innerHTML = html;
+    }
+
+    modal.addEventListener('hidden.bs.modal', () => {
+        fileInput.value = '';
+        brokerSelect.value = '';
+        hint.style.display = 'none';
+        parsedTransactions = [];
+        parsedBookings = [];
+        showStep1();
+    });
+
+    backBtn.addEventListener('click', showStep1);
+
+    parseBtn.addEventListener('click', async () => {
+        const broker = brokerSelect.value;
+        const file = fileInput.files[0];
+        if (!broker) { alert('Please select a broker.'); return; }
+        if (!file) { alert('Please select a file.'); return; }
+
+        parseBtn.disabled = true;
+        parseBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Parsing...';
+        try {
+            const data = await window.apiClient.uploadBrokerFile(broker, file);
+            parsedTransactions = data.transactions || [];
+            parsedBookings = data.bookings || [];
+            showStep2(parsedTransactions, parsedBookings, data.skipped_count || 0);
+        } catch (err) {
+            alert('Error parsing file: ' + err.message);
+        } finally {
+            parseBtn.disabled = false;
+            parseBtn.innerHTML = '<i class="bi bi-search me-2"></i>Parse File';
+        }
+    });
+
+    saveBtn.addEventListener('click', async () => {
+        const selected = Array.from(document.querySelectorAll('.file-tx-select:checked'))
+            .map(cb => parsedTransactions[parseInt(cb.dataset.idx)]);
+        if (selected.length === 0 && parsedBookings.length === 0) { alert('No transactions selected.'); return; }
+
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving...';
+        try {
+            const result = await window.apiClient.saveImportedTransactions(selected, parsedBookings, null, _dupAction());
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = '<i class="bi bi-check-lg me-2"></i>Save Selected';
+            bootstrap.Modal.getInstance(modal).hide();
+            const bkMsg = result.saved_bookings > 0 ? ` + ${result.saved_bookings} booking(s)` : '';
+            const msg = result.errors.length > 0
+                ? `Saved ${result.saved}${bkMsg}. Errors:\n${result.errors.join('\n')}`
+                : `Successfully imported ${result.saved} transaction(s)${bkMsg}.`;
+            alert(msg);
+            window.pageManager.loadTransactionsPage();
+        } catch (err) {
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = '<i class="bi bi-check-lg me-2"></i>Save Selected';
+            alert('Error saving: ' + err.message);
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
+// LLM Import Modal (Transactions page)
+// ---------------------------------------------------------------------------
+
+function setupLlmImportModal() {
+    const modal = document.getElementById('llmImportModal');
+    if (!modal) return;
+
+    const step1 = document.getElementById('llmImportStep1');
+    const step2 = document.getElementById('llmImportStep2');
+    const extractBtn = document.getElementById('llmImportExtractBtn');
+    const saveBtn = document.getElementById('llmImportSaveBtn');
+    const backBtn = document.getElementById('llmImportBackBtn');
+    const textarea = document.getElementById('llmImportText');
+    const results = document.getElementById('llmImportResults');
+    const portfolioSelect = document.getElementById('llmImportPortfolio');
+
+    let extractedTransactions = [];
+
+    // Populate portfolio dropdown when modal opens
+    modal.addEventListener('show.bs.modal', async () => {
+        if (portfolioSelect && portfolioSelect.options.length <= 1) {
+            try {
+                const portfolios = await window.apiClient.getPortfolios();
+                portfolios.forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p.id;
+                    opt.textContent = p.name;
+                    portfolioSelect.appendChild(opt);
+                });
+            } catch (e) { /* silent */ }
+        }
+    });
+
+    function showStep1() {
+        step1.style.display = '';
+        step2.style.display = 'none';
+        extractBtn.style.display = '';
+        saveBtn.style.display = 'none';
+        backBtn.style.display = 'none';
+    }
+
+    function showStep2(transactions) {
+        step1.style.display = 'none';
+        step2.style.display = '';
+        extractBtn.style.display = 'none';
+        saveBtn.style.display = transactions.length > 0 ? '' : 'none';
+        backBtn.style.display = '';
+
+        if (transactions.length === 0) {
+            results.innerHTML = '<div class="alert alert-warning">No transactions could be extracted from the provided text.</div>';
+            return;
+        }
+
+        const rows = transactions.map((tx, i) => `
+            <tr>
+                <td><input class="form-check-input tx-select" type="checkbox" checked data-idx="${i}"></td>
+                <td>${tx.date || ''}</td>
+                <td><strong>${esc(tx.symbol || '')}</strong><br><small class="text-muted">${esc(tx.asset_name || '')}</small></td>
+                <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : tx.tx_type === 'sell' ? 'danger' : 'info'}">${(tx.tx_type || '').toUpperCase()}</span></td>
+                <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString()}</td>
+                <td class="text-end">${parseFloat(tx.price || 0).toFixed(4)}</td>
+                <td>${tx.currency || ''}</td>
+                <td class="text-end text-muted">${(parseFloat(tx.fees) || 0) > 0 ? parseFloat(tx.fees).toFixed(2) : '—'}</td>
+            </tr>
+        `).join('');
+
+        results.innerHTML = `
+            <p class="text-muted small mb-2">Found <strong>${transactions.length}</strong> transaction(s). Uncheck any you don't want to import.</p>
+            <div class="table-responsive">
+                <table class="table table-sm table-hover">
+                    <thead><tr><th></th><th>Date</th><th>Asset</th><th>Type</th><th class="text-end">Qty</th><th class="text-end">Price</th><th>Currency</th><th class="text-end">Fees</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+        `;
+    }
+
+    modal.addEventListener('hidden.bs.modal', () => {
+        textarea.value = '';
+        extractedTransactions = [];
+        showStep1();
+    });
+
+    backBtn.addEventListener('click', showStep1);
+
+    extractBtn.addEventListener('click', async () => {
+        const text = textarea.value.trim();
+        if (!text) { alert('Please paste some broker statement text first.'); return; }
+
+        extractBtn.disabled = true;
+        extractBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Extracting...';
+
+        try {
+            const data = await window.apiClient.extractTransactions(text);
+            extractedTransactions = data.transactions || [];
+            showStep2(extractedTransactions);
+        } catch (err) {
+            alert('Error extracting transactions: ' + err.message);
+        } finally {
+            extractBtn.disabled = false;
+            extractBtn.innerHTML = '<i class="bi bi-magic me-2"></i>Extract Transactions';
+        }
+    });
+
+    saveBtn.addEventListener('click', async () => {
+        const checked = Array.from(document.querySelectorAll('.tx-select:checked'))
+            .map(cb => extractedTransactions[parseInt(cb.dataset.idx)]);
+
+        if (checked.length === 0) { alert('No transactions selected.'); return; }
+
+        // Normalise LLM transactions to the import/save schema
+        const normalized = checked.map(tx => ({
+            symbol: tx.symbol,
+            name: tx.asset_name || tx.symbol,
+            asset_type: 'stock',
+            tx_type: tx.tx_type,
+            date: tx.date,
+            quantity: tx.quantity,
+            price: tx.price,
+            currency: tx.currency || 'EUR',
+            fees: parseFloat(tx.fees) || 0.0,
+            notes: tx.raw_text || ''
+        }));
+
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving...';
+
+        try {
+            const portfolioId = portfolioSelect && portfolioSelect.value ? parseInt(portfolioSelect.value) : null;
+            const result = await window.apiClient.saveImportedTransactions(normalized, [], portfolioId);
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = '<i class="bi bi-check-lg me-2"></i>Save All';
+            bootstrap.Modal.getInstance(modal).hide();
+            const msg = result.errors.length > 0
+                ? `Saved ${result.saved}${result.duplicates_skipped ? `, ${result.duplicates_skipped} duplicate(s) skipped` : ''}. Errors:\n${result.errors.filter(e => !e.startsWith('DUPLICATE')).join('\n')}`
+                : `Successfully imported ${result.saved} transaction(s)${result.duplicates_skipped ? `, ${result.duplicates_skipped} duplicate(s) skipped` : ''}.`;
+            alert(msg);
+            window.pageManager.loadTransactionsPage();
+        } catch (err) {
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = '<i class="bi bi-check-lg me-2"></i>Save All';
+            alert('Error saving: ' + err.message);
+        }
+    });
+}
+
+// ---------------------------------------------------------------------------
