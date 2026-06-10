@@ -33,7 +33,7 @@ dependencies = [
 [tool.uv]
 package = false
 dev-dependencies = [
-    "black",
+    "black==25.1.0",
     "pytest",
     "pre-commit",
     "pytest-asyncio",
