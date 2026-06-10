@@ -4,6 +4,119 @@
 // and MUST load in this order: pfm_core, pfm_pages, pfm_analytics,
 // pfm_features. See index.html.
 
+// Dashboard Top Positions state + rendering. _dashHoldingsAll backs the KPIs,
+// donut and the table when broker=all; _dashTopHoldings backs the table when a
+// broker filter is active (separate per-broker fetch).
+let _dashHoldingsAll = [];
+let _dashTopHoldings = [];
+
+function _dashTypeBadge(t) {
+    return ({ stock: 'bg-primary', etf: 'bg-info', index: 'bg-success', crypto: 'bg-warning text-dark', bond: 'bg-secondary', p2p: 'bg-dark' }[t] || 'bg-secondary');
+}
+
+function renderDashTopPositions() {
+    const cfg = window.PREFS.dashTopPositions || { n: 5, type: 'all', broker: 'all', sort: 'value' };
+    const body = document.querySelector('#dashTopPositionsTable tbody');
+    if (!body) return;
+
+    // Right column shows € P&L for the "total" sorts, otherwise % P&L.
+    const isTotal = cfg.sort === 'gain_total' || cfg.sort === 'loss_total';
+    const hdr = document.getElementById('dashTopPnlHeader');
+    if (hdr) hdr.textContent = isTotal ? 'P&L (EUR)' : 'P&L %';
+
+    const rows = topPositions(_dashTopHoldings, { n: cfg.n, type: cfg.type, sort: cfg.sort });
+    if (rows.length === 0) {
+        body.innerHTML = '<tr><td colspan="4" class="text-center text-muted ps-3 py-3">No positions match this filter.</td></tr>';
+        return;
+    }
+    body.innerHTML = rows.map(h => {
+        const valEur = parseFloat(h.total_value_eur || h.total_value || 0);
+        const pnlPct = parseFloat(h.pnl_pct || 0);
+        const pnlAmt = parseFloat(h.pnl_amount || 0);
+        const metric = isTotal ? pnlAmt : pnlPct;
+        const cls = metric >= 0 ? 'text-success' : 'text-danger';
+        const txt = isTotal
+            ? (metric >= 0 ? '+' : '') + metric.toLocaleString(Fmt.loc(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+            : (metric >= 0 ? '+' : '') + metric.toLocaleString(Fmt.loc(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%';
+        const name = h.name || h.symbol || '';
+        return `
+        <tr>
+            <td class="ps-3" style="max-width:220px;">
+                <div class="fw-semibold text-truncate" title="${esc(name)}">${esc(name)}</div>
+                <div class="small text-muted">${esc(h.symbol || '')} ${assetLinks(h.symbol)}</div>
+            </td>
+            <td><span class="badge ${_dashTypeBadge(h.asset_type)}">${esc((h.asset_type || '').toUpperCase())}</span></td>
+            <td class="text-end">${valEur.toLocaleString(Fmt.loc(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+            <td class="text-end pe-3 ${cls} fw-semibold">${txt}</td>
+        </tr>`;
+    }).join('');
+}
+
+// Re-fetch the table's backing data if a broker filter is active, else reuse
+// the all-broker holdings; then render.
+async function refreshDashTopHoldings() {
+    const cfg = window.PREFS.dashTopPositions || {};
+    if (cfg.broker && cfg.broker !== 'all') {
+        const data = await window.apiClient.getHoldings(cfg.broker);
+        _dashTopHoldings = (data && data.holdings) || [];
+    } else {
+        _dashTopHoldings = _dashHoldingsAll;
+    }
+    renderDashTopPositions();
+}
+
+// Populate the Type (from current holdings) and Broker (from portfolios) selects
+// and apply saved values. Wire change handlers once.
+async function setupDashTopControls() {
+    const cfg = window.PREFS.dashTopPositions || { n: 5, type: 'all', broker: 'all', sort: 'value' };
+    const elN = document.getElementById('dashTopN');
+    const elType = document.getElementById('dashTopType');
+    const elBroker = document.getElementById('dashTopBroker');
+    const elSort = document.getElementById('dashTopSort');
+    if (!elN || !elType || !elBroker || !elSort) return;
+
+    // Type options from the asset types actually present.
+    const types = [...new Set(_dashHoldingsAll
+        .filter(h => parseFloat(h.quantity || 0) > 0)
+        .map(h => h.asset_type || 'other'))].sort();
+    elType.innerHTML = '<option value="all">All</option>' +
+        types.map(t => `<option value="${esc(t)}">${esc(t.toUpperCase())}</option>`).join('');
+
+    // Broker options from portfolios.
+    try {
+        const ps = await window.apiClient.getPortfolios();
+        const list = Array.isArray(ps) ? ps : (ps.portfolios || []);
+        elBroker.innerHTML = '<option value="all">All</option>' +
+            list.map(p => `<option value="${esc(String(p.id))}">${esc(p.name || '')}</option>`).join('');
+    } catch (e) { /* keep just "All" */ }
+
+    // Apply saved values (fall back to defaults if an option no longer exists).
+    elN.value = String(cfg.n);
+    elType.value = [...elType.options].some(o => o.value === cfg.type) ? cfg.type : 'all';
+    elBroker.value = [...elBroker.options].some(o => o.value === String(cfg.broker)) ? String(cfg.broker) : 'all';
+    elSort.value = cfg.sort;
+
+    // Wire once.
+    const save = (patch, refetch) => {
+        window.PREFS.dashTopPositions = Object.assign({}, window.PREFS.dashTopPositions, patch);
+        savePrefs();
+        if (refetch) refreshDashTopHoldings(); else renderDashTopPositions();
+    };
+    if (!elN._bound) { elN._bound = true; elN.addEventListener('change', () => save({ n: elN.value }, false)); }
+    if (!elType._bound) { elType._bound = true; elType.addEventListener('change', () => save({ type: elType.value }, false)); }
+    if (!elSort._bound) { elSort._bound = true; elSort.addEventListener('change', () => save({ sort: elSort.value }, false)); }
+    if (!elBroker._bound) { elBroker._bound = true; elBroker.addEventListener('change', () => save({ broker: elBroker.value }, true)); }
+
+    const gear = document.getElementById('dashTopConfigBtn');
+    const panel = document.getElementById('dashTopControls');
+    if (gear && panel && !gear._bound) {
+        gear._bound = true;
+        gear.addEventListener('click', () => {
+            panel.style.display = panel.style.display === 'none' ? '' : 'none';
+        });
+    }
+}
+
 // Page Manager
 // ---------------------------------------------------------------------------
 function createPageManager() {
@@ -162,36 +275,10 @@ function createPageManager() {
                     : (openPositions === 1 ? '1 position' : openPositions + ' positions');
             }
 
-            // --- Top 5 positions table ---
-            const topBody = document.querySelector('#dashTopPositionsTable tbody');
-            if (topBody) {
-                const sorted = holdings
-                    .filter(h => parseFloat(h.quantity || 0) > 0)
-                    .sort((a, b) => parseFloat(b.total_value_eur || b.total_value || 0) - parseFloat(a.total_value_eur || a.total_value || 0))
-                    .slice(0, 5);
-
-                if (sorted.length === 0) {
-                    topBody.innerHTML = '<tr><td colspan="4" class="text-center text-muted ps-3 py-3">No positions yet. Add buy transactions to see them here.</td></tr>';
-                } else {
-                    const typeBadge = t => ({ stock: 'bg-primary', etf: 'bg-info', index: 'bg-success', crypto: 'bg-warning text-dark', bond: 'bg-secondary', p2p: 'bg-dark' }[t] || 'bg-secondary');
-                    topBody.innerHTML = sorted.map(h => {
-                        const pnlPct  = parseFloat(h.pnl_pct || 0);
-                        const valEur  = parseFloat(h.total_value_eur || h.total_value || 0);
-                        const pnlClass = pnlPct >= 0 ? 'text-success' : 'text-danger';
-                        const name    = h.name || h.symbol || '';
-                        return `
-                        <tr>
-                            <td class="ps-3" style="max-width:220px;">
-                                <div class="fw-semibold text-truncate" title="${name}">${name}</div>
-                                <div class="small text-muted">${esc(h.symbol || '')} ${assetLinks(h.symbol)}</div>
-                            </td>
-                            <td><span class="badge ${typeBadge(h.asset_type)}">${(h.asset_type || '').toUpperCase()}</span></td>
-                            <td class="text-end">${valEur.toLocaleString(Fmt.loc(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                            <td class="text-end pe-3 ${pnlClass} fw-semibold">${fmtPct(pnlPct)}</td>
-                        </tr>`;
-                    }).join('');
-                }
-            }
+            // --- Top positions (configurable) ---
+            _dashHoldingsAll = holdings;
+            await setupDashTopControls();
+            await refreshDashTopHoldings();
 
             // --- Allocation donut chart ---
             const donutArea = el('dashDonutArea');
