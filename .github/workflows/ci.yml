@@ -19,6 +19,8 @@ jobs:
         run: uv sync --frozen
       - name: Black (format check)
         run: uv run black --check .
+      - name: Ruff (lint)
+        run: uv run ruff check portf_manager portf_server
       - name: Flake8 (lint)
         run: uv run flake8 portf_manager portf_server --max-line-length=88 --extend-ignore=E203,W503,E501
 
