@@ -2638,10 +2638,16 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <!-- Markdown rendering for chat responses -->
     <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
 
-    <!-- Centralized help text (must load before portfolio_debug.js) -->
+    <!-- Centralized help text (must load before the app scripts) -->
     <script src="js/help_text.js?v=1780000006"></script>
 
-    <!-- Custom JavaScript -->
-    <script src="js/portfolio_debug.js?v=1780000040"></script>
+    <!-- App scripts: portfolio_debug.js was split into these four classic
+         scripts. They share one global scope and MUST load in this order:
+         core → pages → analytics → features (features carries the
+         DOMContentLoaded bootstrap, so it loads last). -->
+    <script src="js/pfm_core.js?v=1780000041"></script>
+    <script src="js/pfm_pages.js?v=1780000041"></script>
+    <script src="js/pfm_analytics.js?v=1780000041"></script>
+    <script src="js/pfm_features.js?v=1780000041"></script>
 </body>
 </html>

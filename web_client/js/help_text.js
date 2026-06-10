@@ -1,5 +1,5 @@
 // Centralized help text for the Portfolio Manager web client.
-// Loaded BEFORE portfolio_debug.js so the globals are available when pages render.
+// Loaded BEFORE the app scripts (pfm_core/pages/analytics/features) so its globals are available when pages render.
 
 // Short metric explanations for tooltips (data-bs-toggle="tooltip" title=...).
 window.METRIC_HELP = {
