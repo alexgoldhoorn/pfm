@@ -80,3 +80,6 @@ docker-compose.override.yml
 service-account.json
 *.session
 .portf_session
+
+# DB safety backups (never commit — contain real data)
+*.db.bak-*

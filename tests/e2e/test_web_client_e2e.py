@@ -10,7 +10,6 @@ import asyncio
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext
 import json
 import time
-from typing import Dict, Any
 
 
 @pytest.fixture(scope="session")
@@ -111,7 +110,8 @@ class TestWebClientSmoke:
     async def test_navigation_elements(self, page: Page):
         """Test basic navigation elements."""
         # Mock a simple HTML structure for testing
-        await page.set_content("""
+        await page.set_content(
+            """
         <!DOCTYPE html>
         <html>
         <head>
@@ -129,7 +129,8 @@ class TestWebClientSmoke:
             </main>
         </body>
         </html>
-        """)
+        """
+        )
 
         # Check navigation elements exist
         navbar = await page.query_selector("#navbar")
@@ -151,7 +152,8 @@ class TestWebClientSmoke:
     @pytest.mark.slow
     async def test_dashboard_elements(self, page: Page):
         """Test dashboard elements are present."""
-        await page.set_content("""
+        await page.set_content(
+            """
         <!DOCTYPE html>
         <html>
         <head>
@@ -172,7 +174,8 @@ class TestWebClientSmoke:
             </div>
         </body>
         </html>
-        """)
+        """
+        )
 
         # Check dashboard components
         portfolio_value = await page.query_selector("#portfolio-value")
@@ -192,7 +195,8 @@ class TestWebClientSmoke:
     @pytest.mark.slow
     async def test_assets_page_functionality(self, page: Page):
         """Test assets page basic functionality."""
-        await page.set_content("""
+        await page.set_content(
+            """
         <!DOCTYPE html>
         <html>
         <head>
@@ -233,14 +237,15 @@ class TestWebClientSmoke:
                 document.getElementById('add-asset-btn').addEventListener('click', function() {
                     document.getElementById('add-asset-modal').style.display = 'block';
                 });
-                
+
                 document.getElementById('cancel-add-asset').addEventListener('click', function() {
                     document.getElementById('add-asset-modal').style.display = 'none';
                 });
             </script>
         </body>
         </html>
-        """)
+        """
+        )
 
         # Test add asset button opens modal
         add_asset_btn = await page.query_selector("#add-asset-btn")
@@ -279,7 +284,8 @@ class TestWebClientSmoke:
     @pytest.mark.slow
     async def test_transactions_page_functionality(self, page: Page):
         """Test transactions page basic functionality."""
-        await page.set_content("""
+        await page.set_content(
+            """
         <!DOCTYPE html>
         <html>
         <head>
@@ -321,7 +327,8 @@ class TestWebClientSmoke:
             </div>
         </body>
         </html>
-        """)
+        """
+        )
 
         # Test filter elements
         symbol_filter = await page.query_selector("#symbol-filter")
@@ -357,7 +364,8 @@ class TestWebClientSmoke:
     @pytest.mark.slow
     async def test_responsive_design(self, page: Page):
         """Test responsive design on different screen sizes."""
-        await page.set_content("""
+        await page.set_content(
+            """
         <!DOCTYPE html>
         <html>
         <head>
@@ -367,7 +375,7 @@ class TestWebClientSmoke:
                 .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
                 .nav-desktop { display: block; }
                 .nav-mobile { display: none; }
-                
+
                 @media (max-width: 768px) {
                     .nav-desktop { display: none; }
                     .nav-mobile { display: block; }
@@ -383,7 +391,8 @@ class TestWebClientSmoke:
             </div>
         </body>
         </html>
-        """)
+        """
+        )
 
         # Test desktop view (default 1280x720)
         desktop_nav = await page.query_selector(".nav-desktop")
@@ -398,8 +407,8 @@ class TestWebClientSmoke:
         await page.set_viewport_size({"width": 375, "height": 667})
         await page.wait_for_timeout(100)  # Wait for CSS to apply
 
-        desktop_visible_mobile = await desktop_nav.is_visible()
-        mobile_visible_mobile = await mobile_nav.is_visible()
+        await desktop_nav.is_visible()
+        await mobile_nav.is_visible()
 
         # Note: CSS media queries might not work in this test setup
         # This is more of a structural test
@@ -411,7 +420,8 @@ class TestWebClientSmoke:
     @pytest.mark.slow
     async def test_error_handling(self, page: Page):
         """Test error handling in web client."""
-        await page.set_content("""
+        await page.set_content(
+            """
         <!DOCTYPE html>
         <html>
         <head>
@@ -423,7 +433,7 @@ class TestWebClientSmoke:
                 <button id="close-error">Close</button>
             </div>
             <button id="trigger-error">Trigger Error</button>
-            
+
             <script>
                 function showError(message) {
                     const container = document.getElementById('error-container');
@@ -431,21 +441,22 @@ class TestWebClientSmoke:
                     messageEl.textContent = message;
                     container.style.display = 'block';
                 }
-                
+
                 function hideError() {
                     const container = document.getElementById('error-container');
                     container.style.display = 'none';
                 }
-                
+
                 document.getElementById('trigger-error').addEventListener('click', function() {
                     showError('This is a test error message');
                 });
-                
+
                 document.getElementById('close-error').addEventListener('click', hideError);
             </script>
         </body>
         </html>
-        """)
+        """
+        )
 
         # Test error display
         trigger_btn = await page.query_selector("#trigger-error")
@@ -473,7 +484,8 @@ class TestWebClientSmoke:
     @pytest.mark.slow
     async def test_form_validation(self, page: Page):
         """Test client-side form validation."""
-        await page.set_content("""
+        await page.set_content(
+            """
         <!DOCTYPE html>
         <html>
         <head>
@@ -487,35 +499,36 @@ class TestWebClientSmoke:
                 <button type="submit" id="submit-btn">Submit</button>
             </form>
             <div id="validation-message" style="display: none; color: red;"></div>
-            
+
             <script>
                 document.getElementById('test-form').addEventListener('submit', function(e) {
                     e.preventDefault();
-                    
+
                     const symbol = document.getElementById('symbol').value;
                     const quantity = document.getElementById('quantity').value;
                     const email = document.getElementById('email').value;
                     const messageEl = document.getElementById('validation-message');
-                    
+
                     if (!symbol || !quantity || !email) {
                         messageEl.textContent = 'All fields are required';
                         messageEl.style.display = 'block';
                         return;
                     }
-                    
+
                     if (quantity < 1) {
                         messageEl.textContent = 'Quantity must be at least 1';
                         messageEl.style.display = 'block';
                         return;
                     }
-                    
+
                     messageEl.style.display = 'none';
                     alert('Form submitted successfully!');
                 });
             </script>
         </body>
         </html>
-        """)
+        """
+        )
 
         # Test empty form submission
         submit_btn = await page.query_selector("#submit-btn")
@@ -564,7 +577,8 @@ class TestWebClientPerformance:
     @pytest.mark.slow
     async def test_page_load_time(self, page: Page):
         """Test page load performance."""
-        await page.set_content("""
+        await page.set_content(
+            """
         <!DOCTYPE html>
         <html>
         <head>
@@ -584,16 +598,19 @@ class TestWebClientPerformance:
             </script>
         </body>
         </html>
-        """)
+        """
+        )
 
         # Measure load time
-        performance_timing = await page.evaluate("""
+        performance_timing = await page.evaluate(
+            """
             () => {
                 const entries = performance.getEntriesByType('measure');
                 const pageLoad = entries.find(entry => entry.name === 'page-load');
                 return pageLoad ? pageLoad.duration : null;
             }
-        """)
+        """
+        )
 
         # Page should load quickly (adjust threshold as needed)
         if performance_timing:
@@ -607,7 +624,8 @@ class TestWebClientPerformance:
         # Generate HTML for a large table
         table_rows = []
         for i in range(100):
-            table_rows.append(f"""
+            table_rows.append(
+                f"""
                 <tr>
                     <td>{i + 1}</td>
                     <td>STOCK{i:03d}</td>
@@ -615,7 +633,8 @@ class TestWebClientPerformance:
                     <td>${100 + i}.00</td>
                     <td>{10 * (i + 1)}</td>
                 </tr>
-            """)
+            """
+            )
 
         table_html = f"""
         <!DOCTYPE html>
@@ -670,7 +689,8 @@ class TestWebClientAccessibility:
     @pytest.mark.slow
     async def test_keyboard_navigation(self, page: Page):
         """Test keyboard navigation functionality."""
-        await page.set_content("""
+        await page.set_content(
+            """
         <!DOCTYPE html>
         <html>
         <head>
@@ -683,7 +703,8 @@ class TestWebClientAccessibility:
             <button id="btn3" tabindex="4">Button 3</button>
         </body>
         </html>
-        """)
+        """
+        )
 
         # Test Tab navigation
         await page.focus("#btn1")
@@ -710,7 +731,8 @@ class TestWebClientAccessibility:
     @pytest.mark.slow
     async def test_aria_labels(self, page: Page):
         """Test ARIA labels and accessibility attributes."""
-        await page.set_content("""
+        await page.set_content(
+            """
         <!DOCTYPE html>
         <html>
         <head>
@@ -735,7 +757,8 @@ class TestWebClientAccessibility:
             </table>
         </body>
         </html>
-        """)
+        """
+        )
 
         # Test ARIA labels
         add_btn_label = await page.get_attribute("#add-btn", "aria-label")
