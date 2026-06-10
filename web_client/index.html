@@ -476,8 +476,9 @@
                                 <option value="commodity">Commodity</option>
                             </select>
                         </div>
-                        <div class="col-12 col-sm-5">
-                            <input type="text" class="form-control form-control-sm" id="assetSearchInput" placeholder="Search assets...">
+                        <div class="col-12 col-sm-5 position-relative">
+                            <input type="text" class="form-control form-control-sm" id="assetSearchInput" autocomplete="off" placeholder="Search by name, ticker or alias…">
+                            <div id="assetSuggest" class="list-group position-absolute w-100 shadow-sm" style="z-index:1050; display:none; max-height:260px; overflow-y:auto;"></div>
                         </div>
                         <div class="col-12 col-sm-3">
                             <button class="btn btn-sm btn-outline-secondary w-100" id="refreshAssets" title="Refresh assets list">
@@ -553,6 +554,10 @@
                                 <option value="">All Portfolios</option>
                             </select>
                         </div>
+                        <div class="col-12 col-sm-6 col-md-3 position-relative">
+                            <input type="text" class="form-control form-control-sm" id="txAssetFilter" autocomplete="off" placeholder="Filter by name or ticker…">
+                            <div id="txAssetSuggest" class="list-group position-absolute w-100 shadow-sm" style="z-index:1050; display:none; max-height:260px; overflow-y:auto;"></div>
+                        </div>
                         <div class="col-6 col-md-2">
                             <select class="form-select form-select-sm" id="transactionTypeFilter">
                                 <option value="">All Types</option>
@@ -569,8 +574,8 @@
                         <div class="col-6 col-md-2">
                             <input type="date" class="form-control form-control-sm" id="toDate">
                         </div>
-                        <div class="col-6 col-md-3">
-                            <button class="btn btn-sm btn-outline-secondary w-100" id="refreshTransactionsPage" title="Refresh transaction list">
+                        <div class="col-6 col-md-auto">
+                            <button class="btn btn-sm btn-outline-secondary" id="refreshTransactionsPage" title="Refresh transaction list">
                                 <i class="bi bi-arrow-clockwise me-1"></i>Refresh
                             </button>
                         </div>
@@ -764,14 +769,14 @@
                     </div>
 
                     <!-- Sub-navigation: each tab lazy-loads only its own sections -->
-                    <ul class="nav nav-pills flex-wrap mb-3" id="analyticsTabs">
-                        <li class="nav-item"><button type="button" class="nav-link active" data-an-tab="performance"><i class="bi bi-speedometer2 me-1"></i>Performance &amp; Net Worth</button></li>
-                        <li class="nav-item"><button type="button" class="nav-link" data-an-tab="dividends"><i class="bi bi-cash-coin me-1"></i>Dividends</button></li>
-                        <li class="nav-item"><button type="button" class="nav-link" data-an-tab="gainloss"><i class="bi bi-trophy me-1"></i>Gain / Loss</button></li>
-                        <li class="nav-item"><button type="button" class="nav-link" data-an-tab="tax"><i class="bi bi-receipt me-1"></i>Tax</button></li>
-                        <li class="nav-item"><button type="button" class="nav-link" data-an-tab="risk"><i class="bi bi-shield-check me-1"></i>Risk &amp; Diversification</button></li>
-                        <li class="nav-item"><button type="button" class="nav-link" data-an-tab="fees"><i class="bi bi-cash-stack me-1"></i>Fees &amp; Costs</button></li>
-                    </ul>
+                    <div class="d-flex flex-wrap gap-1 mb-3" id="analyticsTabs">
+                        <button type="button" class="btn btn-sm btn-outline-secondary active" data-an-tab="performance"><i class="bi bi-speedometer2 me-1"></i>Performance &amp; Net Worth</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-an-tab="dividends"><i class="bi bi-cash-coin me-1"></i>Dividends</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-an-tab="gainloss"><i class="bi bi-trophy me-1"></i>Gain / Loss</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-an-tab="tax"><i class="bi bi-receipt me-1"></i>Tax</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-an-tab="risk"><i class="bi bi-shield-check me-1"></i>Risk &amp; Diversification</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-an-tab="fees"><i class="bi bi-cash-stack me-1"></i>Fees &amp; Costs</button>
+                    </div>
 
                     <!-- a) Performance -->
                     <div class="card mb-4" data-an-section="performance">
@@ -960,9 +965,10 @@
                         </div>
                         <div class="card-body">
                             <form id="addWatchlistForm" class="row g-2 align-items-end">
-                                <div class="col-6 col-sm-3 col-md-2">
+                                <div class="col-6 col-sm-3 col-md-2 position-relative">
                                     <label class="form-label small mb-1">Symbol *</label>
-                                    <input type="text" class="form-control form-control-sm" id="addWatchlistSymbol" placeholder="e.g. AAPL" required>
+                                    <input type="text" class="form-control form-control-sm" id="addWatchlistSymbol" autocomplete="off" placeholder="e.g. AAPL" required>
+                                    <div id="watchlistSymbolSuggest" class="list-group position-absolute w-100 shadow-sm" style="z-index:1050; display:none; max-height:260px; overflow-y:auto;"></div>
                                 </div>
                                 <div class="col-6 col-sm-3 col-md-2">
                                     <label class="form-label small mb-1">Buy below</label>

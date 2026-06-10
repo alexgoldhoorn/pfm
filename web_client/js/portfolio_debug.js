@@ -349,6 +349,154 @@ function applyPrivacy() {
 applyTheme();  // before first paint
 
 // ---------------------------------------------------------------------------
+// AssetSearch — shared asset autocomplete matching used by all search inputs
+// ---------------------------------------------------------------------------
+const AssetSearch = (() => {
+    // Maps a term the user might type → lowercase fragment that must appear in the
+    // asset name. Covers popular tickers with non-obvious Yahoo symbols, class-share
+    // variants, and common company nicknames. `acronymOf` (below) derives first-letter
+    // acronyms automatically, so this table only needs hand-crafted entries.
+    const ALIASES = {
+        // US Tech
+        GOOGL: 'alphabet', GOOG: 'alphabet', GOOGLE: 'alphabet',
+        META: 'meta platforms', FB: 'meta platforms', FACEBOOK: 'meta platforms',
+        AMZN: 'amazon', MSFT: 'microsoft', AAPL: 'apple', NVDA: 'nvidia',
+        TSLA: 'tesla', NFLX: 'netflix', PYPL: 'paypal', DIS: 'walt disney',
+        AMD: 'advanced micro devices', INTC: 'intel corporation',
+        AVGO: 'broadcom', QCOM: 'qualcomm',
+        ORCL: 'oracle', CRM: 'salesforce', NOW: 'servicenow',
+        ADBE: 'adobe', INTU: 'intuit',
+        // Class-share / exchange variants
+        ISRG: 'intuitive surgical',   // Yahoo may suffix with A (ISRGA)
+        BRKB: 'berkshire', BRKA: 'berkshire', BRK: 'berkshire', BERKSHIRE: 'berkshire',
+        // US Finance
+        JPM: 'jpmorgan', GS: 'goldman sachs', MS: 'morgan stanley',
+        WFC: 'wells fargo', BAC: 'bank of america', C: 'citigroup',
+        V: 'visa', MA: 'mastercard', AXP: 'american express',
+        BLK: 'blackrock', SCHW: 'charles schwab',
+        // US Healthcare / Pharma
+        JNJ: 'johnson', UNH: 'unitedhealth', LLY: 'eli lilly',
+        ABBV: 'abbvie', MRK: 'merck', PFE: 'pfizer', CVS: 'cvs health',
+        // US Consumer / Industrial
+        NKE: 'nike', SBUX: 'starbucks', MCD: 'mcdonalds',
+        KO: 'coca-cola', PEP: 'pepsico', PG: 'procter', PROCTER: 'procter',
+        HD: 'home depot', LOW: 'lowe', TGT: 'target', WMT: 'walmart',
+        BA: 'boeing', GE: 'general electric', MMM: '3m company', CAT: 'caterpillar',
+        // European
+        LVMH: 'lvmh', 'LOUIS VUITTON': 'lvmh', MOET: 'moet',
+        LOREAL: "l'oreal", LOR: "l'oreal",
+        NESTLE: 'nestle', NOVARTIS: 'novartis', ROCHE: 'roche',
+        SIEMENS: 'siemens', ALLIANZ: 'allianz', BASF: 'basf',
+        VW: 'volkswagen', VOLKSWAGEN: 'volkswagen',
+        AIRBUS: 'airbus',
+        // Semiconductors / Global
+        TSM: 'taiwan semiconductor', TSMC: 'taiwan semiconductor',
+        NVO: 'novo nordisk', NOVO: 'novo nordisk',
+        ASML: 'asml',
+    };
+
+    // Strips exchange and currency-pair suffixes so users can omit them:
+    // "ASML.AS" → "ASML",  "BTC-EUR" → "BTC",  "BRK.B" → "BRK"
+    function baseTicker(symbol) {
+        return (symbol || '').replace(/[.\-][A-Z0-9]+$/i, '').toUpperCase();
+    }
+
+    // First letter of each word in the name → "Advanced Micro Devices" → "AMD"
+    function acronymOf(name) {
+        const words = (name || '').replace(/[^A-Za-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
+        if (words.length < 2) return '';
+        return words.map(w => w[0]).join('').toUpperCase();
+    }
+
+    // Returns ALIASES keys whose target fragment appears in this asset's name.
+    function aliasesFor(name) {
+        const n = (name || '').toLowerCase();
+        return Object.keys(ALIASES).filter(a => n.includes(ALIASES[a]));
+    }
+
+    // Produce a search-ready asset object. Pass extra fields (currency, source, …) as extras.
+    function enrich(symbol, name, extras = {}) {
+        return {
+            symbol, name: name || '', ...extras,
+            acronym: acronymOf(name),
+            aliases: aliasesFor(name),
+            base: baseTicker(symbol),
+        };
+    }
+
+    // Score and rank assets against query. Returns up to `limit` best matches.
+    function match(query, assets, limit = 10) {
+        const q = (query || '').trim().toLowerCase();
+        if (!q) return [];
+        const scored = assets.map(s => {
+            const sym  = (s.symbol  || '').toLowerCase();
+            const name = (s.name    || '').toLowerCase();
+            const acr  = (s.acronym || acronymOf(s.name)).toLowerCase();
+            const base = (s.base    || baseTicker(s.symbol)).toLowerCase();
+            const al   = (s.aliases || aliasesFor(s.name)).map(a => a.toLowerCase());
+            let score = -1;
+            if (sym === q)                                         score = 0;    // exact symbol
+            else if (base === q)                                   score = 0.5;  // exact base (ASML ↔ ASML.AS)
+            else if (sym.startsWith(q))                            score = 1;    // symbol prefix
+            else if (base.startsWith(q))                           score = 1.5;  // base prefix
+            else if (acr === q || al.some(a => a === q))           score = 2;    // exact acronym/alias
+            else if (name.startsWith(q))                           score = 3;    // name prefix
+            else if (acr.startsWith(q) || al.some(a => a.startsWith(q))) score = 3.5;
+            else if (sym.includes(q))                              score = 4;
+            else if (name.includes(q))                             score = 5;
+            return { s, score };
+        }).filter(x => x.score >= 0).sort((a, b) => a.score - b.score).slice(0, limit);
+        return scored.map(x => x.s);
+    }
+
+    // Wire a full autocomplete UI on an input+dropdown pair.
+    // opts: { getSuggestions, onSelect, onInput, renderItem, limit, clearOnEscape }
+    function buildAutocomplete(inputEl, suggestEl, opts = {}) {
+        const { getSuggestions, onSelect, onInput, limit = 10, clearOnEscape = false } = opts;
+        const renderItem = opts.renderItem || (s => `
+            <button type="button" class="list-group-item list-group-item-action py-1 px-2" data-sym="${s.symbol}">
+                <strong>${s.symbol}</strong>
+                ${s.name ? `<div class="small text-muted text-truncate">${s.name}</div>` : ''}
+            </button>`);
+        let activeIdx = -1;
+        const hideSuggest = () => { suggestEl.style.display = 'none'; activeIdx = -1; };
+        const showSuggest = (q) => {
+            const assets = getSuggestions ? getSuggestions() : [];
+            const hits = match(q, assets, limit);
+            if (!hits.length) { hideSuggest(); return; }
+            suggestEl.innerHTML = hits.map(renderItem).join('');
+            suggestEl.querySelectorAll('[data-sym]').forEach(b => {
+                b.addEventListener('mousedown', e => {
+                    e.preventDefault();
+                    const asset = hits.find(h => h.symbol === b.dataset.sym) || { symbol: b.dataset.sym };
+                    inputEl.value = asset.symbol;
+                    hideSuggest();
+                    if (onSelect) onSelect(asset);
+                });
+            });
+            activeIdx = -1;
+            suggestEl.style.display = '';
+        };
+        inputEl.addEventListener('input', () => { showSuggest(inputEl.value); if (onInput) onInput(inputEl.value); });
+        inputEl.addEventListener('focus', () => { if (inputEl.value) showSuggest(inputEl.value); });
+        inputEl.addEventListener('blur', () => setTimeout(hideSuggest, 150));
+        inputEl.addEventListener('keydown', e => {
+            const items = suggestEl.querySelectorAll('[data-sym]');
+            if (suggestEl.style.display !== 'none' && items.length) {
+                if (e.key === 'ArrowDown') { e.preventDefault(); activeIdx = Math.min(activeIdx + 1, items.length - 1); }
+                else if (e.key === 'ArrowUp') { e.preventDefault(); activeIdx = Math.max(activeIdx - 1, 0); }
+                else if (e.key === 'Enter' && activeIdx >= 0) { e.preventDefault(); items[activeIdx].dispatchEvent(new Event('mousedown')); return; }
+                items.forEach((it, i) => it.classList.toggle('active', i === activeIdx));
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') return;
+            }
+            if (e.key === 'Escape') { hideSuggest(); if (clearOnEscape) { inputEl.value = ''; if (onInput) onInput(''); } }
+        });
+    }
+
+    return { enrich, match, buildAutocomplete, baseTicker, acronymOf, aliasesFor };
+})();
+
+// ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
 
@@ -1486,38 +1634,89 @@ function createPageManager() {
         },
 
         loadAssetsPage: async function() {
+            const tableBody = document.querySelector('#assetsPage tbody');
+            if (tableBody) tableBody.innerHTML = '<tr><td colspan="7" class="text-center"><div class="spinner-border spinner-border-sm me-2"></div>Loading…</td></tr>';
             try {
                 const assets = await window.apiClient.getAssets();
-                const tableBody = document.querySelector('#assetsPage tbody');
 
-                if (tableBody) {
-                    if (assets.length === 0) {
-                        tableBody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">No assets found. Click "Add Asset" to create your first asset.</td></tr>';
-                    } else {
-                        tableBody.innerHTML = assets.map(asset => `
-                            <tr>
-                                <td><strong>${asset.symbol || 'N/A'}</strong></td>
-                                <td>${asset.name || 'N/A'}</td>
-                                <td><span class="badge bg-primary">${asset.asset_type || 'N/A'}</span></td>
-                                <td>${asset.exchange || 'N/A'}</td>
-                                <td>
-                                    ${fmtPrice(asset.current_price, asset.currency)}
-                                    ${asset.auto_price === false ? '<span class="badge bg-secondary ms-1" title="Manual price — the daily cron will not overwrite it">manual</span>' : ''}
-                                    <button class="btn btn-sm btn-link p-0 ms-1 align-baseline" title="Set a manual price" onclick="setAssetPrice(${asset.id}, '${(asset.symbol || '').replace(/'/g, "\\'")}', '${asset.currency || ''}')"><i class="bi bi-pencil-square"></i></button>
-                                </td>
-                                <td>${asset.currency || ''}</td>
-                                <td>
-                                    ${assetLinks(asset.symbol)}
-                                </td>
-                            </tr>
-                        `).join('');
-                    }
+                this._assetsData = assets;
+                this._assetSuggestions = assets
+                    .filter(a => a.symbol)
+                    .map(a => AssetSearch.enrich(a.symbol, a.name));
+
+                // Wire filters once per page lifecycle
+                const page = document.getElementById('assetsPage');
+                if (page && !page.dataset.filtersWired) {
+                    page.dataset.filtersWired = '1';
+                    document.getElementById('assetTypeFilter')
+                        ?.addEventListener('change', () => this._renderFilteredAssets());
+                    document.getElementById('refreshAssets')
+                        ?.addEventListener('click', () => this.loadAssetsPage());
+                    this._setupAssetAutocomplete();
                 }
+
+                this._renderFilteredAssets();
                 this.hideLoadingSpinners();
             } catch (error) {
                 console.error('Error loading assets page:', error);
+                if (tableBody) tableBody.innerHTML = '<tr><td colspan="7" class="text-center text-danger">Error loading assets.</td></tr>';
                 this.hideLoadingSpinners();
             }
+        },
+
+        _renderFilteredAssets: function() {
+            const tableBody = document.querySelector('#assetsPage tbody');
+            if (!tableBody || !this._assetsData) return;
+
+            const typeVal   = document.getElementById('assetTypeFilter')?.value || '';
+            const searchVal = (document.getElementById('assetSearchInput')?.value || '').trim();
+
+            let filtered = this._assetsData;
+            if (typeVal) filtered = filtered.filter(a => a.asset_type === typeVal);
+            if (searchVal) {
+                // Smart match using AssetSearch (no result limit — this is a table filter)
+                const matched = new Set(
+                    AssetSearch.match(searchVal, this._assetSuggestions || [], this._assetsData.length)
+                        .map(s => s.symbol)
+                );
+                // Also let exchange substring through (not in AssetSearch scoring)
+                const sq = searchVal.toLowerCase();
+                filtered = filtered.filter(a =>
+                    matched.has(a.symbol) || (a.exchange || '').toLowerCase().includes(sq)
+                );
+            }
+
+            if (filtered.length === 0) {
+                tableBody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">No assets match the current filters.</td></tr>';
+            } else {
+                tableBody.innerHTML = filtered.map(asset => `
+                    <tr>
+                        <td><strong>${asset.symbol || 'N/A'}</strong></td>
+                        <td>${asset.name || 'N/A'}</td>
+                        <td><span class="badge bg-primary">${asset.asset_type || 'N/A'}</span></td>
+                        <td>${asset.exchange || 'N/A'}</td>
+                        <td>
+                            ${fmtPrice(asset.current_price, asset.currency)}
+                            ${asset.auto_price === false ? '<span class="badge bg-secondary ms-1" title="Manual price — the daily cron will not overwrite it">manual</span>' : ''}
+                            <button class="btn btn-sm btn-link p-0 ms-1 align-baseline" title="Set a manual price" onclick="setAssetPrice(${asset.id}, '${(asset.symbol || '').replace(/'/g, "\\'")}', '${asset.currency || ''}')"><i class="bi bi-pencil-square"></i></button>
+                        </td>
+                        <td>${asset.currency || ''}</td>
+                        <td>${assetLinks(asset.symbol)}</td>
+                    </tr>`).join('');
+            }
+        },
+
+        _setupAssetAutocomplete: function() {
+            const input   = document.getElementById('assetSearchInput');
+            const suggest = document.getElementById('assetSuggest');
+            if (!input || !suggest) return;
+            const self = this;
+            AssetSearch.buildAutocomplete(input, suggest, {
+                getSuggestions: () => self._assetSuggestions || [],
+                onSelect: () => self._renderFilteredAssets(),
+                onInput:  () => self._renderFilteredAssets(),
+                clearOnEscape: true,
+            });
         },
 
         loadDashboardPage: async function() {
@@ -1757,9 +1956,14 @@ function createPageManager() {
                 }
 
                 // Unify into one date-sorted list (trades + cash bookings).
+                // Each row carries filter metadata alongside its HTML.
                 const rows = [];
                 transactions.forEach(tx => rows.push({
                     date: tx.transaction_date,
+                    txType: tx.transaction_type || '',
+                    sym: (tx.symbol || '').toLowerCase(),
+                    txName: (tx.name || '').toLowerCase(),
+                    isBooking: false,
                     html: `
                         <tr>
                             <td>${Fmt.date(tx.transaction_date)}</td>
@@ -1787,6 +1991,10 @@ function createPageManager() {
                     const isDep = b.action === 'Deposit';
                     rows.push({
                         date: b.date,
+                        txType: '',
+                        sym: '',
+                        txName: '',
+                        isBooking: true,
                         html: `
                         <tr class="tx-cash-row">
                             <td>${Fmt.date(b.date)}</td>
@@ -1808,19 +2016,82 @@ function createPageManager() {
                     });
                 });
 
-                if (rows.length === 0) {
-                    tableBody.innerHTML = '<tr><td colspan="10" class="text-center text-muted">No transactions or cash movements found.</td></tr>';
-                } else {
-                    // Newest first; fall back to stable order when dates match
-                    rows.sort((a, b) => String(b.date).localeCompare(String(a.date)));
-                    tableBody.innerHTML = rows.map(r => r.html).join('');
+                // Newest first; fall back to stable order when dates match
+                rows.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+
+                // Store for client-side filter re-renders
+                this._txAllRows = rows;
+
+                // Build autocomplete suggestions from unique symbols in loaded transactions
+                const symMap = new Map();
+                transactions.forEach(tx => {
+                    if (tx.symbol && !symMap.has(tx.symbol)) {
+                        symMap.set(tx.symbol, AssetSearch.enrich(tx.symbol, tx.name));
+                    }
+                });
+                this._txSuggestions = [...symMap.values()].sort((a, b) => a.symbol.localeCompare(b.symbol));
+
+                // Wire client-side filters once per page lifecycle
+                const page = document.getElementById('transactionsPage');
+                if (page && !page.dataset.filtersWired) {
+                    page.dataset.filtersWired = '1';
+                    ['transactionTypeFilter', 'fromDate', 'toDate'].forEach(id => {
+                        const el = document.getElementById(id);
+                        if (el) el.addEventListener('change', () => this._renderFilteredTx());
+                    });
+                    this._setupTxAssetAutocomplete();
                 }
+
+                this._renderFilteredTx();
             } catch (error) {
                 console.error('Error loading transactions:', error);
                 tableBody.innerHTML = '<tr><td colspan="10" class="text-center text-danger">Error loading transactions.</td></tr>';
             }
 
             this.hideLoadingSpinners();
+        },
+
+        _renderFilteredTx: function() {
+            const tableBody = document.querySelector('#transactionsPage tbody');
+            if (!tableBody || !this._txAllRows) return;
+
+            const typeVal = document.getElementById('transactionTypeFilter')?.value || '';
+            const fromVal = document.getElementById('fromDate')?.value || '';
+            const toVal = document.getElementById('toDate')?.value || '';
+            const assetVal = (document.getElementById('txAssetFilter')?.value || '').trim().toLowerCase();
+
+            const filtered = this._txAllRows.filter(r => {
+                if (typeVal) {
+                    if (r.isBooking) return false;
+                    if (r.txType !== typeVal) return false;
+                }
+                if (fromVal && r.date < fromVal) return false;
+                if (toVal && r.date > toVal) return false;
+                if (assetVal) {
+                    if (r.isBooking) return false;
+                    if (!r.sym.includes(assetVal) && !r.txName.includes(assetVal)) return false;
+                }
+                return true;
+            });
+
+            if (filtered.length === 0) {
+                tableBody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4">No transactions match the current filters.</td></tr>';
+            } else {
+                tableBody.innerHTML = filtered.map(r => r.html).join('');
+            }
+        },
+
+        _setupTxAssetAutocomplete: function() {
+            const input = document.getElementById('txAssetFilter');
+            const suggest = document.getElementById('txAssetSuggest');
+            if (!input || !suggest) return;
+            const self = this;
+            AssetSearch.buildAutocomplete(input, suggest, {
+                getSuggestions: () => self._txSuggestions || [],
+                onSelect: () => self._renderFilteredTx(),
+                onInput: () => self._renderFilteredTx(),
+                clearOnEscape: true,
+            });
         },
 
         loadHoldingsPage: async function() {
@@ -3358,6 +3629,35 @@ function setupWatchlistPage() {
     const status = document.getElementById('watchlistFormStatus');
     if (refreshBtn) refreshBtn.addEventListener('click', loadWatchlist);
     if (!form) return;
+
+    // Autocomplete for the symbol input — suggestions come from holdings + all assets.
+    // Fetched asynchronously so the form is immediately usable, suggestions appear once ready.
+    let watchlistSymbolSuggestions = [];
+    const symInput   = document.getElementById('addWatchlistSymbol');
+    const symSuggest = document.getElementById('watchlistSymbolSuggest');
+    if (symInput && symSuggest) {
+        AssetSearch.buildAutocomplete(symInput, symSuggest, {
+            getSuggestions: () => watchlistSymbolSuggestions,
+            clearOnEscape: false,
+        });
+        (async () => {
+            try {
+                const [holdingsData, assets] = await Promise.all([
+                    window.apiClient.getHoldings().catch(() => ({ holdings: [] })),
+                    window.apiClient.getAssets().catch(() => []),
+                ]);
+                const map = new Map();
+                (holdingsData.holdings || []).forEach(h => {
+                    if (h.symbol) map.set(h.symbol, AssetSearch.enrich(h.symbol, h.name));
+                });
+                (assets || []).forEach(a => {
+                    if (a.symbol && !map.has(a.symbol)) map.set(a.symbol, AssetSearch.enrich(a.symbol, a.name));
+                });
+                watchlistSymbolSuggestions = [...map.values()].sort((a, b) => a.symbol.localeCompare(b.symbol));
+            } catch (e) { /* non-fatal — autocomplete just won't suggest */ }
+        })();
+    }
+
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const symbol = document.getElementById('addWatchlistSymbol').value.trim();
@@ -5284,30 +5584,6 @@ function setupResearchPage() {
     // — populated on page open.
     let suggestions = [];
 
-    // Curated nicknames for names that don't reduce to a clean acronym (acronyms
-    // like "Advanced Micro Devices" → "AMD" are derived automatically below).
-    // Maps an alias the user might type → a lowercase fragment of the asset name.
-    const TICKER_ALIASES = {
-        AMD: 'advanced micro devices',
-        GOOGL: 'alphabet', GOOG: 'alphabet', GOOGLE: 'alphabet',
-        META: 'meta platforms', FB: 'meta platforms', FACEBOOK: 'meta platforms',
-        BRK: 'berkshire', BERKSHIRE: 'berkshire',
-        NVDA: 'nvidia', AMZN: 'amazon', MSFT: 'microsoft', AAPL: 'apple',
-        TSLA: 'tesla', NFLX: 'netflix', PYPL: 'paypal', DIS: 'walt disney',
-    };
-
-    // First letter of each word → "International Business Machines" → "IBM".
-    function acronymOf(name) {
-        const words = (name || '').replace(/[^A-Za-z0-9 ]/g, ' ').split(/\s+/).filter(Boolean);
-        if (words.length < 2) return '';
-        return words.map(w => w[0]).join('').toUpperCase();
-    }
-    // Curated aliases whose target fragment appears in this asset's name.
-    function aliasesFor(name) {
-        const n = (name || '').toLowerCase();
-        return Object.keys(TICKER_ALIASES).filter(a => n.includes(TICKER_ALIASES[a]));
-    }
-
     // Tabs
     page.querySelectorAll('#researchTabs [data-rtab]').forEach(a => {
         a.addEventListener('click', (e) => {
@@ -5609,29 +5885,7 @@ function setupResearchPage() {
     function hideSuggest() { suggestBox.style.display = 'none'; activeIdx = -1; }
 
     function matchSuggestions(q) {
-        q = (q || '').trim().toLowerCase();
-        if (!q) return [];
-        // Match on symbol, name, auto-acronym, or curated alias; symbol-prefix
-        // matches rank first, then acronym/alias, then name.
-        const scored = suggestions
-            .map(s => {
-                const sym = (s.symbol || '').toLowerCase();
-                const name = (s.name || '').toLowerCase();
-                const acr = (s.acronym || '').toLowerCase();
-                const aliases = (s.aliases || []).map(a => a.toLowerCase());
-                let score = -1;
-                if (sym.startsWith(q)) score = 0;
-                else if (acr === q || aliases.includes(q)) score = 1;
-                else if (name.startsWith(q)) score = 2;
-                else if (acr.startsWith(q) || aliases.some(a => a.startsWith(q))) score = 2.5;
-                else if (sym.includes(q)) score = 3;
-                else if (name.includes(q)) score = 4;
-                return { s, score };
-            })
-            .filter(x => x.score >= 0)
-            .sort((a, b) => a.score - b.score)
-            .slice(0, 10);
-        return scored.map(x => x.s);
+        return AssetSearch.match(q, suggestions, 10);
     }
 
     function renderSuggest(q) {
@@ -5828,18 +6082,14 @@ function setupResearchPage() {
                 window.apiClient.getWatchlist().catch(() => []),
             ]);
             const bySym = new Map();
-            const mk = (symbol, name, currency, source) => ({
-                symbol, name: name || '', currency: currency || '', source,
-                acronym: acronymOf(name), aliases: aliasesFor(name),
-            });
             (holdings.holdings || []).forEach(h => {
                 if (h.symbol && !bySym.has(h.symbol)) {
-                    bySym.set(h.symbol, mk(h.symbol, h.name, h.currency, 'held'));
+                    bySym.set(h.symbol, AssetSearch.enrich(h.symbol, h.name, { currency: h.currency || '', source: 'held' }));
                 }
             });
             (Array.isArray(watch) ? watch : (watch.watchlist || [])).forEach(w => {
                 if (w.symbol && !bySym.has(w.symbol)) {
-                    bySym.set(w.symbol, mk(w.symbol, w.name, w.currency, 'watchlist'));
+                    bySym.set(w.symbol, AssetSearch.enrich(w.symbol, w.name, { currency: w.currency || '', source: 'watchlist' }));
                 }
             });
             suggestions = [...bySym.values()];
