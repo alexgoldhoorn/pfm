@@ -23,6 +23,7 @@ const PREFS_DEFAULTS = {
     defaultBroker: '',        // portfolio/broker name to preselect on new entries
     holdingsSort: 'value',    // value | pnl | pnlpct | name
     hideBelowEur: 0,          // hide holdings below this EUR value (0 = show all)
+    dashTopPositions: { n: 5, type: 'all', broker: 'all', sort: 'value' },
 };
 window.PREFS = Object.assign({}, PREFS_DEFAULTS, (() => {
     try { return JSON.parse(localStorage.getItem(PREFS_KEY) || '{}'); } catch (e) { return {}; }
@@ -734,9 +735,11 @@ function createAPIClient() {
             if (!response.ok) throw new Error(await response.text());
         },
 
-        async getHoldings() {
+        async getHoldings(portfolioId = null) {
             try {
-                const response = await fetch(this.baseURL + '/api/v1/portfolios/holdings', {
+                const q = (portfolioId != null && portfolioId !== 'all')
+                    ? `?portfolio_id=${encodeURIComponent(portfolioId)}` : '';
+                const response = await fetch(this.baseURL + '/api/v1/portfolios/holdings' + q, {
                     headers: { 'X-API-Key': this.apiKey }
                 });
                 const data = await response.json();
