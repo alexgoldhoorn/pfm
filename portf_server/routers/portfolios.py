@@ -37,17 +37,51 @@ _FX_TTL = 1800  # 30 minutes
 # Seed timestamps so pre-seeded values are valid immediately (not expired)
 _FX_CACHE_TS: dict[str, float] = {k: time.time() for k in _FX_CACHE}
 
+# Shared DB handle for the cross-worker (kv_cache) FX layer, set by the app
+# lifespan at startup. Without it, _get_fx_rate falls back to the per-worker
+# in-process cache only (still correct, just not shared between workers).
+_SHARED_DB = None
+
+
+def set_shared_db(db) -> None:
+    """Register the process-wide Database handle for the shared FX cache."""
+    global _SHARED_DB
+    _SHARED_DB = db
+
 
 def _get_fx_rate(currency: str) -> float:
-    """Return EUR/currency rate with 30-minute in-process cache."""
+    """Return EUR/currency rate, cached two ways.
+
+    L1 is a per-worker in-process dict (fast). L2 is the DB-backed kv_cache,
+    shared across gunicorn workers so they don't each hit yfinance for the same
+    currency. Falls back to the pre-seeded default rate on any failure.
+    """
     if currency == "EUR":
         return 1.0
     now = time.time()
+    # L1: in-process cache
     if currency in _FX_CACHE and now - _FX_CACHE_TS.get(currency, 0) < _FX_TTL:
         return _FX_CACHE[currency]
+    # L2: shared kv_cache (populated by any worker)
+    if _SHARED_DB is not None:
+        try:
+            shared = _SHARED_DB.cache_get(f"fx:{currency}")
+            if shared is not None:
+                _FX_CACHE[currency] = float(shared)
+                _FX_CACHE_TS[currency] = now
+                return _FX_CACHE[currency]
+        except Exception:
+            pass
+    # Live fetch, then write through both cache layers
     try:
         rate = yf.Ticker(f"{currency}EUR=X").fast_info.last_price
-        _FX_CACHE[currency] = float(rate) if rate else _FX_CACHE.get(currency, 1.0)
+        if rate:
+            _FX_CACHE[currency] = float(rate)
+            if _SHARED_DB is not None:
+                try:
+                    _SHARED_DB.cache_set(f"fx:{currency}", float(rate), _FX_TTL)
+                except Exception:
+                    pass
     except Exception:
         logger.warning(f"FX rate {currency}→EUR unavailable, using cached/default")
     _FX_CACHE_TS[currency] = now
