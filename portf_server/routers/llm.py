@@ -39,24 +39,35 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-# Session management (from original)
-_chat_sessions: Dict[str, List[Dict[str, str]]] = {}
+# Chat session history is stored in the DB-backed kv_cache (not a module dict),
+# so it is shared across gunicorn workers and survives a restart — a module dict
+# meant a follow-up message routed to another worker lost all context.
+_CHAT_HISTORY_TTL = 24 * 3600  # forget idle sessions after a day
+_CHAT_HISTORY_MAX = 10  # keep only the last N messages
 
 
-def _ensure_session(session_id: str):
-    if session_id not in _chat_sessions:
-        _chat_sessions[session_id] = []
+def _history_key(session_id: str) -> str:
+    return f"chat:session:{session_id}"
 
 
-def _get_history(session_id: str) -> List[Dict[str, str]]:
-    return _chat_sessions.get(session_id, [])
+def _get_history(db, session_id: str) -> List[Dict[str, str]]:
+    """Return the stored message history for *session_id* (empty if none)."""
+    try:
+        return db.cache_get(_history_key(session_id)) or []
+    except Exception as e:
+        logger.warning(f"chat history read failed for {session_id}: {e}")
+        return []
 
 
-def _append_history(session_id: str, role: str, content: str):
-    if session_id in _chat_sessions:
-        _chat_sessions[session_id].append({"role": role, "content": content})
-        # Keep last 10 messages
-        _chat_sessions[session_id] = _chat_sessions[session_id][-10:]
+def _append_history(db, session_id: str, role: str, content: str) -> None:
+    """Append a message to the session history, trimmed to the last N."""
+    history = _get_history(db, session_id)
+    history.append({"role": role, "content": content})
+    history = history[-_CHAT_HISTORY_MAX:]
+    try:
+        db.cache_set(_history_key(session_id), history, _CHAT_HISTORY_TTL)
+    except Exception as e:
+        logger.warning(f"chat history write failed for {session_id}: {e}")
 
 
 # API Key authentication dependency
@@ -174,7 +185,6 @@ class EnhancedChatEngine:
         """Process enhanced chat request with stock advice integration."""
         try:
             session_id = request.session_id or "default"
-            _ensure_session(session_id)
 
             # Classify intent to determine if we need advanced stock analysis
             intent = IntentClassifier.classify_intent(request.message)
@@ -188,12 +198,12 @@ class EnhancedChatEngine:
 
             # Generate response
             response_text = await self._generate_enhanced_response(
-                request.message, context, session_id
+                request.message, context, session_id, db
             )
 
             # Update session history
-            _append_history(session_id, "user", request.message)
-            _append_history(session_id, "assistant", response_text)
+            _append_history(db, session_id, "user", request.message)
+            _append_history(db, session_id, "assistant", response_text)
 
             return ChatResponse(
                 session_id=session_id,
@@ -489,11 +499,11 @@ class EnhancedChatEngine:
             return {"portfolios": [], "positions": [], "_warnings": [str(e)]}
 
     async def _generate_enhanced_response(
-        self, message: str, context: Dict[str, Any], session_id: str
+        self, message: str, context: Dict[str, Any], session_id: str, db: Database
     ) -> str:
         """Generate enhanced response with both portfolio and stock analysis."""
         # Build enhanced prompt
-        prompt = self._build_enhanced_prompt(message, context, session_id)
+        prompt = self._build_enhanced_prompt(message, context, session_id, db)
 
         try:
             response = await asyncio.to_thread(self.llm.generate, prompt)
@@ -503,7 +513,7 @@ class EnhancedChatEngine:
             return "I apologize, but I'm having trouble accessing the AI service right now. Please try again later."
 
     def _build_enhanced_prompt(
-        self, message: str, context: Dict[str, Any], session_id: str
+        self, message: str, context: Dict[str, Any], session_id: str, db: Database
     ) -> str:
         """Build enhanced prompt combining portfolio and stock analysis context."""
 
@@ -522,7 +532,7 @@ about risks. This is informational, not regulated financial advice.
 """
 
         # Add conversation history
-        history = _get_history(session_id)
+        history = _get_history(db, session_id)
         if history:
             base_prompt += "Previous conversation:\n"
             for msg in history[-4:]:  # Last 4 messages

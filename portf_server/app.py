@@ -97,6 +97,8 @@ async def lifespan(app: FastAPI):
             # For now, fall back to default
             database = Database("portfolio.db")
         logger.info(f"Database initialized successfully ({settings.database_url})")
+        # Register the DB handle for the cross-worker FX cache (kv_cache layer).
+        portfolios.set_shared_db(database)
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")
         raise
