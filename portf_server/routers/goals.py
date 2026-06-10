@@ -62,8 +62,12 @@ def _project(
 
 
 @router.get("/")
-async def list_goals(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
-    """List goals with progress and on-track projection."""
+def list_goals(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+    """List goals with progress and on-track projection.
+
+    Sync (plain ``def``): _current_networth → _fx does blocking FX lookups that
+    would stall the event loop on a cache miss in an async handler.
+    """
     current_nw = _current_networth(db)
     out = []
     today = date.today()

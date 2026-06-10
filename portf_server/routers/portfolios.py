@@ -227,13 +227,16 @@ async def list_portfolios(
 
 
 @router.get("/values")
-async def get_portfolio_values(
+def get_portfolio_values(
     database: Database = Depends(get_database),
 ):
     """Current EUR value, cost, and P&L per portfolio, plus a grand total.
 
     Powers the value column + totals footer on the Portfolios page. Detailed
     positions remain on the Holdings page.
+
+    Sync (plain ``def``) so the blocking FX lookups in ``_get_fx_rate`` run in
+    the threadpool rather than stalling the event loop on a cache miss.
     """
     transactions = database.get_all_transactions()
 
@@ -337,10 +340,14 @@ async def get_portfolio_values(
 
 
 @router.get("/holdings")
-async def get_holdings(
+def get_holdings(
     database: Database = Depends(get_database),
 ):
-    """Get current holdings (positions with total value) computed from transactions."""
+    """Get current holdings (positions with total value) computed from transactions.
+
+    Sync (plain ``def``) so the blocking FX lookups in ``_get_fx_rate`` run in
+    the threadpool rather than stalling the event loop on a cache miss.
+    """
     transactions = database.get_all_transactions()
 
     # Shared chronological position helper (handles buy/sell/splits).

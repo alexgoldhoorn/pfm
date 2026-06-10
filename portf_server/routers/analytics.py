@@ -411,7 +411,7 @@ async def backfill_status(api_key_info: dict = Depends(_auth)):
 
 
 @router.get("/tax-estimate")
-async def get_tax_estimate(
+def get_tax_estimate(
     year: Optional[int] = Query(None, description="Tax year (default current)"),
     db=Depends(get_database),
     api_key_info: dict = Depends(_auth),
@@ -761,7 +761,7 @@ async def get_risk(db=Depends(get_database), api_key_info: dict = Depends(_auth)
 
 
 @router.get("/fees")
-async def get_fees(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def get_fees(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
     """Total fees + tax by broker/portfolio, fee drag as % of invested."""
     by_portfolio: dict[str, dict] = {}
     total_fees = total_tax = total_invested = 0.0
