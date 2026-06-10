@@ -68,6 +68,31 @@ function esc(s) {
 }
 window.esc = esc;
 
+// Pure, DOM-free filter+sort for the dashboard Top Positions card (unit-tested
+// in web_client/js/tests/). Drops zero/negative-quantity positions, filters by
+// asset type, sorts by the chosen mode, then takes the top N.
+function _topVal(h) { return parseFloat(h.total_value_eur || h.total_value || 0); }
+function _topPct(h) { return parseFloat(h.pnl_pct || 0); }
+function _topAmt(h) { return parseFloat(h.pnl_amount || 0); }
+const TOP_POSITION_SORTS = {
+    value:      (a, b) => _topVal(b) - _topVal(a),
+    gain_pct:   (a, b) => _topPct(b) - _topPct(a),
+    loss_pct:   (a, b) => _topPct(a) - _topPct(b),
+    gain_total: (a, b) => _topAmt(b) - _topAmt(a),
+    loss_total: (a, b) => _topAmt(a) - _topAmt(b),
+};
+function topPositions(holdings, opts) {
+    const { n = 5, type = 'all', sort = 'value' } = opts || {};
+    let list = (holdings || []).filter(h => parseFloat(h.quantity || 0) > 0);
+    if (type && type !== 'all') {
+        list = list.filter(h => (h.asset_type || 'other') === type);
+    }
+    list = list.slice().sort(TOP_POSITION_SORTS[sort] || TOP_POSITION_SORTS.value);
+    if (n === 'all' || n == null) return list;
+    return list.slice(0, Number(n));
+}
+window.topPositions = topPositions;
+
 // Dashboard alerts banner: price targets crossed + watchlist buy zones.
 // Loaded async so it never blocks the dashboard (watchlist check hits live
 // prices). Hidden entirely when nothing is triggered.
