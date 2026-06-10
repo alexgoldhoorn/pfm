@@ -5,8 +5,10 @@ Handles user registration, login, logout, and user management.
 """
 
 import os
+import time
+from collections import defaultdict, deque
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer
 from pydantic import BaseModel, Field
 
@@ -14,6 +16,7 @@ from portf_manager.auth import AuthManager, AuthenticationError
 from portf_manager.database import Database
 
 from ..dependencies import get_database, get_auth_manager, get_current_user
+from ..settings import get_settings
 from ..schemas.auth import (
     UserRegistrationRequest,
     UserLoginRequest,
@@ -26,6 +29,29 @@ from ..schemas.auth import (
 router = APIRouter()
 security = HTTPBearer()
 
+# Brute-force slowdown for credential endpoints. In-process (per worker), keyed
+# by client IP + username: enough to throttle online guessing without external
+# infrastructure. A full solution would centralise this in the DB/Redis.
+_LOGIN_MAX_ATTEMPTS = 5
+_LOGIN_WINDOW_SECONDS = 60.0
+_login_attempts: dict[str, deque] = defaultdict(deque)
+
+
+def _enforce_login_rate_limit(request: Request, username: str) -> None:
+    """Raise 429 if too many recent attempts for this client/username."""
+    client = request.client.host if request.client else "unknown"
+    key = f"{client}:{username}"
+    now = time.time()
+    attempts = _login_attempts[key]
+    while attempts and now - attempts[0] > _LOGIN_WINDOW_SECONDS:
+        attempts.popleft()
+    if len(attempts) >= _LOGIN_MAX_ATTEMPTS:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many login attempts. Please wait a minute and try again.",
+        )
+    attempts.append(now)
+
 
 class LoginKeyResponse(BaseModel):
     """Response for password login that returns the API key for data calls."""
@@ -37,6 +63,7 @@ class LoginKeyResponse(BaseModel):
 @router.post("/login-key", response_model=LoginKeyResponse)
 async def login_for_api_key(
     login_data: UserLoginRequest,
+    request: Request,
     auth_manager: AuthManager = Depends(get_auth_manager),
 ):
     """Validate username/password and return the server API key.
@@ -45,6 +72,7 @@ async def login_for_api_key(
     username/password login to that scheme: on valid credentials it returns the
     configured ``SERVER_API_KEY`` so the browser can use it for subsequent calls.
     """
+    _enforce_login_rate_limit(request, login_data.username)
     try:
         auth_manager.login(login_data.username, login_data.password)
     except AuthenticationError as e:
@@ -70,6 +98,7 @@ class ChangePasswordKeyRequest(BaseModel):
 @router.post("/change-password-key", response_model=MessageResponse)
 async def change_password_with_key(
     data: ChangePasswordKeyRequest,
+    request: Request,
     auth_manager: AuthManager = Depends(get_auth_manager),
 ):
     """Change a user's password from the web client.
@@ -79,6 +108,7 @@ async def change_password_with_key(
     the authorisation: we verify it via ``login`` (which sets the session),
     then update to the new password.
     """
+    _enforce_login_rate_limit(request, data.username)
     try:
         auth_manager.login(data.username, data.current_password)
         auth_manager.change_password(data.current_password, data.new_password)
@@ -107,8 +137,15 @@ async def register_user(
         UserResponse: Created user information
 
     Raises:
-        HTTPException: If registration fails
+        HTTPException: If registration is disabled or fails
     """
+    # Self-service registration is gated: with it open, anyone could register
+    # and then exchange those credentials for the shared API key via /login-key.
+    if not get_settings().allow_registration:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Self-service registration is disabled.",
+        )
     try:
         user_id = auth_manager.register_user(
             username=user_data.username,
@@ -142,6 +179,7 @@ async def register_user(
 @router.post("/login", response_model=LoginResponse)
 async def login_user(
     login_data: UserLoginRequest,
+    request: Request,
     auth_manager: AuthManager = Depends(get_auth_manager),
     db: Database = Depends(get_database),
 ):
@@ -159,6 +197,7 @@ async def login_user(
     Raises:
         HTTPException: If login fails
     """
+    _enforce_login_rate_limit(request, login_data.username)
     try:
         session = auth_manager.login(login_data.username, login_data.password)
 
