@@ -16,9 +16,17 @@ from typing import Any
 
 import yfinance as yf
 
-from portf_manager.llm_client import get_llm_client
+import os
+
+from portf_manager.llm_client import OpenRouterLLMClient, get_llm_client
 
 logger = logging.getLogger(__name__)
+
+
+def _is_rate_limited(exc: Exception) -> bool:
+    msg = str(exc)
+    return "429" in msg or "quota" in msg.lower() or "rate limit" in msg.lower()
+
 
 # Fields pulled from yfinance Ticker.info
 _FUNDAMENTAL_FIELDS = [
@@ -187,8 +195,6 @@ def generate_valuation_report(
       fair_value, recommendation (BUY/HOLD/SELL), confidence (high/medium/low),
       summary (≤3 sentences), rationale, risks, catalysts, price_targets
     """
-    llm = get_llm_client()
-
     fund_str = json.dumps(
         {k: v for k, v in fundamentals.items() if k != "symbol"},
         indent=2,
@@ -233,7 +239,23 @@ Be concise and data-driven. If this is a crypto, ETF, or P2P asset where DCF doe
 """
 
     try:
-        raw = llm.generate(prompt).strip()
+        llm = get_llm_client()
+        try:
+            raw = llm.generate(prompt).strip()
+        except Exception as e:
+            if _is_rate_limited(e):
+                or_key = os.getenv("OPENROUTER_API_KEY") or os.getenv(
+                    "PORTF_OPENROUTER_API_KEY"
+                )
+                if or_key:
+                    logger.warning(
+                        f"Primary LLM rate-limited for {symbol}, retrying with OpenRouter"
+                    )
+                    raw = OpenRouterLLMClient(api_key=or_key).generate(prompt).strip()
+                else:
+                    raise
+            else:
+                raise
         # Strip markdown code fences if present
         if raw.startswith("```"):
             raw = "\n".join(
