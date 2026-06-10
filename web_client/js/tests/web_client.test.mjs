@@ -121,3 +121,43 @@ test("Fmt.date respects the date-format preference", () => {
     assert.equal(w.Fmt.date("2026-05-28T14:30:00"), "05-28-2026 14:30");
     assert.equal(w.Fmt.date(""), "");
 });
+
+const SAMPLE_HOLDINGS = [
+    { symbol: "A", asset_type: "stock", quantity: 1, total_value_eur: 100, pnl_pct: 5, pnl_amount: 10 },
+    { symbol: "B", asset_type: "crypto", quantity: 2, total_value_eur: 300, pnl_pct: -8, pnl_amount: -40 },
+    { symbol: "C", asset_type: "stock", quantity: 3, total_value_eur: 200, pnl_pct: 20, pnl_amount: 15 },
+    { symbol: "D", asset_type: "etf", quantity: 0, total_value_eur: 999, pnl_pct: 99, pnl_amount: 99 },
+];
+
+test("topPositions: drops zero-qty, sorts by value desc, slices N", () => {
+    const { topPositions } = loadAppIntoContext();
+    const r = topPositions(SAMPLE_HOLDINGS, { n: 2, type: "all", sort: "value" });
+    assert.deepEqual(r.map((h) => h.symbol), ["B", "C"]); // D dropped (qty 0)
+});
+
+test("topPositions: each sort mode orders correctly", () => {
+    const { topPositions } = loadAppIntoContext();
+    const syms = (sort) =>
+        topPositions(SAMPLE_HOLDINGS, { n: "all", type: "all", sort }).map((h) => h.symbol);
+    assert.deepEqual(syms("value"), ["B", "C", "A"]);        // 300,200,100
+    assert.deepEqual(syms("gain_pct"), ["C", "A", "B"]);     // 20,5,-8
+    assert.deepEqual(syms("loss_pct"), ["B", "A", "C"]);     // -8,5,20
+    assert.deepEqual(syms("gain_total"), ["C", "A", "B"]);   // 15,10,-40
+    assert.deepEqual(syms("loss_total"), ["B", "A", "C"]);   // -40,10,15
+});
+
+test("topPositions: type filter + N='all'", () => {
+    const { topPositions } = loadAppIntoContext();
+    const r = topPositions(SAMPLE_HOLDINGS, { n: "all", type: "stock", sort: "value" });
+    assert.deepEqual(r.map((h) => h.symbol), ["C", "A"]);
+});
+
+test("topPositions: loss sort still returns rows when nothing is negative", () => {
+    const { topPositions } = loadAppIntoContext();
+    const winners = [
+        { symbol: "X", quantity: 1, total_value_eur: 1, pnl_pct: 5, pnl_amount: 5 },
+        { symbol: "Y", quantity: 1, total_value_eur: 1, pnl_pct: 2, pnl_amount: 2 },
+    ];
+    const r = topPositions(winners, { n: 5, type: "all", sort: "loss_pct" });
+    assert.deepEqual(r.map((h) => h.symbol), ["Y", "X"]); // least-positive first
+});
