@@ -6,7 +6,7 @@ Handles portfolio management and analysis.
 
 import time
 from typing import Optional
-from fastapi import APIRouter, HTTPException, status, Depends, Request
+from fastapi import APIRouter, HTTPException, status, Depends, Request, Query
 from pydantic import BaseModel, Field
 import logging
 
@@ -341,14 +341,20 @@ def get_portfolio_values(
 
 @router.get("/holdings")
 def get_holdings(
+    portfolio_id: Optional[int] = Query(
+        None, description="Filter positions to a single broker/portfolio"
+    ),
     database: Database = Depends(get_database),
 ):
     """Get current holdings (positions with total value) computed from transactions.
 
     Sync (plain ``def``) so the blocking FX lookups in ``_get_fx_rate`` run in
     the threadpool rather than stalling the event loop on a cache miss.
+
+    When ``portfolio_id`` is given, positions are computed from only that
+    broker's transactions (a multi-broker asset shows just that broker's slice).
     """
-    transactions = database.get_all_transactions()
+    transactions = database.get_all_transactions(portfolio_id=portfolio_id)
 
     # Shared chronological position helper (handles buy/sell/splits).
     positions, _ = compute_positions(transactions)
