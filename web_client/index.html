@@ -346,11 +346,52 @@
                         <!-- Top 5 Positions -->
                         <div class="col-12 col-lg-7">
                             <div class="card h-100">
-                                <div class="card-header d-flex justify-content-between align-items-center">
-                                    <span><i class="bi bi-bar-chart-steps me-2"></i>Top Positions</span>
-                                    <button class="btn btn-sm btn-outline-secondary" id="refreshTopPositions" title="Refresh top positions">
-                                        <i class="bi bi-arrow-clockwise"></i>
-                                    </button>
+                                <div class="card-header">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <span><i class="bi bi-bar-chart-steps me-2"></i>Top Positions</span>
+                                        <div class="btn-group btn-group-sm">
+                                            <button class="btn btn-outline-secondary" id="dashTopConfigBtn" title="Configure">
+                                                <i class="bi bi-sliders"></i>
+                                            </button>
+                                            <button class="btn btn-outline-secondary" id="refreshTopPositions" title="Refresh top positions">
+                                                <i class="bi bi-arrow-clockwise"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div id="dashTopControls" class="row g-2 mt-2 small" style="display:none;">
+                                        <div class="col-6 col-sm-3">
+                                            <label class="form-label mb-0 text-muted">Show</label>
+                                            <select id="dashTopN" class="form-select form-select-sm">
+                                                <option value="5">Top 5</option>
+                                                <option value="10">Top 10</option>
+                                                <option value="15">Top 15</option>
+                                                <option value="20">Top 20</option>
+                                                <option value="all">All</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-6 col-sm-3">
+                                            <label class="form-label mb-0 text-muted">Type</label>
+                                            <select id="dashTopType" class="form-select form-select-sm">
+                                                <option value="all">All</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-6 col-sm-3">
+                                            <label class="form-label mb-0 text-muted">Broker</label>
+                                            <select id="dashTopBroker" class="form-select form-select-sm">
+                                                <option value="all">All</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-6 col-sm-3">
+                                            <label class="form-label mb-0 text-muted">Sort</label>
+                                            <select id="dashTopSort" class="form-select form-select-sm">
+                                                <option value="value">Value</option>
+                                                <option value="gain_pct">Gain %</option>
+                                                <option value="loss_pct">Loss %</option>
+                                                <option value="gain_total">Gain total</option>
+                                                <option value="loss_total">Loss total</option>
+                                            </select>
+                                        </div>
+                                    </div>
                                 </div>
                                 <div class="card-body p-0">
                                     <div class="table-responsive">
@@ -360,7 +401,7 @@
                                                     <th class="ps-3">Name</th>
                                                     <th>Type</th>
                                                     <th class="text-end">Value (EUR)</th>
-                                                    <th class="text-end pe-3">P&amp;L %</th>
+                                                    <th class="text-end pe-3" id="dashTopPnlHeader">P&amp;L %</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
