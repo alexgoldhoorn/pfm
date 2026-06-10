@@ -9,17 +9,14 @@ import asyncio
 import os
 import tempfile
 import uuid
-from datetime import datetime, date, timedelta
-from typing import AsyncGenerator, Dict, Any, Optional
-from unittest.mock import Mock, AsyncMock
+from datetime import date, timedelta
+from typing import Dict, Any
+from unittest.mock import Mock
 
 import pytest
 import pytest_asyncio
 import httpx
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
 
 from portf_server.app import app
 from portf_server.dependencies import (
@@ -88,7 +85,7 @@ def test_user_data():
 @pytest.fixture
 def test_user(test_auth_manager, test_user_data):
     """Create test user in database."""
-    user_id = test_auth_manager.register_user(**test_user_data)
+    test_auth_manager.register_user(**test_user_data)
     test_auth_manager.login(test_user_data["username"], test_user_data["password"])
     user_data = test_auth_manager.get_current_user()
     yield user_data
@@ -111,9 +108,19 @@ def test_app(test_database, test_auth_manager, test_api_key_manager):
     app.dependency_overrides[get_auth_manager] = lambda: test_auth_manager
     app.dependency_overrides[get_api_key_manager] = lambda: test_api_key_manager
 
+    # Tests exercise the /auth/register HTTP endpoint to set up users; that
+    # endpoint is gated by allow_registration (off in production). Enable it on
+    # the shared settings singleton for the duration of the test.
+    from portf_server.settings import get_settings
+
+    settings = get_settings()
+    prev_allow_registration = settings.allow_registration
+    settings.allow_registration = True
+
     yield app
 
     # Clean up
+    settings.allow_registration = prev_allow_registration
     app.dependency_overrides.clear()
 
 
