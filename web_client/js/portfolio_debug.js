@@ -50,6 +50,18 @@ const Fmt = {
 };
 window.Fmt = Fmt;
 
+// Escape text before interpolating it into innerHTML. Asset names, symbols,
+// notes and broker names come from imported broker files and LLM extraction —
+// untrusted — and the API key lives in localStorage, so an unescaped value
+// could script-inject and exfiltrate it. Use this for any such field.
+function esc(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+}
+window.esc = esc;
+
 // Dashboard alerts banner: price targets crossed + watchlist buy zones.
 // Loaded async so it never blocks the dashboard (watchlist check hits live
 // prices). Hidden entirely when nothing is triggered.
@@ -77,7 +89,7 @@ async function loadDashboardAlerts() {
                         .map(s => {
                             // ISIN/P2P symbols are unreadable; prefer the asset name.
                             const lbl = (s.name && s.name !== s.symbol) ? s.name : s.symbol;
-                            return s.age_days != null ? `${lbl} (${s.age_days}d)` : `${lbl} (no price)`;
+                            return s.age_days != null ? `${esc(lbl)} (${s.age_days}d)` : `${esc(lbl)} (no price)`;
                         })
                         .join(', ');
                     const more = fresh.stale_count > 6 ? ` +${fresh.stale_count - 6} more` : '';
@@ -104,13 +116,13 @@ async function loadDashboardAlerts() {
             const priceDateTxt = a.price_date ? ` <small class="text-muted">[${a.price_date}]</small>` : '';
             (a.triggers || []).forEach(t => {
                 const buy = t.type === 'BUY';
-                const nameTxt = a.name ? ` <span class="text-muted">· ${a.name}</span>` : '';
-                items.push(`<li class="mb-1"><span class="badge bg-${buy ? 'success' : 'danger'} me-2">${t.type}</span><strong>${a.symbol}</strong>${nameTxt} at ${Fmt.num(t.price, 2, 2)} ${cur} ${buy ? '≤ buy-below' : '≥ sell-above'} ${Fmt.num(t.threshold, 2, 2)} ${cur}${posInfo}${priceDateTxt}</li>`);
+                const nameTxt = a.name ? ` <span class="text-muted">· ${esc(a.name)}</span>` : '';
+                items.push(`<li class="mb-1"><span class="badge bg-${buy ? 'success' : 'danger'} me-2">${t.type}</span><strong>${esc(a.symbol)}</strong>${nameTxt} at ${Fmt.num(t.price, 2, 2)} ${cur} ${buy ? '≤ buy-below' : '≥ sell-above'} ${Fmt.num(t.threshold, 2, 2)} ${cur}${posInfo}${priceDateTxt}</li>`);
             });
         });
         (watch.alerts || []).forEach(a => {
             const fetchedTxt = a.price_fetched_at ? ` <small class="text-muted">[${fmtFetchedAt(a.price_fetched_at)}]</small>` : '';
-            items.push(`<li class="mb-1"><span class="badge bg-info text-dark me-2">WATCH</span><strong>${a.symbol}</strong> ${a.name ? '· ' + a.name : ''} at ${Fmt.num(a.price, 2, 2)} entered buy zone (≤ ${Fmt.num(a.buy_below, 2, 2)})${fetchedTxt}</li>`);
+            items.push(`<li class="mb-1"><span class="badge bg-info text-dark me-2">WATCH</span><strong>${esc(a.symbol)}</strong> ${a.name ? '· ' + esc(a.name) : ''} at ${Fmt.num(a.price, 2, 2)} entered buy zone (≤ ${Fmt.num(a.buy_below, 2, 2)})${fetchedTxt}</li>`);
         });
         if (!items.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
         // Dismissal is keyed by the alert content so a *new* alert reappears even
@@ -187,7 +199,7 @@ async function loadDataFreshness() {
 
     const staleList = (f.stale || [])
         .map(s => {
-            const lbl = (s.name && s.name !== s.symbol) ? `${s.symbol} (${s.name})` : s.symbol;
+            const lbl = (s.name && s.name !== s.symbol) ? `${esc(s.symbol)} (${esc(s.name)})` : s.symbol;
             return s.age_days != null ? `${lbl}: ${s.age_days}d old` : `${lbl}: no price`;
         })
         .join('\n');
@@ -455,8 +467,8 @@ const AssetSearch = (() => {
         const { getSuggestions, onSelect, onInput, limit = 10, clearOnEscape = false } = opts;
         const renderItem = opts.renderItem || (s => `
             <button type="button" class="list-group-item list-group-item-action py-1 px-2" data-sym="${s.symbol}">
-                <strong>${s.symbol}</strong>
-                ${s.name ? `<div class="small text-muted text-truncate">${s.name}</div>` : ''}
+                <strong>${esc(s.symbol)}</strong>
+                ${s.name ? `<div class="small text-muted text-truncate">${esc(s.name)}</div>` : ''}
             </button>`);
         let activeIdx = -1;
         const hideSuggest = () => { suggestEl.style.display = 'none'; activeIdx = -1; };
@@ -1350,7 +1362,7 @@ function _buildPreviewTable(transactions, bookings) {
             <td><input class="form-check-input file-tx-select" type="checkbox" checked data-idx="${i}"></td>
             ${hasBroker ? `<td><small>${tx.broker || ''}</small></td>` : ''}
             <td>${tx.date || ''}${tx.is_duplicate ? dupBadge : ''}</td>
-            <td><strong>${tx.symbol || ''}</strong><br><small class="text-muted">${tx.name || ''}</small></td>
+            <td><strong>${esc(tx.symbol || '')}</strong><br><small class="text-muted">${esc(tx.name || '')}</small></td>
             <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : tx.tx_type === 'sell' ? 'danger' : 'secondary'}">${(tx.tx_type || '').toUpperCase()}</span></td>
             <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(Fmt.loc(), {maximumFractionDigits: 4})}</td>
             <td class="text-end">${parseFloat(tx.price || 0).toFixed(4)}</td>
@@ -1534,7 +1546,7 @@ function setupLlmImportModal() {
             <tr>
                 <td><input class="form-check-input tx-select" type="checkbox" checked data-idx="${i}"></td>
                 <td>${tx.date || ''}</td>
-                <td><strong>${tx.symbol || ''}</strong><br><small class="text-muted">${tx.asset_name || ''}</small></td>
+                <td><strong>${esc(tx.symbol || '')}</strong><br><small class="text-muted">${esc(tx.asset_name || '')}</small></td>
                 <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : tx.tx_type === 'sell' ? 'danger' : 'info'}">${(tx.tx_type || '').toUpperCase()}</span></td>
                 <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString()}</td>
                 <td class="text-end">${parseFloat(tx.price || 0).toFixed(4)}</td>
@@ -1691,8 +1703,8 @@ function createPageManager() {
             } else {
                 tableBody.innerHTML = filtered.map(asset => `
                     <tr>
-                        <td><strong>${asset.symbol || 'N/A'}</strong></td>
-                        <td>${asset.name || 'N/A'}</td>
+                        <td><strong>${esc(asset.symbol || 'N/A')}</strong></td>
+                        <td>${esc(asset.name || 'N/A')}</td>
                         <td><span class="badge bg-primary">${asset.asset_type || 'N/A'}</span></td>
                         <td>${asset.exchange || 'N/A'}</td>
                         <td>
@@ -1803,7 +1815,7 @@ function createPageManager() {
                         <tr>
                             <td class="ps-3" style="max-width:220px;">
                                 <div class="fw-semibold text-truncate" title="${name}">${name}</div>
-                                <div class="small text-muted">${h.symbol || ''} ${assetLinks(h.symbol)}</div>
+                                <div class="small text-muted">${esc(h.symbol || '')} ${assetLinks(h.symbol)}</div>
                             </td>
                             <td><span class="badge ${typeBadge(h.asset_type)}">${(h.asset_type || '').toUpperCase()}</span></td>
                             <td class="text-end">${valEur.toLocaleString(Fmt.loc(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
@@ -1891,7 +1903,7 @@ function createPageManager() {
                                 <td class="ps-3">${Fmt.date(tx.transaction_date)}</td>
                                 <td style="max-width:200px;">
                                     <div class="fw-semibold text-truncate" title="${txName}">${txName}</div>
-                                    <div class="small text-muted">${tx.symbol || ''}</div>
+                                    <div class="small text-muted">${esc(tx.symbol || '')}</div>
                                 </td>
                                 <td><span class="badge bg-${typeCls}">${(tx.transaction_type || '').toUpperCase()}</span></td>
                                 <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(Fmt.loc(), { maximumFractionDigits: 4 })}</td>
@@ -1967,8 +1979,8 @@ function createPageManager() {
                     html: `
                         <tr>
                             <td>${Fmt.date(tx.transaction_date)}</td>
-                            <td><small>${tx.portfolio_name || ''}</small></td>
-                            <td><strong>${tx.symbol || ''}</strong> ${assetLinks(tx.symbol)}<br><small class="text-muted">${tx.name || ''}</small></td>
+                            <td><small>${esc(tx.portfolio_name || '')}</small></td>
+                            <td><strong>${esc(tx.symbol || '')}</strong> ${assetLinks(tx.symbol)}<br><small class="text-muted">${esc(tx.name || '')}</small></td>
                             <td><span class="badge bg-${tx.transaction_type === 'buy' ? 'success' : tx.transaction_type === 'sell' ? 'danger' : 'secondary'}">${(tx.transaction_type || '').toUpperCase()}</span></td>
                             <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(Fmt.loc(), {maximumFractionDigits: 6})}</td>
                             <td class="text-end">${fmtPrice(tx.price, tx.currency)}</td>
@@ -1998,7 +2010,7 @@ function createPageManager() {
                         html: `
                         <tr class="tx-cash-row">
                             <td>${Fmt.date(b.date)}</td>
-                            <td><small>${b.portfolio_name || ''}</small></td>
+                            <td><small>${esc(b.portfolio_name || '')}</small></td>
                             <td><i class="bi bi-cash-coin me-1 text-muted"></i><span class="text-muted">Cash ${isDep ? 'in' : 'out'} (broker)</span></td>
                             <td><span class="badge ${isDep ? 'bg-info text-dark' : 'bg-warning text-dark'}">${b.action.toUpperCase()}</span></td>
                             <td class="text-end">—</td>
@@ -2143,8 +2155,8 @@ function createPageManager() {
                         const symEsc = (h.symbol || '').replace(/'/g, "\\'");
                         return `
                         <tr>
-                            <td><strong>${h.symbol}</strong></td>
-                            <td>${h.name}</td>
+                            <td><strong>${esc(h.symbol)}</strong></td>
+                            <td>${esc(h.name)}</td>
                             <td><span class="badge ${typeBadge}">${(h.asset_type || '').toUpperCase()}</span></td>
                             <td>${h.currency || ''}</td>
                             <td class="text-end">${parseFloat(h.quantity).toLocaleString(Fmt.loc(), { maximumFractionDigits: 4 })}</td>
@@ -2216,12 +2228,12 @@ function createPageManager() {
                             <div class="small"><i class="bi bi-cash-stack me-1 text-muted" title="Cash deposits/withdrawals"></i>${range(p.first_booking_date, p.last_booking_date)}</div>`;
                         return `
                         <tr>
-                            <td class="ps-3"><strong>${p.name}</strong>${site}</td>
+                            <td class="ps-3"><strong>${esc(p.name)}</strong>${site}</td>
                             <td>${p.base_currency || ''}</td>
                             <td class="text-end">${v ? eur(v.value_eur) : '<span class="text-muted">—</span>'}${v && Math.abs(v.cash_eur || 0) >= 1 ? `<div class="small text-muted" title="Cash balance (deposits − withdrawals + sells − buys + dividends)"><i class="bi bi-cash-coin me-1"></i>${eur(v.cash_eur)} cash</div>` : ''}</td>
                             ${pnlCell(v)}
                             <td>${activity}</td>
-                            <td><small class="text-muted">${p.description || ''}</small></td>
+                            <td><small class="text-muted">${esc(p.description || '')}</small></td>
                             <td class="pe-3">
                                 <button class="btn btn-sm btn-outline-primary me-1" title="Edit" onclick="editPortfolio(${p.id}, '${esc(p.name)}', '${p.base_currency || 'EUR'}', '${esc(p.description)}', '${esc(p.website)}')">
                                     <i class="bi bi-pencil"></i>
@@ -2833,7 +2845,7 @@ async function loadAnalyticsDividends() {
             ? topPayers.map(p => `
                 <tr>
                     <td><strong>${p.sym}</strong></td>
-                    <td class="text-truncate small text-muted" style="max-width:180px;" title="${p.name}">${p.name !== p.sym ? p.name : ''}</td>
+                    <td class="text-truncate small text-muted" style="max-width:180px;" title="${esc(p.name)}">${p.name !== p.sym ? esc(p.name) : ''}</td>
                     <td class="text-end">${anFmtEur2(p.total)}</td>
                     <td class="text-end">${p.yoc != null ? parseFloat(p.yoc).toFixed(2) + '%' : '—'}</td>
                 </tr>`).join('')
@@ -2849,7 +2861,7 @@ async function loadAnalyticsDividends() {
         const fwdRows = fwd.length ? fwd.map(x => `
             <tr>
                 <td><strong>${x.s}</strong></td>
-                <td class="text-truncate small text-muted" style="max-width:200px;" title="${x.name}">${x.name !== x.s ? x.name : ''}</td>
+                <td class="text-truncate small text-muted" style="max-width:200px;" title="${esc(x.name)}">${x.name !== x.s ? esc(x.name) : ''}</td>
                 <td class="text-end">${anFmtEur2(x.v)}</td>
                 <td class="text-end text-muted">${fwdTotal > 0 ? (x.v / fwdTotal * 100).toFixed(1) + '%' : '—'}</td>
             </tr>`).join('') : '<tr><td colspan="4" class="text-center text-muted small">No recurring dividends in the last 12 months.</td></tr>';
@@ -3022,8 +3034,8 @@ async function loadAnalyticsTax() {
         const candRows = candidates.length
             ? candidates.map(c => `
                 <tr>
-                    <td><strong>${c.symbol}</strong></td>
-                    <td class="text-truncate small text-muted" style="max-width:220px;" title="${c.name || ''}">${c.name || ''}</td>
+                    <td><strong>${esc(c.symbol)}</strong></td>
+                    <td class="text-truncate small text-muted" style="max-width:220px;" title="${esc(c.name || '')}">${esc(c.name || '')}</td>
                     <td class="text-end">${c.quantity != null ? Fmt.num(c.quantity, 0, 4) : '—'}</td>
                     <td class="text-end text-danger">${anFmtEur2(c.unrealised_loss_eur)}</td>
                 </tr>`).join('')
@@ -3035,8 +3047,8 @@ async function loadAnalyticsTax() {
                 const v = parseFloat(r.realised_eur || 0);
                 return `
                 <tr>
-                    <td><strong>${r.symbol}</strong></td>
-                    <td class="text-truncate small text-muted" style="max-width:220px;" title="${r.name || ''}">${r.name || ''}</td>
+                    <td><strong>${esc(r.symbol)}</strong></td>
+                    <td class="text-truncate small text-muted" style="max-width:220px;" title="${esc(r.name || '')}">${esc(r.name || '')}</td>
                     <td class="text-end ${v >= 0 ? 'text-success' : 'text-danger'}">${anFmtEur2(v)}</td>
                 </tr>`;
             }).join('')
@@ -3194,7 +3206,7 @@ async function loadAnalyticsGainLoss() {
         const row = h => {
             const cls = pnl(h) >= 0 ? 'text-success' : 'text-danger';
             return `<tr>
-                <td><strong>${h.symbol}</strong> <span class="small text-muted">${h.name || ''}</span></td>
+                <td><strong>${esc(h.symbol)}</strong> <span class="small text-muted">${esc(h.name || '')}</span></td>
                 <td class="text-end">${anFmtEur2(hv(h))}</td>
                 <td class="text-end ${cls}">${pnl(h) >= 0 ? '+' : ''}${anFmtEur2(pnl(h))}</td>
                 <td class="text-end ${cls}">${anFmtPct(pnlpct(h))}</td>
@@ -3213,7 +3225,7 @@ async function loadAnalyticsGainLoss() {
         const realised = (tax.realised_by_symbol || []).slice().sort((a, b) => (b.realised_eur || 0) - (a.realised_eur || 0));
         const realisedRows = realised.length ? realised.map(r => {
             const v = parseFloat(r.realised_eur || 0);
-            return `<tr><td><strong>${r.symbol}</strong> <span class="small text-muted">${r.name || ''}</span></td>
+            return `<tr><td><strong>${esc(r.symbol)}</strong> <span class="small text-muted">${esc(r.name || '')}</span></td>
                 <td class="text-end ${v >= 0 ? 'text-success' : 'text-danger'}">${anFmtEur2(v)}</td></tr>`;
         }).join('') : `<tr><td colspan="2" class="text-center text-muted small">No realised sales in ${year}.</td></tr>`;
 
@@ -3248,7 +3260,7 @@ async function loadAnalyticsTaxReport() {
         const lots = d.realised_lots || [];
         const lotRows = lots.length ? lots.map(l => `
             <tr>
-                <td><strong>${l.symbol}</strong></td>
+                <td><strong>${esc(l.symbol)}</strong></td>
                 <td>${Fmt.date(l.sell_date)}</td>
                 <td class="text-end">${Fmt.num(l.quantity, 0, 4)}</td>
                 <td class="text-end">${anFmtEur2(l.proceeds)}</td>
@@ -3306,7 +3318,7 @@ async function loadTaxOptimizer() {
         const cands = d.candidates || [];
         const rows = cands.length ? cands.map(c => `
             <tr class="${c.wash_sale_risk ? 'text-muted' : ''}">
-                <td><strong>${c.symbol}</strong> <span class="small text-muted">${c.name || ''}</span></td>
+                <td><strong>${esc(c.symbol)}</strong> <span class="small text-muted">${esc(c.name || '')}</span></td>
                 <td class="text-end text-danger">${anFmtEur2(c.unrealised_loss_eur)}</td>
                 <td>${c.last_buy ? Fmt.date(c.last_buy) : '—'}</td>
                 <td>${c.wash_sale_risk
@@ -3590,17 +3602,17 @@ async function loadWatchlist() {
                 ? `<span class="${inZone ? 'text-success fw-semibold' : ''}">${(dist >= 0 ? '+' : '') + dist.toFixed(1)}%</span>`
                 : '—';
             const symCell = inZone
-                ? `<strong>${w.symbol}</strong> <span class="badge bg-success">BUY ZONE</span> ${assetLinks(w.symbol)}`
-                : `<strong>${w.symbol}</strong> ${assetLinks(w.symbol)}`;
+                ? `<strong>${esc(w.symbol)}</strong> <span class="badge bg-success">BUY ZONE</span> ${assetLinks(w.symbol)}`
+                : `<strong>${esc(w.symbol)}</strong> ${assetLinks(w.symbol)}`;
             return `
                 <tr class="${inZone ? 'table-success' : ''}">
                     <td class="ps-3">${symCell}</td>
-                    <td>${w.name || ''}</td>
+                    <td>${esc(w.name || '')}</td>
                     <td><span class="badge ${typeBadge(w.asset_type)}">${(w.asset_type || '').toUpperCase() || '—'}</span></td>
                     <td class="text-end">${price != null ? price.toLocaleString(Fmt.loc(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
                     <td class="text-end">${buyBelow != null ? buyBelow.toLocaleString(Fmt.loc(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}</td>
                     <td class="text-end">${distCell}</td>
-                    <td class="text-muted small">${w.notes || ''}</td>
+                    <td class="text-muted small">${esc(w.notes || '')}</td>
                     <td class="pe-3">
                         <button class="btn btn-sm btn-outline-danger" onclick="window.deleteWatchlistRow('${(w.symbol || '').replace(/'/g, "\\'")}')" title="Remove from watchlist">
                             <i class="bi bi-trash"></i>
@@ -3720,7 +3732,7 @@ async function loadGoals() {
                     <div class="card h-100">
                         <div class="card-body">
                             <div class="d-flex justify-content-between align-items-start mb-2">
-                                <h5 class="card-title mb-0"><i class="bi bi-bullseye me-2 text-primary"></i>${g.name || 'Goal'}</h5>
+                                <h5 class="card-title mb-0"><i class="bi bi-bullseye me-2 text-primary"></i>${esc(g.name || 'Goal')}</h5>
                                 <div class="d-flex align-items-center gap-2">
                                     ${trackBadge}
                                     <button class="btn btn-sm btn-outline-danger" onclick="window.deleteGoalRow(${g.id}, '${(g.name || '').replace(/'/g, "\\'")}')" title="Delete goal">
@@ -4083,7 +4095,7 @@ function setupChatPage() {
             <tr>
                 <td><input class="form-check-input chat-tx-select" type="checkbox" checked data-idx="${i}"></td>
                 <td>${tx.date || ''}</td>
-                <td><strong>${tx.symbol || ''}</strong> <small class="text-muted">${tx.asset_name || ''}</small></td>
+                <td><strong>${esc(tx.symbol || '')}</strong> <small class="text-muted">${esc(tx.asset_name || '')}</small></td>
                 <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : tx.tx_type === 'sell' ? 'danger' : 'info'}">${(tx.tx_type || '').toUpperCase()}</span></td>
                 <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(Fmt.loc(), {maximumFractionDigits:4})}</td>
                 <td class="text-end">${parseFloat(tx.price || 0).toFixed(4)} ${tx.currency || ''}</td>
@@ -4512,7 +4524,7 @@ function setupImportExportPage() {
                 <tr class="${tx.is_duplicate ? 'table-warning' : ''}">
                     <td><input class="form-check-input io-tx-select" type="checkbox" checked data-idx="${i}"></td>
                     <td>${tx.date || ''}${tx.is_duplicate ? dupBadge : ''}</td>
-                    <td><strong>${tx.symbol || ''}</strong> <small class="text-muted">${tx.asset_name || ''}</small></td>
+                    <td><strong>${esc(tx.symbol || '')}</strong> <small class="text-muted">${esc(tx.asset_name || '')}</small></td>
                     <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : tx.tx_type === 'sell' ? 'danger' : 'info'}">${(tx.tx_type || '').toUpperCase()}</span></td>
                     <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(Fmt.loc(), {maximumFractionDigits:4})}</td>
                     <td class="text-end">${parseFloat(tx.price || 0).toFixed(4)} ${tx.currency || ''}</td>
@@ -4604,7 +4616,7 @@ function setupImportExportPage() {
                     <td><span class="badge bg-${b.action === 'Deposit' ? 'success' : 'warning'}">${b.action}</span></td>
                     <td class="text-end">${parseFloat(b.amount).toFixed(2)}</td>
                     <td>${b.currency}</td>
-                    <td class="text-muted small">${b.portfolio_name || ''}</td>
+                    <td class="text-muted small">${esc(b.portfolio_name || '')}</td>
                 </tr>`).join('');
             container.innerHTML = `<table class="table table-sm table-hover mb-0">
                 <thead><tr><th>Date</th><th>Action</th><th class="text-end">Amount</th><th>Currency</th><th>Portfolio</th></tr></thead>
@@ -5894,10 +5906,10 @@ function setupResearchPage() {
         suggestBox.innerHTML = matches.map((s, i) => `
             <button type="button" class="list-group-item list-group-item-action py-1 px-2" data-sym="${s.symbol}" data-idx="${i}">
                 <div class="d-flex justify-content-between align-items-center">
-                    <span><strong>${s.symbol}</strong>${s.currency ? ` <span class="badge bg-light text-secondary border ms-1">${s.currency}</span>` : ''}</span>
+                    <span><strong>${esc(s.symbol)}</strong>${s.currency ? ` <span class="badge bg-light text-secondary border ms-1">${s.currency}</span>` : ''}</span>
                     <span class="badge ${s.source === 'watchlist' ? 'bg-info' : 'bg-secondary'} ms-2">${s.source}</span>
                 </div>
-                <div class="small text-muted text-truncate">${s.name || ''}</div>
+                <div class="small text-muted text-truncate">${esc(s.name || '')}</div>
             </button>`).join('');
         suggestBox.querySelectorAll('[data-sym]').forEach(b => {
             b.addEventListener('mousedown', e => {
@@ -5939,7 +5951,7 @@ function setupResearchPage() {
         btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Preparing…';
         try {
             const url = window.apiClient.baseURL + `/api/v1/research/${encodeURIComponent(R.symbol)}/report?format=md&download=true`;
-            await window.apiClient.downloadBlob(url, `research_${R.symbol}_${new Date().toISOString().slice(0, 10)}.md`);
+            await window.apiClient.downloadBlob(url, `research_${esc(R.symbol)}_${new Date().toISOString().slice(0, 10)}.md`);
         } catch (e) {
             alert('Could not generate report: ' + (e.message || e));
         } finally { btn.disabled = false; btn.innerHTML = orig; }
@@ -6009,7 +6021,7 @@ function setupResearchPage() {
                 const cur = R.currency || '';
                 const fmt = v => v == null ? '—' : Fmt.num(v, 2, 2) + (cur ? ' ' + cur : '');
                 updateTargets = confirm(
-                    `${R.symbol} already has an alert target:\n` +
+                    `${esc(R.symbol)} already has an alert target:\n` +
                     `  buy ${fmt(existingBuy)} · sell ${fmt(existingSell)}\n\n` +
                     `Overwrite with your researched values?\n` +
                     `  buy ${fmt(c.buy)} · sell ${fmt(c.sell)}\n\n` +
@@ -6058,7 +6070,7 @@ function setupResearchPage() {
                 const up = r.upside_pct;
                 const upCls = up == null ? 'text-muted' : up >= 0 ? 'text-success' : 'text-danger';
                 return `<tr style="cursor:pointer" data-sym="${r.symbol}">
-                    <td class="ps-3"><strong>${r.symbol}</strong></td>
+                    <td class="ps-3"><strong>${esc(r.symbol)}</strong></td>
                     <td class="text-end">${money(r.current_price, '')}</td>
                     <td class="text-end">${money(r.fair_value, '')}</td>
                     <td class="text-end ${upCls}">${up == null ? '—' : anFmtPct(up)}</td>
@@ -6122,7 +6134,7 @@ function setupSettings() {
                 const sel = $('setDefaultBroker');
                 const pfs = await window.apiClient.getPortfolios();
                 sel.innerHTML = '<option value="">— none —</option>' +
-                    (pfs || []).map(p => `<option value="${p.name}">${p.name}</option>`).join('');
+                    (pfs || []).map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
                 sel.value = PREFS.defaultBroker || '';
             } catch (e) { /* ignore */ }
         })();
