@@ -243,7 +243,7 @@ Signature: `saveImportedTransactions(transactions, bookings = [], portfolioId = 
 
 ## Testing
 - Run tests: `uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e`
-- **342 passing**, 0 failures, 6 skipped (as of last session).
+- **429 passing**, 0 failures, 6 skipped (as of last session).
 - Pre-push hook runs the full unit test suite automatically (`git push` will fail if tests fail).
 - Safe F541 fixer: `uv run python scripts/fix_f541.py` — strips `f` from f-strings without `{}` using a regex that correctly excludes triple-quoted strings.
 - Reset LLM singleton between tests: `from portf_manager.llm_client import reset_llm_client`.
