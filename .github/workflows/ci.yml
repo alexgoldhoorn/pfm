@@ -36,3 +36,14 @@ jobs:
         run: uv sync --frozen
       - name: Unit tests
         run: uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
+
+  test-js:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # No npm deps — uses Node's built-in test runner.
+      - name: Web client JS tests
+        run: node --test web_client/js/tests/
