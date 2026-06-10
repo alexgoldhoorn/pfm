@@ -72,6 +72,10 @@ test-integration: ## Run integration tests only
 	@echo "$(GREEN)Running integration tests...$(NC)"
 	@$(PYTHON) -m pytest tests/ -v --tb=short -k "integration"
 
+test-js: ## Run web client JS tests (Node built-in runner, no npm deps)
+	@echo "$(GREEN)Running web client JS tests...$(NC)"
+	@node --test web_client/js/tests/
+
 # Database operations
 migrate: ## Run database migrations
 	@echo "$(GREEN)Running database migrations...$(NC)"
