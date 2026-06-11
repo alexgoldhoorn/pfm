@@ -46,3 +46,22 @@ def test_internal_activity_is_ignored_but_summarised():
 
 def test_symbol_constant():
     assert MINTOS_SYMBOL == "MINTOS"
+
+
+DEPOSIT_SAMPLE = HEADER + "\n".join(
+    [
+        '"2025-11-02 09:00:00",d1,"Ingreso de fondos",100.00,100.00,EUR,"Depósito"',
+        '"2025-11-03 02:52:28",i1,"Préstamo X Intereses recibidos",0.10,100.10,EUR,"Intereses recibidos"',
+        '"2025-11-20 09:00:00",w1,"Retirada de fondos",-40.00,60.10,EUR,"Retirada de fondos"',
+    ]
+)
+
+
+def test_deposits_and_withdrawals_become_bookings():
+    r = parse_mintos_csv(DEPOSIT_SAMPLE)
+    pairs = {(b["action"], b["amount"], b["currency"]) for b in r.bookings}
+    assert ("Deposit", 100.0, "EUR") in pairs
+    assert ("Withdrawal", 40.0, "EUR") in pairs
+    assert len(r.bookings) == 2
+    # Interest is still aggregated, unaffected by the new booking rows.
+    assert any(e["amount"] == 0.10 for e in r.interest)
