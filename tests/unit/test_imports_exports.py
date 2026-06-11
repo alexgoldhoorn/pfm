@@ -167,6 +167,7 @@ class TestImportUpload:
         mock_result = MagicMock()
         mock_result.importable = [fake_tx]
         mock_result.skipped = [("Send", "non-trade")]
+        mock_result.bookings = []
 
         with patch(
             "portf_server.routers.imports.parse_coinbase_csv",
@@ -187,6 +188,32 @@ class TestImportUpload:
         # invisible under the broker filter). Regression guard for that bug.
         assert data["transactions"][0]["broker"] == "Coinbase"
         assert data["skipped_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_upload_coinbase_deposit_booking(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        csv = (
+            "Transactions\nuser@example.com\n"
+            "Timestamp,Transaction Type,Asset,Quantity Transacted,"
+            "Price Currency,Price at Transaction,"
+            "Total (inclusive of fees and/or spread),Notes\n"
+            "2025-08-20 10:00:00 UTC,Deposit,EUR,500,EUR,,500,sepa in\n"
+        )
+        response = await async_test_client.post(
+            "/api/v1/import/upload",
+            headers=auth_headers,
+            data={"broker": "coinbase"},
+            files={"file": ("cb.csv", csv.encode(), "text/csv")},
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert len(data["bookings"]) == 1
+        bk = data["bookings"][0]
+        assert bk["action"] == "Deposit"
+        assert bk["amount"] == 500.0
+        assert bk["currency"] == "EUR"
+        assert bk["broker"] == "Coinbase"
 
     @pytest.mark.asyncio
     async def test_upload_pdt(self, async_test_client: AsyncClient, auth_headers):

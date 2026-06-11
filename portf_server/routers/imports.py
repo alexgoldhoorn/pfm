@@ -213,7 +213,9 @@ def _parse_indexacapital(
     return previews, [], skipped
 
 
-def _parse_coinbase(content: str) -> tuple[List[PreviewTransaction], List[dict]]:
+def _parse_coinbase(
+    content: str,
+) -> tuple[List[PreviewTransaction], List[PreviewBooking], List[dict]]:
     result = parse_coinbase_csv(content)
     previews = [
         PreviewTransaction(
@@ -235,8 +237,9 @@ def _parse_coinbase(content: str) -> tuple[List[PreviewTransaction], List[dict]]
         )
         for tx in result.importable
     ]
+    bookings = [PreviewBooking(broker="Coinbase", **bk) for bk in result.bookings]
     skipped = [{"type": t, "reason": r} for t, r in result.skipped]
-    return previews, skipped
+    return previews, bookings, skipped
 
 
 def _parse_myinvestor(
@@ -470,8 +473,7 @@ async def upload_broker_file(
             previews, bookings, skipped = _parse_indexacapital(content)
         elif broker == "coinbase":
             content = file_bytes.decode("utf-8-sig")
-            previews, skipped = _parse_coinbase(content)
-            bookings = []
+            previews, bookings, skipped = _parse_coinbase(content)
         elif broker == "myinvestor":
             content = file_bytes.decode("utf-8-sig")
             previews, bookings, skipped = _parse_myinvestor(content)
