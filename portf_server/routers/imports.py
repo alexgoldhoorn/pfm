@@ -313,7 +313,8 @@ def _parse_mintos(
             result.ignored_summary.items(), key=lambda x: -x[1][0]
         )
     ]
-    return previews, [], skipped
+    bookings = [PreviewBooking(broker="Mintos", **bk) for bk in result.bookings]
+    return previews, bookings, skipped
 
 
 def _parse_pdt(
