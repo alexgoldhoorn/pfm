@@ -213,6 +213,8 @@ Single HTML file (`index.html`) + four classic JS files split from the former `p
 
 **User preferences (browser-local)**: `window.PREFS` (persisted to `localStorage` key `pfmPrefs`) holds number locale, decimals, date format, theme, privacy-blur, default benchmark, landing page, rows-per-page. The Settings modal (`setupSettings()`, gear in the sidebar) edits them. Format all numbers via `Fmt.num()` / money helpers (which wrap in `<span class="pfm-amt">` for privacy blur) and dates via `Fmt.date()`. Theme = `data-bs-theme` on `<html>` (Bootstrap 5.3). There is no server-side per-user settings store — the web logs in with the shared `SERVER_API_KEY`, so prefs are per-browser.
 
+**Sortable/filterable tables**: Holdings, Transactions, Assets and Brokers use the shared `makeSortableTable(config)` helper (pure `applyTableState(rows, columns, state)` core, both in `pfm_core.js`, unit-tested in `web_client/js/tests/`): clickable `<th data-key data-type [data-filter=select]>` headers toggle sort (▲/▼), an optional filter row provides categorical dropdowns, and per-table state persists in `PREFS.tableState[<page>]`. Holdings adds a Type filter; Transactions is sort-only (it keeps its own type/date/asset filter bar) and its broker filter stays a server refetch (`getTransactions(500, portfolioId)`); the dashboard Top Positions keeps its own specialised control bar.
+
 **Deploy after editing web files**: `portf_web` is an nginx container with files **baked into the image** at build time — they are NOT live-mounted. After any change to `web_client/`:
 ```bash
 docker compose build web && docker stop portf_web && docker compose up -d web
