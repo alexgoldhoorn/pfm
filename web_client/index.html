@@ -607,6 +607,8 @@
                                 <option value="dividend">Dividend</option>
                                 <option value="interest">Interest</option>
                                 <option value="split">Stock Split</option>
+                                <option value="Deposit">Deposit (cash)</option>
+                                <option value="Withdrawal">Withdrawal (cash)</option>
                             </select>
                         </div>
                         <div class="col-6 col-md-2">
@@ -1038,6 +1040,15 @@
                         </div>
                     </div>
 
+                    <!-- Watchlist Filter -->
+                    <div class="row g-2 mb-3">
+                        <div class="col-12 col-sm-4">
+                            <select class="form-select form-select-sm" id="watchlistTypeFilter">
+                                <option value="all">All Asset Types</option>
+                            </select>
+                        </div>
+                    </div>
+
                     <!-- Watchlist table -->
                     <div class="card">
                         <div class="card-body p-0">
@@ -1045,13 +1056,13 @@
                                 <table class="table table-hover mb-0" id="watchlistTable">
                                     <thead>
                                         <tr>
-                                            <th class="ps-3">Symbol</th>
-                                            <th>Name</th>
-                                            <th>Type</th>
-                                            <th class="text-end">Current Price</th>
-                                            <th class="text-end">Buy Below</th>
-                                            <th class="text-end">Distance to Buy</th>
-                                            <th>Notes</th>
+                                            <th class="ps-3" data-key="symbol" data-type="text">Symbol</th>
+                                            <th data-key="name" data-type="text">Name</th>
+                                            <th data-key="asset_type" data-type="text">Type</th>
+                                            <th class="text-end" data-key="current_price" data-type="num">Current Price</th>
+                                            <th class="text-end" data-key="buy_below" data-type="num">Buy Below</th>
+                                            <th class="text-end" data-key="distance_to_buy_pct" data-type="num">Distance to Buy</th>
+                                            <th data-key="notes" data-type="text">Notes</th>
                                             <th class="pe-3">Actions</th>
                                         </tr>
                                     </thead>
@@ -2695,9 +2706,9 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
          scripts. They share one global scope and MUST load in this order:
          core → pages → analytics → features (features carries the
          DOMContentLoaded bootstrap, so it loads last). -->
-    <script src="js/pfm_core.js?v=1780000044"></script>
-    <script src="js/pfm_pages.js?v=1780000044"></script>
-    <script src="js/pfm_analytics.js?v=1780000044"></script>
-    <script src="js/pfm_features.js?v=1780000044"></script>
+    <script src="js/pfm_core.js?v=1780000045"></script>
+    <script src="js/pfm_pages.js?v=1780000045"></script>
+    <script src="js/pfm_analytics.js?v=1780000045"></script>
+    <script src="js/pfm_features.js?v=1780000045"></script>
 </body>
 </html>

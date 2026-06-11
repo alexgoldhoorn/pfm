@@ -579,8 +579,13 @@ function createPageManager() {
 
             const filtered = this._txAllRows.filter(r => {
                 if (typeVal) {
-                    if (r.isBooking) return false;
-                    if (r.txType !== typeVal) return false;
+                    // Cash bookings carry their action (Deposit/Withdrawal) in
+                    // transaction_type; trades use txType (buy/sell/...).
+                    if (r.isBooking) {
+                        if (r.transaction_type !== typeVal) return false;
+                    } else if (r.txType !== typeVal) {
+                        return false;
+                    }
                 }
                 if (fromVal && r.date < fromVal) return false;
                 if (toVal && r.date > toVal) return false;
