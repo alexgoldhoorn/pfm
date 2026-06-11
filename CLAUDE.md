@@ -76,8 +76,8 @@ All LLM calls go through `LLMClient.generate(prompt) -> str`. `GeminiClient` is 
 Each broker has a standalone parser module returning `LLMTransaction` objects via a `ParseResult` dataclass:
 - `indexacapital_csv_parser.py` — semicolon CSV, European number format, ISINs, EUR (ISIN trades export). `_parse_indexacapital` in `imports.py` also auto-detects the **"Movimientos"** cash statement (`Fecha;Movimiento;Importe;Saldo`) → SEPA transfers become deposit/withdrawal bookings; fund subscriptions are skipped (no unit detail).
 - `myinvestor_csv_parser.py` — MyInvestor "Movimientos Mi Cuenta" CSV → INVEST=deposit booking, `NAME @ QTY`=buy/sell, positive no-`@`=dividend; fees/unit-less fund buys skipped. No ISIN/fees, so buy/sells are flagged "review" in the preview.
-- `mintos_csv_parser.py` — Mintos P2P statement (often 20k+ rows). Keeps only interest/withholding, **aggregates per month** into `interest` transactions (price=interest, tax=withholding) vs a synthetic `MINTOS` asset; principal/investment/secondary/fee rows ignored (summarised in the preview's skipped list). Large file → nginx `client_max_body_size 25m`.
-- `coinbase_csv_parser.py` — Coinbase Advanced Trade CSV export
+- `mintos_csv_parser.py` — Mintos P2P statement (often 20k+ rows). Keeps only interest/withholding, **aggregates per month** into `interest` transactions (price=interest, tax=withholding) vs a synthetic `MINTOS` asset; principal/investment/secondary/fee rows ignored (summarised in the preview's skipped list). Deposit/withdrawal rows (`Tipo de pago` deposit/withdrawal keywords) → bookings, kept individual (not aggregated). Large file → nginx `client_max_body_size 25m`.
+- `coinbase_csv_parser.py` — Coinbase Advanced Trade CSV export. Fiat `Deposit`/`Withdrawal` rows (Asset in a fiat allowlist) → deposit/withdrawal bookings; crypto `Send`/`Receive` stay skipped. `_parse_coinbase` returns `(previews, bookings, skipped)`.
 - `pdt_xlsx_parser.py` — Portfolio Dividend Tracker XLSX (import + export, all 3 sheets)
 - `pdt_sheets_sync.py` — Portfolio Dividend Tracker Google Sheets sync (pull/push)
 
