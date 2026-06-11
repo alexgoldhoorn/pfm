@@ -445,6 +445,16 @@ function createPageManager() {
                     sym: (tx.symbol || '').toLowerCase(),
                     txName: (tx.name || '').toLowerCase(),
                     isBooking: false,
+                    // Sortable column values (read by the shared sortable-table helper).
+                    transaction_date: tx.transaction_date,
+                    portfolio_name: tx.portfolio_name || '',
+                    symbol: tx.symbol || '',
+                    transaction_type: tx.transaction_type || '',
+                    quantity: tx.quantity,
+                    price: tx.price,
+                    currency: tx.currency || '',
+                    total_amount: tx.total_amount,
+                    fees: tx.fees,
                     html: `
                         <tr>
                             <td>${Fmt.date(tx.transaction_date)}</td>
@@ -476,6 +486,16 @@ function createPageManager() {
                         sym: '',
                         txName: '',
                         isBooking: true,
+                        // Sortable column values (cash rows have no qty/price/fees).
+                        transaction_date: b.date,
+                        portfolio_name: b.portfolio_name || '',
+                        symbol: '',
+                        transaction_type: b.action || '',
+                        quantity: null,
+                        price: null,
+                        currency: b.currency || '',
+                        total_amount: b.amount,
+                        fees: null,
                         html: `
                         <tr class="tx-cash-row">
                             <td>${Fmt.date(b.date)}</td>
@@ -497,11 +517,27 @@ function createPageManager() {
                     });
                 });
 
-                // Newest first; fall back to stable order when dates match
-                rows.sort((a, b) => String(b.date).localeCompare(String(a.date)));
-
-                // Store for client-side filter re-renders
+                // Store for client-side filter re-renders; the shared sortable
+                // table owns ordering (default: transaction_date desc). Sort-only
+                // here — the page keeps its own type/date/asset filter controls.
                 this._txAllRows = rows;
+                this._txST = this._txST || makeSortableTable({
+                    table: document.querySelector('#transactionsPage table'),
+                    columns: [
+                        { key: 'transaction_date', type: 'date' }, { key: 'portfolio_name', type: 'text' },
+                        { key: 'symbol', type: 'text' }, { key: 'transaction_type', type: 'text' },
+                        { key: 'quantity', type: 'num' }, { key: 'price', type: 'num' },
+                        { key: 'currency', type: 'text' }, { key: 'total_amount', type: 'num' },
+                        { key: 'fees', type: 'num' }, { key: null },
+                    ],
+                    getRows: () => this._txFilteredRows || [],
+                    renderRows: (sorted, tbody) => {
+                        tbody.innerHTML = sorted.length
+                            ? sorted.map(r => r.html).join('')
+                            : '<tr><td colspan="10" class="text-center text-muted py-4">No transactions match the current filters.</td></tr>';
+                    },
+                    prefsKey: 'transactions',
+                });
 
                 // Build autocomplete suggestions from unique symbols in loaded transactions
                 const symMap = new Map();
@@ -555,10 +591,15 @@ function createPageManager() {
                 return true;
             });
 
-            if (filtered.length === 0) {
-                tableBody.innerHTML = '<tr><td colspan="10" class="text-center text-muted py-4">No transactions match the current filters.</td></tr>';
+            // Hand the filtered set to the shared sortable table (it applies the
+            // active column sort, then renders the rows' pre-built HTML).
+            this._txFilteredRows = filtered;
+            if (this._txST) {
+                this._txST.refresh();
             } else {
-                tableBody.innerHTML = filtered.map(r => r.html).join('');
+                tableBody.innerHTML = filtered.length
+                    ? filtered.map(r => r.html).join('')
+                    : '<tr><td colspan="10" class="text-center text-muted py-4">No transactions match the current filters.</td></tr>';
             }
         },
 
