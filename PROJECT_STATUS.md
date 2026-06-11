@@ -1,6 +1,11 @@
 # Portfolio Manager — Project Status
 
-Last updated: 2026-06-03
+> **Note:** `CLAUDE.md` is the authoritative, up-to-date project reference. This
+> file is a periodic snapshot and its lower sections (Test Status, Pending Work,
+> Data Import table) may lag the code — verify against `CLAUDE.md` and the
+> codebase before relying on them.
+
+Last updated: 2026-06-10
 
 **Recent (v2.0):** AI chat reads the real portfolio; research workbench (position panel, sell calculator, cost chart, downloadable report); analytics split into lazy tabs with a gain/loss leaderboard, dividend forward-income/calendar, and a per-lot tax report + CSV; dashboard alerts banner; `index` asset type; yfinance caching (`kv_cache`, schema v14); per-user settings (default currency/broker, holdings sort, hide-tiny, change password); grouped/collapsible sidebar with Help/About/Resources pages. Tests: 407 passing.
 
@@ -59,9 +64,9 @@ Last updated: 2026-06-03
 
 ## Test Status
 
-**224 passed, 0 failed, 0 errors, 6 skipped** (unit tests, excluding integration/e2e)
+**429 passed, 0 failed, 0 errors, 6 skipped** (unit tests, excluding integration/e2e)
 
-All tests passing as of 2026-04-23.
+All tests passing as of 2026-06-10.
 
 ## Recent Changes (develop branch)
 
@@ -96,7 +101,7 @@ All tests passing as of 2026-04-23.
 | IndexaCapital | CSV (semicolon, ISIN, EUR) | `indexacapital_csv_parser.py` | ✅ Working |
 | MyInvestor | XLS via Inversis (semicolon, Spanish) | Inline in `import_csv()` | 🟡 Works but not modular |
 | Coinbase | CSV | `coinbase_csv_parser.py` | ✅ Working |
-| Mintos | CSV account statement | — | ❌ Not implemented |
+| Mintos | CSV account statement | `mintos_csv_parser.py` | ✅ Working |
 | Any broker | Free text (LLM) | `gemini_client.py` via `paste-transaction` | ✅ Working (needs API key or Ollama) |
 
 ## Tax Reporting

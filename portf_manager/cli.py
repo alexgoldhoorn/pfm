@@ -2912,6 +2912,17 @@ class PortfolioManagerCLI:
             except Exception as e:
                 tqdm.write(f"⚠️  Could not record update run: {e}")
 
+            # Reclaim expired kv_cache rows (cache_get ignores them but never
+            # deletes them). Piggy-backing on the daily cron keeps the table
+            # from growing unbounded. Best-effort.
+            try:
+                if self.db_manager is not None:
+                    removed = self.db_manager.purge_expired_cache()
+                    if removed:
+                        tqdm.write(f"🧹 Purged {removed} expired cache entries")
+            except Exception as e:
+                tqdm.write(f"⚠️  Could not purge expired cache: {e}")
+
             # Exit non-zero on real failures so cron wrappers alert instead of
             # silently reporting success. DB write errors or API errors are real
             # problems; "skipped" assets (no Yahoo data) are expected and don't

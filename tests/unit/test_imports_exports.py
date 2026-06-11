@@ -2,7 +2,6 @@
 Unit tests for the import and export routers, and OpenRouterLLMClient.
 """
 
-import io
 import os
 from unittest.mock import MagicMock, patch
 
@@ -168,6 +167,7 @@ class TestImportUpload:
         mock_result = MagicMock()
         mock_result.importable = [fake_tx]
         mock_result.skipped = [("Send", "non-trade")]
+        mock_result.bookings = []
 
         with patch(
             "portf_server.routers.imports.parse_coinbase_csv",
@@ -183,7 +183,37 @@ class TestImportUpload:
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert data["transactions"][0]["asset_type"] == "crypto"
+        # Coinbase previews must carry the broker so the save step tags them to
+        # the Coinbase portfolio (else they land with portfolio_id=NULL and are
+        # invisible under the broker filter). Regression guard for that bug.
+        assert data["transactions"][0]["broker"] == "Coinbase"
         assert data["skipped_count"] == 1
+
+    @pytest.mark.asyncio
+    async def test_upload_coinbase_deposit_booking(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        csv = (
+            "Transactions\nuser@example.com\n"
+            "Timestamp,Transaction Type,Asset,Quantity Transacted,"
+            "Price Currency,Price at Transaction,"
+            "Total (inclusive of fees and/or spread),Notes\n"
+            "2025-08-20 10:00:00 UTC,Deposit,EUR,500,EUR,,500,sepa in\n"
+        )
+        response = await async_test_client.post(
+            "/api/v1/import/upload",
+            headers=auth_headers,
+            data={"broker": "coinbase"},
+            files={"file": ("cb.csv", csv.encode(), "text/csv")},
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert len(data["bookings"]) == 1
+        bk = data["bookings"][0]
+        assert bk["action"] == "Deposit"
+        assert bk["amount"] == 500.0
+        assert bk["currency"] == "EUR"
+        assert bk["broker"] == "Coinbase"
 
     @pytest.mark.asyncio
     async def test_upload_pdt(self, async_test_client: AsyncClient, auth_headers):
@@ -228,6 +258,29 @@ class TestImportUpload:
         data = response.json()
         assert data["transactions"][0]["symbol"] == "AAPL"
         assert data["transactions"][0]["tx_type"] == "buy"
+
+    @pytest.mark.asyncio
+    async def test_upload_mintos_deposit_booking(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        csv = (
+            "Fecha,Identificación de la operación:,Detalles,"
+            "Volumen de negocios,Saldo,Divisa,Tipo de pago\n"
+            '"2025-11-02 09:00:00",d1,"Ingreso de fondos",100.00,100.00,EUR,"Depósito"\n'
+        )
+        response = await async_test_client.post(
+            "/api/v1/import/upload",
+            headers=auth_headers,
+            data={"broker": "mintos"},
+            files={"file": ("mintos.csv", csv.encode(), "text/csv")},
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert len(data["bookings"]) == 1
+        bk = data["bookings"][0]
+        assert bk["action"] == "Deposit"
+        assert bk["amount"] == 100.0
+        assert bk["broker"] == "Mintos"
 
 
 # ---------------------------------------------------------------------------

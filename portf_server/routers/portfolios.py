@@ -6,7 +6,7 @@ Handles portfolio management and analysis.
 
 import time
 from typing import Optional
-from fastapi import APIRouter, HTTPException, status, Depends, Request
+from fastapi import APIRouter, HTTPException, status, Depends, Request, Query
 from pydantic import BaseModel, Field
 import logging
 
@@ -37,17 +37,51 @@ _FX_TTL = 1800  # 30 minutes
 # Seed timestamps so pre-seeded values are valid immediately (not expired)
 _FX_CACHE_TS: dict[str, float] = {k: time.time() for k in _FX_CACHE}
 
+# Shared DB handle for the cross-worker (kv_cache) FX layer, set by the app
+# lifespan at startup. Without it, _get_fx_rate falls back to the per-worker
+# in-process cache only (still correct, just not shared between workers).
+_SHARED_DB = None
+
+
+def set_shared_db(db) -> None:
+    """Register the process-wide Database handle for the shared FX cache."""
+    global _SHARED_DB
+    _SHARED_DB = db
+
 
 def _get_fx_rate(currency: str) -> float:
-    """Return EUR/currency rate with 30-minute in-process cache."""
+    """Return EUR/currency rate, cached two ways.
+
+    L1 is a per-worker in-process dict (fast). L2 is the DB-backed kv_cache,
+    shared across gunicorn workers so they don't each hit yfinance for the same
+    currency. Falls back to the pre-seeded default rate on any failure.
+    """
     if currency == "EUR":
         return 1.0
     now = time.time()
+    # L1: in-process cache
     if currency in _FX_CACHE and now - _FX_CACHE_TS.get(currency, 0) < _FX_TTL:
         return _FX_CACHE[currency]
+    # L2: shared kv_cache (populated by any worker)
+    if _SHARED_DB is not None:
+        try:
+            shared = _SHARED_DB.cache_get(f"fx:{currency}")
+            if shared is not None:
+                _FX_CACHE[currency] = float(shared)
+                _FX_CACHE_TS[currency] = now
+                return _FX_CACHE[currency]
+        except Exception:
+            pass
+    # Live fetch, then write through both cache layers
     try:
         rate = yf.Ticker(f"{currency}EUR=X").fast_info.last_price
-        _FX_CACHE[currency] = float(rate) if rate else _FX_CACHE.get(currency, 1.0)
+        if rate:
+            _FX_CACHE[currency] = float(rate)
+            if _SHARED_DB is not None:
+                try:
+                    _SHARED_DB.cache_set(f"fx:{currency}", float(rate), _FX_TTL)
+                except Exception:
+                    pass
     except Exception:
         logger.warning(f"FX rate {currency}→EUR unavailable, using cached/default")
     _FX_CACHE_TS[currency] = now
@@ -193,13 +227,16 @@ async def list_portfolios(
 
 
 @router.get("/values")
-async def get_portfolio_values(
+def get_portfolio_values(
     database: Database = Depends(get_database),
 ):
     """Current EUR value, cost, and P&L per portfolio, plus a grand total.
 
     Powers the value column + totals footer on the Portfolios page. Detailed
     positions remain on the Holdings page.
+
+    Sync (plain ``def``) so the blocking FX lookups in ``_get_fx_rate`` run in
+    the threadpool rather than stalling the event loop on a cache miss.
     """
     transactions = database.get_all_transactions()
 
@@ -303,11 +340,21 @@ async def get_portfolio_values(
 
 
 @router.get("/holdings")
-async def get_holdings(
+def get_holdings(
+    portfolio_id: Optional[int] = Query(
+        None, description="Filter positions to a single broker/portfolio"
+    ),
     database: Database = Depends(get_database),
 ):
-    """Get current holdings (positions with total value) computed from transactions."""
-    transactions = database.get_all_transactions()
+    """Get current holdings (positions with total value) computed from transactions.
+
+    Sync (plain ``def``) so the blocking FX lookups in ``_get_fx_rate`` run in
+    the threadpool rather than stalling the event loop on a cache miss.
+
+    When ``portfolio_id`` is given, positions are computed from only that
+    broker's transactions (a multi-broker asset shows just that broker's slice).
+    """
+    transactions = database.get_all_transactions(portfolio_id=portfolio_id)
 
     # Shared chronological position helper (handles buy/sell/splits).
     positions, _ = compute_positions(transactions)

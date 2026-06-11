@@ -167,14 +167,17 @@ def create_default_database_schema(db_path: str):
 
         # Check if api_keys table exists
         with db.get_connection() as conn:
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 SELECT name FROM sqlite_master
                 WHERE type='table' AND name='api_keys'
-            """)
+            """
+            )
 
             if not cursor.fetchone():
                 # Create api_keys table
-                conn.execute("""
+                conn.execute(
+                    """
                     CREATE TABLE api_keys (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         key_name TEXT NOT NULL,
@@ -186,7 +189,8 @@ def create_default_database_schema(db_path: str):
                         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                         expires_at DATETIME
                     )
-                """)
+                """
+                )
 
                 # Create indexes
                 conn.execute("CREATE INDEX idx_api_keys_key_hash ON api_keys(key_hash)")

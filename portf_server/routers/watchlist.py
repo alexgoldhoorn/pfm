@@ -71,10 +71,15 @@ def list_watchlist(db=Depends(get_database), api_key_info: dict = Depends(_auth)
 
 
 @router.post("/", status_code=201)
-async def add_watchlist(
+def add_watchlist(
     body: WatchlistAdd, db=Depends(get_database), api_key_info: dict = Depends(_auth)
 ):
-    """Add a symbol to the watchlist (auto-fills name/type from yfinance if omitted)."""
+    """Add a symbol to the watchlist (auto-fills name/type from yfinance if omitted).
+
+    Sync (plain ``def``) so FastAPI runs it in the threadpool: the yfinance
+    ``.info`` lookup is blocking and would stall the event loop in an async
+    handler.
+    """
     name, asset_type = body.name, body.asset_type
     if not name:
         try:

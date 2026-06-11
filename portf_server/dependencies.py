@@ -4,7 +4,7 @@ FastAPI Dependencies for Portfolio Management System
 This module provides dependency injection for database and authentication management.
 """
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from portf_manager.database import Database
@@ -135,6 +135,20 @@ def get_optional_current_user(
         return auth_manager.current_session if current_user else None
     except Exception:
         return None
+
+
+async def require_api_key_dep(
+    request: Request,
+    api_key_manager: "APIKeyManager" = Depends(get_api_key_manager),
+) -> dict:
+    """Router-level API key authentication dependency.
+
+    Applied via ``include_router(..., dependencies=[Depends(require_api_key_dep)])``
+    so every endpoint in a data router is protected by default — no per-endpoint
+    dependency to forget. Raises 401 when the ``X-API-Key`` header is missing or
+    invalid.
+    """
+    return await require_api_key(api_key_manager)(request)
 
 
 def get_api_key_auth(api_key_manager: "APIKeyManager" = Depends(get_api_key_manager)):

@@ -33,7 +33,7 @@ dependencies = [
 [tool.uv]
 package = false
 dev-dependencies = [
-    "black",
+    "black==25.1.0",
     "pytest",
     "pre-commit",
     "pytest-asyncio",
@@ -44,8 +44,31 @@ dev-dependencies = [
     "pytest-cov",
     "pytest-xvfb",
     "flake8>=7.3.0",
+    "ruff",
+    "mypy",
 ]
 
 [tool.black]
 line-length = 88
 target-version = ["py313"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+
+[tool.ruff.lint]
+# Mirror the existing flake8 config (pyflakes + pycodestyle) so adopting ruff
+# doesn't churn the codebase. W503 has no ruff equivalent; E501 (line length)
+# is left to black. E402 is ignored to match flake8's exemptions for the
+# import-after-fallback blocks in cli.py / portfolio_aware_agent.py. Broaden
+# the selection in follow-up work.
+select = ["E", "F", "W"]
+ignore = ["E203", "E402", "E501"]
+
+[tool.mypy]
+python_version = "3.13"
+# Report-only adoption: types are hinted but not yet enforced everywhere, so
+# keep mypy non-blocking (run locally / informationally) until the backlog is
+# cleared. Not wired into CI as a gating step yet.
+ignore_missing_imports = true
+warn_unused_ignores = true

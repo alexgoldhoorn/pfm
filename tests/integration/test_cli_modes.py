@@ -5,28 +5,25 @@ This module tests the CLI functionality in both local and server modes
 using ephemeral FastAPI server fixtures for integration testing.
 """
 
-import asyncio
 import os
-import tempfile
-import threading
 import time
 import uuid
-from contextlib import contextmanager
 from multiprocessing import Process
-from subprocess import run, PIPE, CalledProcessError
-from typing import Dict, Any, List
+from subprocess import run
 import pytest
 import uvicorn
-from fastapi.testclient import TestClient
 import httpx
 
-from portf_server.app import app
 from portf_manager.cli import PortfolioManagerCLI
 from portf_manager.config import PortfolioConfig
 
 
 def run_server(host, port):
     """Top-level function to run the uvicorn server."""
+    # The integration test provisions its API key via the /auth/register HTTP
+    # endpoint, which is gated off by default — enable it for this ephemeral
+    # server (set before importing the app so settings pick it up).
+    os.environ["PORTF_ALLOW_REGISTRATION"] = "true"
     from portf_server.app import app
 
     uvicorn.run(app, host=host, port=port, log_level="error")
@@ -503,7 +500,7 @@ class TestCLIPerformance:
         import time
 
         start_time = time.time()
-        cli = PortfolioManagerCLI(local_config)
+        PortfolioManagerCLI(local_config)
         initialization_time = time.time() - start_time
 
         # CLI should initialize quickly (under 1 second for local mode)
