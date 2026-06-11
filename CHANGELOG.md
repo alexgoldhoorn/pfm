@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Ticker aliases** (`assets.ticker`, DB schema v18): assets gain a yfinance-style
+  market-symbol alias (NVDA, ASML.AS, BTC-EUR) next to their ISIN symbol.
+  `get_asset_by_symbol` and `/research/{symbol}/lookup` resolve tickers to
+  ISIN-stored assets; the holdings API exposes `ticker`; one-time backfill via
+  `scripts/backfill_tickers.py` (Yahoo search). Consumed by the homelab finance
+  mail digest.
+
+### Fixed
+- Migration helper `_add_column_if_missing` no longer swallows unexpected SQLite
+  errors (e.g. a locked live DB), which could stamp a schema version without
+  applying the migration.
+
 ## [2.0.0] - 2026-06
 
 ### Added
