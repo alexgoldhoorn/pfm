@@ -161,3 +161,49 @@ test("topPositions: loss sort still returns rows when nothing is negative", () =
     const r = topPositions(winners, { n: 5, type: "all", sort: "loss_pct" });
     assert.deepEqual(r.map((h) => h.symbol), ["Y", "X"]); // least-positive first
 });
+
+const TS_COLUMNS = [
+    { key: "symbol", type: "text" },
+    { key: "value", type: "num" },
+    { key: "date", type: "date" },
+    { key: "asset_type", type: "text", filter: "select" },
+];
+const TS_ROWS = [
+    { symbol: "bbb", value: 10, date: "2025-01-02", asset_type: "stock" },
+    { symbol: "AAA", value: 30, date: "2025-03-01", asset_type: "crypto" },
+    { symbol: "ccc", value: 20, date: "2025-02-01", asset_type: "stock" },
+    { symbol: "ddd", value: null, date: "", asset_type: "stock" },
+];
+
+test("applyTableState: numeric sort desc, blanks last", () => {
+    const { applyTableState } = loadAppIntoContext();
+    const r = applyTableState(TS_ROWS, TS_COLUMNS, { sort: { key: "value", dir: "desc" }, filters: {} });
+    assert.deepEqual(r.map((x) => x.symbol), ["AAA", "ccc", "bbb", "ddd"]);
+});
+
+test("applyTableState: text sort asc is case-insensitive", () => {
+    const { applyTableState } = loadAppIntoContext();
+    const r = applyTableState(TS_ROWS, TS_COLUMNS, { sort: { key: "symbol", dir: "asc" }, filters: {} });
+    assert.deepEqual(r.map((x) => x.symbol), ["AAA", "bbb", "ccc", "ddd"]);
+});
+
+test("applyTableState: date sort asc", () => {
+    const { applyTableState } = loadAppIntoContext();
+    const r = applyTableState(TS_ROWS, TS_COLUMNS, { sort: { key: "date", dir: "asc" }, filters: {} });
+    assert.deepEqual(r.map((x) => x.symbol), ["bbb", "ccc", "AAA", "ddd"]);
+});
+
+test("applyTableState: select filter keeps matches; 'all' passes through", () => {
+    const { applyTableState } = loadAppIntoContext();
+    const f = applyTableState(TS_ROWS, TS_COLUMNS, { sort: { key: "symbol", dir: "asc" }, filters: { asset_type: "stock" } });
+    assert.deepEqual(f.map((x) => x.symbol), ["bbb", "ccc", "ddd"]);
+    const all = applyTableState(TS_ROWS, TS_COLUMNS, { sort: null, filters: { asset_type: "all" } });
+    assert.equal(all.length, 4);
+});
+
+test("applyTableState: does not mutate input", () => {
+    const { applyTableState } = loadAppIntoContext();
+    const before = TS_ROWS.map((x) => x.symbol);
+    applyTableState(TS_ROWS, TS_COLUMNS, { sort: { key: "value", dir: "asc" }, filters: {} });
+    assert.deepEqual(TS_ROWS.map((x) => x.symbol), before);
+});
