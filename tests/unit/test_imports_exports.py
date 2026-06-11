@@ -259,6 +259,29 @@ class TestImportUpload:
         assert data["transactions"][0]["symbol"] == "AAPL"
         assert data["transactions"][0]["tx_type"] == "buy"
 
+    @pytest.mark.asyncio
+    async def test_upload_mintos_deposit_booking(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        csv = (
+            "Fecha,Identificación de la operación:,Detalles,"
+            "Volumen de negocios,Saldo,Divisa,Tipo de pago\n"
+            '"2025-11-02 09:00:00",d1,"Ingreso de fondos",100.00,100.00,EUR,"Depósito"\n'
+        )
+        response = await async_test_client.post(
+            "/api/v1/import/upload",
+            headers=auth_headers,
+            data={"broker": "mintos"},
+            files={"file": ("mintos.csv", csv.encode(), "text/csv")},
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert len(data["bookings"]) == 1
+        bk = data["bookings"][0]
+        assert bk["action"] == "Deposit"
+        assert bk["amount"] == 100.0
+        assert bk["broker"] == "Mintos"
+
 
 # ---------------------------------------------------------------------------
 # Import router — /api/v1/import/save
