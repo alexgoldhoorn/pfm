@@ -596,43 +596,49 @@ function createPageManager() {
                 const hVal = h => parseFloat(h.total_value_eur ?? h.total_value ?? 0) || 0;
                 let view = holdings.slice();
                 if (hideBelow > 0) view = view.filter(h => hVal(h) >= hideBelow);
-                const sortKey = window.PREFS.holdingsSort || 'value';
-                view.sort((a, b) => {
-                    if (sortKey === 'name') return String(a.name || a.symbol).localeCompare(String(b.name || b.symbol));
-                    if (sortKey === 'pnl') return (parseFloat(b.pnl_amount) || 0) - (parseFloat(a.pnl_amount) || 0);
-                    if (sortKey === 'pnlpct') return (parseFloat(b.pnl_pct) || 0) - (parseFloat(a.pnl_pct) || 0);
-                    return hVal(b) - hVal(a); // value (default)
-                });
-
-                if (view.length === 0) {
-                    tableBody.innerHTML = `<tr><td colspan="12" class="text-center text-muted">${holdings.length ? 'All positions are below your “hide tiny positions” threshold.' : 'No holdings found. Add buy transactions to see your positions here.'}</td></tr>`;
-                } else {
-                    tableBody.innerHTML = view.map(h => {
-                        const pnlClass = h.pnl_amount >= 0 ? 'text-success' : 'text-danger';
-                        const typeBadge = { stock: 'bg-primary', etf: 'bg-info', index: 'bg-success', crypto: 'bg-warning text-dark', bond: 'bg-secondary', p2p: 'bg-dark' }[h.asset_type] || 'bg-secondary';
-                        const symEsc = (h.symbol || '').replace(/'/g, "\\'");
-                        return `
+                // Seed the default holdings sort from the legacy holdingsSort pref (once).
+                if (!window.PREFS.tableState || !window.PREFS.tableState.holdings) {
+                    const legacy = { value: { key: 'total_value_eur', dir: 'desc' }, pnl: { key: 'pnl_amount', dir: 'desc' }, pnlpct: { key: 'pnl_pct', dir: 'desc' }, name: { key: 'name', dir: 'asc' } }[window.PREFS.holdingsSort || 'value'];
+                    if (legacy) { if (!window.PREFS.tableState) window.PREFS.tableState = {}; window.PREFS.tableState.holdings = { sort: legacy, filters: {} }; }
+                }
+                // Store the hide-tiny-filtered set; the shared table does sort+filter.
+                this._holdingsRows = view;
+                const emptyMsg = `<tr><td colspan=”12” class=”text-center text-muted”>${holdings.length ? 'No holdings match the current filter.' : 'No holdings found. Add buy transactions to see your positions here.'}</td></tr>`;
+                const renderHoldingRow = (h) => {
+                    const pnlClass = h.pnl_amount >= 0 ? 'text-success' : 'text-danger';
+                    const typeBadge = { stock: 'bg-primary', etf: 'bg-info', index: 'bg-success', crypto: 'bg-warning text-dark', bond: 'bg-secondary', p2p: 'bg-dark' }[h.asset_type] || 'bg-secondary';
+                    const symEsc = (h.symbol || '').replace(/'/g, "\\'");
+                    return `
                         <tr>
                             <td><strong>${esc(h.symbol)}</strong></td>
                             <td>${esc(h.name)}</td>
-                            <td><span class="badge ${typeBadge}">${(h.asset_type || '').toUpperCase()}</span></td>
-                            <td>${h.currency || ''}</td>
-                            <td class="text-end">${parseFloat(h.quantity).toLocaleString(Fmt.loc(), { maximumFractionDigits: 4 })}</td>
-                            <td class="text-end">${fmt(h.avg_price)}</td>
-                            <td class="text-end">${h.current_price > 0 ? fmt(h.current_price) : '<span class="text-muted">—</span>'}</td>
-                            <td class="text-end fw-bold">${fmt(h.total_value)}</td>
-                            <td class="text-end ${pnlClass}">${h.pnl_amount >= 0 ? '+' : ''}${fmt(h.pnl_amount)}</td>
-                            <td class="text-end ${pnlClass}">${h.pnl_pct >= 0 ? '+' : ''}${fmt(h.pnl_pct)}%</td>
-                            <td class="text-center text-nowrap">${assetLinks(h.symbol)}</td>
-                            <td class="text-end pe-3">
-                                <button class="btn btn-sm btn-outline-primary" title="Research / Valuation"
-                                        onclick="openResearchModal('${symEsc}')">
-                                    <i class="bi bi-graph-up"></i>
-                                </button>
-                            </td>
+                            <td><span class=”badge ${typeBadge}”>${esc((h.asset_type || '').toUpperCase())}</span></td>
+                            <td>${esc(h.currency || '')}</td>
+                            <td class=”text-end”>${parseFloat(h.quantity).toLocaleString(Fmt.loc(), { maximumFractionDigits: 4 })}</td>
+                            <td class=”text-end”>${fmt(h.avg_price)}</td>
+                            <td class=”text-end”>${h.current_price > 0 ? fmt(h.current_price) : '<span class=”text-muted”>—</span>'}</td>
+                            <td class=”text-end fw-bold”>${fmt(h.total_value)}</td>
+                            <td class=”text-end ${pnlClass}”>${h.pnl_amount >= 0 ? '+' : ''}${fmt(h.pnl_amount)}</td>
+                            <td class=”text-end ${pnlClass}”>${h.pnl_pct >= 0 ? '+' : ''}${fmt(h.pnl_pct)}%</td>
+                            <td class=”text-center text-nowrap”>${assetLinks(h.symbol)}</td>
+                            <td class=”text-end pe-3”><button class=”btn btn-sm btn-outline-primary” title=”Research / Valuation” onclick=”openResearchModal('${symEsc}')”><i class=”bi bi-graph-up”></i></button></td>
                         </tr>`;
-                    }).join('');
-                }
+                };
+                this._holdingsST = this._holdingsST || makeSortableTable({
+                    table: document.getElementById('holdingsTable'),
+                    columns: [
+                        { key: 'symbol', type: 'text' }, { key: 'name', type: 'text' },
+                        { key: 'asset_type', type: 'text', filter: 'select' }, { key: 'currency', type: 'text' },
+                        { key: 'quantity', type: 'num' }, { key: 'avg_price', type: 'num' },
+                        { key: 'current_price', type: 'num' }, { key: 'total_value_eur', type: 'num' },
+                        { key: 'pnl_amount', type: 'num' }, { key: 'pnl_pct', type: 'num' },
+                        { key: null }, { key: null },
+                    ],
+                    getRows: () => this._holdingsRows,
+                    renderRows: (rows, tbody) => { tbody.innerHTML = rows.length ? rows.map(renderHoldingRow).join('') : emptyMsg; },
+                    prefsKey: 'holdings',
+                });
+                this._holdingsST.refresh();
             } catch (error) {
                 console.error('Error loading holdings:', error);
                 tableBody.innerHTML = '<tr><td colspan="12" class="text-center text-danger">Error loading holdings.</td></tr>';
