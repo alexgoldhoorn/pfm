@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 
 # Database version for migration tracking
-DATABASE_VERSION = 17
+DATABASE_VERSION = 18
 
 
 # black
@@ -116,12 +116,14 @@ class Database:
 
     def _create_version_table(self, conn: sqlite3.Connection):
         """Create database version tracking table."""
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS database_version (
                 version INTEGER PRIMARY KEY,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+        )
 
     def _get_database_version(self, conn: sqlite3.Connection) -> int:
         """Get current database version."""
@@ -139,7 +141,8 @@ class Database:
     def _create_all_tables(self, conn: sqlite3.Connection):
         """Create all database tables."""
         # Users table
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT NOT NULL UNIQUE,
@@ -152,10 +155,12 @@ class Database:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+        )
 
         # Entities table
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS entities (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -169,10 +174,12 @@ class Database:
                 FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
                 UNIQUE (user_id, name)
             )
-        """)
+        """
+        )
 
         # Portfolios table
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS portfolios (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
@@ -187,13 +194,16 @@ class Database:
                 FOREIGN KEY (entity_id) REFERENCES entities (id) ON DELETE SET NULL,
                 FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
             )
-        """)
+        """
+        )
 
         # Assets table
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS assets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 symbol TEXT NOT NULL UNIQUE,
+                ticker TEXT,
                 name TEXT NOT NULL,
                 asset_type TEXT NOT NULL CHECK (asset_type IN ('stock', 'bond', 'crypto', 'etf', 'index', 'mutual_fund', 'commodity', 'cash')),
                 exchange TEXT,
@@ -205,10 +215,12 @@ class Database:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+        )
 
         # Transactions table
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 asset_id INTEGER NOT NULL,
@@ -229,10 +241,12 @@ class Database:
                 FOREIGN KEY (portfolio_id) REFERENCES portfolios (id) ON DELETE SET NULL,
                 FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
             )
-        """)
+        """
+        )
 
         # Bookings table (deposits and withdrawals — no asset involved)
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS bookings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 portfolio_id INTEGER,
@@ -243,10 +257,12 @@ class Database:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (portfolio_id) REFERENCES portfolios (id) ON DELETE SET NULL
             )
-        """)
+        """
+        )
 
         # Prices table
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS prices (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 asset_id INTEGER NOT NULL,
@@ -259,10 +275,12 @@ class Database:
                 FOREIGN KEY (asset_id) REFERENCES assets (id) ON DELETE CASCADE,
                 UNIQUE(asset_id, price_date, price_type)
             )
-        """)
+        """
+        )
 
         # Portfolio configuration table
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS portfolio_config (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 config_key TEXT NOT NULL UNIQUE,
@@ -272,10 +290,12 @@ class Database:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+        )
 
         # API Keys table for authentication
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS api_keys (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 key_name TEXT NOT NULL,
@@ -287,7 +307,8 @@ class Database:
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 expires_at DATETIME
             )
-        """)
+        """
+        )
 
         # Create indexes for better performance
         conn.execute("CREATE INDEX idx_users_username ON users (username)")
@@ -331,7 +352,8 @@ class Database:
         conn.execute("CREATE INDEX idx_bookings_date ON bookings (date)")
 
         # Allocation targets, price targets, research reports (v7)
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS allocation_targets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 asset_type TEXT NOT NULL,
@@ -340,8 +362,10 @@ class Database:
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(asset_type)
             )
-        """)
-        conn.execute("""
+        """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS price_targets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 asset_id INTEGER NOT NULL UNIQUE,
@@ -354,8 +378,10 @@ class Database:
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (asset_id) REFERENCES assets (id) ON DELETE CASCADE
             )
-        """)
-        conn.execute("""
+        """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS research_reports (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 asset_id INTEGER NOT NULL UNIQUE,
@@ -368,9 +394,11 @@ class Database:
                 generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (asset_id) REFERENCES assets (id) ON DELETE CASCADE
             )
-        """)
+        """
+        )
 
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS research_notes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 asset_id INTEGER,
@@ -388,9 +416,11 @@ class Database:
                 sources TEXT,
                 FOREIGN KEY (asset_id) REFERENCES assets (id) ON DELETE CASCADE
             )
-        """)
+        """
+        )
 
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS portfolio_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 snapshot_date DATE NOT NULL UNIQUE,
@@ -398,8 +428,10 @@ class Database:
                 total_cost_eur REAL NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
-        conn.execute("""
+        """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS watchlist (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 symbol TEXT NOT NULL UNIQUE,
@@ -410,8 +442,10 @@ class Database:
                 alert_sent_at TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
-        conn.execute("""
+        """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS goals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -422,25 +456,29 @@ class Database:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+        )
 
         # Generic key/value cache (yfinance sector/country, fundamentals,
         # benchmark history) — persists across restarts. expires_at is epoch
         # seconds; NULL = never expires.
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS kv_cache (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL,
                 expires_at REAL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+        )
 
         # Manual assets & liabilities outside the brokerage (cash, property,
         # pension, mortgage, loans …) so net worth can reflect the whole
         # picture, not just tracked investments. amount is always positive;
         # is_liability flips the sign when totalling net worth.
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS manual_assets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -452,10 +490,12 @@ class Database:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+        )
 
         # Price-update run history (Diagnostics page). See _migrate_to_v17.
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS price_update_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 started_at TIMESTAMP,
@@ -469,7 +509,8 @@ class Database:
                 error_symbols TEXT,
                 api_errors TEXT
             )
-        """)
+        """
+        )
 
         # Create triggers for updated_at timestamps
         for table in [
@@ -479,13 +520,15 @@ class Database:
             "transactions",
             "portfolio_config",
         ]:
-            conn.execute(f"""
+            conn.execute(
+                f"""
                 CREATE TRIGGER update_{table}_timestamp
                 AFTER UPDATE ON {table}
                 BEGIN
                     UPDATE {table} SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
                 END
-            """)
+            """
+            )
 
         conn.commit()
 
@@ -523,13 +566,16 @@ class Database:
             self._migrate_to_v16(conn)
         if current_version < 17:
             self._migrate_to_v17(conn)
+        if current_version < 18:
+            self._migrate_to_v18(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
     def _migrate_to_v2(self, conn: sqlite3.Connection):
         """Migrate database from v1 to v2 - add entities and portfolios support."""
         # Add entities table
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE entities (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
@@ -540,10 +586,12 @@ class Database:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+        )
 
         # Add portfolios table
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE portfolios (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
@@ -555,22 +603,27 @@ class Database:
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (entity_id) REFERENCES entities (id) ON DELETE SET NULL
             )
-        """)
+        """
+        )
 
         # Create a default portfolio for existing transactions
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO portfolios (name, description)
             VALUES ('Default Portfolio', 'Automatically created for existing transactions')
-        """)
+        """
+        )
 
         # Add portfolio_id column to transactions table
         conn.execute("ALTER TABLE transactions ADD COLUMN portfolio_id INTEGER")
 
         # Set all existing transactions to the default portfolio
-        conn.execute("""
+        conn.execute(
+            """
             UPDATE transactions
             SET portfolio_id = (SELECT id FROM portfolios WHERE name = 'Default Portfolio')
-        """)
+        """
+        )
 
         # Add indexes for new tables
         conn.execute("CREATE INDEX idx_entities_name ON entities (name)")
@@ -583,20 +636,23 @@ class Database:
 
         # Add triggers for new tables
         for table in ["entities", "portfolios"]:
-            conn.execute(f"""
+            conn.execute(
+                f"""
                 CREATE TRIGGER update_{table}_timestamp
                 AFTER UPDATE ON {table}
                 BEGIN
                     UPDATE {table} SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
                 END
-            """)
+            """
+            )
 
         conn.commit()
 
     def _migrate_to_v3(self, conn: sqlite3.Connection):
         """Migrate database from v2 to v3 - add user authentication system."""
         # Add users table
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT NOT NULL UNIQUE,
@@ -609,7 +665,8 @@ class Database:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+        )
 
         # Ensure user_id columns exist before updating data
         _add_column_if_missing(conn, "entities", "user_id", "INTEGER")
@@ -617,17 +674,21 @@ class Database:
         _add_column_if_missing(conn, "transactions", "user_id", "INTEGER")
 
         # Create a default user for existing data
-        conn.execute("""
+        conn.execute(
+            """
             INSERT INTO users (username, email, password_hash, salt, full_name)
             VALUES ('admin', 'admin@localhost', 'dummy_hash', 'dummy_salt', 'Default Admin User')
-        """)
+        """
+        )
 
         # Set all existing entities to the default user
         try:
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 UPDATE entities
                 SET user_id = (SELECT id FROM users WHERE username = 'admin')
-            """)
+            """
+            )
             if cursor.rowcount == 0:
                 self.logger.warning(
                     "No entities found to update with user_id during migration"
@@ -639,10 +700,12 @@ class Database:
 
         # Set all existing portfolios to the default user
         try:
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 UPDATE portfolios
                 SET user_id = (SELECT id FROM users WHERE username = 'admin')
-            """)
+            """
+            )
             if cursor.rowcount == 0:
                 self.logger.warning(
                     "No portfolios found to update with user_id during migration"
@@ -654,10 +717,12 @@ class Database:
 
         # Set all existing transactions to the default user
         try:
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 UPDATE transactions
                 SET user_id = (SELECT id FROM users WHERE username = 'admin')
-            """)
+            """
+            )
             if cursor.rowcount == 0:
                 self.logger.warning(
                     "No transactions found to update with user_id during migration"
@@ -697,27 +762,32 @@ class Database:
         # For production, you might want to recreate tables with proper foreign keys
 
         # Add trigger for users table
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TRIGGER update_users_timestamp
             AFTER UPDATE ON users
             BEGIN
                 UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
             END
-        """)
+        """
+        )
 
         conn.commit()
 
     def _migrate_to_v4(self, conn: sqlite3.Connection):
         """Migrate database from v3 to v4 - add API keys table."""
         # Check if api_keys table already exists
-        cursor = conn.execute("""
+        cursor = conn.execute(
+            """
             SELECT name FROM sqlite_master
             WHERE type='table' AND name='api_keys'
-        """)
+        """
+        )
 
         if not cursor.fetchone():
             # Create api_keys table
-            conn.execute("""
+            conn.execute(
+                """
                 CREATE TABLE api_keys (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     key_name TEXT NOT NULL,
@@ -729,7 +799,8 @@ class Database:
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                     expires_at DATETIME
                 )
-            """)
+            """
+            )
 
             # Create indexes for api_keys table
             conn.execute("CREATE INDEX idx_api_keys_key_hash ON api_keys (key_hash)")
@@ -750,7 +821,8 @@ class Database:
             "SELECT name FROM sqlite_master WHERE type='table' AND name='bookings'"
         )
         if not cursor.fetchone():
-            conn.execute("""
+            conn.execute(
+                """
                 CREATE TABLE bookings (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     portfolio_id INTEGER,
@@ -761,7 +833,8 @@ class Database:
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     FOREIGN KEY (portfolio_id) REFERENCES portfolios (id) ON DELETE SET NULL
                 )
-            """)
+            """
+            )
             conn.execute(
                 "CREATE INDEX idx_bookings_portfolio_id ON bookings (portfolio_id)"
             )
@@ -816,18 +889,21 @@ class Database:
 
     def _migrate_to_v8(self, conn: sqlite3.Connection):
         """Migrate database from v7 to v8 — add portfolio_snapshots table."""
-        conn.execute("""CREATE TABLE IF NOT EXISTS portfolio_snapshots (
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS portfolio_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 snapshot_date DATE NOT NULL UNIQUE,
                 total_value_eur REAL NOT NULL,
                 total_cost_eur REAL NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )""")
+            )"""
+        )
         conn.commit()
 
     def _migrate_to_v9(self, conn: sqlite3.Connection):
         """Migrate database from v8 to v9 — add watchlist and goals tables."""
-        conn.execute("""CREATE TABLE IF NOT EXISTS watchlist (
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS watchlist (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 symbol TEXT NOT NULL UNIQUE,
                 name TEXT,
@@ -836,8 +912,10 @@ class Database:
                 notes TEXT,
                 alert_sent_at TIMESTAMP,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS goals (
+            )"""
+        )
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS goals (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
                 target_amount_eur REAL NOT NULL,
@@ -846,7 +924,8 @@ class Database:
                 expected_return_pct REAL DEFAULT 7.0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )""")
+            )"""
+        )
         conn.commit()
 
     def _migrate_to_v10(self, conn: sqlite3.Connection):
@@ -870,7 +949,8 @@ class Database:
 
     def _migrate_to_v12(self, conn: sqlite3.Connection):
         """Migrate from v11 to v12 — add research_notes (versioned research)."""
-        conn.execute("""CREATE TABLE IF NOT EXISTS research_notes (
+        conn.execute(
+            """CREATE TABLE IF NOT EXISTS research_notes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 asset_id INTEGER,
                 symbol TEXT NOT NULL,
@@ -886,7 +966,8 @@ class Database:
                 llm_summary TEXT,
                 sources TEXT,
                 FOREIGN KEY (asset_id) REFERENCES assets (id) ON DELETE CASCADE
-            )""")
+            )"""
+        )
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_research_notes_symbol "
             "ON research_notes (symbol, created_at)"
@@ -923,7 +1004,8 @@ class Database:
         conn.execute("PRAGMA foreign_keys=OFF")
         conn.execute("PRAGMA legacy_alter_table=ON")
         conn.execute("ALTER TABLE assets RENAME TO assets_old")
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE assets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 symbol TEXT NOT NULL UNIQUE,
@@ -938,7 +1020,8 @@ class Database:
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 auto_price INTEGER NOT NULL DEFAULT 1
             )
-            """)
+            """
+        )
         # Copy only the columns present in BOTH tables — when migrating from a
         # very old schema the source may lack some (exchange, sector,
         # auto_price, …); those take their column defaults in the new table.
@@ -965,19 +1048,22 @@ class Database:
         Backs the yfinance cache (sector/country, fundamentals, benchmark
         history) so repeated/expensive lookups survive restarts.
         """
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS kv_cache (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL,
                 expires_at REAL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-            """)
+            """
+        )
         conn.commit()
 
     def _migrate_to_v15(self, conn: sqlite3.Connection):
         """Migrate from v14 to v15 — add manual_assets (off-brokerage net worth)."""
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS manual_assets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -989,7 +1075,8 @@ class Database:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-            """)
+            """
+        )
         conn.commit()
 
     def _migrate_to_v16(self, conn: sqlite3.Connection):
@@ -1011,7 +1098,8 @@ class Database:
         conn.execute("PRAGMA legacy_alter_table=ON")
         conn.execute("DROP TRIGGER IF EXISTS update_transactions_timestamp")
         conn.execute("ALTER TABLE transactions RENAME TO transactions_old")
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 asset_id INTEGER NOT NULL,
@@ -1032,7 +1120,8 @@ class Database:
                 FOREIGN KEY (portfolio_id) REFERENCES portfolios (id) ON DELETE SET NULL,
                 FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
             )
-            """)
+            """
+        )
         new_cols = [r[1] for r in conn.execute("PRAGMA table_info(transactions)")]
         old_cols = {r[1] for r in conn.execute("PRAGMA table_info(transactions_old)")}
         common = ", ".join(c for c in new_cols if c in old_cols)
@@ -1040,13 +1129,15 @@ class Database:
             f"INSERT INTO transactions ({common}) SELECT {common} FROM transactions_old"
         )
         conn.execute("DROP TABLE transactions_old")
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TRIGGER update_transactions_timestamp
             AFTER UPDATE ON transactions
             BEGIN
                 UPDATE transactions SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
             END
-            """)
+            """
+        )
         conn.commit()
         conn.execute("PRAGMA legacy_alter_table=OFF")
         conn.execute("PRAGMA foreign_keys=ON")
@@ -1058,7 +1149,8 @@ class Database:
         Diagnostics page can show update timings, success/skip counts and the
         per-symbol skip reasons instead of that detail being lost to stdout.
         """
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS price_update_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 started_at TIMESTAMP,
@@ -1072,8 +1164,18 @@ class Database:
                 error_symbols TEXT,
                 api_errors TEXT
             )
-            """)
+            """
+        )
         conn.commit()
+
+    def _migrate_to_v18(self, conn: sqlite3.Connection):
+        """Migrate from v17 to v18 — add assets.ticker.
+
+        Stocks are stored by ISIN (e.g. US67066G1040); the nullable ticker
+        column holds the yfinance-style market symbol (NVDA, ASML.AS,
+        BTC-EUR) so API consumers can resolve tickers to held assets.
+        """
+        _add_column_if_missing(conn, "assets", "ticker", "TEXT")
 
     # ── Price-update run history (Diagnostics) ─────────────────────────────
 
@@ -1630,6 +1732,7 @@ class Database:
             "description",
             "is_active",
             "auto_price",
+            "ticker",
         }
         update_fields = {k: v for k, v in kwargs.items() if k in valid_fields}
 
@@ -2268,12 +2371,14 @@ class Database:
             total_transactions = cursor.fetchone()[0]
 
             # Get asset types breakdown
-            cursor = conn.execute("""
+            cursor = conn.execute(
+                """
                 SELECT asset_type, COUNT(*) as count
                 FROM assets
                 WHERE is_active = TRUE
                 GROUP BY asset_type
-            """)
+            """
+            )
             asset_types = {row[0]: row[1] for row in cursor.fetchall()}
 
             return {
@@ -2327,9 +2432,11 @@ class Database:
     def get_all_price_targets(self) -> List[Dict]:
         """Get all price targets with asset symbol."""
         with self.get_connection() as conn:
-            rows = conn.execute("""SELECT pt.*, a.symbol, a.name
+            rows = conn.execute(
+                """SELECT pt.*, a.symbol, a.name
                    FROM price_targets pt JOIN assets a ON pt.asset_id = a.id
-                   ORDER BY a.symbol""").fetchall()
+                   ORDER BY a.symbol"""
+            ).fetchall()
             return [dict(r) for r in rows]
 
     def upsert_price_target(
@@ -2413,11 +2520,13 @@ class Database:
     def get_latest_research_notes(self) -> List[Dict]:
         """The most recent research note per symbol (for the compare table)."""
         with self.get_connection() as conn:
-            rows = conn.execute("""SELECT rn.* FROM research_notes rn
+            rows = conn.execute(
+                """SELECT rn.* FROM research_notes rn
                    JOIN (SELECT symbol, MAX(id) AS mx FROM research_notes
                          GROUP BY symbol) latest
                      ON rn.id = latest.mx
-                   ORDER BY rn.created_at DESC""").fetchall()
+                   ORDER BY rn.created_at DESC"""
+            ).fetchall()
             return [dict(r) for r in rows]
 
     def upsert_research_report(

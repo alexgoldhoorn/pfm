@@ -38,7 +38,22 @@ class TestDatabase:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             result = cursor.fetchone()
-            assert result[0] == 17  # Current schema version
+            assert result[0] == 18  # Current schema version
+
+    def test_v18_assets_have_ticker_column(self):
+        """v18 adds the nullable ticker alias column to assets."""
+        with self.db.get_connection() as conn:
+            cols = {row["name"] for row in conn.execute("PRAGMA table_info(assets)")}
+        assert "ticker" in cols
+
+    def test_update_asset_accepts_ticker(self):
+        """update_asset whitelist includes the new ticker column."""
+        asset_id = self.db.create_asset(
+            symbol="US67066G1040", name="NVIDIA CP", asset_type="stock"
+        )
+        assert self.db.update_asset(asset_id, ticker="NVDA") is True
+        asset = self.db.get_asset(asset_id)
+        assert asset["ticker"] == "NVDA"
 
     def test_database_tables_exist(self):
         """Test that all required tables are created."""
@@ -849,16 +864,19 @@ class TestDatabaseMigrations:
     def _create_legacy_v2_db(self):
         """Create legacy database structure for version 2."""
         conn = sqlite3.connect(self.db_path)
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE database_version (
                 version INTEGER PRIMARY KEY,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+        )
         conn.execute("INSERT INTO database_version (version) VALUES (2)")
 
         # Create v2 tables without user_id columns
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE entities (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
@@ -869,9 +887,11 @@ class TestDatabaseMigrations:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+        )
 
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE portfolios (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
@@ -882,10 +902,12 @@ class TestDatabaseMigrations:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+        )
 
         # Create transactions table (which would exist in v2)
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 asset_id INTEGER NOT NULL,
@@ -899,7 +921,8 @@ class TestDatabaseMigrations:
                 portfolio_id INTEGER,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+        )
 
         conn.commit()
         conn.close()
@@ -917,7 +940,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 17
+            assert version == 18
 
             # Assert columns exist
             for table in ["entities", "portfolios", "transactions"]:
@@ -947,7 +970,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 17
+            assert version == 18
 
             # Check all tables exist
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -960,16 +983,19 @@ class TestDatabaseMigrations:
         """Test migration from older database version."""
         # Create a basic database structure (simulate older version)
         conn = sqlite3.connect(self.db_path)
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE database_version (
                 version INTEGER PRIMARY KEY,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+        )
         conn.execute("INSERT INTO database_version (version) VALUES (1)")
 
         # Create minimal v1 tables
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE assets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 symbol TEXT NOT NULL UNIQUE,
@@ -977,8 +1003,10 @@ class TestDatabaseMigrations:
                 asset_type TEXT NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
-        conn.execute("""
+        """
+        )
+        conn.execute(
+            """
             CREATE TABLE transactions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 asset_id INTEGER NOT NULL,
@@ -989,7 +1017,8 @@ class TestDatabaseMigrations:
                 transaction_date DATE NOT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """)
+        """
+        )
         conn.commit()
         conn.close()
 
@@ -1010,7 +1039,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 17
+            assert version == 18
 
             # Check new tables exist
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
