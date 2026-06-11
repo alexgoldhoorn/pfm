@@ -390,6 +390,27 @@ class TestAssetOperations:
         asset = self.db.get_asset_by_symbol("NONEXISTENT")
         assert asset is None
 
+    def test_get_asset_by_symbol_resolves_ticker_alias(self):
+        """Ticker aliases resolve case-insensitively to the ISIN asset."""
+        asset_id = self.db.create_asset(
+            symbol="US67066G1040", name="NVIDIA CP", asset_type="stock"
+        )
+        self.db.update_asset(asset_id, ticker="NVDA")
+        assert self.db.get_asset_by_symbol("NVDA")["id"] == asset_id
+        assert self.db.get_asset_by_symbol("nvda")["id"] == asset_id
+
+    def test_get_asset_by_symbol_prefers_exact_symbol_over_ticker(self):
+        """A direct symbol match wins over another asset's ticker alias."""
+        btc_id = self.db.create_asset(symbol="BTC", name="Bitcoin", asset_type="crypto")
+        other_id = self.db.create_asset(
+            symbol="US0000000001", name="Decoy", asset_type="stock"
+        )
+        self.db.update_asset(other_id, ticker="BTC")
+        assert self.db.get_asset_by_symbol("BTC")["id"] == btc_id
+
+    def test_get_asset_by_symbol_unknown_returns_none(self):
+        assert self.db.get_asset_by_symbol("ZZZZ.XX") is None
+
     def test_get_all_assets(self):
         """Test getting all assets."""
         # Create test assets

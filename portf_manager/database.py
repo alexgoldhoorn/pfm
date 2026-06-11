@@ -203,7 +203,6 @@ class Database:
             CREATE TABLE IF NOT EXISTS assets (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 symbol TEXT NOT NULL UNIQUE,
-                ticker TEXT,
                 name TEXT NOT NULL,
                 asset_type TEXT NOT NULL CHECK (asset_type IN ('stock', 'bond', 'crypto', 'etf', 'index', 'mutual_fund', 'commodity', 'cash')),
                 exchange TEXT,
@@ -213,7 +212,8 @@ class Database:
                 is_active BOOLEAN NOT NULL DEFAULT TRUE,
                 auto_price INTEGER NOT NULL DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                ticker TEXT
             )
         """
         )
@@ -1176,6 +1176,7 @@ class Database:
         BTC-EUR) so API consumers can resolve tickers to held assets.
         """
         _add_column_if_missing(conn, "assets", "ticker", "TEXT")
+        conn.commit()
 
     # ── Price-update run history (Diagnostics) ─────────────────────────────
 
@@ -1699,10 +1700,15 @@ class Database:
             return dict(row) if row else None
 
     def get_asset_by_symbol(self, symbol: str) -> Optional[Dict]:
-        """Get asset by symbol."""
+        """Get asset by symbol, falling back to the ticker alias (case-insensitive)."""
         with self.get_connection() as conn:
             cursor = conn.execute("SELECT * FROM assets WHERE symbol = ?", (symbol,))
             row = cursor.fetchone()
+            if row is None:
+                cursor = conn.execute(
+                    "SELECT * FROM assets WHERE ticker = ? COLLATE NOCASE", (symbol,)
+                )
+                row = cursor.fetchone()
             return dict(row) if row else None
 
     def get_all_assets(self, active_only: bool = True) -> List[Dict]:

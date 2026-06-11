@@ -145,6 +145,7 @@ class Asset(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     symbol = Column(String(50), nullable=False, unique=True)
+    ticker = Column(String(50))
     name = Column(String(255), nullable=False)
     asset_type = Column(String(50), nullable=False)
     exchange = Column(String(100))

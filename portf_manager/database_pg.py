@@ -11,7 +11,7 @@ import logging
 from contextlib import contextmanager
 from datetime import datetime
 from typing import Dict, List, Optional, Any
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, func
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.exc import SQLAlchemyError
 import json
@@ -484,9 +484,15 @@ class PostgreSQLDatabase:
             return self._orm_to_dict(asset)
 
     def get_asset_by_symbol(self, symbol: str) -> Optional[Dict]:
-        """Get asset by symbol."""
+        """Get asset by symbol, falling back to the ticker alias (case-insensitive)."""
         with self.get_session() as session:
             asset = session.query(Asset).filter(Asset.symbol == symbol).first()
+            if asset is None:
+                asset = (
+                    session.query(Asset)
+                    .filter(func.upper(Asset.ticker) == symbol.upper())
+                    .first()
+                )
             return self._orm_to_dict(asset)
 
     def get_all_assets(self, active_only: bool = True) -> List[Dict]:
