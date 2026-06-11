@@ -1073,3 +1073,25 @@ class TestDatabaseMigrations:
             cursor = conn.execute("SELECT * FROM users WHERE username = 'admin'")
             admin_user = cursor.fetchone()
             assert admin_user is not None
+
+
+def test_add_column_if_missing_reraises_unexpected_errors():
+    """A locked DB (or any non-'no such table' error) must not be swallowed,
+    otherwise migrations get version-stamped without being applied."""
+    from unittest.mock import MagicMock
+    from portf_manager.database import _add_column_if_missing
+
+    conn = MagicMock()
+    conn.execute.side_effect = sqlite3.OperationalError("database is locked")
+    with pytest.raises(sqlite3.OperationalError):
+        _add_column_if_missing(conn, "assets", "ticker", "TEXT")
+
+
+def test_add_column_if_missing_skips_missing_table():
+    """When the table doesn't exist yet, the error should be silently ignored."""
+    from unittest.mock import MagicMock
+    from portf_manager.database import _add_column_if_missing
+
+    conn = MagicMock()
+    conn.execute.side_effect = sqlite3.OperationalError("no such table: assets")
+    _add_column_if_missing(conn, "assets", "ticker", "TEXT")  # must not raise
