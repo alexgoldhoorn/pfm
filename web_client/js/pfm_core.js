@@ -127,6 +127,113 @@ function applyTableState(rows, columns, state) {
 }
 window.applyTableState = applyTableState;
 
+// Per-table state accessor (seeds a default sort the first time).
+function _tableState(prefsKey, columns) {
+    if (!window.PREFS.tableState) window.PREFS.tableState = {};
+    if (!window.PREFS.tableState[prefsKey]) {
+        const first = (columns || []).find(c => c.sortable !== false && c.key);
+        window.PREFS.tableState[prefsKey] = {
+            sort: first ? { key: first.key, dir: (first.type === 'text' ? 'asc' : 'desc') } : null,
+            filters: {},
+        };
+    }
+    const st = window.PREFS.tableState[prefsKey];
+    if (!st.filters) st.filters = {};
+    return st;
+}
+
+// Enhance an existing <table> with clickable-header sort + a filter row.
+// config: { table, columns, getRows, renderRows, prefsKey }
+//  - columns: [{key, type, sortable?, filter?}] matched to <th data-key=...>
+//  - getRows(): current data array  - renderRows(rows, tbody): fills tbody
+// Returns { refresh() } — call after (re)loading data.
+function makeSortableTable(config) {
+    const { table, columns, getRows, renderRows, prefsKey } = config;
+    if (!table) return { refresh() {} };
+    const thead = table.querySelector('thead');
+    const tbody = table.querySelector('tbody');
+    const state = _tableState(prefsKey, columns);
+
+    function updateIndicators() {
+        thead.querySelectorAll('th[data-key]').forEach(th => {
+            let arrow = th.querySelector('.pfm-sort-arrow');
+            if (!arrow) {
+                arrow = document.createElement('span');
+                arrow.className = 'pfm-sort-arrow ms-1';
+                th.appendChild(arrow);
+            }
+            const active = state.sort && state.sort.key === th.dataset.key;
+            arrow.textContent = active ? (state.sort.dir === 'asc' ? '▲' : '▼') : '';
+        });
+    }
+
+    function render() {
+        renderRows(applyTableState(getRows(), columns, state), tbody);
+        updateIndicators();
+    }
+
+    function populateFilters() {
+        const rows = getRows() || [];
+        thead.querySelectorAll('select[data-filter-key]').forEach(sel => {
+            const key = sel.dataset.filterKey;
+            const vals = [...new Set(rows.map(r => String(r[key] == null ? '' : r[key])).filter(Boolean))].sort();
+            const cur = state.filters[key] || 'all';
+            sel.innerHTML = '<option value="all">All</option>' +
+                vals.map(v => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+            sel.value = [...sel.options].some(o => o.value === cur) ? cur : 'all';
+        });
+    }
+
+    if (!table.dataset.sortWired) {
+        table.dataset.sortWired = '1';
+        // Header click → toggle/set sort.
+        thead.querySelectorAll('th[data-key]').forEach(th => {
+            th.style.cursor = 'pointer';
+            th.classList.add('pfm-sortable-th');
+            th.addEventListener('click', () => {
+                const key = th.dataset.key;
+                if (state.sort && state.sort.key === key) {
+                    state.sort.dir = state.sort.dir === 'asc' ? 'desc' : 'asc';
+                } else {
+                    state.sort = { key, dir: (th.dataset.type === 'text' ? 'asc' : 'desc') };
+                }
+                savePrefs();
+                render();
+            });
+        });
+        // Build a second thead row of filter <select>s (one cell per column).
+        const filterCols = (columns || []).filter(c => c.filter === 'select');
+        if (filterCols.length) {
+            const fr = document.createElement('tr');
+            fr.className = 'pfm-filter-row';
+            const headerCells = thead.querySelector('tr').children.length;
+            for (let i = 0; i < headerCells; i++) {
+                const cell = document.createElement('th');
+                cell.className = 'py-1 fw-normal';
+                const col = columns[i];
+                if (col && col.filter === 'select') {
+                    const sel = document.createElement('select');
+                    sel.className = 'form-select form-select-sm';
+                    sel.dataset.filterKey = col.key;
+                    sel.addEventListener('change', () => {
+                        state.filters[col.key] = sel.value;
+                        savePrefs();
+                        render();
+                    });
+                    cell.appendChild(sel);
+                }
+                fr.appendChild(cell);
+            }
+            thead.appendChild(fr);
+        }
+    }
+
+    return {
+        refresh() { populateFilters(); render(); },
+    };
+}
+window.makeSortableTable = makeSortableTable;
+
 // Dashboard alerts banner: price targets crossed + watchlist buy zones.
 // Loaded async so it never blocks the dashboard (watchlist check hits live
 // prices). Hidden entirely when nothing is triggered.
