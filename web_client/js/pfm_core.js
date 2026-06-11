@@ -24,6 +24,7 @@ const PREFS_DEFAULTS = {
     holdingsSort: 'value',    // value | pnl | pnlpct | name
     hideBelowEur: 0,          // hide holdings below this EUR value (0 = show all)
     dashTopPositions: { n: 5, type: 'all', broker: 'all', sort: 'value' },
+    tableState: {},   // per-table sort/filter, keyed by table (holdings, transactions, assets, portfolios)
 };
 window.PREFS = Object.assign({}, PREFS_DEFAULTS, (() => {
     try { return JSON.parse(localStorage.getItem(PREFS_KEY) || '{}'); } catch (e) { return {}; }
@@ -93,6 +94,38 @@ function topPositions(holdings, opts) {
     return list.slice(0, Number(n));
 }
 window.topPositions = topPositions;
+
+// Pure filter+sort for the shared sortable tables (unit-tested). `columns` is
+// [{key, type:'text'|'num'|'date', filter?}]; `state` is {sort:{key,dir}, filters:{key:value}}.
+// Blanks/missing always sort last; returns a new array (no mutation).
+function applyTableState(rows, columns, state) {
+    const byKey = Object.fromEntries((columns || []).map(c => [c.key, c]));
+    let out = (rows || []).slice();
+    const filters = (state && state.filters) || {};
+    for (const [k, v] of Object.entries(filters)) {
+        if (v && v !== 'all') out = out.filter(r => String(r[k] == null ? '' : r[k]) === String(v));
+    }
+    const s = state && state.sort;
+    if (s && s.key && byKey[s.key]) {
+        const type = byKey[s.key].type || 'text';
+        const dir = s.dir === 'asc' ? 1 : -1;
+        out.sort((a, b) => {
+            const av = a[s.key], bv = b[s.key];
+            const ab = av == null || av === '';
+            const bb = bv == null || bv === '';
+            if (ab && bb) return 0;
+            if (ab) return 1;   // blanks last regardless of direction
+            if (bb) return -1;
+            let cmp;
+            if (type === 'num') cmp = (parseFloat(av) || 0) - (parseFloat(bv) || 0);
+            else if (type === 'date') cmp = String(av).localeCompare(String(bv));
+            else cmp = String(av).toLowerCase().localeCompare(String(bv).toLowerCase());
+            return cmp * dir;
+        });
+    }
+    return out;
+}
+window.applyTableState = applyTableState;
 
 // Dashboard alerts banner: price targets crossed + watchlist buy zones.
 // Loaded async so it never blocks the dashboard (watchlist check hits live
