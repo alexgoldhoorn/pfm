@@ -2101,18 +2101,26 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                             <label class="form-label small mb-1">Name *</label>
                                             <input class="form-control form-control-sm" id="nwName" placeholder="e.g. Emergency fund, Flat, Mortgage" required>
                                         </div>
-                                        <div class="col-6">
+                                        <div class="col-12">
                                             <label class="form-label small mb-1">Type</label>
                                             <select class="form-select form-select-sm" id="nwCategory">
-                                                <option value="cash">Cash / savings</option>
-                                                <option value="investment_external">Investment (external)</option>
-                                                <option value="property">Property</option>
-                                                <option value="vehicle">Vehicle</option>
-                                                <option value="pension">Pension</option>
-                                                <option value="other">Other asset</option>
-                                                <option value="mortgage">Mortgage</option>
-                                                <option value="loan">Loan</option>
-                                                <option value="credit">Credit / other debt</option>
+                                                <optgroup label="Assets">
+                                                    <option value="savings_account">Savings account</option>
+                                                    <option value="current_account">Current / running account</option>
+                                                    <option value="cash">Cash</option>
+                                                    <option value="property">Property</option>
+                                                    <option value="vehicle">Vehicle</option>
+                                                    <option value="pension">Pension</option>
+                                                    <option value="investment_external">Investment (external)</option>
+                                                    <option value="other">Other asset</option>
+                                                </optgroup>
+                                                <optgroup label="Liabilities (debt)">
+                                                    <option value="mortgage">Mortgage</option>
+                                                    <option value="personal_loan">Personal loan</option>
+                                                    <option value="car_loan">Car loan</option>
+                                                    <option value="credit_card">Credit card</option>
+                                                    <option value="other_debt">Other debt</option>
+                                                </optgroup>
                                             </select>
                                         </div>
                                         <div class="col-6">
@@ -2122,9 +2130,6 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                         <div class="col-6">
                                             <label class="form-label small mb-1">Currency</label>
                                             <input class="form-control form-control-sm" id="nwCurrency" value="EUR" maxlength="3">
-                                        </div>
-                                        <div class="col-6 d-flex align-items-end">
-                                            <div class="form-check"><input class="form-check-input" type="checkbox" id="nwIsLiability"><label class="form-check-label small" for="nwIsLiability">It's a debt</label></div>
                                         </div>
                                         <div class="col-12">
                                             <input class="form-control form-control-sm" id="nwNotes" placeholder="Notes (optional)">
@@ -2706,9 +2711,9 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
          scripts. They share one global scope and MUST load in this order:
          core → pages → analytics → features (features carries the
          DOMContentLoaded bootstrap, so it loads last). -->
-    <script src="js/pfm_core.js?v=1780000045"></script>
-    <script src="js/pfm_pages.js?v=1780000045"></script>
-    <script src="js/pfm_analytics.js?v=1780000045"></script>
-    <script src="js/pfm_features.js?v=1780000045"></script>
+    <script src="js/pfm_core.js?v=1780000046"></script>
+    <script src="js/pfm_pages.js?v=1780000046"></script>
+    <script src="js/pfm_analytics.js?v=1780000046"></script>
+    <script src="js/pfm_features.js?v=1780000046"></script>
 </body>
 </html>
