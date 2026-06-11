@@ -42,7 +42,7 @@ def _enabled() -> bool:
 
 
 @router.get("/summary")
-async def public_summary(db=Depends(get_database)):
+def public_summary(db=Depends(get_database)):
     """Return allocation percentages + lifetime return %. No absolute amounts.
 
     Disabled unless PORTF_PUBLIC_VIEW is truthy.

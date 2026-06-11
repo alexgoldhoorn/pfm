@@ -33,6 +33,8 @@ MINTOS_NAME = "Mintos P2P"
 class MintosParseResult:
     # one dict per month: {date, amount, tax, count, currency}
     interest: List[dict] = field(default_factory=list)
+    # one dict per cash deposit/withdrawal: {date, action, amount, currency}
+    bookings: List[dict] = field(default_factory=list)
     # {payment_type: (row_count, summed_eur)} for the rows we skipped
     ignored_summary: Dict[str, Tuple[int, float]] = field(default_factory=dict)
     skipped: List[Tuple[str, str]] = field(default_factory=list)
@@ -73,6 +75,26 @@ def parse_mintos_csv(csv_content: str) -> MintosParseResult:
             m[2] += 1
             if date > m[3]:
                 m[3] = date
+        elif any(
+            k in low for k in ("depósit", "deposit", "ingreso", "incoming client")
+        ):
+            res.bookings.append(
+                {
+                    "date": date,
+                    "action": "Deposit",
+                    "amount": abs(amt),
+                    "currency": cur,
+                }
+            )
+        elif any(k in low for k in ("retirada", "withdrawal", "outgoing")):
+            res.bookings.append(
+                {
+                    "date": date,
+                    "action": "Withdrawal",
+                    "amount": abs(amt),
+                    "currency": cur,
+                }
+            )
         else:
             agg = ignored.setdefault(ptype or "(unknown)", [0, 0.0])
             agg[0] += 1

@@ -54,6 +54,13 @@ class ServerSettings(BaseSettings):
     api_key_header: str = Field(
         default="X-API-Key", description="Header name for API key authentication"
     )
+    # Self-service account creation. Off by default: /login-key hands out the
+    # shared SERVER_API_KEY to any valid login, so open registration would let
+    # anyone provision full access. The demo deployment sets this true.
+    allow_registration: bool = Field(
+        default=False,
+        description="Allow self-service user registration (PORTF_ALLOW_REGISTRATION)",
+    )
 
     # CORS settings
     cors_origins: List[str] = Field(

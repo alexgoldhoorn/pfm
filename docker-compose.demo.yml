@@ -21,6 +21,9 @@ services:
       - PORTF_DATABASE_URL=sqlite:///portfolio_demo.db
       - SERVER_API_KEY=demo-key-0000000000000000000000000000000000000000000000000000000000
       - PORTF_PUBLIC_VIEW=false
+      # Disposable synthetic demo DB — allow visitors to self-register and try
+      # the full sign-up flow. Production leaves this unset (registration off).
+      - PORTF_ALLOW_REGISTRATION=true
     volumes:
       - ./portfolio_demo.db:/app/portfolio_demo.db
     command: ["uvicorn", "portf_server.app:app", "--host", "0.0.0.0", "--port", "8000"]

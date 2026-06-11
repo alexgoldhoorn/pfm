@@ -213,7 +213,9 @@ def _parse_indexacapital(
     return previews, [], skipped
 
 
-def _parse_coinbase(content: str) -> tuple[List[PreviewTransaction], List[dict]]:
+def _parse_coinbase(
+    content: str,
+) -> tuple[List[PreviewTransaction], List[PreviewBooking], List[dict]]:
     result = parse_coinbase_csv(content)
     previews = [
         PreviewTransaction(
@@ -227,11 +229,17 @@ def _parse_coinbase(content: str) -> tuple[List[PreviewTransaction], List[dict]]
             currency=tx.currency or "USD",
             fees=tx.fees,
             notes=tx.raw_text or "",
+            # Tag with the broker so the save step resolves the Coinbase
+            # portfolio (get_or_create_portfolio). Without this the rows save
+            # with portfolio_id=NULL and vanish under the broker filter — the
+            # other parsers all set this; Coinbase was the omission.
+            broker="Coinbase",
         )
         for tx in result.importable
     ]
+    bookings = [PreviewBooking(broker="Coinbase", **bk) for bk in result.bookings]
     skipped = [{"type": t, "reason": r} for t, r in result.skipped]
-    return previews, skipped
+    return previews, bookings, skipped
 
 
 def _parse_myinvestor(
@@ -305,7 +313,8 @@ def _parse_mintos(
             result.ignored_summary.items(), key=lambda x: -x[1][0]
         )
     ]
-    return previews, [], skipped
+    bookings = [PreviewBooking(broker="Mintos", **bk) for bk in result.bookings]
+    return previews, bookings, skipped
 
 
 def _parse_pdt(
@@ -465,8 +474,7 @@ async def upload_broker_file(
             previews, bookings, skipped = _parse_indexacapital(content)
         elif broker == "coinbase":
             content = file_bytes.decode("utf-8-sig")
-            previews, skipped = _parse_coinbase(content)
-            bookings = []
+            previews, bookings, skipped = _parse_coinbase(content)
         elif broker == "myinvestor":
             content = file_bytes.decode("utf-8-sig")
             previews, bookings, skipped = _parse_myinvestor(content)

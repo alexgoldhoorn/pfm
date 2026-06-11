@@ -105,6 +105,13 @@ class Database:
             conn.row_factory = sqlite3.Row
             # Enable foreign key constraints
             conn.execute("PRAGMA foreign_keys = ON")
+            # WAL lets readers and a writer run concurrently (vs. the default
+            # rollback journal, which blocks readers during a write) — needed
+            # because the server runs multiple gunicorn workers against one DB.
+            # busy_timeout makes a connection wait (rather than immediately
+            # raising "database is locked") when another holds the write lock.
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA busy_timeout = 5000")
             yield conn
         except Exception as e:
             if conn:
@@ -1331,6 +1338,24 @@ class Database:
                 )
             else:
                 cur = conn.execute("DELETE FROM kv_cache")
+            conn.commit()
+            return cur.rowcount
+
+    def purge_expired_cache(self) -> int:
+        """Delete expired cache rows and return how many were removed.
+
+        ``cache_get`` already ignores expired entries on read, but never deletes
+        them, so the table grows unbounded. Call this periodically (the daily
+        price cron does) to reclaim the space.
+        """
+        import time
+
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                "DELETE FROM kv_cache "
+                "WHERE expires_at IS NOT NULL AND expires_at < ?",
+                (time.time(),),
+            )
             conn.commit()
             return cur.rowcount
 
