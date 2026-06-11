@@ -514,6 +514,7 @@ class PostgreSQLDatabase:
 
         valid_fields = {
             "name",
+            "ticker",
             "asset_type",
             "exchange",
             "currency",
