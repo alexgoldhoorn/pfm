@@ -734,7 +734,7 @@ function createPageManager() {
                 if (portfolios.length === 0) {
                     tableBody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No brokers yet. Click "Add Portfolio" to create one.</td></tr>';
                 } else {
-                    tableBody.innerHTML = portfolios.map(p => {
+                    const renderBrokerRow = (p) => {
                         const v = valByName[p.name];
                         const site = p.website
                             ? ` <a href="${p.website}" target="_blank" rel="noopener" title="${p.website}${p.website_is_default ? ' (suggested)' : ''}" class="text-decoration-none"><i class="bi bi-box-arrow-up-right small ${p.website_is_default ? 'text-muted' : ''}"></i></a>`
@@ -759,7 +759,30 @@ function createPageManager() {
                                 </button>
                             </td>
                         </tr>`;
-                    }).join('');
+                    };
+                    // Merge per-broker EUR values onto the rows so the shared table
+                    // can sort by value_eur / pnl_eur (they live on valByName).
+                    this._brokerRows = portfolios.map(p => {
+                        const v = valByName[p.name] || {};
+                        return Object.assign({}, p, {
+                            value_eur: v.value_eur == null ? null : v.value_eur,
+                            pnl_eur: v.pnl_eur == null ? null : v.pnl_eur,
+                        });
+                    });
+                    this._brokersST = this._brokersST || makeSortableTable({
+                        table: document.getElementById('portfoliosTable'),
+                        columns: [
+                            { key: 'name', type: 'text' }, { key: 'base_currency', type: 'text' },
+                            { key: 'value_eur', type: 'num' }, { key: 'pnl_eur', type: 'num' },
+                            { key: 'last_transaction_date', type: 'date' }, { key: 'description', type: 'text' },
+                            { key: null },
+                        ],
+                        getRows: () => this._brokerRows,
+                        renderRows: (rows, tbody) => { tbody.innerHTML = rows.length ? rows.map(renderBrokerRow).join('') : '<tr><td colspan="7" class="text-center text-muted">No brokers.</td></tr>'; },
+                        prefsKey: 'portfolios',
+                    });
+                    this._brokersST.refresh();
+
                     if (footer && (values.total_value_eur || 0) > 0) {
                         const tp = values.total_pnl_eur;
                         const tcls = tp >= 0 ? 'text-success' : 'text-danger';
