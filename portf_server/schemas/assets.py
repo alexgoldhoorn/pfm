@@ -56,7 +56,7 @@ class AssetUpdateRequest(BaseModel):
     sector: Optional[str] = Field(None, max_length=100, description="Asset sector")
     description: Optional[str] = Field(None, description="Asset description")
     ticker: Optional[str] = Field(
-        None, max_length=20, description="Market ticker alias (e.g., NVDA, ASML.AS)"
+        None, max_length=50, description="Market ticker alias (e.g., NVDA, ASML.AS)"
     )
     is_active: Optional[bool] = Field(None, description="Whether asset is active")
 
