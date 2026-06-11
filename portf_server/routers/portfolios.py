@@ -349,6 +349,7 @@ async def get_holdings(
             {
                 "asset_id": asset_id,
                 "symbol": asset.get("symbol", ""),
+                "ticker": asset.get("ticker") or "",
                 "name": asset.get("name", ""),
                 "asset_type": asset.get("asset_type", ""),
                 "currency": currency,
