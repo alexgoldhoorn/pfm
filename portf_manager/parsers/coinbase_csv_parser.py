@@ -9,7 +9,7 @@ import csv
 from datetime import datetime
 from io import StringIO
 from typing import List, Tuple, Optional
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ..llm_types import LLMTransaction
 
@@ -20,6 +20,7 @@ class CoinbaseParseResult:
 
     importable: List[LLMTransaction]
     skipped: List[Tuple[str, str]]  # (transaction_type, reason)
+    bookings: List[dict] = field(default_factory=list)  # cash deposits/withdrawals
 
 
 class CoinbaseCSVParser:
@@ -38,6 +39,23 @@ class CoinbaseCSVParser:
         "Deposit",
         "Withdrawal",
         "Retail Staking Transfer",
+    }
+
+    # Cash-movement types. Only count as bookings when the Asset is fiat;
+    # the crypto-asset variants are wallet transfers, left in `skipped`.
+    DEPOSIT_TYPES = {"Deposit", "Pro Deposit"}
+    WITHDRAWAL_TYPES = {"Withdrawal", "Pro Withdrawal"}
+    FIAT_CURRENCIES = {
+        "EUR",
+        "USD",
+        "GBP",
+        "CHF",
+        "SEK",
+        "DKK",
+        "NOK",
+        "JPY",
+        "CAD",
+        "AUD",
     }
 
     def parse_csv_content(self, csv_content: str) -> CoinbaseParseResult:
@@ -64,6 +82,7 @@ class CoinbaseCSVParser:
 
         importable = []
         skipped = []
+        bookings = []
 
         try:
             # Parse CSV using DictReader
@@ -71,6 +90,10 @@ class CoinbaseCSVParser:
 
             for row in csv_reader:
                 try:
+                    booking = self._parse_booking_row(row)
+                    if booking:
+                        bookings.append(booking)
+                        continue
                     parsed_transaction = self._parse_transaction_row(row)
                     if parsed_transaction:
                         importable.append(parsed_transaction)
@@ -87,7 +110,9 @@ class CoinbaseCSVParser:
         except Exception as e:
             raise ValueError(f"Failed to parse CSV data: {str(e)}")
 
-        return CoinbaseParseResult(importable=importable, skipped=skipped)
+        return CoinbaseParseResult(
+            importable=importable, skipped=skipped, bookings=bookings
+        )
 
     def _parse_transaction_row(self, row: dict) -> Optional[LLMTransaction]:
         """
@@ -205,6 +230,41 @@ class CoinbaseCSVParser:
             raw_text=raw_text,
             fees=fees_amount,
         )
+
+    def _parse_booking_row(self, row: dict) -> Optional[dict]:
+        """Return a cash booking dict for a fiat Deposit/Withdrawal row, else None.
+
+        Crypto-asset deposits/withdrawals (Asset not a fiat currency) return
+        None so they fall through to the normal skip path — they are wallet
+        transfers, not cash bookings.
+        """
+        tx_type = row.get("Transaction Type", "").strip()
+        is_deposit = tx_type in self.DEPOSIT_TYPES
+        is_withdrawal = tx_type in self.WITHDRAWAL_TYPES
+        if not (is_deposit or is_withdrawal):
+            return None
+        asset = row.get("Asset", "").strip().upper()
+        if asset not in self.FIAT_CURRENCIES:
+            return None
+        # Amount: the fiat Quantity Transacted is the cash amount; fall back to
+        # the Total column if blank. Strip currency symbols/grouping.
+        raw = (
+            row.get("Quantity Transacted", "").strip()
+            or row.get("Total (inclusive of fees and/or spread)", "").strip()
+        )
+        cleaned = raw.replace("€", "").replace("$", "").replace(",", "")
+        try:
+            amount = abs(float(cleaned))
+        except ValueError:
+            return None
+        if amount == 0:
+            return None
+        return {
+            "date": row.get("Timestamp", "").strip()[:10],
+            "action": "Deposit" if is_deposit else "Withdrawal",
+            "amount": amount,
+            "currency": asset,
+        }
 
     def _get_skip_reason(self, tx_type: str) -> str:
         """Get a human-readable reason for skipping a transaction type."""

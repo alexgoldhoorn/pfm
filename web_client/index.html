@@ -346,11 +346,52 @@
                         <!-- Top 5 Positions -->
                         <div class="col-12 col-lg-7">
                             <div class="card h-100">
-                                <div class="card-header d-flex justify-content-between align-items-center">
-                                    <span><i class="bi bi-bar-chart-steps me-2"></i>Top Positions</span>
-                                    <button class="btn btn-sm btn-outline-secondary" id="refreshTopPositions" title="Refresh top positions">
-                                        <i class="bi bi-arrow-clockwise"></i>
-                                    </button>
+                                <div class="card-header">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <span><i class="bi bi-bar-chart-steps me-2"></i>Top Positions</span>
+                                        <div class="btn-group btn-group-sm">
+                                            <button class="btn btn-outline-secondary" id="dashTopConfigBtn" title="Configure">
+                                                <i class="bi bi-sliders"></i>
+                                            </button>
+                                            <button class="btn btn-outline-secondary" id="refreshTopPositions" title="Refresh top positions">
+                                                <i class="bi bi-arrow-clockwise"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div id="dashTopControls" class="row g-2 mt-2 small" style="display:none;">
+                                        <div class="col-6 col-sm-3">
+                                            <label class="form-label mb-0 text-muted">Show</label>
+                                            <select id="dashTopN" class="form-select form-select-sm">
+                                                <option value="5">Top 5</option>
+                                                <option value="10">Top 10</option>
+                                                <option value="15">Top 15</option>
+                                                <option value="20">Top 20</option>
+                                                <option value="all">All</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-6 col-sm-3">
+                                            <label class="form-label mb-0 text-muted">Type</label>
+                                            <select id="dashTopType" class="form-select form-select-sm">
+                                                <option value="all">All</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-6 col-sm-3">
+                                            <label class="form-label mb-0 text-muted">Broker</label>
+                                            <select id="dashTopBroker" class="form-select form-select-sm">
+                                                <option value="all">All</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-6 col-sm-3">
+                                            <label class="form-label mb-0 text-muted">Sort</label>
+                                            <select id="dashTopSort" class="form-select form-select-sm">
+                                                <option value="value">Value</option>
+                                                <option value="gain_pct">Gain %</option>
+                                                <option value="loss_pct">Loss %</option>
+                                                <option value="gain_total">Gain total</option>
+                                                <option value="loss_total">Loss total</option>
+                                            </select>
+                                        </div>
+                                    </div>
                                 </div>
                                 <div class="card-body p-0">
                                     <div class="table-responsive">
@@ -360,7 +401,7 @@
                                                     <th class="ps-3">Name</th>
                                                     <th>Type</th>
                                                     <th class="text-end">Value (EUR)</th>
-                                                    <th class="text-end pe-3">P&amp;L %</th>
+                                                    <th class="text-end pe-3" id="dashTopPnlHeader">P&amp;L %</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -494,12 +535,12 @@
                                 <table class="table table-hover mb-0" id="assetsTable">
                                     <thead>
                                         <tr>
-                                            <th class="ps-3">Symbol</th>
-                                            <th>Name</th>
-                                            <th>Type</th>
-                                            <th>Exchange</th>
-                                            <th class="text-end">Current Price</th>
-                                            <th>Currency</th>
+                                            <th class="ps-3" data-key="symbol" data-type="text">Symbol</th>
+                                            <th data-key="name" data-type="text">Name</th>
+                                            <th data-key="asset_type" data-type="text">Type</th>
+                                            <th data-key="exchange" data-type="text">Exchange</th>
+                                            <th class="text-end" data-key="current_price" data-type="num">Current Price</th>
+                                            <th data-key="currency" data-type="text">Currency</th>
                                             <th class="pe-3">Actions</th>
                                         </tr>
                                     </thead>
@@ -588,15 +629,15 @@
                                 <table class="table table-hover mb-0" id="transactionsTable">
                                     <thead>
                                         <tr>
-                                            <th class="ps-3">Date</th>
-                                            <th>Portfolio</th>
-                                            <th>Asset</th>
-                                            <th>Type</th>
-                                            <th class="text-end">Quantity</th>
-                                            <th class="text-end">Price</th>
-                                            <th>Currency</th>
-                                            <th class="text-end">Total</th>
-                                            <th class="text-end">Fees</th>
+                                            <th class="ps-3" data-key="transaction_date" data-type="date">Date</th>
+                                            <th data-key="portfolio_name" data-type="text">Portfolio</th>
+                                            <th data-key="symbol" data-type="text">Asset</th>
+                                            <th data-key="transaction_type" data-type="text">Type</th>
+                                            <th class="text-end" data-key="quantity" data-type="num">Quantity</th>
+                                            <th class="text-end" data-key="price" data-type="num">Price</th>
+                                            <th data-key="currency" data-type="text">Currency</th>
+                                            <th class="text-end" data-key="total_amount" data-type="num">Total</th>
+                                            <th class="text-end" data-key="fees" data-type="num">Fees</th>
                                             <th class="pe-3">Actions</th>
                                         </tr>
                                     </thead>
@@ -676,16 +717,16 @@
                                 <table class="table table-hover mb-0" id="holdingsTable">
                                     <thead>
                                         <tr>
-                                            <th class="ps-3">Symbol</th>
-                                            <th>Name</th>
-                                            <th>Type</th>
-                                            <th>Currency</th>
-                                            <th class="text-end">Quantity</th>
-                                            <th class="text-end">Avg Price</th>
-                                            <th class="text-end">Current Price</th>
-                                            <th class="text-end">Total Value</th>
-                                            <th class="text-end">P/L</th>
-                                            <th class="text-end">P/L %</th>
+                                            <th class="ps-3" data-key="symbol" data-type="text">Symbol</th>
+                                            <th data-key="name" data-type="text">Name</th>
+                                            <th data-key="asset_type" data-type="text" data-filter="select">Type</th>
+                                            <th data-key="currency" data-type="text">Currency</th>
+                                            <th class="text-end" data-key="quantity" data-type="num">Quantity</th>
+                                            <th class="text-end" data-key="avg_price" data-type="num">Avg Price</th>
+                                            <th class="text-end" data-key="current_price" data-type="num">Current Price</th>
+                                            <th class="text-end" data-key="total_value_eur" data-type="num">Total Value</th>
+                                            <th class="text-end" data-key="pnl_amount" data-type="num">P/L</th>
+                                            <th class="text-end" data-key="pnl_pct" data-type="num">P/L %</th>
                                             <th class="text-center">Links</th>
                                             <th class="text-end pe-3">Research</th>
                                         </tr>
@@ -1132,12 +1173,12 @@
                                 <table class="table table-hover mb-0" id="portfoliosTable">
                                     <thead>
                                         <tr>
-                                            <th class="ps-3">Broker</th>
-                                            <th>Currency</th>
-                                            <th class="text-end">Value (EUR)</th>
-                                            <th class="text-end">P&amp;L</th>
-                                            <th>Activity <span class="text-muted fw-normal small">(first → last)</span></th>
-                                            <th>Description</th>
+                                            <th class="ps-3" data-key="name" data-type="text">Broker</th>
+                                            <th data-key="base_currency" data-type="text">Currency</th>
+                                            <th class="text-end" data-key="value_eur" data-type="num">Value (EUR)</th>
+                                            <th class="text-end" data-key="pnl_eur" data-type="num">P&amp;L</th>
+                                            <th data-key="last_transaction_date" data-type="date">Activity <span class="text-muted fw-normal small">(first → last)</span></th>
+                                            <th data-key="description" data-type="text">Description</th>
                                             <th class="pe-3">Actions</th>
                                         </tr>
                                     </thead>
@@ -2638,10 +2679,16 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <!-- Markdown rendering for chat responses -->
     <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
 
-    <!-- Centralized help text (must load before portfolio_debug.js) -->
+    <!-- Centralized help text (must load before the app scripts) -->
     <script src="js/help_text.js?v=1780000006"></script>
 
-    <!-- Custom JavaScript -->
-    <script src="js/portfolio_debug.js?v=1780000039"></script>
+    <!-- App scripts: portfolio_debug.js was split into these four classic
+         scripts. They share one global scope and MUST load in this order:
+         core → pages → analytics → features (features carries the
+         DOMContentLoaded bootstrap, so it loads last). -->
+    <script src="js/pfm_core.js?v=1780000043"></script>
+    <script src="js/pfm_pages.js?v=1780000043"></script>
+    <script src="js/pfm_analytics.js?v=1780000043"></script>
+    <script src="js/pfm_features.js?v=1780000043"></script>
 </body>
 </html>

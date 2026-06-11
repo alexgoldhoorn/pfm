@@ -19,6 +19,8 @@ jobs:
         run: uv sync --frozen
       - name: Black (format check)
         run: uv run black --check .
+      - name: Ruff (lint)
+        run: uv run ruff check portf_manager portf_server
       - name: Flake8 (lint)
         run: uv run flake8 portf_manager portf_server --max-line-length=88 --extend-ignore=E203,W503,E501
 
@@ -34,3 +36,14 @@ jobs:
         run: uv sync --frozen
       - name: Unit tests
         run: uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
+
+  test-js:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      # No npm deps — uses Node's built-in test runner.
+      - name: Web client JS tests
+        run: node --test web_client/js/tests/

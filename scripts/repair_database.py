@@ -103,15 +103,18 @@ def repair_database(db_path):
         conn.execute("BEGIN TRANSACTION")
 
         # Check if users table exists
-        cursor = conn.execute("""
-            SELECT name FROM sqlite_master 
+        cursor = conn.execute(
+            """
+            SELECT name FROM sqlite_master
             WHERE type='table' AND name='users'
-        """)
+        """
+        )
         users_table_exists = cursor.fetchone() is not None
 
         if not users_table_exists:
             print("📋 Creating users table...")
-            conn.execute("""
+            conn.execute(
+                """
                 CREATE TABLE users (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     username TEXT NOT NULL UNIQUE,
@@ -124,20 +127,23 @@ def repair_database(db_path):
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
-            """)
+            """
+            )
 
             # Create indexes for users table
             conn.execute("CREATE INDEX idx_users_username ON users (username)")
             conn.execute("CREATE INDEX idx_users_email ON users (email)")
 
             # Create update trigger for users table
-            conn.execute("""
+            conn.execute(
+                """
                 CREATE TRIGGER update_users_timestamp
                 AFTER UPDATE ON users
                 BEGIN
                     UPDATE users SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
                 END
-            """)
+            """
+            )
 
             print("  ✓ Users table created with indexes and triggers")
         else:
@@ -149,10 +155,12 @@ def repair_database(db_path):
 
         if admin_user is None:
             print("👤 Creating default admin user...")
-            conn.execute("""
-                INSERT INTO users (username, email, password_hash, salt, full_name) 
+            conn.execute(
+                """
+                INSERT INTO users (username, email, password_hash, salt, full_name)
                 VALUES ('admin', 'admin@localhost', 'dummy_hash', 'dummy_salt', 'Default Admin User')
-            """)
+            """
+            )
 
             # Get the admin user ID
             cursor = conn.execute("SELECT id FROM users WHERE username = 'admin'")
@@ -173,10 +181,12 @@ def repair_database(db_path):
         # Add user_id columns to tables if missing
         for table, column_type in tables_to_update:
             # Check if table exists
-            cursor = conn.execute(f"""
-                SELECT name FROM sqlite_master 
+            cursor = conn.execute(
+                f"""
+                SELECT name FROM sqlite_master
                 WHERE type='table' AND name='{table}'
-            """)
+            """
+            )
             table_exists = cursor.fetchone() is not None
 
             if table_exists:
@@ -211,20 +221,24 @@ def repair_database(db_path):
         print("🏷️  Setting database version...")
 
         # Check if database_version table exists
-        cursor = conn.execute("""
-            SELECT name FROM sqlite_master 
+        cursor = conn.execute(
+            """
+            SELECT name FROM sqlite_master
             WHERE type='table' AND name='database_version'
-        """)
+        """
+        )
         version_table_exists = cursor.fetchone() is not None
 
         if not version_table_exists:
             print("  📋 Creating database_version table...")
-            conn.execute("""
+            conn.execute(
+                """
                 CREATE TABLE database_version (
                     version INTEGER PRIMARY KEY,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
-            """)
+            """
+            )
 
         # Check current version
         cursor = conn.execute(
@@ -254,10 +268,12 @@ def repair_database(db_path):
 
         # Check user_id columns in all tables
         for table, _ in tables_to_update:
-            cursor = conn.execute(f"""
-                SELECT name FROM sqlite_master 
+            cursor = conn.execute(
+                f"""
+                SELECT name FROM sqlite_master
                 WHERE type='table' AND name='{table}'
-            """)
+            """
+            )
             if cursor.fetchone():
                 cursor = conn.execute(f"PRAGMA table_info({table})")
                 columns = [col["name"] for col in cursor.fetchall()]

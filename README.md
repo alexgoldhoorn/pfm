@@ -476,7 +476,7 @@ pfm/
 │   └── auth_middleware.py
 ├── web_client/                 # Bootstrap 5 + Chart.js frontend (static)
 │   ├── index.html
-│   ├── js/portfolio_debug.js
+│   ├── js/pfm_core.js, pfm_pages.js, pfm_analytics.js, pfm_features.js
 │   └── css/
 ├── tests/
 │   ├── test_pdt_xlsx_parser.py

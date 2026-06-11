@@ -16,7 +16,7 @@ Portfolio Manager: a Python CLI + FastAPI server + web client for tracking stock
 ## Architecture
 - `portf_manager/` — Core package: CLI, models, database, parsers, LLM client, tax calculator.
 - `portf_server/` — FastAPI REST API server with routers, schemas, auth middleware.
-- `web_client/` — Vanilla JS + Bootstrap 5 frontend (static files, no build step). Entry: `portfolio_debug.js`.
+- `web_client/` — Vanilla JS + Bootstrap 5 frontend (static files, no build step). Entry: `pfm_core.js` → `pfm_pages.js` → `pfm_analytics.js` → `pfm_features.js` (split from the former `portfolio_debug.js`).
 - `tests/` — pytest test suite. `tests/unit/`, `tests/integration/`, `tests/e2e/`.
 
 ## Key Patterns
@@ -76,8 +76,8 @@ All LLM calls go through `LLMClient.generate(prompt) -> str`. `GeminiClient` is 
 Each broker has a standalone parser module returning `LLMTransaction` objects via a `ParseResult` dataclass:
 - `indexacapital_csv_parser.py` — semicolon CSV, European number format, ISINs, EUR (ISIN trades export). `_parse_indexacapital` in `imports.py` also auto-detects the **"Movimientos"** cash statement (`Fecha;Movimiento;Importe;Saldo`) → SEPA transfers become deposit/withdrawal bookings; fund subscriptions are skipped (no unit detail).
 - `myinvestor_csv_parser.py` — MyInvestor "Movimientos Mi Cuenta" CSV → INVEST=deposit booking, `NAME @ QTY`=buy/sell, positive no-`@`=dividend; fees/unit-less fund buys skipped. No ISIN/fees, so buy/sells are flagged "review" in the preview.
-- `mintos_csv_parser.py` — Mintos P2P statement (often 20k+ rows). Keeps only interest/withholding, **aggregates per month** into `interest` transactions (price=interest, tax=withholding) vs a synthetic `MINTOS` asset; principal/investment/secondary/fee rows ignored (summarised in the preview's skipped list). Large file → nginx `client_max_body_size 25m`.
-- `coinbase_csv_parser.py` — Coinbase Advanced Trade CSV export
+- `mintos_csv_parser.py` — Mintos P2P statement (often 20k+ rows). Keeps only interest/withholding, **aggregates per month** into `interest` transactions (price=interest, tax=withholding) vs a synthetic `MINTOS` asset; principal/investment/secondary/fee rows ignored (summarised in the preview's skipped list). Deposit/withdrawal rows (`Tipo de pago` deposit/withdrawal keywords) → bookings, kept individual (not aggregated). Large file → nginx `client_max_body_size 25m`.
+- `coinbase_csv_parser.py` — Coinbase Advanced Trade CSV export. Fiat `Deposit`/`Withdrawal` rows (Asset in a fiat allowlist) → deposit/withdrawal bookings; crypto `Send`/`Receive` stay skipped. `_parse_coinbase` returns `(previews, bookings, skipped)`.
 - `pdt_xlsx_parser.py` — Portfolio Dividend Tracker XLSX (import + export, all 3 sheets)
 - `pdt_sheets_sync.py` — Portfolio Dividend Tracker Google Sheets sync (pull/push)
 
@@ -209,16 +209,18 @@ All financial transactions go through `database.create_transaction()` with `port
 `compute_positions(transactions, key=...)` is the **single source of truth** for turning transactions into `{key: {quantity, cost}}` + realised P&L. It processes **chronologically** and supports **stock splits**: a `split` transaction stores the ratio in its `quantity` (2-for-1 → 2.0; 1-for-10 reverse → 0.1), scaling held quantity and leaving cost unchanged. The holdings/values endpoints and `analytics._compute_positions` all delegate to it; `tax_calculator` applies splits to FIFO lots. **Note:** this fixed a latent cost-basis bug — the old per-loop accumulation ran on `get_all_transactions()` (date DESC), so a partial sell processed before its buys left sold shares in cost basis, *overstating invested / understating return* for any asset with sells.
 
 ## Web Client (`web_client/`)
-Single HTML file (`index.html`) + one JS file (`portfolio_debug.js`). All pages are divs toggled by `navigationManager.showPage()`. Pages: `dashboard`, `assets`, `transactions`, `holdings`, `chat`, `importexport`, `portfolios`, **`forecast`**.
+Single HTML file (`index.html`) + four classic JS files split from the former `portfolio_debug.js` (no build step): **`pfm_core.js`** (prefs, `Fmt`, `esc`, helpers, `AssetSearch`, API + modal managers), **`pfm_pages.js`** (page/nav/auth managers, dashboard, transactions, assets, holdings, help/resources), **`pfm_analytics.js`** (net-worth/dividend/analytics/diversification charts), **`pfm_features.js`** (watchlist, goals, chat, portfolios, import/export, forecast, rebalance, research, settings + the `DOMContentLoaded` bootstrap). They share one global scope and **must load in that order** (see `index.html`); `help_text.js` loads first. All pages are divs toggled by `navigationManager.showPage()`. Pages: `dashboard`, `assets`, `transactions`, `holdings`, `chat`, `importexport`, `portfolios`, **`forecast`**.
 
 **User preferences (browser-local)**: `window.PREFS` (persisted to `localStorage` key `pfmPrefs`) holds number locale, decimals, date format, theme, privacy-blur, default benchmark, landing page, rows-per-page. The Settings modal (`setupSettings()`, gear in the sidebar) edits them. Format all numbers via `Fmt.num()` / money helpers (which wrap in `<span class="pfm-amt">` for privacy blur) and dates via `Fmt.date()`. Theme = `data-bs-theme` on `<html>` (Bootstrap 5.3). There is no server-side per-user settings store — the web logs in with the shared `SERVER_API_KEY`, so prefs are per-browser.
+
+**Sortable/filterable tables**: Holdings, Transactions, Assets and Brokers use the shared `makeSortableTable(config)` helper (pure `applyTableState(rows, columns, state)` core, both in `pfm_core.js`, unit-tested in `web_client/js/tests/`): clickable `<th data-key data-type [data-filter=select]>` headers toggle sort (▲/▼), an optional filter row provides categorical dropdowns, and per-table state persists in `PREFS.tableState[<page>]`. Holdings adds a Type filter; Transactions is sort-only (it keeps its own type/date/asset filter bar) and its broker filter stays a server refetch (`getTransactions(500, portfolioId)`); the dashboard Top Positions keeps its own specialised control bar.
 
 **Deploy after editing web files**: `portf_web` is an nginx container with files **baked into the image** at build time — they are NOT live-mounted. After any change to `web_client/`:
 ```bash
 docker compose build web && docker stop portf_web && docker compose up -d web
 ```
 
-`forecast` page — wealth projection using live portfolio value + GBM simulation (`setupForecastPage()` in `portfolio_debug.js`).
+`forecast` page — wealth projection using live portfolio value + GBM simulation (`setupForecastPage()` in `pfm_features.js`).
 
 ### Import / Export page (`importexport`)
 Inline (no modals). Sections:
@@ -234,7 +236,7 @@ Inline (no modals). Sections:
 - **Export CSV** / **Export PDT** → fetch + blob download via `setupExportButtons()`
 
 ### Chat page
-`setupChatPage()` in `portfolio_debug.js`:
+`setupChatPage()` in `pfm_features.js`:
 - **Send** (or Ctrl+Enter) → `POST /api/v1/llm/chat` → conversation thread
 - **Extract & Import** → `POST /api/v1/llm/extract-transactions` → inline transaction card with import button
 
@@ -243,7 +245,8 @@ Signature: `saveImportedTransactions(transactions, bookings = [], portfolioId = 
 
 ## Testing
 - Run tests: `uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e`
-- **342 passing**, 0 failures, 6 skipped (as of last session).
+- **429 passing**, 0 failures, 6 skipped (as of last session).
+- **Web client JS tests**: `make test-js` (or `node --test web_client/js/tests/`) — Node's built-in runner, no npm deps. Loads the 4 split scripts (`pfm_core`/`pfm_pages`/`pfm_analytics`/`pfm_features`) into one vm scope with DOM stubs: a load/smoke test (catches a broken split) plus `esc()` XSS-escaping and `Fmt` number/date formatting. CI runs it as the `test-js` job.
 - Pre-push hook runs the full unit test suite automatically (`git push` will fail if tests fail).
 - Safe F541 fixer: `uv run python scripts/fix_f541.py` — strips `f` from f-strings without `{}` using a regex that correctly excludes triple-quoted strings.
 - Reset LLM singleton between tests: `from portf_manager.llm_client import reset_llm_client`.
