@@ -1166,6 +1166,10 @@ async function loadAnalyticsFees() {
 // Watchlist page
 // ---------------------------------------------------------------------------
 
+// Watchlist sortable-table state (loadWatchlist is a plain function, not a method).
+let _watchlistRows = [];
+let _watchlistST = null;
+
 async function loadWatchlist() {
     const tbody = document.querySelector('#watchlistTable tbody');
     if (!tbody) return;
@@ -1179,11 +1183,12 @@ async function loadWatchlist() {
     try {
         const items = await window.apiClient.getWatchlist();
         if (!Array.isArray(items) || items.length === 0) {
+            _watchlistRows = [];
             tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">Your watchlist is empty. Add a symbol above to start tracking it.</td></tr>';
             return;
         }
         const typeBadge = t => ({ stock: 'bg-primary', etf: 'bg-info', index: 'bg-success', crypto: 'bg-warning text-dark', bond: 'bg-secondary', commodity: 'bg-dark' }[t] || 'bg-secondary');
-        tbody.innerHTML = items.map(w => {
+        const renderWatchRow = (w) => {
             const price = w.current_price != null ? parseFloat(w.current_price) : null;
             const buyBelow = w.buy_below != null ? parseFloat(w.buy_below) : null;
             const dist = w.distance_to_buy_pct != null ? parseFloat(w.distance_to_buy_pct) : null;
@@ -1209,7 +1214,46 @@ async function loadWatchlist() {
                         </button>
                     </td>
                 </tr>`;
-        }).join('');
+        };
+        _watchlistRows = items;
+
+        // Above-table asset-type filter (consistent with Holdings/Assets); writes
+        // into the table's state.filters, which applyTableState honours.
+        const wTypeSel = document.getElementById('watchlistTypeFilter');
+        if (wTypeSel) {
+            if (!window.PREFS.tableState) window.PREFS.tableState = {};
+            const st = window.PREFS.tableState.watchlist = window.PREFS.tableState.watchlist || { sort: null, filters: {} };
+            st.filters = st.filters || {};
+            const types = [...new Set(items.map(w => w.asset_type || 'other').filter(Boolean))].sort();
+            const cur = st.filters.asset_type || 'all';
+            wTypeSel.innerHTML = '<option value="all">All Asset Types</option>' +
+                types.map(t => `<option value="${esc(t)}">${esc(t.toUpperCase())}</option>`).join('');
+            wTypeSel.value = [...wTypeSel.options].some(o => o.value === cur) ? cur : 'all';
+            if (!wTypeSel._bound) {
+                wTypeSel._bound = true;
+                wTypeSel.addEventListener('change', () => {
+                    const s = window.PREFS.tableState.watchlist;
+                    s.filters = s.filters || {};
+                    s.filters.asset_type = wTypeSel.value;
+                    savePrefs();
+                    if (_watchlistST) _watchlistST.refresh();
+                });
+            }
+        }
+
+        _watchlistST = _watchlistST || makeSortableTable({
+            table: document.getElementById('watchlistTable'),
+            columns: [
+                { key: 'symbol', type: 'text' }, { key: 'name', type: 'text' },
+                { key: 'asset_type', type: 'text' }, { key: 'current_price', type: 'num' },
+                { key: 'buy_below', type: 'num' }, { key: 'distance_to_buy_pct', type: 'num' },
+                { key: 'notes', type: 'text' }, { key: null },
+            ],
+            getRows: () => _watchlistRows,
+            renderRows: (rows, tb) => { tb.innerHTML = rows.length ? rows.map(renderWatchRow).join('') : '<tr><td colspan="8" class="text-center text-muted py-4">No watchlist items match the filter.</td></tr>'; },
+            prefsKey: 'watchlist',
+        });
+        _watchlistST.refresh();
     } catch (err) {
         tbody.innerHTML = `<tr><td colspan="8" class="text-danger small py-3 ps-3">Error loading watchlist: ${err.message}</td></tr>`;
     }
