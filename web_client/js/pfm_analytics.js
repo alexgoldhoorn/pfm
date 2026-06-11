@@ -6,10 +6,17 @@
 
 // Net Worth page — brokerage value (auto) + manual assets/liabilities.
 const NW_CATEGORY_LABELS = {
-    cash: 'Cash / savings', investment_external: 'Investment (external)',
-    property: 'Property', vehicle: 'Vehicle', pension: 'Pension', other: 'Other',
-    mortgage: 'Mortgage', loan: 'Loan', credit: 'Credit / debt',
+    savings_account: 'Savings account', current_account: 'Current account',
+    cash: 'Cash', property: 'Property', vehicle: 'Vehicle', pension: 'Pension',
+    investment_external: 'Investment (external)', other: 'Other asset',
+    mortgage: 'Mortgage', personal_loan: 'Personal loan', car_loan: 'Car loan',
+    credit_card: 'Credit card', other_debt: 'Other debt',
+    // legacy values from earlier entries:
+    loan: 'Loan', credit: 'Credit / debt',
 };
+// Type values that count as liabilities (debt). Used to derive is_liability
+// from the chosen type (the separate checkbox was removed).
+const NW_LIABILITY_CATS = new Set(['mortgage', 'personal_loan', 'car_loan', 'credit_card', 'other_debt', 'loan', 'credit']);
 async function loadNetworthPage() {
     const $ = id => document.getElementById(id);
     _wireNetworthForm();
@@ -24,7 +31,9 @@ async function loadNetworthPage() {
         $('nwTotal').innerHTML = eur(d.net_worth_eur);
         const card = $('nwTotalCard');
         if (card) card.style.background = d.net_worth_eur >= 0 ? '#0d6efd' : '#dc3545';
-        const items = d.items || [];
+        // Group visually: assets first, then liabilities (stable within each).
+        const items = (d.items || []).slice()
+            .sort((a, b) => (a.is_liability ? 1 : 0) - (b.is_liability ? 1 : 0));
         if (!items.length) {
             body.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4">No off-brokerage items yet. Add cash, property, a mortgage… on the left.</td></tr>';
         } else {
@@ -52,20 +61,17 @@ function _wireNetworthForm() {
     if (form && !form.dataset.wired) {
         form.dataset.wired = '1';
         const $ = id => document.getElementById(id);
-        const liabilityCats = new Set(['mortgage', 'loan', 'credit']);
-        // Auto-tick "debt" when a liability category is chosen
-        $('nwCategory').addEventListener('change', () => {
-            if (liabilityCats.has($('nwCategory').value)) $('nwIsLiability').checked = true;
-        });
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
             const status = $('nwAddStatus');
+            const category = $('nwCategory').value;
             const payload = {
                 name: $('nwName').value.trim(),
-                category: $('nwCategory').value,
+                category: category,
                 amount: parseFloat($('nwAmount').value) || 0,
                 currency: ($('nwCurrency').value || 'EUR').toUpperCase(),
-                is_liability: $('nwIsLiability').checked,
+                // The chosen type determines whether it's a debt (no checkbox).
+                is_liability: NW_LIABILITY_CATS.has(category),
                 notes: $('nwNotes').value.trim() || null,
             };
             if (!payload.name) return;
