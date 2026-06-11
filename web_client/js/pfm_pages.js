@@ -182,10 +182,9 @@ function createPageManager() {
                 );
             }
 
-            if (filtered.length === 0) {
-                tableBody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-4">No assets match the current filters.</td></tr>';
-            } else {
-                tableBody.innerHTML = filtered.map(asset => `
+            this._assetsRows = filtered;
+            const emptyMsg = '<tr><td colspan="7" class="text-center text-muted py-4">No assets match the current filters.</td></tr>';
+            const renderAssetRow = (asset) => `
                     <tr>
                         <td><strong>${esc(asset.symbol || 'N/A')}</strong></td>
                         <td>${esc(asset.name || 'N/A')}</td>
@@ -198,8 +197,20 @@ function createPageManager() {
                         </td>
                         <td>${asset.currency || ''}</td>
                         <td>${assetLinks(asset.symbol)}</td>
-                    </tr>`).join('');
-            }
+                    </tr>`;
+            this._assetsST = this._assetsST || makeSortableTable({
+                table: document.querySelector('#assetsPage table'),
+                columns: [
+                    { key: 'symbol', type: 'text' }, { key: 'name', type: 'text' },
+                    { key: 'asset_type', type: 'text' }, { key: 'exchange', type: 'text' },
+                    { key: 'current_price', type: 'num' }, { key: 'currency', type: 'text' },
+                    { key: null },
+                ],
+                getRows: () => this._assetsRows,
+                renderRows: (rows, tbody) => { tbody.innerHTML = rows.length ? rows.map(renderAssetRow).join('') : emptyMsg; },
+                prefsKey: 'assets',
+            });
+            this._assetsST.refresh();
         },
 
         _setupAssetAutocomplete: function() {
