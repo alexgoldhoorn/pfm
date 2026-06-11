@@ -23,9 +23,10 @@ def _add_column_if_missing(conn, table, column, ddl):
         cols = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
         if column not in cols:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
-    except sqlite3.OperationalError:
-        # Table doesn't exist, skip adding column
-        pass
+    except sqlite3.OperationalError as e:
+        if "no such table" not in str(e).lower():
+            raise
+        # Table doesn't exist yet (fresh DB creates it with the column included).
 
 
 class DatabaseError(Exception):
