@@ -207,3 +207,28 @@ test("applyTableState: does not mutate input", () => {
     applyTableState(TS_ROWS, TS_COLUMNS, { sort: { key: "value", dir: "asc" }, filters: {} });
     assert.deepEqual(TS_ROWS.map((x) => x.symbol), before);
 });
+
+// Guard against the curly-quote-in-HTML-attribute corruption that broke the
+// Holdings render (e.g. class=”text-end” instead of class="text-end"). Such
+// quotes are valid inside a JS template literal — so the app still parses and
+// the other tests pass — but the rendered HTML attribute is broken. We flag any
+// `=` immediately followed by a curly quote (U+201C/U+201D), which only happens
+// when an attribute value was opened with a curly quote. Legitimate curly quotes
+// in display text (e.g. a glossary entry) never follow an `=`.
+test("no curly quotes opening HTML attributes in the JS files", () => {
+    const offenders = [];
+    for (const f of FILES) {
+        const src = readFileSync(join(JS_DIR, f), "utf8");
+        src.split("\n").forEach((line, i) => {
+            if (/=[“”]/.test(line)) {
+                offenders.push(`${f}:${i + 1}: ${line.trim().slice(0, 80)}`);
+            }
+        });
+    }
+    assert.deepEqual(
+        offenders,
+        [],
+        "Curly quote opening an HTML attribute (use straight \" instead):\n  " +
+            offenders.join("\n  ")
+    );
+});
