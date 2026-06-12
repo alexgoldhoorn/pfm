@@ -5,12 +5,10 @@ These tests use mocks to avoid external API dependencies.
 """
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 from datetime import datetime, date, timedelta
 from decimal import Decimal
-from pathlib import Path
 import tempfile
-import json
 
 from portf_manager.api_client import (
     APIClient,
@@ -18,6 +16,7 @@ from portf_manager.api_client import (
     CacheEntry,
     RateLimiter,
     APIError,
+    DataNotFoundError,
     get_price,
     convert,
     get_metadata,
@@ -179,6 +178,53 @@ class TestAPIClient:
 
         price = self.client.get_price("INVALID")
         assert price is None
+
+    @patch("portf_manager.api_client.yf.Ticker")
+    @patch("portf_manager.api_client.yf.download")
+    def test_fetch_latest_prices_fast_info_fallback(self, mock_download, mock_ticker):
+        """A symbol the batch download can't resolve is recovered via fast_info
+        (the Stuttgart .SG / Luxembourg .LU fund-listing case)."""
+        import pandas as pd
+
+        mock_download.return_value = pd.DataFrame()  # empty → batch-invalid
+        fi = Mock()
+        fi.last_price = 5.54
+        fi.currency = "EUR"
+        mock_ticker.return_value.fast_info = fi
+
+        result = self.client.fetch_latest_prices(["IE000AK4O3W6.SG"])
+        assert result == {"IE000AK4O3W6.SG": 5.54}
+
+    @patch("portf_manager.api_client.yf.Ticker")
+    @patch("portf_manager.api_client.yf.download")
+    def test_fetch_latest_prices_fast_info_gbp_pence(self, mock_download, mock_ticker):
+        """A GBp (pence) fast_info price is normalised to GBP (÷100)."""
+        import pandas as pd
+
+        mock_download.return_value = pd.DataFrame()
+        fi = Mock()
+        fi.last_price = 1900.0
+        fi.currency = "GBp"
+        mock_ticker.return_value.fast_info = fi
+
+        result = self.client.fetch_latest_prices(["GB00B.LSE"])
+        assert result == {"GB00B.LSE": 19.0}
+
+    @patch("portf_manager.api_client.yf.Ticker")
+    @patch("portf_manager.api_client.yf.download")
+    def test_fetch_latest_prices_fast_info_gives_up(self, mock_download, mock_ticker):
+        """When neither the batch nor fast_info has a price, the symbol stays
+        invalid (DataNotFoundError on a complete miss)."""
+        import pandas as pd
+
+        mock_download.return_value = pd.DataFrame()
+        fi = Mock()
+        fi.last_price = None
+        fi.currency = "EUR"
+        mock_ticker.return_value.fast_info = fi
+
+        with pytest.raises(DataNotFoundError):
+            self.client.fetch_latest_prices(["NOPE.XX"])
 
     @patch("portf_manager.api_client.yf.Ticker")
     def test_get_metadata_success(self, mock_ticker):

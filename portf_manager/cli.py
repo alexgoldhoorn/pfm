@@ -2779,8 +2779,12 @@ class PortfolioManagerCLI:
                         yf_to_db[yf_ticker] = sym
                         yf_quote_ccy[yf_ticker] = quote_ccy
                     else:
-                        yf_to_db[sym] = sym
-                        yf_quote_ccy[sym] = None
+                        # Use the asset's Yahoo ticker when set (v18 assets.ticker
+                        # — e.g. an exchange-listed symbol for a fund whose ISIN
+                        # Yahoo can't price); fall back to the ISIN symbol.
+                        yf_ticker = asset.get("ticker") or sym
+                        yf_to_db[yf_ticker] = sym
+                        yf_quote_ccy[yf_ticker] = None
 
                 print("📡 Fetching latest prices from API...")
                 prices_raw = api_client.fetch_latest_prices(list(yf_to_db.keys()))
