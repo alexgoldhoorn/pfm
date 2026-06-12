@@ -285,5 +285,35 @@ def tax_report(year: Optional[int] = None) -> str:
     return "\n".join(lines)
 
 
+@mcp.tool()
+def quote(symbols: str, max_age: int = 86400) -> str:
+    """
+    Market quotes (price, daily change %, currency) for one or more
+    Yahoo-format tickers, served from pfm's shared market-data cache.
+
+    Args:
+        symbols: Comma-separated Yahoo tickers, e.g. 'NVDA,ASML.AS,BTC-EUR'.
+        max_age: Maximum acceptable data age in seconds (default 1 day).
+            Lower it (e.g. 900) when intraday freshness matters.
+    """
+    try:
+        data = _get("/api/v1/market/quotes", {"symbols": symbols, "max_age": max_age})
+    except Exception as e:
+        return f"Error fetching quotes: {e}"
+
+    lines = ["QUOTES:"]
+    for q in data.get("quotes", []):
+        if q.get("error"):
+            lines.append(f"  {q.get('symbol', '?'):12s}  unavailable ({q['error']})")
+            continue
+        chg = f"{q['change_pct']:+.2f}%" if q.get("change_pct") is not None else "n/a"
+        stale = "  [stale]" if q.get("stale") else ""
+        lines.append(
+            f"  {q['symbol']:12s} {q['price']:>12.4f} {q.get('currency') or '':3s}"
+            f"  {chg}{stale}"
+        )
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     mcp.run()
