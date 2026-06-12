@@ -658,8 +658,25 @@ function createPageManager() {
                     const legacy = { value: { key: 'total_value_eur', dir: 'desc' }, pnl: { key: 'pnl_amount', dir: 'desc' }, pnlpct: { key: 'pnl_pct', dir: 'desc' }, name: { key: 'name', dir: 'asc' } }[window.PREFS.holdingsSort || 'value'];
                     if (legacy) { if (!window.PREFS.tableState) window.PREFS.tableState = {}; window.PREFS.tableState.holdings = { sort: legacy, filters: {} }; }
                 }
-                // Store the hide-tiny-filtered set; the shared table does sort+filter.
-                this._holdingsRows = view;
+                // Store the hide-tiny set; the search box narrows it (symbol/
+                // ticker/name), then the shared table does type-filter + sort.
+                this._holdingsAll = view;
+                const _applyHoldingsSearch = () => {
+                    const q = (document.getElementById('holdingsSearchInput')?.value || '').trim().toLowerCase();
+                    this._holdingsRows = !q ? this._holdingsAll : this._holdingsAll.filter(h =>
+                        (h.symbol || '').toLowerCase().includes(q) ||
+                        (h.name || '').toLowerCase().includes(q) ||
+                        (h.ticker || '').toLowerCase().includes(q));
+                };
+                _applyHoldingsSearch();   // respect any existing search text on reload
+                const hSearchEl = document.getElementById('holdingsSearchInput');
+                if (hSearchEl && !hSearchEl._bound) {
+                    hSearchEl._bound = true;
+                    hSearchEl.addEventListener('input', () => {
+                        _applyHoldingsSearch();
+                        if (this._holdingsST) this._holdingsST.refresh();
+                    });
+                }
                 const emptyMsg = `<tr><td colspan="12" class="text-center text-muted">${holdings.length ? 'No holdings match the current filter.' : 'No holdings found. Add buy transactions to see your positions here.'}</td></tr>`;
                 const renderHoldingRow = (h) => {
                     const pnlClass = h.pnl_amount >= 0 ? 'text-success' : 'text-danger';
