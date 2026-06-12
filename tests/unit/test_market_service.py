@@ -230,6 +230,25 @@ class TestGetFxEur:
         assert stale is True
 
 
+class TestCurrentPriceDelegation:
+    def test_unheld_symbol_uses_market_quote(self, db, monkeypatch):
+        from portf_server.routers import research as research_router
+
+        monkeypatch.setattr(
+            market,
+            "get_quote",
+            lambda d, s, max_age=900: {
+                "symbol": s,
+                "price": 42.0,
+                "currency": "USD",
+                "stale": False,
+            },
+        )
+        price, cur = research_router._current_price(db, None, "NVDA")
+        assert price == 42.0
+        assert cur == "USD"
+
+
 class TestFxDelegation:
     def test_portfolios_get_fx_rate_uses_market(self, db, monkeypatch):
         from portf_server.routers import portfolios

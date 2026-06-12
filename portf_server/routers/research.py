@@ -13,10 +13,11 @@ import logging
 from datetime import date, datetime
 from typing import Optional
 
-import yfinance as yf
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
+
+from portf_manager import market
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
@@ -146,16 +147,16 @@ def _cost_evolution(db, asset: Optional[dict]) -> tuple[list, list]:
 
 
 def _current_price(db, asset: Optional[dict], symbol: str) -> tuple[float, str]:
-    """Latest price + currency: stored price for held assets, else live yfinance."""
+    """Latest price + currency: stored price for held assets, else the shared
+    market-data cache (15-min freshness)."""
     if asset:
         pd_ = db.get_latest_price(asset["id"])
         if pd_:
             return float(pd_["price"]), asset.get("currency", "EUR")
-    try:
-        fi = yf.Ticker(symbol.upper()).fast_info
-        return float(fi["last_price"]), (fi.get("currency") or "EUR")
-    except Exception:
-        return 0.0, (asset.get("currency", "EUR") if asset else "EUR")
+    q = market.get_quote(db, symbol, max_age=900)
+    if q.get("price"):
+        return float(q["price"]), q.get("currency") or "EUR"
+    return 0.0, (asset.get("currency", "EUR") if asset else "EUR")
 
 
 @router.get("/compare")
