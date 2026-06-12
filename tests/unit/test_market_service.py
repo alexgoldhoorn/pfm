@@ -15,7 +15,15 @@ def db(tmp_path):
 
 
 def _patch_ticker(monkeypatch, fast_info=None, raise_exc=False):
-    """Replace market.yf.Ticker with a fake returning *fast_info* (a dict)."""
+    """Replace market.yf.Ticker with a fake returning *fast_info* (a dict).
+
+    The fake is a plain dict and is faithful for ``fi[key]`` subscript access
+    and ``.get()`` on keys that genuinely exist in ``FastInfo.keys()`` (like
+    ``currency``).  Production code must NOT use ``.get()`` with snake_case
+    keys such as ``previous_close`` — real ``FastInfo.get()`` only resolves
+    camelCase keys (e.g. ``previousClose``), so snake_case lookups via
+    ``.get()`` always return None on real yfinance.
+    """
 
     class FakeTicker:
         def __init__(self, symbol):
