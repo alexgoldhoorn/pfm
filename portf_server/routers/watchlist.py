@@ -10,6 +10,8 @@ import yfinance as yf
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
+from portf_manager import market
+
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
 
@@ -20,21 +22,14 @@ _PRICE_CACHE_TTL = 600  # seconds — 10 minutes
 
 
 def _fetch_price_cached(db, symbol: str) -> Tuple[Optional[float], Optional[str]]:
-    """Return (price, fetched_at_iso) for *symbol*, using kv_cache to avoid
-    repeated yfinance calls within the same 10-minute window."""
-    cache_key = f"watchlist_price:{symbol}"
-    cached = db.cache_get(cache_key)
-    if cached:
-        return cached["price"], cached["fetched_at"]
-    try:
-        price = float(yf.Ticker(symbol).fast_info.last_price)
-    except Exception:
+    """Return (price, fetched_at_iso) via the shared market-data cache."""
+    q = market.get_quote(db, symbol, max_age=_PRICE_CACHE_TTL)
+    if not q.get("price"):
         return None, None
-    fetched_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    db.cache_set(
-        cache_key, {"price": price, "fetched_at": fetched_at}, _PRICE_CACHE_TTL
+    fetched_at = datetime.fromtimestamp(q["fetched_at"], tz=timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
     )
-    return price, fetched_at
+    return float(q["price"]), fetched_at
 
 
 class WatchlistAdd(BaseModel):
