@@ -199,6 +199,15 @@ Manual: `docker exec -e PORTF_API_KEY=... portf_backend_dev python3 -m portf_man
 - Crypto uses `{SYM}-EUR` format (e.g. `BTC-EUR`). A few tokens only resolve under a numeric-suffixed, **USD-quoted** Yahoo symbol (the bare `{SYM}-EUR` is missing or points at a delisted look-alike). `cli.update_prices._CRYPTO_YF_OVERRIDES` maps `symbol → (yf_ticker, quote_ccy)` (e.g. `SUI → ("SUI20947-USD", "USD")`, `UNI → ("UNI7083-USD", "USD")`); USD results are converted to EUR via `api_client.get_fx_rate` before storing (crypto assets are stored in EUR). A few assets (most EU fund ISINs, delisted tokens) have no Yahoo data at all and are skipped — visible on the Diagnostics page.
 - `GET /api/v1/portfolios/holdings` summary is EUR-converted via `XYZEUR=X` FX tickers. Per-holding `total_value_eur` is available; `total_value` is in the asset's native currency.
 
+### Market Data API (`portf_server/routers/market.py` + `portf_manager/market.py`)
+Shared, key-auth Yahoo Finance cache — the single market-data source for web,
+MCP, and cron scripts (no consumer fetches Yahoo directly except the price
+cron, which *writes* the `prices` table):
+- `GET /api/v1/market/quotes?symbols=A,B,C&max_age=` (batch, ≤50), `/market/quote/{symbol}`, `/market/fx?currencies=`, `/market/fundamentals/{symbol}`
+- **Read-time freshness**: kv_cache values (`mkt:quote:*`, `mkt:fx:*`, `mkt:fund:*`) store a 7-day-expiry payload with `fetched_at` inside; callers pass `max_age` seconds (floor 60). Stale-on-failure: Yahoo down → last value with `stale: true`.
+- Quote resolution: fresh cache → held asset's stored daily price (prev close from prior row) → live fast_info (GBX÷100; **read `previous_close` via subscript, never `fast_info.get()` with snake_case — it silently returns None**) → stale fallback → error entry.
+- Consumers: routers (`portfolios._get_fx_rate`, `public._fx`, rebalance, research `_current_price`, watchlist) all delegate to `portf_manager.market`; `~/scripts/stock-monitor.py` and the MCP `quote` tool call the HTTP API.
+
 ### Portfolio Value History
 `~/.hermes/data/portf_history.jsonl` — daily report appends `{"date": "...", "value": ...}` each run. The 1d/1w/1m/1y comparisons only appear once enough history has accumulated.
 
