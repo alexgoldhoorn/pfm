@@ -2914,9 +2914,12 @@ class PortfolioManagerCLI:
 
             # Reclaim expired kv_cache rows (cache_get ignores them but never
             # deletes them). Piggy-backing on the daily cron keeps the table
-            # from growing unbounded. Best-effort.
+            # from growing unbounded. Best-effort, and only in local mode — in
+            # server mode db_manager is the HTTP client, which has no DB access.
             try:
-                if self.db_manager is not None:
+                if self.db_manager is not None and hasattr(
+                    self.db_manager, "purge_expired_cache"
+                ):
                     removed = self.db_manager.purge_expired_cache()
                     if removed:
                         tqdm.write(f"🧹 Purged {removed} expired cache entries")
