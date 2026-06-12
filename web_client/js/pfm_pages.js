@@ -579,8 +579,13 @@ function createPageManager() {
 
             const filtered = this._txAllRows.filter(r => {
                 if (typeVal) {
-                    if (r.isBooking) return false;
-                    if (r.txType !== typeVal) return false;
+                    // Cash bookings carry their action (Deposit/Withdrawal) in
+                    // transaction_type; trades use txType (buy/sell/...).
+                    if (r.isBooking) {
+                        if (r.transaction_type !== typeVal) return false;
+                    } else if (r.txType !== typeVal) {
+                        return false;
+                    }
                 }
                 if (fromVal && r.date < fromVal) return false;
                 if (toVal && r.date > toVal) return false;
@@ -655,7 +660,7 @@ function createPageManager() {
                 }
                 // Store the hide-tiny-filtered set; the shared table does sort+filter.
                 this._holdingsRows = view;
-                const emptyMsg = `<tr><td colspan=”12” class=”text-center text-muted”>${holdings.length ? 'No holdings match the current filter.' : 'No holdings found. Add buy transactions to see your positions here.'}</td></tr>`;
+                const emptyMsg = `<tr><td colspan="12" class="text-center text-muted">${holdings.length ? 'No holdings match the current filter.' : 'No holdings found. Add buy transactions to see your positions here.'}</td></tr>`;
                 const renderHoldingRow = (h) => {
                     const pnlClass = h.pnl_amount >= 0 ? 'text-success' : 'text-danger';
                     const typeBadge = { stock: 'bg-primary', etf: 'bg-info', index: 'bg-success', crypto: 'bg-warning text-dark', bond: 'bg-secondary', p2p: 'bg-dark' }[h.asset_type] || 'bg-secondary';
@@ -664,23 +669,23 @@ function createPageManager() {
                         <tr>
                             <td><strong>${esc(h.symbol)}</strong></td>
                             <td>${esc(h.name)}</td>
-                            <td><span class=”badge ${typeBadge}”>${esc((h.asset_type || '').toUpperCase())}</span></td>
+                            <td><span class="badge ${typeBadge}">${esc((h.asset_type || '').toUpperCase())}</span></td>
                             <td>${esc(h.currency || '')}</td>
-                            <td class=”text-end”>${parseFloat(h.quantity).toLocaleString(Fmt.loc(), { maximumFractionDigits: 4 })}</td>
-                            <td class=”text-end”>${fmt(h.avg_price)}</td>
-                            <td class=”text-end”>${h.current_price > 0 ? fmt(h.current_price) : '<span class=”text-muted”>—</span>'}</td>
-                            <td class=”text-end fw-bold”>${fmt(h.total_value)}</td>
-                            <td class=”text-end ${pnlClass}”>${h.pnl_amount >= 0 ? '+' : ''}${fmt(h.pnl_amount)}</td>
-                            <td class=”text-end ${pnlClass}”>${h.pnl_pct >= 0 ? '+' : ''}${fmt(h.pnl_pct)}%</td>
-                            <td class=”text-center text-nowrap”>${assetLinks(h.symbol)}</td>
-                            <td class=”text-end pe-3”><button class=”btn btn-sm btn-outline-primary” title=”Research / Valuation” onclick=”openResearchModal('${symEsc}')”><i class=”bi bi-graph-up”></i></button></td>
+                            <td class="text-end">${parseFloat(h.quantity).toLocaleString(Fmt.loc(), { maximumFractionDigits: 4 })}</td>
+                            <td class="text-end">${fmt(h.avg_price)}</td>
+                            <td class="text-end">${h.current_price > 0 ? fmt(h.current_price) : '<span class="text-muted">—</span>'}</td>
+                            <td class="text-end fw-bold">${fmt(h.total_value)}</td>
+                            <td class="text-end ${pnlClass}">${h.pnl_amount >= 0 ? '+' : ''}${fmt(h.pnl_amount)}</td>
+                            <td class="text-end ${pnlClass}">${h.pnl_pct >= 0 ? '+' : ''}${fmt(h.pnl_pct)}%</td>
+                            <td class="text-center text-nowrap">${assetLinks(h.symbol)}</td>
+                            <td class="text-end pe-3"><button class="btn btn-sm btn-outline-primary" title="Research / Valuation" onclick="openResearchModal('${symEsc}')"><i class="bi bi-graph-up"></i></button></td>
                         </tr>`;
                 };
                 this._holdingsST = this._holdingsST || makeSortableTable({
                     table: document.getElementById('holdingsTable'),
                     columns: [
                         { key: 'symbol', type: 'text' }, { key: 'name', type: 'text' },
-                        { key: 'asset_type', type: 'text', filter: 'select' }, { key: 'currency', type: 'text' },
+                        { key: 'asset_type', type: 'text' }, { key: 'currency', type: 'text' },
                         { key: 'quantity', type: 'num' }, { key: 'avg_price', type: 'num' },
                         { key: 'current_price', type: 'num' }, { key: 'total_value_eur', type: 'num' },
                         { key: 'pnl_amount', type: 'num' }, { key: 'pnl_pct', type: 'num' },
@@ -690,6 +695,31 @@ function createPageManager() {
                     renderRows: (rows, tbody) => { tbody.innerHTML = rows.length ? rows.map(renderHoldingRow).join('') : emptyMsg; },
                     prefsKey: 'holdings',
                 });
+                // Above-table asset-type filter (consistent with the Assets page).
+                // It writes into the table's state.filters, which applyTableState
+                // already honours, so sort + filter persist together.
+                const hTypeSel = document.getElementById('holdingsTypeFilter');
+                if (hTypeSel) {
+                    const types = [...new Set(view
+                        .filter(h => parseFloat(h.quantity || 0) > 0)
+                        .map(h => h.asset_type || 'other'))].sort();
+                    const st = window.PREFS.tableState.holdings;
+                    st.filters = st.filters || {};
+                    const cur = st.filters.asset_type || 'all';
+                    hTypeSel.innerHTML = '<option value="all">All Asset Types</option>' +
+                        types.map(t => `<option value="${esc(t)}">${esc(t.toUpperCase())}</option>`).join('');
+                    hTypeSel.value = [...hTypeSel.options].some(o => o.value === cur) ? cur : 'all';
+                    if (!hTypeSel._bound) {
+                        hTypeSel._bound = true;
+                        hTypeSel.addEventListener('change', () => {
+                            const s = window.PREFS.tableState.holdings;
+                            s.filters = s.filters || {};
+                            s.filters.asset_type = hTypeSel.value;
+                            savePrefs();
+                            this._holdingsST.refresh();
+                        });
+                    }
+                }
                 this._holdingsST.refresh();
             } catch (error) {
                 console.error('Error loading holdings:', error);
