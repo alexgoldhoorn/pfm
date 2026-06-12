@@ -77,8 +77,34 @@ class TestMarketQuotes:
             status.HTTP_403_FORBIDDEN,
         )
 
+    @pytest.mark.asyncio
+    async def test_max_age_floored_to_60(
+        self, async_test_client: AsyncClient, auth_headers, monkeypatch
+    ):
+        seen = {}
+
+        def fake(db, syms, max_age):
+            seen["max_age"] = max_age
+            return [_fake_quote(s) for s in syms]
+
+        monkeypatch.setattr(market, "get_quotes", fake)
+        resp = await async_test_client.get(
+            "/api/v1/market/quotes?symbols=NVDA&max_age=0", headers=auth_headers
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        assert seen["max_age"] == 60
+
 
 class TestMarketFx:
+    @pytest.mark.asyncio
+    async def test_empty_currencies_rejected(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        resp = await async_test_client.get(
+            "/api/v1/market/fx?currencies=,,", headers=auth_headers
+        )
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+
     @pytest.mark.asyncio
     async def test_fx_rates(
         self, async_test_client: AsyncClient, auth_headers, monkeypatch
