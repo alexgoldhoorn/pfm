@@ -13,7 +13,6 @@ import os
 from unittest.mock import patch, MagicMock, ANY
 from io import StringIO
 from datetime import datetime
-from decimal import Decimal
 
 from portf_manager.cli import PortfolioManagerCLI
 from portf_manager.config import PortfolioConfig
@@ -85,6 +84,47 @@ class TestUpdatePricesCLI:
         self.cli.db_manager.insert_price_record.assert_called_once_with(
             symbol="AAPL",
             price=150.0,
+            fetched_ts=ANY,
+            source="yfinance",
+        )
+
+    @patch("portf_manager.cli.get_client")
+    def test_update_prices_uses_ticker_when_set(self, mock_get_client):
+        """An asset with a Yahoo ticker (v18 assets.ticker) is fetched by that
+        ticker, and the returned price is stored under the asset's ISIN symbol."""
+        # A fund whose ISIN Yahoo can't price, but whose exchange listing can.
+        self.cli.db_manager.create_asset(
+            symbol="LU0000000010",
+            name="Amundi JPM Global Govt Bond",
+            asset_type="index",
+            currency="EUR",
+        )
+        # Set the Yahoo ticker (create_asset has no ticker param).
+        with self.cli.db_manager.get_connection() as conn:
+            conn.execute(
+                "UPDATE assets SET ticker = ? WHERE symbol = ?",
+                ("LU0000000010.LU", "LU0000000010"),
+            )
+            conn.commit()
+
+        # The batch fetch is keyed by the Yahoo ticker, not the ISIN.
+        mock_api_client = MagicMock(spec=APIClient)
+        mock_api_client.fetch_latest_prices.return_value = {"LU0000000010.LU": 1276.8}
+        mock_get_client.return_value = mock_api_client
+        self.cli.db_manager.insert_price_record = MagicMock()
+
+        with patch("sys.stdout", new_callable=StringIO):
+            self.cli.update_prices(symbols=["LU0000000010"])
+
+        # fetch_latest_prices was asked for the ticker, not the ISIN.
+        requested = mock_api_client.fetch_latest_prices.call_args[0][0]
+        assert "LU0000000010.LU" in requested
+        assert "LU0000000010" not in requested
+
+        # The price is stored under the DB symbol (the ISIN).
+        self.cli.db_manager.insert_price_record.assert_called_once_with(
+            symbol="LU0000000010",
+            price=1276.8,
             fetched_ts=ANY,
             source="yfinance",
         )
