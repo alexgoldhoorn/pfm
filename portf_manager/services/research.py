@@ -64,6 +64,18 @@ _FUNDAMENTAL_FIELDS = [
 ]
 
 
+def _fetch_fundamentals_live(symbol: str) -> dict[str, Any]:
+    """Uncached yfinance fundamentals fetch (shared with portf_manager.market)."""
+    try:
+        info = yf.Ticker(symbol).info
+        data = {k: info.get(k) for k in _FUNDAMENTAL_FIELDS if info.get(k) is not None}
+        data["symbol"] = symbol
+        return data
+    except Exception as e:
+        logger.warning(f"Could not fetch fundamentals for {symbol}: {e}")
+        return {"symbol": symbol}
+
+
 def fetch_fundamentals(symbol: str, db=None) -> dict[str, Any]:
     """Pull key fundamentals from yfinance for *symbol*.
 
@@ -77,13 +89,7 @@ def fetch_fundamentals(symbol: str, db=None) -> dict[str, Any]:
                 return hit
         except Exception as e:
             logger.warning(f"fundamentals cache_get failed for {symbol}: {e}")
-    try:
-        info = yf.Ticker(symbol).info
-        data = {k: info.get(k) for k in _FUNDAMENTAL_FIELDS if info.get(k) is not None}
-        data["symbol"] = symbol
-    except Exception as e:
-        logger.warning(f"Could not fetch fundamentals for {symbol}: {e}")
-        return {"symbol": symbol}
+    data = _fetch_fundamentals_live(symbol)
     # Only cache a genuine hit (more than just the symbol key).
     if db is not None and len(data) > 1:
         try:
