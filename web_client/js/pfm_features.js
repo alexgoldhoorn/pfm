@@ -1145,6 +1145,33 @@ function setupImportExportPage() {
 // Forecast page
 // ---------------------------------------------------------------------------
 
+// Pure: map Net Worth manual-asset items to the forecast's modelled inputs.
+// Cash = savings/current/cash; Bonds = external investment; Mortgage = the
+// mortgage liability. Everything else (property/vehicle/pension, other debts)
+// is collected into `skipped` (the simulator has no field for them). Amounts
+// are EUR (prefers amount_eur). Unit-tested in web_client/js/tests/.
+function mapNetworthToForecast(items) {
+    const CASH = new Set(['savings_account', 'current_account', 'cash']);
+    const BONDS = new Set(['investment_external']);
+    let cash = 0, bonds = 0, mortgage = 0;
+    const skipped = [];
+    for (const it of (items || [])) {
+        const eur = parseFloat(it.amount_eur != null ? it.amount_eur : it.amount) || 0;
+        if (it.is_liability) {
+            if (it.category === 'mortgage') mortgage += eur;
+            else skipped.push(it.name || it.category);
+        } else if (CASH.has(it.category)) {
+            cash += eur;
+        } else if (BONDS.has(it.category)) {
+            bonds += eur;
+        } else {
+            skipped.push(it.name || it.category);
+        }
+    }
+    return { cash, bonds, mortgage, skipped };
+}
+window.mapNetworthToForecast = mapNetworthToForecast;
+
 function setupForecastPage() {
     // DOM refs - asset allocation inputs
     const cashAmountInput   = document.getElementById('fcCashAmount');
@@ -1509,6 +1536,31 @@ function setupForecastPage() {
 
     refreshBtn.addEventListener('click', loadStartValue);
     runBtn.addEventListener('click', runForecast);
+
+    // Opt-in: pre-fill Cash / Bonds / Mortgage from the Net Worth page.
+    const loadNwBtn = document.getElementById('fcLoadNetworth');
+    const nwNote = document.getElementById('fcNetworthNote');
+    if (loadNwBtn) {
+        loadNwBtn.addEventListener('click', async () => {
+            if (nwNote) nwNote.textContent = 'Loading from Net Worth…';
+            try {
+                const d = await window.apiClient.getNetworth();
+                const m = mapNetworthToForecast(d.items || []);
+                cashAmountInput.value = Math.round(m.cash);
+                bondsAmountInput.value = Math.round(m.bonds);
+                mortgagePrincipalInput.value = Math.round(m.mortgage);
+                updateTotalLiquidBadge();
+                updateMortgageNote();
+                if (nwNote) {
+                    let msg = `Loaded Cash ${fmtEur(m.cash)} · Bonds ${fmtEur(m.bonds)} · Mortgage ${fmtEur(m.mortgage)} from Net Worth.`;
+                    if (m.skipped.length) msg += ` Skipped (not modelled): ${m.skipped.join(', ')}.`;
+                    nwNote.textContent = msg;
+                }
+            } catch (e) {
+                if (nwNote) nwNote.textContent = 'Could not load Net Worth: ' + e.message;
+            }
+        });
+    }
 
     // Re-render on window resize to keep chart responsive
     let resizeTimer;
