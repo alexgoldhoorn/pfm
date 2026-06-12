@@ -6,10 +6,17 @@
 
 // Net Worth page — brokerage value (auto) + manual assets/liabilities.
 const NW_CATEGORY_LABELS = {
-    cash: 'Cash / savings', investment_external: 'Investment (external)',
-    property: 'Property', vehicle: 'Vehicle', pension: 'Pension', other: 'Other',
-    mortgage: 'Mortgage', loan: 'Loan', credit: 'Credit / debt',
+    savings_account: 'Savings account', current_account: 'Current account',
+    cash: 'Cash', property: 'Property', vehicle: 'Vehicle', pension: 'Pension',
+    investment_external: 'Investment (external)', other: 'Other asset',
+    mortgage: 'Mortgage', personal_loan: 'Personal loan', car_loan: 'Car loan',
+    credit_card: 'Credit card', other_debt: 'Other debt',
+    // legacy values from earlier entries:
+    loan: 'Loan', credit: 'Credit / debt',
 };
+// Type values that count as liabilities (debt). Used to derive is_liability
+// from the chosen type (the separate checkbox was removed).
+const NW_LIABILITY_CATS = new Set(['mortgage', 'personal_loan', 'car_loan', 'credit_card', 'other_debt', 'loan', 'credit']);
 async function loadNetworthPage() {
     const $ = id => document.getElementById(id);
     _wireNetworthForm();
@@ -24,7 +31,9 @@ async function loadNetworthPage() {
         $('nwTotal').innerHTML = eur(d.net_worth_eur);
         const card = $('nwTotalCard');
         if (card) card.style.background = d.net_worth_eur >= 0 ? '#0d6efd' : '#dc3545';
-        const items = d.items || [];
+        // Group visually: assets first, then liabilities (stable within each).
+        const items = (d.items || []).slice()
+            .sort((a, b) => (a.is_liability ? 1 : 0) - (b.is_liability ? 1 : 0));
         if (!items.length) {
             body.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4">No off-brokerage items yet. Add cash, property, a mortgage… on the left.</td></tr>';
         } else {
@@ -52,20 +61,17 @@ function _wireNetworthForm() {
     if (form && !form.dataset.wired) {
         form.dataset.wired = '1';
         const $ = id => document.getElementById(id);
-        const liabilityCats = new Set(['mortgage', 'loan', 'credit']);
-        // Auto-tick "debt" when a liability category is chosen
-        $('nwCategory').addEventListener('change', () => {
-            if (liabilityCats.has($('nwCategory').value)) $('nwIsLiability').checked = true;
-        });
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
             const status = $('nwAddStatus');
+            const category = $('nwCategory').value;
             const payload = {
                 name: $('nwName').value.trim(),
-                category: $('nwCategory').value,
+                category: category,
                 amount: parseFloat($('nwAmount').value) || 0,
                 currency: ($('nwCurrency').value || 'EUR').toUpperCase(),
-                is_liability: $('nwIsLiability').checked,
+                // The chosen type determines whether it's a debt (no checkbox).
+                is_liability: NW_LIABILITY_CATS.has(category),
                 notes: $('nwNotes').value.trim() || null,
             };
             if (!payload.name) return;
@@ -1166,6 +1172,10 @@ async function loadAnalyticsFees() {
 // Watchlist page
 // ---------------------------------------------------------------------------
 
+// Watchlist sortable-table state (loadWatchlist is a plain function, not a method).
+let _watchlistRows = [];
+let _watchlistST = null;
+
 async function loadWatchlist() {
     const tbody = document.querySelector('#watchlistTable tbody');
     if (!tbody) return;
@@ -1179,11 +1189,12 @@ async function loadWatchlist() {
     try {
         const items = await window.apiClient.getWatchlist();
         if (!Array.isArray(items) || items.length === 0) {
+            _watchlistRows = [];
             tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-4">Your watchlist is empty. Add a symbol above to start tracking it.</td></tr>';
             return;
         }
         const typeBadge = t => ({ stock: 'bg-primary', etf: 'bg-info', index: 'bg-success', crypto: 'bg-warning text-dark', bond: 'bg-secondary', commodity: 'bg-dark' }[t] || 'bg-secondary');
-        tbody.innerHTML = items.map(w => {
+        const renderWatchRow = (w) => {
             const price = w.current_price != null ? parseFloat(w.current_price) : null;
             const buyBelow = w.buy_below != null ? parseFloat(w.buy_below) : null;
             const dist = w.distance_to_buy_pct != null ? parseFloat(w.distance_to_buy_pct) : null;
@@ -1209,7 +1220,46 @@ async function loadWatchlist() {
                         </button>
                     </td>
                 </tr>`;
-        }).join('');
+        };
+        _watchlistRows = items;
+
+        // Above-table asset-type filter (consistent with Holdings/Assets); writes
+        // into the table's state.filters, which applyTableState honours.
+        const wTypeSel = document.getElementById('watchlistTypeFilter');
+        if (wTypeSel) {
+            if (!window.PREFS.tableState) window.PREFS.tableState = {};
+            const st = window.PREFS.tableState.watchlist = window.PREFS.tableState.watchlist || { sort: null, filters: {} };
+            st.filters = st.filters || {};
+            const types = [...new Set(items.map(w => w.asset_type || 'other').filter(Boolean))].sort();
+            const cur = st.filters.asset_type || 'all';
+            wTypeSel.innerHTML = '<option value="all">All Asset Types</option>' +
+                types.map(t => `<option value="${esc(t)}">${esc(t.toUpperCase())}</option>`).join('');
+            wTypeSel.value = [...wTypeSel.options].some(o => o.value === cur) ? cur : 'all';
+            if (!wTypeSel._bound) {
+                wTypeSel._bound = true;
+                wTypeSel.addEventListener('change', () => {
+                    const s = window.PREFS.tableState.watchlist;
+                    s.filters = s.filters || {};
+                    s.filters.asset_type = wTypeSel.value;
+                    savePrefs();
+                    if (_watchlistST) _watchlistST.refresh();
+                });
+            }
+        }
+
+        _watchlistST = _watchlistST || makeSortableTable({
+            table: document.getElementById('watchlistTable'),
+            columns: [
+                { key: 'symbol', type: 'text' }, { key: 'name', type: 'text' },
+                { key: 'asset_type', type: 'text' }, { key: 'current_price', type: 'num' },
+                { key: 'buy_below', type: 'num' }, { key: 'distance_to_buy_pct', type: 'num' },
+                { key: 'notes', type: 'text' }, { key: null },
+            ],
+            getRows: () => _watchlistRows,
+            renderRows: (rows, tb) => { tb.innerHTML = rows.length ? rows.map(renderWatchRow).join('') : '<tr><td colspan="8" class="text-center text-muted py-4">No watchlist items match the filter.</td></tr>'; },
+            prefsKey: 'watchlist',
+        });
+        _watchlistST.refresh();
     } catch (err) {
         tbody.innerHTML = `<tr><td colspan="8" class="text-danger small py-3 ps-3">Error loading watchlist: ${err.message}</td></tr>`;
     }
