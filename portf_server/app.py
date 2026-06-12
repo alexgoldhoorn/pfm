@@ -44,6 +44,7 @@ from .routers import (
     goals,
     public,
     networth,
+    market,
 )
 from .dependencies import (
     get_database,
@@ -357,6 +358,13 @@ app.include_router(
     networth.router,
     prefix="/api/v1/networth",
     tags=["Net Worth"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    market.router,
+    prefix="/api/v1/market",
+    tags=["Market Data"],
     dependencies=_PROTECTED,
 )
 
