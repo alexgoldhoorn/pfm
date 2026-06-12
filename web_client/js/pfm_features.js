@@ -1172,12 +1172,27 @@ function mapNetworthToForecast(items) {
 }
 window.mapNetworthToForecast = mapNetworthToForecast;
 
+// Pure: turn the analytics performance + risk payloads into forecast inputs.
+// Uses money-weighted IRR for the return and annualised volatility; needs ≥3
+// snapshots. Returns { ok, rate, vol, snapshots } or { ok:false, reason }.
+// Unit-tested in web_client/js/tests/.
+function historyToForecast(perf, risk) {
+    const snaps = (risk && risk.snapshots_used) || 0;
+    if (snaps < 3) return { ok: false, reason: 'Not enough history yet — need a few more daily snapshots.' };
+    const rate = perf && typeof perf.money_weighted_irr_pct === 'number' ? perf.money_weighted_irr_pct : null;
+    const vol = risk && typeof risk.volatility_pct === 'number' ? risk.volatility_pct : null;
+    if (rate == null || vol == null) return { ok: false, reason: 'Return/volatility unavailable.' };
+    return { ok: true, rate, vol, snapshots: snaps };
+}
+window.historyToForecast = historyToForecast;
+
 function setupForecastPage() {
     // DOM refs - asset allocation inputs
     const cashAmountInput   = document.getElementById('fcCashAmount');
     const cashRateInput     = document.getElementById('fcCashRate');
     const stocksAmountInput = document.getElementById('fcStocksAmount');
     const stocksRateInput   = document.getElementById('fcStocksRate');
+    const stocksVolInput    = document.getElementById('fcStocksVol');
     const bondsAmountInput  = document.getElementById('fcBondsAmount');
     const bondsRateInput    = document.getElementById('fcBondsRate');
     const startNote         = document.getElementById('fcStartValueNote');
@@ -1277,11 +1292,11 @@ function setupForecastPage() {
     // Full projection: assets + mortgage amortization + net worth.
     // Returns { data[], mortgagePaidOffYear, totalInterestPaid }
     function runProjection(cashAmt, cashRate, stocksAmt, stocksRate, bondsAmt, bondsRate,
-                           mortgagePrincipal, mortgageRate, monthlyPayment, years, sigma) {
+                           mortgagePrincipal, mortgageRate, monthlyPayment, years, sigma, stocksVol) {
         const VOLATILITY = { cash: 0.01, bonds: 0.06, stocks: 0.16 };
 
         const cashProj   = projectAccount(cashAmt,   cashRate,   VOLATILITY.cash,   years, sigma);
-        const stocksProj = projectAccount(stocksAmt, stocksRate, VOLATILITY.stocks, years, sigma);
+        const stocksProj = projectAccount(stocksAmt, stocksRate, (stocksVol != null ? stocksVol : VOLATILITY.stocks), years, sigma);
         const bondsProj  = projectAccount(bondsAmt,  bondsRate,  VOLATILITY.bonds,  years, sigma);
 
         let currentMortgage     = mortgagePrincipal;
@@ -1484,10 +1499,11 @@ function setupForecastPage() {
         const mortPayment   = parseFloat(monthlyPaymentInput.value)    || 0;
         const years         = parseInt(yearsSlider.value)              || 30;
         const sigma         = parseFloat(confSelect.value)             || 1.96;
+        const stocksVol     = stocksVolInput ? (parseFloat(stocksVolInput.value) || 16) / 100 : null;
 
         const proj = runProjection(
             cashAmt, cashRate, stocksAmt, stocksRate, bondsAmt, bondsRate,
-            mortPrincipal, mortRate, mortPayment, years, sigma
+            mortPrincipal, mortRate, mortPayment, years, sigma, stocksVol
         );
 
         renderChart(proj, cashAmt + stocksAmt + bondsAmt, years);
@@ -1558,6 +1574,30 @@ function setupForecastPage() {
                 }
             } catch (e) {
                 if (nwNote) nwNote.textContent = 'Could not load Net Worth: ' + e.message;
+            }
+        });
+    }
+
+    // Opt-in: set stock return + volatility from the user's own history.
+    const useHistBtn = document.getElementById('fcUseHistory');
+    const histNote = document.getElementById('fcHistoryNote');
+    if (useHistBtn) {
+        useHistBtn.addEventListener('click', async () => {
+            if (histNote) histNote.textContent = 'Reading your history…';
+            try {
+                const [perf, risk] = await Promise.all([
+                    window.apiClient.getPerformance(null, 'all'),
+                    window.apiClient.getRisk(),
+                ]);
+                const h = historyToForecast(perf, risk);
+                if (!h.ok) { if (histNote) histNote.textContent = h.reason; return; }
+                stocksRateInput.value = h.rate.toFixed(1);
+                if (stocksVolInput) stocksVolInput.value = Math.round(h.vol);
+                if (histNote) {
+                    histNote.textContent = `Set from your history: return ${h.rate.toFixed(1)}%/yr (money-weighted IRR), volatility ${Math.round(h.vol)}% — based on ${h.snapshots} daily snapshots. This is your whole-portfolio figure (incl. crypto), a proxy for the stocks bucket.`;
+                }
+            } catch (e) {
+                if (histNote) histNote.textContent = 'Could not load history: ' + e.message;
             }
         });
     }
