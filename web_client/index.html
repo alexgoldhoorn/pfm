@@ -1480,13 +1480,19 @@
                                             </div>
                                             <div class="col-5">
                                                 <div class="input-group input-group-sm">
-                                                    <input type="number" class="form-control" id="fcStocksRate" value="8.0" min="-5" max="20" step="0.1">
+                                                    <input type="number" class="form-control" id="fcStocksRate" value="8.0" min="-5" max="40" step="0.1">
                                                     <span class="input-group-text">%</span>
                                                 </div>
                                             </div>
                                         </div>
-                                        <div class="form-text d-flex justify-content-between">
-                                            <span>Volatility: 16% — high risk</span>
+                                        <div class="d-flex justify-content-between align-items-center mt-1">
+                                            <div class="d-flex align-items-center gap-1">
+                                                <label class="form-text mb-0" for="fcStocksVol">Volatility</label>
+                                                <div class="input-group input-group-sm" style="width:90px;">
+                                                    <input type="number" class="form-control" id="fcStocksVol" value="16" min="0" max="100" step="1">
+                                                    <span class="input-group-text">%</span>
+                                                </div>
+                                            </div>
                                             <button class="btn btn-link btn-sm p-0 text-muted" id="fcRefreshBtn" title="Reload stocks value from current holdings">
                                                 <i class="bi bi-arrow-clockwise"></i>
                                             </button>
@@ -1496,7 +1502,11 @@
                                             <button type="button" class="btn btn-sm btn-outline-secondary" id="fcLoadNetworth" title="Pre-fill Cash, Bonds and Mortgage from your Net Worth page">
                                                 <i class="bi bi-piggy-bank me-1"></i>Load from Net Worth
                                             </button>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary ms-1" id="fcUseHistory" title="Set stock return &amp; volatility from your portfolio history">
+                                                <i class="bi bi-clock-history me-1"></i>Use my history
+                                            </button>
                                             <div class="form-text" id="fcNetworthNote"></div>
+                                            <div class="form-text" id="fcHistoryNote"></div>
                                         </div>
                                     </div>
 
@@ -2717,9 +2727,9 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
          scripts. They share one global scope and MUST load in this order:
          core → pages → analytics → features (features carries the
          DOMContentLoaded bootstrap, so it loads last). -->
-    <script src="js/pfm_core.js?v=1780000047"></script>
-    <script src="js/pfm_pages.js?v=1780000047"></script>
-    <script src="js/pfm_analytics.js?v=1780000047"></script>
-    <script src="js/pfm_features.js?v=1780000047"></script>
+    <script src="js/pfm_core.js?v=1780000048"></script>
+    <script src="js/pfm_pages.js?v=1780000048"></script>
+    <script src="js/pfm_analytics.js?v=1780000048"></script>
+    <script src="js/pfm_features.js?v=1780000048"></script>
 </body>
 </html>
