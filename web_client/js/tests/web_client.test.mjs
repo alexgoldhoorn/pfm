@@ -232,3 +232,34 @@ test("no curly quotes opening HTML attributes in the JS files", () => {
             offenders.join("\n  ")
     );
 });
+
+test("mapNetworthToForecast: maps cash/bonds/mortgage, skips the rest", () => {
+    const { mapNetworthToForecast } = loadAppIntoContext();
+    const items = [
+        { category: "savings_account", is_liability: false, amount_eur: 5000 },
+        { category: "current_account", is_liability: false, amount_eur: 2000 },
+        { category: "cash", is_liability: false, amount_eur: 500 },
+        { category: "investment_external", is_liability: false, amount_eur: 8000 },
+        { category: "mortgage", is_liability: true, amount_eur: 180000 },
+        { category: "property", is_liability: false, amount_eur: 250000, name: "Flat" },
+        { category: "pension", is_liability: false, amount_eur: 30000 },
+        { category: "credit_card", is_liability: true, amount_eur: 1200, name: "Visa" },
+    ];
+    const m = mapNetworthToForecast(items);
+    assert.equal(m.cash, 7500);       // 5000+2000+500
+    assert.equal(m.bonds, 8000);
+    assert.equal(m.mortgage, 180000);
+    // spread the vm-realm array into the test realm before comparing
+    assert.deepEqual([...m.skipped], ["Flat", "pension", "Visa"]); // name||category
+});
+
+test("mapNetworthToForecast: empty/undefined → zeros, prefers amount_eur", () => {
+    const { mapNetworthToForecast } = loadAppIntoContext();
+    const e = mapNetworthToForecast();
+    assert.equal(e.cash, 0);
+    assert.equal(e.bonds, 0);
+    assert.equal(e.mortgage, 0);
+    assert.equal(e.skipped.length, 0);
+    const m = mapNetworthToForecast([{ category: "cash", is_liability: false, amount_eur: 10, amount: 999 }]);
+    assert.equal(m.cash, 10); // amount_eur wins over amount
+});
