@@ -45,7 +45,11 @@ def _fetch_quote_live(symbol: str) -> Optional[dict]:
         fi = yf.Ticker(symbol).fast_info
         price = float(fi["last_price"])
         currency = fi.get("currency") or "EUR"
-        prev = fi.get("previous_close")
+        # FastInfo.get() only resolves camelCase keys; subscript handles snake_case.
+        try:
+            prev = fi["previous_close"]
+        except Exception:
+            prev = None
         prev = float(prev) if prev else None
         # Yahoo quotes UK listings in pence (GBX); normalise to GBP.
         if currency == "GBp":
@@ -70,7 +74,7 @@ def _fetch_quote_live(symbol: str) -> Optional[dict]:
 def _quote_from_db(db, symbol: str) -> Optional[dict]:
     """Quote built from a held asset's stored daily prices (the price cron).
 
-    ``get_asset_by_symbol`` also resolves the v18 ticker alias, so 'NVDA'
+    ``get_asset_by_symbol`` also resolves the ticker alias column, so 'NVDA'
     finds an asset stored under its ISIN. Stored closes carry a date, not a
     time — ``fetched_at`` is that date's midnight, which slightly overstates
     age; acceptable for day-granularity freshness.
@@ -145,10 +149,21 @@ def get_quote(db, symbol: str, max_age: float = 86400) -> dict:
     if fallback:
         source = "cache" if fallback is cached else "db"
         return {**fallback, "source": source, "stale": True}
-    return {"symbol": sym, "price": None, "error": "no data available", "stale": True}
+    return {
+        "symbol": sym,
+        "price": None,
+        "prev_close": None,
+        "change_pct": None,
+        "currency": None,
+        "name": None,
+        "fetched_at": None,
+        "source": "error",
+        "error": "no data available",
+        "stale": True,
+    }
 
 
-def get_quotes(db, symbols, max_age: float = 86400) -> list:
+def get_quotes(db, symbols: list[str], max_age: float = 86400) -> list[dict]:
     """Quotes for many symbols; per-symbol errors, never raises for a batch."""
     return [get_quote(db, s, max_age=max_age) for s in symbols]
 
@@ -165,7 +180,7 @@ _FX_FALLBACK = {
 }
 
 
-def get_fx_eur(db, currency: str, max_age: float = 3600) -> tuple:
+def get_fx_eur(db, currency: str, max_age: float = 3600) -> tuple[float, bool]:
     """EUR rate for *currency* via the ``{CUR}EUR=X`` ticker → (rate, stale)."""
     cur = currency.strip().upper()
     if cur == "EUR":
@@ -178,6 +193,7 @@ def get_fx_eur(db, currency: str, max_age: float = 3600) -> tuple:
     try:
         fi = yf.Ticker(f"{cur}EUR=X").fast_info
         rate = fi["last_price"]
+        # A zero or None rate is meaningless and treated as a failed fetch.
         if rate:
             _cache_set(db, key, {"rate": float(rate), "fetched_at": now})
             return float(rate), False
