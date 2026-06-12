@@ -592,6 +592,26 @@ class APIClient:
             invalid_symbols.extend(batch_invalid)
             api_errors.extend(batch_errors)
 
+            # yf.download returns nothing for some listings (e.g. Stuttgart .SG /
+            # Luxembourg .LU fund quotes) that still resolve via fast_info. Retry
+            # each symbol the batch marked invalid before giving up on it.
+            if invalid_symbols:
+                still_invalid = []
+                for symbol in invalid_symbols:
+                    try:
+                        fi = yf.Ticker(symbol).fast_info
+                        px = fi.last_price
+                        if px is not None and not pd.isna(px) and float(px) > 0:
+                            px = float(px)
+                            if fi.currency == "GBp":
+                                px = px / 100.0
+                            results[symbol] = px
+                        else:
+                            still_invalid.append(symbol)
+                    except Exception:
+                        still_invalid.append(symbol)
+                invalid_symbols[:] = still_invalid
+
         except Exception as e:
             logger.error(f"Error in batch price fetch: {e}")
             api_errors.append(str(e))
