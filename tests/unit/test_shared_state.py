@@ -9,6 +9,7 @@ import os
 import tempfile
 from unittest.mock import patch
 
+from portf_manager import market
 from portf_manager.database import Database
 from portf_server.routers import llm as llm_router
 from portf_server.routers import portfolios as portfolios_router
@@ -64,18 +65,22 @@ class TestFxSharedCache:
             portfolios_router._FX_CACHE.pop("XYZ", None)
             portfolios_router._FX_CACHE_TS.pop("XYZ", None)
 
-            class _FastInfo:
-                last_price = 1.25
+            class _FastInfo(dict):
+                # market.get_fx_eur uses subscript access: fi["last_price"]
+                def __init__(self):
+                    super().__init__(last_price=1.25)
 
             class _Ticker:
                 def __init__(self, *_a, **_k):
                     self.fast_info = _FastInfo()
 
-            with patch.object(portfolios_router.yf, "Ticker", _Ticker) as _:
+            # market.get_fx_eur now owns the live fetch and the kv_cache write.
+            with patch.object(market.yf, "Ticker", _Ticker):
                 rate = portfolios_router._get_fx_rate("XYZ")
             assert rate == 1.25
-            # Written through to the shared kv_cache layer.
-            assert db.cache_get("fx:XYZ") == 1.25
+            # Written through to the shared kv_cache layer by market.get_fx_eur.
+            cached = db.cache_get("mkt:fx:XYZ")
+            assert cached is not None and float(cached["rate"]) == 1.25
 
             # Drop the in-process entry; a second call must hit kv_cache, not yf.
             portfolios_router._FX_CACHE.pop("XYZ", None)
@@ -84,7 +89,7 @@ class TestFxSharedCache:
             def _boom(*_a, **_k):
                 raise AssertionError("yfinance should not be called on kv_cache hit")
 
-            with patch.object(portfolios_router.yf, "Ticker", _boom):
+            with patch.object(market.yf, "Ticker", _boom):
                 rate2 = portfolios_router._get_fx_rate("XYZ")
             assert rate2 == 1.25
         finally:

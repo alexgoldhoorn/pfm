@@ -7,34 +7,21 @@ costs. Disabled by default; enable with PORTF_PUBLIC_VIEW=true.
 
 import logging
 import os
-import time
 
-import yfinance as yf
 from fastapi import APIRouter, Depends, HTTPException
+
+from portf_manager import market
 
 from ..dependencies import get_database
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-_FX = {"USD": 0.92, "GBP": 1.17, "SEK": 0.088, "DKK": 0.134, "CHF": 1.05}
-_FX_TS: dict[str, float] = {}
 
-
-def _fx(currency: str) -> float:
-    if currency == "EUR":
-        return 1.0
-    now = time.time()
-    if currency in _FX and now - _FX_TS.get(currency, 0) < 1800:
-        return _FX[currency]
-    try:
-        _FX[currency] = float(
-            yf.Ticker(f"{currency}EUR=X").fast_info.last_price or _FX.get(currency, 1.0)
-        )
-    except Exception:
-        pass
-    _FX_TS[currency] = now
-    return _FX.get(currency, 1.0)
+def _fx(db, currency: str) -> float:
+    """EUR rate via the shared market-data cache (30-min freshness)."""
+    rate, _stale = market.get_fx_eur(db, currency, max_age=1800)
+    return rate
 
 
 def _enabled() -> bool:
@@ -79,7 +66,7 @@ def public_summary(db=Depends(get_database)):
         if not asset:
             continue
         cur = asset.get("currency", "EUR")
-        fx = _fx(cur)
+        fx = _fx(db, cur)
         price_data = db.get_latest_price(aid)
         price = float(price_data["price"]) if price_data else 0.0
         value = pos["quantity"] * price * fx
