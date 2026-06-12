@@ -263,3 +263,25 @@ test("mapNetworthToForecast: empty/undefined → zeros, prefers amount_eur", () 
     const m = mapNetworthToForecast([{ category: "cash", is_liability: false, amount_eur: 10, amount: 999 }]);
     assert.equal(m.cash, 10); // amount_eur wins over amount
 });
+
+test("historyToForecast: returns rate+vol from IRR/volatility with enough snapshots", () => {
+    const { historyToForecast } = loadAppIntoContext();
+    const h = historyToForecast({ money_weighted_irr_pct: 24.7 }, { volatility_pct: 49.8, snapshots_used: 553 });
+    assert.equal(h.ok, true);
+    assert.equal(h.rate, 24.7);
+    assert.equal(h.vol, 49.8);
+    assert.equal(h.snapshots, 553);
+});
+
+test("historyToForecast: too few snapshots → not ok", () => {
+    const { historyToForecast } = loadAppIntoContext();
+    const h = historyToForecast({ money_weighted_irr_pct: 10 }, { volatility_pct: 12, snapshots_used: 2 });
+    assert.equal(h.ok, false);
+    assert.match(h.reason, /Not enough history/);
+});
+
+test("historyToForecast: missing fields → not ok", () => {
+    const { historyToForecast } = loadAppIntoContext();
+    const h = historyToForecast({}, { snapshots_used: 100 });
+    assert.equal(h.ok, false);
+});
