@@ -10,8 +10,7 @@ from fastapi import APIRouter, HTTPException, status, Depends, Request, Query
 from pydantic import BaseModel, Field
 import logging
 
-import yfinance as yf
-
+from portf_manager import market
 from portf_manager.database import Database
 from portf_manager.positions import compute_positions
 from ..dependencies import get_database
@@ -52,40 +51,19 @@ def set_shared_db(db) -> None:
 def _get_fx_rate(currency: str) -> float:
     """Return EUR/currency rate, cached two ways.
 
-    L1 is a per-worker in-process dict (fast). L2 is the DB-backed kv_cache,
-    shared across gunicorn workers so they don't each hit yfinance for the same
-    currency. Falls back to the pre-seeded default rate on any failure.
+    L1 is a per-worker in-process dict (fast, for the per-holding loops).
+    L2 + live fetching is delegated to portf_manager.market.get_fx_eur, the
+    shared read-time-freshness cache used by every consumer.
     """
     if currency == "EUR":
         return 1.0
     now = time.time()
-    # L1: in-process cache
     if currency in _FX_CACHE and now - _FX_CACHE_TS.get(currency, 0) < _FX_TTL:
         return _FX_CACHE[currency]
-    # L2: shared kv_cache (populated by any worker)
-    if _SHARED_DB is not None:
-        try:
-            shared = _SHARED_DB.cache_get(f"fx:{currency}")
-            if shared is not None:
-                _FX_CACHE[currency] = float(shared)
-                _FX_CACHE_TS[currency] = now
-                return _FX_CACHE[currency]
-        except Exception:
-            pass
-    # Live fetch, then write through both cache layers
-    try:
-        rate = yf.Ticker(f"{currency}EUR=X").fast_info.last_price
-        if rate:
-            _FX_CACHE[currency] = float(rate)
-            if _SHARED_DB is not None:
-                try:
-                    _SHARED_DB.cache_set(f"fx:{currency}", float(rate), _FX_TTL)
-                except Exception:
-                    pass
-    except Exception:
-        logger.warning(f"FX rate {currency}→EUR unavailable, using cached/default")
+    rate, _stale = market.get_fx_eur(_SHARED_DB, currency, max_age=_FX_TTL)
+    _FX_CACHE[currency] = rate
     _FX_CACHE_TS[currency] = now
-    return _FX_CACHE.get(currency, 1.0)
+    return rate
 
 
 class PortfolioCreate(BaseModel):

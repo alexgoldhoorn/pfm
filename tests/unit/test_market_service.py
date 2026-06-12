@@ -230,6 +230,20 @@ class TestGetFxEur:
         assert stale is True
 
 
+class TestFxDelegation:
+    def test_portfolios_get_fx_rate_uses_market(self, db, monkeypatch):
+        from portf_server.routers import portfolios
+
+        # Point the router's shared DB at our test DB and clear its L1 cache.
+        monkeypatch.setattr(portfolios, "_SHARED_DB", db)
+        portfolios._FX_CACHE.clear()
+        portfolios._FX_CACHE_TS.clear()
+        monkeypatch.setattr(
+            market, "get_fx_eur", lambda d, cur, max_age=3600: (0.5, False)
+        )
+        assert portfolios._get_fx_rate("USD") == 0.5
+
+
 class TestGetFundamentals:
     def test_live_then_cached(self, db, monkeypatch):
         calls = []

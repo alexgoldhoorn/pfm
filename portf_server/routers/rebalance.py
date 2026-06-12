@@ -12,6 +12,8 @@ from typing import List
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
+from portf_manager import market
+
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
 
@@ -66,8 +68,6 @@ def get_rebalance_analysis(
     Compare current holdings allocation vs targets and return
     buy/sell amounts needed to rebalance.
     """
-    import yfinance as yf
-
     # ── 1. Get holdings ──────────────────────────────────────────────────────
     transactions = db.get_all_transactions()
     positions: dict = {}
@@ -94,12 +94,7 @@ def get_rebalance_analysis(
         if currency == "EUR" or amount == 0:
             return amount
         if currency not in _fx:
-            try:
-                _fx[currency] = float(
-                    yf.Ticker(f"{currency}EUR=X").fast_info.last_price or 1.0
-                )
-            except Exception:
-                _fx[currency] = 1.0
+            _fx[currency] = market.get_fx_eur(db, currency, max_age=1800)[0]
         return amount * _fx[currency]
 
     type_values: dict[str, float] = {}
