@@ -7,7 +7,6 @@ Handles transaction recording and retrieval.
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from typing import List, Optional
 from pydantic import BaseModel
-from datetime import date
 
 from ..dependencies import get_database
 from ..auth_middleware import APIKeyManager, require_api_key
@@ -26,7 +25,9 @@ class TransactionResponse(BaseModel):
     price: float
     total_amount: float
     fees: float = 0.0
-    transaction_date: date
+    # str, not `date`: LLM imports keep the statement's time-of-day
+    # ('...T18:14:15'), which Pydantic rejects for `date` fields (500).
+    transaction_date: str
     description: Optional[str] = None
     symbol: Optional[str] = None
     name: Optional[str] = None

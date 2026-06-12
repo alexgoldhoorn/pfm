@@ -98,6 +98,45 @@ class TestTransactionSymbolFilter:
         assert all(r["symbol"] == sample_asset_data["symbol"] for r in rows)
 
     @pytest.mark.asyncio
+    async def test_list_survives_datetime_transaction_date(
+        self, async_test_client: AsyncClient, auth_headers, sample_asset_data
+    ):
+        """LLM imports keep statement times — listing must not 500 on them.
+
+        Regression: a `transaction_date` of '...T18:14:15' broke the list
+        endpoint (Pydantic rejects non-midnight datetimes for `date` fields),
+        which also broke the web login's key-validation probe.
+        """
+        asset_resp = await async_test_client.post(
+            "/api/v1/assets",
+            json={**sample_asset_data, "symbol": "TIMEDTX"},
+            headers=auth_headers,
+        )
+        assert asset_resp.status_code == status.HTTP_201_CREATED
+        asset_id = asset_resp.json()["id"]
+
+        tx_resp = await async_test_client.post(
+            "/api/v1/transactions",
+            json={
+                "asset_id": asset_id,
+                "transaction_type": "buy",
+                "quantity": 1.0,
+                "price": 10.0,
+                "total_amount": 10.0,
+                "transaction_date": "2026-06-12T18:14:15",
+            },
+            headers=auth_headers,
+        )
+        assert tx_resp.status_code == status.HTTP_200_OK
+
+        resp = await async_test_client.get(
+            "/api/v1/transactions/", params={"limit": 5}, headers=auth_headers
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        dates = [r["transaction_date"] for r in resp.json()]
+        assert "2026-06-12T18:14:15" in dates
+
+    @pytest.mark.asyncio
     async def test_filter_by_unknown_symbol_returns_404(
         self, async_test_client: AsyncClient, auth_headers
     ):
