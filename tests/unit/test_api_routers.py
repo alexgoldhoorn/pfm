@@ -598,3 +598,91 @@ class TestPerformance:
         # All should succeed
         for response in responses:
             assert response.status_code == status.HTTP_200_OK
+
+
+class TestPortfolioTransactionsClear:
+    """Tests for DELETE /api/v1/portfolios/{id}/transactions."""
+
+    @pytest.mark.unit
+    @pytest.mark.api
+    @pytest.mark.asyncio
+    async def test_clear_transactions_returns_deleted_count(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        port_resp = await async_test_client.post(
+            "/api/v1/portfolios",
+            json={"name": "ClearTest", "base_currency": "EUR"},
+            headers=auth_headers,
+        )
+        assert port_resp.status_code == 201
+        port_id = port_resp.json()["id"]
+
+        asset_resp = await async_test_client.post(
+            "/api/v1/assets",
+            json={
+                "symbol": "CLRT",
+                "name": "ClearTest Asset",
+                "asset_type": "stock",
+                "currency": "EUR",
+            },
+            headers=auth_headers,
+        )
+        assert asset_resp.status_code == 201
+        asset_id = asset_resp.json()["id"]
+
+        tx_resp = await async_test_client.post(
+            "/api/v1/transactions",
+            json={
+                "asset_id": asset_id,
+                "portfolio_id": port_id,
+                "transaction_type": "buy",
+                "quantity": 1.0,
+                "price": 10.0,
+                "total_amount": 10.0,
+                "transaction_date": "2024-01-01",
+                "currency": "EUR",
+            },
+            headers=auth_headers,
+        )
+        assert tx_resp.status_code in (200, 201)
+
+        resp = await async_test_client.delete(
+            f"/api/v1/portfolios/{port_id}/transactions",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["deleted"] == 1
+
+    @pytest.mark.unit
+    @pytest.mark.api
+    @pytest.mark.asyncio
+    async def test_clear_transactions_returns_zero_when_empty(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        port_resp = await async_test_client.post(
+            "/api/v1/portfolios",
+            json={"name": "EmptyClear", "base_currency": "EUR"},
+            headers=auth_headers,
+        )
+        assert port_resp.status_code == 201
+        port_id = port_resp.json()["id"]
+
+        resp = await async_test_client.delete(
+            f"/api/v1/portfolios/{port_id}/transactions",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["deleted"] == 0
+
+    @pytest.mark.unit
+    @pytest.mark.api
+    @pytest.mark.asyncio
+    async def test_clear_transactions_404_for_unknown_portfolio(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        resp = await async_test_client.delete(
+            "/api/v1/portfolios/999999/transactions",
+            headers=auth_headers,
+        )
+        assert resp.status_code == 404
