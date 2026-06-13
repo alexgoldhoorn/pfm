@@ -1015,6 +1015,52 @@ function setupImportExportPage() {
             await window.apiClient.downloadBlob(window.apiClient.baseURL + '/api/v1/export/backup', 'pfm-backup.db');
         } catch (err) { alert('Backup error: ' + err.message); }
     });
+    const ioRestoreBtn = document.getElementById('ioRestoreBackupBtn');
+    if (ioRestoreBtn) {
+        const restoreModal = document.getElementById('restoreBackupModal');
+        const bsRestoreModal = bootstrap.Modal.getOrCreateInstance(restoreModal);
+        const restoreFileInput = document.getElementById('restoreFileInput');
+        const restoreConfirmBtn = document.getElementById('restoreConfirmBtn');
+        const restoreStatusMsg = document.getElementById('restoreStatusMsg');
+
+        ioRestoreBtn.addEventListener('click', () => {
+            restoreFileInput.value = '';
+            restoreConfirmBtn.disabled = true;
+            restoreStatusMsg.textContent = '';
+            bsRestoreModal.show();
+        });
+
+        restoreFileInput.addEventListener('change', () => {
+            restoreConfirmBtn.disabled = !restoreFileInput.files.length;
+            restoreStatusMsg.textContent = '';
+        });
+
+        restoreConfirmBtn.addEventListener('click', async () => {
+            const file = restoreFileInput.files[0];
+            if (!file) return;
+            restoreConfirmBtn.disabled = true;
+            restoreStatusMsg.textContent = 'Restoring…';
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                const resp = await fetch(
+                    window.apiClient.baseURL + '/api/v1/system/restore',
+                    { method: 'POST', headers: { 'X-API-Key': window.apiClient.apiKey }, body: formData }
+                );
+                const data = await resp.json();
+                if (!resp.ok) throw new Error(data.detail || resp.statusText);
+                bsRestoreModal.hide();
+                const backupNote = data.pre_restore_backup
+                    ? ` Pre-restore snapshot saved to ${data.pre_restore_backup}.`
+                    : '';
+                alert(`Database restored successfully.${backupNote}\n\nThe page will reload.`);
+                window.location.reload();
+            } catch (err) {
+                restoreStatusMsg.textContent = 'Error: ' + err.message;
+                restoreConfirmBtn.disabled = false;
+            }
+        });
+    }
 
     // --- Bookings section ---
     async function loadBookings() {
