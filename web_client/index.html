@@ -2674,6 +2674,40 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
         </div>
     </div>
 
+    <!-- Clear portfolio transactions modal -->
+    <div class="modal fade" id="clearTransactionsModal" tabindex="-1" aria-labelledby="clearTransactionsModalLabel" aria-hidden="true">
+      <div class="modal-dialog">
+        <div class="modal-content">
+          <div class="modal-header border-danger">
+            <h5 class="modal-title text-danger" id="clearTransactionsModalLabel">
+              <i class="bi bi-exclamation-triangle-fill me-2"></i>Clear all transactions
+            </h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <p>This will permanently delete <strong>all transactions</strong> for <strong id="clearPortfolioName"></strong>. This cannot be undone.</p>
+            <div class="mb-3">
+              <button class="btn btn-sm btn-outline-secondary" id="clearModalBackupBtn">
+                <i class="bi bi-database-down me-1"></i>Download DB backup first
+              </button>
+            </div>
+            <div class="form-check">
+              <input class="form-check-input" type="checkbox" id="clearConfirmCheck">
+              <label class="form-check-label" for="clearConfirmCheck">
+                I have downloaded a backup or accept the risk
+              </label>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+            <button type="button" class="btn btn-danger" id="clearTransactionsConfirmBtn" disabled>
+              Clear transactions
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Research / Valuation Modal -->
     <div class="modal fade" id="researchModal" tabindex="-1">
         <div class="modal-dialog modal-lg modal-dialog-scrollable">
