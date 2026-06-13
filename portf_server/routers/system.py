@@ -1,5 +1,6 @@
 """System administration endpoints: DB restore."""
 
+import contextlib
 import gzip
 import logging
 import os
@@ -7,21 +8,14 @@ import sqlite3
 import tempfile
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
 
 from portf_manager.database import DATABASE_VERSION, Database
-from ..dependencies import get_database, get_api_key_manager
-from ..auth_middleware import APIKeyManager, require_api_key
+from ..dependencies import get_database
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/system", tags=["system"])
-
-
-async def _auth(
-    request: Request, api_key_manager: APIKeyManager = Depends(get_api_key_manager)
-) -> dict:
-    return await require_api_key(api_key_manager)(request)
 
 
 def _auto_backup(db: Database, backup_dir: str) -> str | None:
@@ -32,21 +26,19 @@ def _auto_backup(db: Database, backup_dir: str) -> str | None:
     os.makedirs(backup_dir, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d-%H%M%S")
     out = os.path.join(backup_dir, f"portfolio-prerestore-{ts}.db")
-    src = sqlite3.connect(src_path)
-    dst = sqlite3.connect(out)
-    with dst:
-        src.backup(dst)
-    dst.close()
-    src.close()
+    with (
+        contextlib.closing(sqlite3.connect(src_path)) as src,
+        contextlib.closing(sqlite3.connect(out)) as dst,
+    ):
+        with dst:
+            src.backup(dst)
     return out
 
 
 @router.post("/restore")
 async def restore_db(
     file: UploadFile,
-    request: Request,
     db: Database = Depends(get_database),
-    api_key_info: dict = Depends(_auth),
 ):
     """Replace the live SQLite database with an uploaded backup.
 
@@ -80,12 +72,11 @@ async def restore_db(
             f.write(raw)
 
         try:
-            conn = sqlite3.connect(tmp_db)
-            result = conn.execute("PRAGMA integrity_check").fetchone()
-            if result[0] != "ok":
-                raise ValueError("integrity_check failed")
-            uploaded_version = conn.execute("PRAGMA user_version").fetchone()[0]
-            conn.close()
+            with contextlib.closing(sqlite3.connect(tmp_db)) as conn:
+                result = conn.execute("PRAGMA integrity_check").fetchone()
+                if result[0] != "ok":
+                    raise ValueError("integrity_check failed")
+                uploaded_version = conn.execute("PRAGMA user_version").fetchone()[0]
         except HTTPException:
             raise
         except Exception:
@@ -111,12 +102,12 @@ async def restore_db(
             except Exception as e:
                 logger.warning("Pre-restore backup failed: %s", e)
 
-        upload_conn = sqlite3.connect(tmp_db)
-        live_conn = sqlite3.connect(src_path)
-        with live_conn:
-            upload_conn.backup(live_conn)
-        live_conn.close()
-        upload_conn.close()
+        with (
+            contextlib.closing(sqlite3.connect(tmp_db)) as upload_conn,
+            contextlib.closing(sqlite3.connect(src_path)) as live_conn,
+        ):
+            with live_conn:
+                upload_conn.backup(live_conn)
 
         logger.info(
             "Database restored from %s; pre-restore backup: %s",

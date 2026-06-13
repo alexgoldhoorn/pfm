@@ -369,7 +369,10 @@ app.include_router(
     dependencies=_PROTECTED,
 )
 
-app.include_router(system.router)
+app.include_router(
+    system.router,
+    dependencies=_PROTECTED,
+)
 
 
 # Dependency injection for database, auth manager, and API key manager
