@@ -1,4 +1,4 @@
-# Design: Clear Portfolio Transactions + Backup Config
+# Design: Clear Portfolio Transactions + Backup/Restore
 
 **Date:** 2026-06-14
 **Status:** Approved
@@ -18,11 +18,12 @@ Backup infrastructure already exists:
 
 ## Scope
 
-Three small additions:
+Four small additions:
 
-1. **Backend** — one new DELETE endpoint
+1. **Backend** — `DELETE /api/v1/portfolios/{id}/transactions` + `POST /api/v1/system/restore`
 2. **Config** — document backup env vars in `.env.local`
-3. **Frontend** — "Clear transactions" action with safety modal on the Portfolios page
+3. **Frontend** — "Clear transactions" action with safety modal on Portfolios page
+4. **Frontend** — "Restore DB backup" upload on Import/Export page
 
 ## Backend
 
@@ -72,8 +73,46 @@ On confirm:
 
 On error: show alert with the error message.
 
+## Backend — Restore
+
+### `POST /api/v1/system/restore`
+
+- Router: new `portf_server/routers/system.py` (registered at `/api/v1/system`)
+- Auth: key-auth
+- Input: multipart upload of a `.db` or `.db.gz` file
+- Steps:
+  1. Receive uploaded file into a temp path
+  2. If `.gz`, decompress to a second temp file
+  3. Validate: open with `sqlite3.connect`, run `PRAGMA integrity_check` — reject if not a valid SQLite DB
+  4. Check schema version: `PRAGMA user_version` must equal current `DATABASE_VERSION` (reject with 422 + message if mismatched)
+  5. Auto-save current DB to `PFM_BACKUP_DIR` using the SQLite backup API (same logic as `portf-backup.sh`) — pre-restore safety snapshot
+  6. Replace live DB using `sqlite3.connect(src).backup(dst)` where src=upload, dst=live DB path
+  7. Clean up temp files
+- Returns: `{"restored": true, "pre_restore_backup": "<path or null if no backup dir configured>"}`
+- On any failure: clean up temps, return 500 with error detail; live DB is untouched (backup happened before replace)
+
+## Frontend — Restore
+
+Location: Import/Export page, alongside the existing "Download DB backup" button.
+
+New "Restore DB backup" button → opens a modal:
+
+| Element | Detail |
+|---|---|
+| Title | "Restore database backup" |
+| Warning | "This will **replace all current data** with the uploaded backup. A pre-restore snapshot will be saved automatically to the backup directory." |
+| File input | Accepts `.db` and `.db.gz` |
+| "Restore" button | Disabled until a file is selected; red/danger |
+
+On confirm:
+- `POST /api/v1/system/restore` with the file as multipart
+- On success: show alert "Database restored. Pre-restore backup saved to [path]." Reload the page (forces fresh data everywhere).
+- On error: show the server's error message (e.g. "Schema version mismatch — backup is v14, current is v17").
+
 ## Out of Scope
 
 - Backup settings UI panel (the Import/Export "Download DB backup" button is sufficient)
 - Clearing bookings alongside transactions (separate concern; not requested)
 - Soft-delete / undo (hard delete matches the intent; user has the backup)
+- Browsing/listing stored backup files from the UI
+- Scheduling or triggering the cron backup from the UI (cron handles this)
