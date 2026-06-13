@@ -1516,41 +1516,52 @@ function _dupAction() {
 
 function _buildPreviewTable(transactions, bookings) {
     bookings = bookings || [];
-    let bookingsSummary = '';
-    if (bookings.length > 0) {
-        const totalDeposits = bookings.filter(b => b.action === 'Deposit').reduce((s, b) => s + b.amount, 0);
-        const totalWithdrawals = bookings.filter(b => b.action === 'Withdrawal').reduce((s, b) => s + b.amount, 0);
-        const parts = [];
-        if (totalDeposits > 0) parts.push(`${bookings.filter(b=>b.action==='Deposit').length} deposit(s) totalling ${totalDeposits.toFixed(2)}`);
-        if (totalWithdrawals > 0) parts.push(`${bookings.filter(b=>b.action==='Withdrawal').length} withdrawal(s) totalling ${totalWithdrawals.toFixed(2)}`);
-        bookingsSummary = `<div class="alert alert-info py-1 mb-2 small"><i class="bi bi-bank me-1"></i><strong>Bookings:</strong> ${parts.join(' + ')} — will be saved automatically.</div>`;
-    }
     const dupControl = _dupControl(transactions, bookings);
-    if (transactions.length === 0) {
-        return bookingsSummary + dupControl + '<div class="alert alert-warning">No importable transactions found in this file.</div>';
-    }
-    const hasBroker = transactions.some(tx => tx.broker);
+    const hasBroker = transactions.some(tx => tx.broker) || bookings.some(b => b.broker);
     const dupBadge = '<span class="badge bg-warning text-dark ms-1">dup</span>';
-    const rows = transactions.map((tx, i) => `
+
+    const txRows = transactions.map((tx, i) => `
         <tr class="${tx.is_duplicate ? 'table-warning' : ''}">
             <td><input class="form-check-input file-tx-select" type="checkbox" checked data-idx="${i}"></td>
-            ${hasBroker ? `<td><small>${tx.broker || ''}</small></td>` : ''}
+            ${hasBroker ? `<td><small>${esc(tx.broker || '')}</small></td>` : ''}
             <td>${tx.date || ''}${tx.is_duplicate ? dupBadge : ''}</td>
             <td><strong>${esc(tx.symbol || '')}</strong><br><small class="text-muted">${esc(tx.name || '')}</small></td>
             <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : tx.tx_type === 'sell' ? 'danger' : 'secondary'}">${(tx.tx_type || '').toUpperCase()}</span></td>
             <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(Fmt.loc(), {maximumFractionDigits: 4})}</td>
             <td class="text-end">${parseFloat(tx.price || 0).toFixed(4)}</td>
-            <td>${tx.currency || ''}</td>
+            <td>${esc(tx.currency || '')}</td>
             <td class="text-end">${parseFloat(tx.fees || 0).toFixed(2)}</td>
         </tr>
     `).join('');
-    return bookingsSummary + dupControl + `
-        <p class="text-muted small mb-2">Found <strong>${transactions.length}</strong> transaction(s). Uncheck any to skip.
-        ${hasBroker ? ' <span class="badge bg-info">Broker column detected — portfolios will be auto-assigned.</span>' : ''}</p>
+
+    const bkRows = bookings.map(bk => `
+        <tr class="table-info${bk.is_duplicate ? ' table-warning' : ''}">
+            <td><i class="bi bi-bank text-muted" title="Cash booking — saved automatically"></i></td>
+            ${hasBroker ? `<td><small>${esc(bk.broker || '')}</small></td>` : ''}
+            <td>${bk.date || ''}${bk.is_duplicate ? dupBadge : ''}</td>
+            <td><em class="text-muted">${esc(bk.action || '')} ${esc(bk.currency || '')}</em></td>
+            <td><span class="badge bg-info">${esc(bk.action || '').toUpperCase()}</span></td>
+            <td class="text-end">${parseFloat(bk.amount || 0).toFixed(2)}</td>
+            <td class="text-end">—</td>
+            <td>${esc(bk.currency || '')}</td>
+            <td class="text-end">—</td>
+        </tr>
+    `).join('');
+
+    const totalRows = transactions.length + bookings.length;
+    if (totalRows === 0) {
+        return dupControl + '<div class="alert alert-warning">No importable transactions found in this file.</div>';
+    }
+    const bkNote = bookings.length > 0
+        ? ` <span class="badge bg-info"><i class="bi bi-bank me-1"></i>${bookings.length} cash booking(s) auto-saved</span>`
+        : '';
+    return dupControl + `
+        <p class="text-muted small mb-2">Found <strong>${transactions.length}</strong> transaction(s)${bookings.length > 0 ? ` + <strong>${bookings.length}</strong> cash booking(s)` : ''}. Uncheck transactions to skip.
+        ${hasBroker ? ' <span class="badge bg-secondary">Portfolios auto-assigned</span>' : ''}${bkNote}</p>
         <div class="table-responsive">
             <table class="table table-sm table-hover">
-                <thead><tr><th></th>${hasBroker ? '<th>Portfolio</th>' : ''}<th>Date</th><th>Asset</th><th>Type</th><th class="text-end">Qty</th><th class="text-end">Price</th><th>Currency</th><th class="text-end">Fees</th></tr></thead>
-                <tbody>${rows}</tbody>
+                <thead><tr><th></th>${hasBroker ? '<th>Portfolio</th>' : ''}<th>Date</th><th>Asset / Action</th><th>Type</th><th class="text-end">Qty / Amount</th><th class="text-end">Price</th><th>Currency</th><th class="text-end">Fees</th></tr></thead>
+                <tbody>${txRows}${bkRows}</tbody>
             </table>
         </div>
     `;
@@ -1808,5 +1819,13 @@ function setupLlmImportModal() {
         }
     });
 }
+
+window.showToast = function(msg, type) {
+    const toastEl = document.getElementById('toast');
+    const toastBody = document.getElementById('toastBody');
+    if (!toastEl || !toastBody) return;
+    toastBody.textContent = msg;
+    bootstrap.Toast.getOrCreateInstance(toastEl).show();
+};
 
 // ---------------------------------------------------------------------------

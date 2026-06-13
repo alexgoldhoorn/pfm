@@ -760,8 +760,8 @@ window.clearPortfolioTransactions = async function(id, name) {
                 window.apiClient.baseURL + `/api/v1/portfolios/${id}/transactions`,
                 { method: 'DELETE', headers: { 'X-API-Key': window.apiClient.apiKey } }
             );
-            if (!resp.ok) throw new Error((await resp.json()).detail || resp.statusText);
             const data = await resp.json();
+            if (!resp.ok) throw new Error(data.detail || resp.statusText);
             bsModal.hide();
             checkbox.checked = false;
             window.showToast(`Deleted ${data.deleted} transaction${data.deleted !== 1 ? 's' : ''} from ${name}.`, 'success');
