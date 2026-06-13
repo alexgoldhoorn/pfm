@@ -45,6 +45,7 @@ from .routers import (
     public,
     networth,
     market,
+    system,
 )
 from .dependencies import (
     get_database,
@@ -367,6 +368,8 @@ app.include_router(
     tags=["Market Data"],
     dependencies=_PROTECTED,
 )
+
+app.include_router(system.router)
 
 
 # Dependency injection for database, auth manager, and API key manager

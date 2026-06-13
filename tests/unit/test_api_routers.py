@@ -686,3 +686,84 @@ class TestPortfolioTransactionsClear:
             headers=auth_headers,
         )
         assert resp.status_code == 404
+
+
+class TestSystemRestore:
+    """Tests for POST /api/v1/system/restore."""
+
+    def _make_valid_db(self, version: int = 18) -> bytes:
+        """Return bytes of a minimal SQLite DB with the given user_version."""
+        import os
+        import sqlite3
+        import tempfile
+
+        fd, path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        try:
+            conn = sqlite3.connect(path)
+            conn.execute(f"PRAGMA user_version = {version}")
+            conn.close()
+            with open(path, "rb") as f:
+                return f.read()
+        finally:
+            os.unlink(path)
+
+    @pytest.mark.unit
+    @pytest.mark.api
+    @pytest.mark.asyncio
+    async def test_restore_valid_db(self, async_test_client: AsyncClient, auth_headers):
+        db_bytes = self._make_valid_db(18)
+        resp = await async_test_client.post(
+            "/api/v1/system/restore",
+            headers=auth_headers,
+            files={"file": ("backup.db", db_bytes, "application/octet-stream")},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["restored"] is True
+
+    @pytest.mark.unit
+    @pytest.mark.api
+    @pytest.mark.asyncio
+    async def test_restore_version_mismatch(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        db_bytes = self._make_valid_db(version=5)
+        resp = await async_test_client.post(
+            "/api/v1/system/restore",
+            headers=auth_headers,
+            files={"file": ("old.db", db_bytes, "application/octet-stream")},
+        )
+        assert resp.status_code == 422
+        assert "version" in resp.json()["detail"].lower()
+
+    @pytest.mark.unit
+    @pytest.mark.api
+    @pytest.mark.asyncio
+    async def test_restore_invalid_file(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        resp = await async_test_client.post(
+            "/api/v1/system/restore",
+            headers=auth_headers,
+            files={
+                "file": ("bad.db", b"not a sqlite file", "application/octet-stream")
+            },
+        )
+        assert resp.status_code == 422
+        assert "valid sqlite" in resp.json()["detail"].lower()
+
+    @pytest.mark.unit
+    @pytest.mark.api
+    @pytest.mark.asyncio
+    async def test_restore_gzip_db(self, async_test_client: AsyncClient, auth_headers):
+        import gzip
+
+        db_bytes = self._make_valid_db(18)
+        gz_bytes = gzip.compress(db_bytes)
+        resp = await async_test_client.post(
+            "/api/v1/system/restore",
+            headers=auth_headers,
+            files={"file": ("backup.db.gz", gz_bytes, "application/gzip")},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["restored"] is True
