@@ -691,12 +691,15 @@ class TestPortfolioTransactionsClear:
 class TestSystemRestore:
     """Tests for POST /api/v1/system/restore."""
 
-    def _make_valid_db(self, version: int = 18) -> bytes:
+    def _make_valid_db(self, version: int | None = None) -> bytes:
         """Return bytes of a minimal SQLite DB with the given user_version."""
         import os
         import sqlite3
         import tempfile
+        from portf_manager.database import DATABASE_VERSION
 
+        if version is None:
+            version = DATABASE_VERSION
         fd, path = tempfile.mkstemp(suffix=".db")
         os.close(fd)
         try:
@@ -712,7 +715,7 @@ class TestSystemRestore:
     @pytest.mark.api
     @pytest.mark.asyncio
     async def test_restore_valid_db(self, async_test_client: AsyncClient, auth_headers):
-        db_bytes = self._make_valid_db(18)
+        db_bytes = self._make_valid_db()
         resp = await async_test_client.post(
             "/api/v1/system/restore",
             headers=auth_headers,
@@ -758,7 +761,7 @@ class TestSystemRestore:
     async def test_restore_gzip_db(self, async_test_client: AsyncClient, auth_headers):
         import gzip
 
-        db_bytes = self._make_valid_db(18)
+        db_bytes = self._make_valid_db()
         gz_bytes = gzip.compress(db_bytes)
         resp = await async_test_client.post(
             "/api/v1/system/restore",
