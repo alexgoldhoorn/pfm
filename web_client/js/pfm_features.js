@@ -729,6 +729,52 @@ window.deletePortfolio = async function(id, name) {
     }
 };
 
+window.clearPortfolioTransactions = async function(id, name) {
+    const modal = document.getElementById('clearTransactionsModal');
+    const bsModal = bootstrap.Modal.getOrCreateInstance(modal);
+    const nameEl = document.getElementById('clearPortfolioName');
+    const checkbox = document.getElementById('clearConfirmCheck');
+    const confirmBtn = document.getElementById('clearTransactionsConfirmBtn');
+    const backupBtn = document.getElementById('clearModalBackupBtn');
+
+    // Reset state
+    nameEl.textContent = name;
+    checkbox.checked = false;
+    confirmBtn.disabled = true;
+
+    checkbox.onchange = () => { confirmBtn.disabled = !checkbox.checked; };
+
+    backupBtn.onclick = async () => {
+        try {
+            await window.apiClient.downloadBlob(
+                window.apiClient.baseURL + '/api/v1/export/backup',
+                'pfm-backup.db'
+            );
+        } catch (err) { alert('Backup error: ' + err.message); }
+    };
+
+    confirmBtn.onclick = async () => {
+        confirmBtn.disabled = true;
+        try {
+            const resp = await fetch(
+                window.apiClient.baseURL + `/api/v1/portfolios/${id}/transactions`,
+                { method: 'DELETE', headers: { 'X-API-Key': window.apiClient.apiKey } }
+            );
+            if (!resp.ok) throw new Error((await resp.json()).detail || resp.statusText);
+            const data = await resp.json();
+            bsModal.hide();
+            checkbox.checked = false;
+            window.showToast(`Deleted ${data.deleted} transaction${data.deleted !== 1 ? 's' : ''} from ${name}.`, 'success');
+            window.pageManager.loadPortfoliosPage();
+        } catch (err) {
+            alert('Error clearing transactions: ' + err.message);
+            confirmBtn.disabled = false;
+        }
+    };
+
+    bsModal.show();
+};
+
 // ---------------------------------------------------------------------------
 // Import / Export page (inline, no modals)
 // ---------------------------------------------------------------------------

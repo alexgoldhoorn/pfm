@@ -801,7 +801,10 @@ function createPageManager() {
                                 <button class="btn btn-sm btn-outline-primary me-1" title="Edit" onclick="editPortfolio(${p.id}, '${esc(p.name)}', '${p.base_currency || 'EUR'}', '${esc(p.description)}', '${esc(p.website)}')">
                                     <i class="bi bi-pencil"></i>
                                 </button>
-                                <button class="btn btn-sm btn-outline-danger" title="Delete" onclick="deletePortfolio(${p.id}, '${esc(p.name)}')">
+                                <button class="btn btn-sm btn-outline-warning me-1" title="Clear all transactions" onclick="clearPortfolioTransactions(${p.id}, '${esc(p.name)}')">
+                                    <i class="bi bi-eraser"></i>
+                                </button>
+                                <button class="btn btn-sm btn-outline-danger" title="Delete portfolio" onclick="deletePortfolio(${p.id}, '${esc(p.name)}')">
                                     <i class="bi bi-trash"></i>
                                 </button>
                             </td>
