@@ -148,3 +148,23 @@ def test_api_mature_deposit(tmp_path):
     body = r2.json()
     assert "transaction_id" in body
     assert body["deposit_id"] == dep_id
+
+
+def test_networth_includes_deposits(tmp_path):
+    client = _make_client(tmp_path)
+    client.post(
+        "/api/v1/deposits/",
+        json={
+            "name": "Active dep",
+            "principal": 5000.0,
+            "interest_rate": 4.0,
+            "start_date": "2026-06-12",
+            "maturity_date": "2026-07-12",
+        },
+        headers=HEADERS,
+    )
+    r = client.get("/api/v1/networth/", headers=HEADERS)
+    assert r.status_code == 200
+    body = r.json()
+    assert "deposits_eur" in body
+    assert body["deposits_eur"] == 5000.0
