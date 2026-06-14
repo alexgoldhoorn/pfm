@@ -831,6 +831,7 @@
                         <button type="button" class="btn btn-sm btn-outline-secondary" data-an-tab="tax"><i class="bi bi-receipt me-1"></i>Tax</button>
                         <button type="button" class="btn btn-sm btn-outline-secondary" data-an-tab="risk"><i class="bi bi-shield-check me-1"></i>Risk &amp; Diversification</button>
                         <button type="button" class="btn btn-sm btn-outline-secondary" data-an-tab="fees"><i class="bi bi-cash-stack me-1"></i>Fees &amp; Costs</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-an-tab="stress"><i class="bi bi-lightning-charge me-1"></i>Stress Test</button>
                     </div>
 
                     <!-- a) Performance -->
@@ -996,6 +997,18 @@
                         <div class="card-body" id="anFeesBody">
                             <div class="text-center text-muted py-4">
                                 <div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading…
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- h) Stress Test -->
+                    <div class="card mb-4" data-an-section="stress" style="display:none;">
+                        <div class="card-header fw-semibold">
+                            <i class="bi bi-lightning-charge me-2 text-danger"></i>Stress Testing
+                        </div>
+                        <div class="card-body" id="anStressBody">
+                            <div class="text-center text-muted py-4">
+                                <div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading&hellip;
                             </div>
                         </div>
                     </div>
@@ -2940,9 +2953,9 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
          scripts. They share one global scope and MUST load in this order:
          core → pages → analytics → features (features carries the
          DOMContentLoaded bootstrap, so it loads last). -->
-    <script src="js/pfm_core.js?v=1780000053"></script>
+    <script src="js/pfm_core.js?v=1780000054"></script>
     <script src="js/pfm_pages.js?v=1780000050"></script>
-    <script src="js/pfm_analytics.js?v=1780000053"></script>
+    <script src="js/pfm_analytics.js?v=1780000054"></script>
     <script src="js/pfm_features.js?v=1780000053"></script>
 </body>
 </html>
