@@ -170,16 +170,28 @@ function _wireDepositForm() {
                     preview.innerHTML = '<p class="small text-muted">No deposits found in the text.</p>';
                     return;
                 }
-                const depCount = result.deposits.length;
-                preview.innerHTML = `
+                let existing = [];
+                try { existing = await window.apiClient.getDeposits(); } catch (_) { /* non-fatal */ }
+                const dupBadge = '<span class="badge bg-warning text-dark ms-1">dup</span>';
+                const deps = result.deposits.map(dep => ({
+                    ...dep,
+                    is_duplicate: existing.some(e =>
+                        e.name === dep.name && e.maturity_date === dep.maturity_date)
+                }));
+                const dupCount = deps.filter(d => d.is_duplicate).length;
+                const dupNote = dupCount > 0
+                    ? `<div class="alert alert-warning py-2 small mb-2"><i class="bi bi-exclamation-triangle me-1"></i><strong>${dupCount}</strong> deposit(s) already exist (unchecked below). Check to import anyway.</div>`
+                    : '';
+                preview.innerHTML = dupNote + `
                     <table class="table table-sm table-bordered mt-2 mb-2">
                         <thead><tr>
-                            <th>Name</th><th>Principal</th><th>Cur</th>
+                            <th></th><th>Name</th><th>Principal</th><th>Cur</th>
                             <th>Rate (%)</th><th>Start</th><th>Maturity</th>
                         </tr></thead>
-                        <tbody>${result.deposits.map((dep, i) => `
-                            <tr>
-                                <td><input type="text" class="form-control form-control-sm" id="dep_name_${i}" value="${escapeForAttr(dep.name)}"></td>
+                        <tbody>${deps.map((dep, i) => `
+                            <tr class="${dep.is_duplicate ? 'table-warning' : ''}">
+                                <td><input type="checkbox" class="form-check-input dep-extract-select" data-idx="${i}" ${dep.is_duplicate ? '' : 'checked'}></td>
+                                <td><input type="text" class="form-control form-control-sm" id="dep_name_${i}" value="${escapeForAttr(dep.name)}">${dep.is_duplicate ? dupBadge : ''}</td>
                                 <td><input type="number" class="form-control form-control-sm" id="dep_principal_${i}" value="${dep.principal}" step="0.01" min="0" style="width:9ch"></td>
                                 <td><input type="text" class="form-control form-control-sm" id="dep_currency_${i}" value="${escapeForAttr(dep.currency)}" maxlength="3" style="width:5ch"></td>
                                 <td><input type="number" class="form-control form-control-sm" id="dep_rate_${i}" value="${dep.interest_rate}" step="0.001" min="0" style="width:7ch"></td>
@@ -189,14 +201,17 @@ function _wireDepositForm() {
                         </tbody>
                     </table>
                     <button class="btn btn-sm btn-primary" id="depSaveExtracted">
-                        <i class="bi bi-cloud-upload me-1"></i>Save all (${depCount})
+                        <i class="bi bi-cloud-upload me-1"></i>Save selected
                     </button>
                     <span class="small text-muted ms-2" id="depSaveStatus"></span>`;
                 document.getElementById('depSaveExtracted').addEventListener('click', async () => {
                     const saveStatus = document.getElementById('depSaveStatus');
+                    const checkedIdxs = Array.from(document.querySelectorAll('.dep-extract-select:checked'))
+                        .map(cb => parseInt(cb.dataset.idx));
+                    if (checkedIdxs.length === 0) { saveStatus.textContent = 'Nothing selected.'; return; }
                     saveStatus.textContent = 'Saving…';
                     try {
-                        for (let i = 0; i < depCount; i++) {
+                        for (const i of checkedIdxs) {
                             await window.apiClient.createDeposit({
                                 name: document.getElementById(`dep_name_${i}`).value,
                                 principal: parseFloat(document.getElementById(`dep_principal_${i}`).value),
@@ -208,7 +223,7 @@ function _wireDepositForm() {
                         }
                         preview.innerHTML = '';
                         document.getElementById('depLlmText').value = '';
-                        statusEl.textContent = `${depCount} deposit(s) saved.`;
+                        statusEl.textContent = `${checkedIdxs.length} deposit(s) saved.`;
                         loadNetworthPage();
                     } catch (err) { saveStatus.textContent = 'Error: ' + err.message; }
                 });
