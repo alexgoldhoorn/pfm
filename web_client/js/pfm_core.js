@@ -1386,6 +1386,18 @@ function createAPIClient() {
             return resp.json();
         },
 
+        async getStressTest(scenario, fromDate, toDate) {
+            let url = this.baseURL + '/api/v1/analytics/stress-test';
+            if (scenario) {
+                url += '?scenario=' + encodeURIComponent(scenario);
+            } else {
+                url += '?from=' + encodeURIComponent(fromDate) + '&to=' + encodeURIComponent(toDate);
+            }
+            const resp = await fetch(url, { headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
         async getWatchlist() {
             const resp = await fetch(this.baseURL + '/api/v1/watchlist/', {
                 headers: { 'X-API-Key': this.apiKey }
