@@ -35,6 +35,102 @@ from ..dependencies import get_api_key_manager, get_database
 # 504 gateway timeouts).
 from .portfolios import _get_fx_rate as _fx
 
+_STRESS_SCENARIOS: dict[str, dict] = {
+    "2008": {
+        "label": "2008 Financial Crisis",
+        "from_date": "2007-10-01",
+        "to_date": "2009-03-09",
+    },
+    "2020": {
+        "label": "2020 COVID Crash",
+        "from_date": "2020-02-19",
+        "to_date": "2020-03-23",
+    },
+    "2022": {
+        "label": "2022 Rate Hike Selloff",
+        "from_date": "2021-12-31",
+        "to_date": "2022-10-12",
+    },
+    "dotcom": {
+        "label": "Dot-com Bust",
+        "from_date": "2000-03-24",
+        "to_date": "2002-10-09",
+    },
+}
+
+_STRESS_FALLBACKS: dict[str, dict[str, float]] = {
+    "2008": {
+        "stock": -50.0,
+        "etf": -50.0,
+        "index": -50.0,
+        "fund": -40.0,
+        "bond": -5.0,
+        "crypto": 0.0,
+        "commodity": -30.0,
+        "interest": 0.0,
+        "deposit": 0.0,
+    },
+    "2020": {
+        "stock": -32.0,
+        "etf": -32.0,
+        "index": -32.0,
+        "fund": -25.0,
+        "bond": 5.0,
+        "crypto": -50.0,
+        "commodity": -20.0,
+        "interest": 0.0,
+        "deposit": 0.0,
+    },
+    "2022": {
+        "stock": -22.0,
+        "etf": -22.0,
+        "index": -22.0,
+        "fund": -18.0,
+        "bond": -15.0,
+        "crypto": -65.0,
+        "commodity": 20.0,
+        "interest": 0.0,
+        "deposit": 0.0,
+    },
+    "dotcom": {
+        "stock": -60.0,
+        "etf": -60.0,
+        "index": -60.0,
+        "fund": -45.0,
+        "bond": 5.0,
+        "crypto": 0.0,
+        "commodity": -15.0,
+        "interest": 0.0,
+        "deposit": 0.0,
+    },
+}
+
+
+def _get_ticker_return(sym: str, from_date: str, to_date: str) -> float | None:
+    """Return total return % for sym between from_date and to_date via yfinance.
+
+    Returns None when data is unavailable (asset too new, bad ticker, network error).
+    Extends the end date by 5 days so the last trading day before to_date is included.
+    """
+    try:
+        end = (datetime.strptime(to_date, "%Y-%m-%d") + timedelta(days=5)).strftime(
+            "%Y-%m-%d"
+        )
+        hist = yf.Ticker(sym).history(start=from_date, end=end, auto_adjust=True)
+        if hist.empty:
+            return None
+        closes = hist["Close"].dropna()
+        if len(closes) < 2:
+            return None
+        price_from = float(closes.iloc[0])
+        price_to = float(closes.iloc[-1])
+        if price_from == 0:
+            return None
+        return round((price_to - price_from) / price_from * 100, 2)
+    except Exception:
+        return None
+
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
