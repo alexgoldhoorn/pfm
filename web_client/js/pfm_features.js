@@ -810,6 +810,7 @@ function setupImportExportPage() {
 
     let parsedFile = [];
     let parsedFileBookings = [];
+    let parsedFileDeposits = [];
 
     fileBroker.addEventListener('change', () => {
         const h = BROKER_HINTS[fileBroker.value];
@@ -823,6 +824,7 @@ function setupImportExportPage() {
         fileBackBtn.style.display = 'none';
         parsedFile = [];
         parsedFileBookings = [];
+        parsedFileDeposits = [];
     }
 
     fileBackBtn.addEventListener('click', fileShowStep1);
@@ -838,10 +840,11 @@ function setupImportExportPage() {
             const data = await window.apiClient.uploadBrokerFile(broker, file);
             parsedFile = data.transactions || [];
             parsedFileBookings = data.bookings || [];
+            parsedFileDeposits = data.deposits || [];
             fileStep1.style.display = 'none'; fileStep2.style.display = '';
             fileParseBtn.style.display = 'none'; fileBackBtn.style.display = '';
-            fileSaveBtn.style.display = (parsedFile.length > 0 || parsedFileBookings.length > 0) ? '' : 'none';
-            let html = _buildPreviewTable(parsedFile, parsedFileBookings);
+            fileSaveBtn.style.display = (parsedFile.length > 0 || parsedFileBookings.length > 0 || parsedFileDeposits.length > 0) ? '' : 'none';
+            let html = _buildPreviewTable(parsedFile, parsedFileBookings, parsedFileDeposits);
             if (data.skipped_count > 0) html += `<p class="text-muted small mt-2">${data.skipped_count} row(s) skipped.</p>`;
             filePreview.innerHTML = html;
         } catch (err) {
@@ -855,18 +858,21 @@ function setupImportExportPage() {
     fileSaveBtn.addEventListener('click', async () => {
         const selected = Array.from(document.querySelectorAll('#ioFilePreview .file-tx-select:checked'))
             .map(cb => parsedFile[parseInt(cb.dataset.idx)]);
-        if (selected.length === 0 && parsedFileBookings.length === 0) { alert('No transactions selected.'); return; }
+        const selectedDeps = Array.from(document.querySelectorAll('#ioFilePreview .file-dep-select:checked'))
+            .map(cb => parsedFileDeposits[parseInt(cb.dataset.idx)]);
+        if (selected.length === 0 && parsedFileBookings.length === 0 && selectedDeps.length === 0) { alert('No data selected.'); return; }
         fileSaveBtn.disabled = true;
         fileSaveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving…';
         try {
-            const result = await window.apiClient.saveImportedTransactions(selected, parsedFileBookings, null, _dupAction());
+            const result = await window.apiClient.saveImportedTransactions(selected, parsedFileBookings, null, _dupAction(), selectedDeps);
             const bkMsg = result.saved_bookings > 0 ? ` + ${result.saved_bookings} booking(s)` : '';
+            const depMsg = result.saved_deposits > 0 ? ` + ${result.saved_deposits} deposit(s)` : '';
             const owMsg = result.overwritten > 0 ? `, ${result.overwritten} overwritten` : '';
             const dupMsg = result.duplicates_skipped > 0 ? `, ${result.duplicates_skipped} duplicate(s) skipped` : '';
             const realErrors = result.errors.filter(e => !e.startsWith('DUPLICATE'));
             alert(realErrors.length > 0
-                ? `Saved ${result.saved}${bkMsg}${owMsg}${dupMsg}. Errors:\n${realErrors.join('\n')}`
-                : `Successfully imported ${result.saved} transaction(s)${bkMsg}${owMsg}${dupMsg}.`);
+                ? `Saved ${result.saved}${bkMsg}${depMsg}${owMsg}${dupMsg}. Errors:\n${realErrors.join('\n')}`
+                : `Successfully imported ${result.saved} transaction(s)${bkMsg}${depMsg}${owMsg}${dupMsg}.`);
             fileShowStep1();
         } catch (err) {
             alert('Error saving: ' + err.message);
