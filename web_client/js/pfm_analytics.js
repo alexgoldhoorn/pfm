@@ -20,6 +20,7 @@ const NW_LIABILITY_CATS = new Set(['mortgage', 'personal_loan', 'car_loan', 'cre
 async function loadNetworthPage() {
     const $ = id => document.getElementById(id);
     _wireNetworthForm();
+    _wireDepositForm();
     const body = $('nwItemsBody');
     if (body) body.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm me-2"></span>Loading…</td></tr>';
     try {
@@ -27,11 +28,11 @@ async function loadNetworthPage() {
         const eur = v => Fmt.amt('€' + Fmt.num(v, 0, 0));
         $('nwBrokerage').innerHTML = eur(d.brokerage_eur);
         $('nwAssets').innerHTML = eur(d.manual_assets_eur);
+        if ($('nwDeposits')) $('nwDeposits').innerHTML = eur(d.deposits_eur || 0);
         $('nwLiabilities').innerHTML = eur(d.manual_liabilities_eur);
         $('nwTotal').innerHTML = eur(d.net_worth_eur);
         const card = $('nwTotalCard');
         if (card) card.style.background = d.net_worth_eur >= 0 ? '#0d6efd' : '#dc3545';
-        // Group visually: assets first, then liabilities (stable within each).
         const items = (d.items || []).slice()
             .sort((a, b) => (a.is_liability ? 1 : 0) - (b.is_liability ? 1 : 0));
         if (!items.length) {
@@ -46,6 +47,7 @@ async function loadNetworthPage() {
                     <td class="pe-3 text-end"><button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteManualAsset(${it.id})"><i class="bi bi-trash"></i></button></td>
                 </tr>`).join('');
         }
+        _renderDeposits(d.deposits || []);
     } catch (err) {
         if (body) body.innerHTML = `<tr><td colspan="5" class="text-center text-danger py-3">${err.message}</td></tr>`;
     }
@@ -95,6 +97,145 @@ window.confirmDeleteManualAsset = async function (id) {
     if (!confirm('Delete this item?')) return;
     try { await window.apiClient.deleteManualAsset(id); loadNetworthPage(); }
     catch (err) { alert('Error: ' + err.message); }
+};
+
+function _renderDeposits(deposits) {
+    const tbody = document.getElementById('nwDepositsBody');
+    if (!tbody) return;
+    if (!deposits.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="text-center text-muted py-3">No fixed deposits yet.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = deposits.map(d => {
+        const statusBadge = d.status === 'active'
+            ? '<span class="badge bg-success">Active</span>'
+            : '<span class="badge bg-secondary">' + d.status.charAt(0).toUpperCase() + d.status.slice(1) + '</span>';
+        const matureBtn = d.status === 'active'
+            ? `<button class="btn btn-sm btn-outline-success me-1" onclick="openMatureDepositModal(${d.id}, ${d.projected_interest}, '${d.maturity_date}')"><i class="bi bi-check-circle"></i></button>`
+            : '';
+        return `<tr>
+            <td class="ps-3"><strong>${escapeForAttr(d.name)}</strong>${d.notes ? `<br><small class="text-muted">${escapeForAttr(d.notes)}</small>` : ''}</td>
+            <td>${d.portfolio_id ? escapeForAttr(String(d.portfolio_id)) : '<span class="text-muted">—</span>'}</td>
+            <td class="text-end">${Fmt.num(d.principal, 2, 2)} ${d.currency}</td>
+            <td class="text-end">${Fmt.num(d.interest_rate, 2, 2)}%</td>
+            <td>${d.maturity_date}</td>
+            <td class="text-end">${Fmt.num(d.projected_interest, 2, 2)} ${d.currency}</td>
+            <td>${statusBadge}</td>
+            <td class="pe-3 text-end">${matureBtn}<button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteDeposit(${d.id})"><i class="bi bi-trash"></i></button></td>
+        </tr>`;
+    }).join('');
+}
+
+function _wireDepositForm() {
+    const form = document.getElementById('nwDepositForm');
+    if (form && !form.dataset.wired) {
+        form.dataset.wired = '1';
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const status = document.getElementById('depAddStatus');
+            const payload = {
+                name: document.getElementById('depName').value.trim(),
+                principal: parseFloat(document.getElementById('depPrincipal').value) || 0,
+                currency: (document.getElementById('depCurrency').value || 'EUR').toUpperCase(),
+                interest_rate: parseFloat(document.getElementById('depRate').value) || 0,
+                start_date: document.getElementById('depStart').value,
+                maturity_date: document.getElementById('depMaturity').value,
+            };
+            if (!payload.name || !payload.start_date || !payload.maturity_date) return;
+            status.className = 'small text-muted'; status.textContent = 'Adding…';
+            try {
+                await window.apiClient.createDeposit(payload);
+                form.reset();
+                document.getElementById('depCurrency').value = 'EUR';
+                status.textContent = '';
+                loadNetworthPage();
+            } catch (err) { status.className = 'small text-danger'; status.textContent = err.message; }
+        });
+    }
+
+    const extractBtn = document.getElementById('depExtractBtn');
+    if (extractBtn && !extractBtn.dataset.wired) {
+        extractBtn.dataset.wired = '1';
+        extractBtn.addEventListener('click', async () => {
+            const text = document.getElementById('depLlmText').value.trim();
+            const statusEl = document.getElementById('depExtractStatus');
+            const preview = document.getElementById('depExtractPreview');
+            if (!text) return;
+            statusEl.textContent = 'Extracting…';
+            preview.innerHTML = '';
+            try {
+                const result = await window.apiClient.extractDepositsLLM(text);
+                statusEl.textContent = '';
+                if (!result.deposits.length) {
+                    preview.innerHTML = '<p class="small text-muted">No deposits found in the text.</p>';
+                    return;
+                }
+                preview.innerHTML = `
+                    <table class="table table-sm table-bordered mt-2 mb-2">
+                        <thead><tr><th>Name</th><th>Principal</th><th>Rate</th><th>Start</th><th>Maturity</th></tr></thead>
+                        <tbody>${result.deposits.map(dep => `
+                            <tr>
+                                <td>${escapeForAttr(dep.name)}</td>
+                                <td>${Fmt.num(dep.principal, 2, 2)} ${dep.currency}</td>
+                                <td>${dep.interest_rate}%</td>
+                                <td>${dep.start_date}</td>
+                                <td>${dep.maturity_date}</td>
+                            </tr>`).join('')}
+                        </tbody>
+                    </table>
+                    <button class="btn btn-sm btn-primary" id="depSaveExtracted">
+                        <i class="bi bi-cloud-upload me-1"></i>Save all (${result.deposits.length})
+                    </button>
+                    <span class="small text-muted ms-2" id="depSaveStatus"></span>`;
+                document.getElementById('depSaveExtracted').addEventListener('click', async () => {
+                    const saveStatus = document.getElementById('depSaveStatus');
+                    saveStatus.textContent = 'Saving…';
+                    try {
+                        for (const dep of result.deposits) {
+                            await window.apiClient.createDeposit(dep);
+                        }
+                        preview.innerHTML = '';
+                        document.getElementById('depLlmText').value = '';
+                        statusEl.textContent = `${result.deposits.length} deposit(s) saved.`;
+                        loadNetworthPage();
+                    } catch (err) { saveStatus.textContent = 'Error: ' + err.message; }
+                });
+            } catch (err) { statusEl.textContent = 'Error: ' + err.message; }
+        });
+    }
+}
+
+window.confirmDeleteDeposit = async function (id) {
+    if (!confirm('Delete this deposit?')) return;
+    try { await window.apiClient.deleteDeposit(id); loadNetworthPage(); }
+    catch (err) { alert('Error: ' + err.message); }
+};
+
+window.openMatureDepositModal = function (id, projectedInterest, maturityDate) {
+    document.getElementById('matureDepositId').value = id;
+    document.getElementById('matureInterestPaid').value = projectedInterest;
+    document.getElementById('maturePayoutDate').value = maturityDate;
+    document.getElementById('matureDepositError').textContent = '';
+
+    const confirmBtn = document.getElementById('matureDepositConfirm');
+    const newBtn = confirmBtn.cloneNode(true);
+    confirmBtn.parentNode.replaceChild(newBtn, confirmBtn);
+    newBtn.addEventListener('click', async () => {
+        const depId = parseInt(document.getElementById('matureDepositId').value);
+        const interest = parseFloat(document.getElementById('matureInterestPaid').value);
+        const dt = document.getElementById('maturePayoutDate').value;
+        const errEl = document.getElementById('matureDepositError');
+        if (!dt || isNaN(interest)) { errEl.textContent = 'Please fill in all fields.'; return; }
+        newBtn.disabled = true;
+        try {
+            await window.apiClient.matureDeposit(depId, { interest_paid: interest, date: dt });
+            bootstrap.Modal.getInstance(document.getElementById('depositMatureModal')).hide();
+            window.showToast(`Interest of ${Fmt.num(interest, 2, 2)} recorded.`, 'success');
+            loadNetworthPage();
+        } catch (err) { errEl.textContent = err.message; newBtn.disabled = false; }
+    });
+
+    new bootstrap.Modal(document.getElementById('depositMatureModal')).show();
 };
 
 // (Re)initialise Bootstrap tooltips on all [data-bs-toggle="tooltip"] elements.
