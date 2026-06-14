@@ -919,26 +919,109 @@ const HELP_GLOSSARY = [
 function renderHelpPage() {
     const acc = document.getElementById('helpAccordion');
     if (acc && window.PAGE_HELP) {
-        acc.innerHTML = Object.entries(window.PAGE_HELP).map(([key, h], i) => `
-            <div class="accordion-item">
+        acc.innerHTML = Object.entries(window.PAGE_HELP).map(([key, h]) => {
+            const bodyText = (h.body || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+            return `
+            <div class="accordion-item" data-search-type="guide"
+                 data-search-title="${esc(h.title || key)}"
+                 data-search-body="${esc(bodyText)}">
                 <h2 class="accordion-header">
                     <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#help_${key}">
                         ${h.title || key}
                     </button>
                 </h2>
-                <div id="help_${key}" class="accordion-collapse collapse" data-bs-parent="#helpAccordion">
+                <div id="help_${key}" class="accordion-collapse collapse">
                     <div class="accordion-body">${h.body || ''}</div>
                 </div>
-            </div>`).join('');
+            </div>`;
+        }).join('');
     }
     const gl = document.getElementById('helpGlossary');
     if (gl) {
         gl.innerHTML = HELP_GLOSSARY.map(([term, def]) =>
-            `<div class="mb-2"><strong>${term}</strong><div class="text-muted">${def}</div></div>`
+            `<div class="mb-2" data-search-type="glossary"
+                  data-search-title="${esc(term)}" data-search-body="${esc(def)}">
+               <strong>${term}</strong><div class="text-muted">${def}</div>
+             </div>`
         ).join('');
+    }
+    const theoryGrid = document.getElementById('helpTheoryResources');
+    if (theoryGrid) {
+        theoryGrid.innerHTML = RESOURCE_LINKS
+            .filter(g => g.theory)
+            .map(group => `
+                <div class="col-12 col-lg-6">
+                    <div class="card h-100">
+                        <div class="card-header fw-semibold">${group.cat}</div>
+                        <div class="list-group list-group-flush">
+                            ${group.items.map(([name, url, desc, icon]) => `
+                                <a class="list-group-item list-group-item-action d-flex align-items-start gap-2"
+                                   href="${url}" target="_blank" rel="noopener"
+                                   data-search-type="theory"
+                                   data-search-title="${esc(name)}" data-search-body="${esc(desc)}">
+                                    <i class="bi ${icon} mt-1"></i>
+                                    <span><span class="fw-semibold">${name}</span> <i class="bi bi-box-arrow-up-right small text-muted"></i><br>
+                                    <span class="small text-muted">${desc}</span></span>
+                                </a>`).join('')}
+                        </div>
+                    </div>
+                </div>`).join('');
+    }
+    const searchInput = document.getElementById('helpSearch');
+    if (searchInput) {
+        searchInput.removeEventListener('input', _filterHelpSearch);
+        searchInput.addEventListener('input', _filterHelpSearch);
     }
 }
 window.renderHelpPage = renderHelpPage;
+
+function _filterHelpSearch() {
+    const q = (document.getElementById('helpSearch').value || '').trim().toLowerCase();
+    const resultsEl = document.getElementById('helpSearchResults');
+    const tabsEl = document.getElementById('helpTabs');
+    const tabContentEl = document.querySelector('#helpPage .tab-content');
+    if (!resultsEl || !tabsEl || !tabContentEl) return;
+
+    if (!q) {
+        resultsEl.style.display = 'none';
+        resultsEl.innerHTML = '';
+        tabsEl.style.display = '';
+        tabContentEl.style.display = '';
+        return;
+    }
+
+    const all = document.querySelectorAll('#helpPage [data-search-title]');
+    const groups = { guide: [], glossary: [], theory: [] };
+    const labels = { guide: 'App Guide', glossary: 'Glossary', theory: 'Books & Courses' };
+
+    all.forEach(el => {
+        const text = ((el.dataset.searchTitle || '') + ' ' + (el.dataset.searchBody || '')).toLowerCase();
+        if (text.includes(q) && groups[el.dataset.searchType]) {
+            groups[el.dataset.searchType].push(el);
+        }
+    });
+
+    const total = Object.values(groups).reduce((n, arr) => n + arr.length, 0);
+    if (total === 0) {
+        resultsEl.innerHTML = `<p class="text-muted small">No results for "<strong>${esc(q)}</strong>".</p>`;
+    } else {
+        resultsEl.innerHTML = Object.entries(groups)
+            .filter(([, hits]) => hits.length)
+            .map(([type, hits]) => `
+                <div class="mb-3">
+                    <div class="fw-semibold small text-muted text-uppercase mb-1">${labels[type]}</div>
+                    ${hits.map(el => `
+                        <div class="border rounded p-2 mb-1 small">
+                            <strong>${esc(el.dataset.searchTitle)}</strong>
+                            <div class="text-muted">${esc((el.dataset.searchBody || '').slice(0, 150))}…</div>
+                        </div>`).join('')}
+                </div>`).join('');
+    }
+    resultsEl.style.display = '';
+    tabsEl.style.display = 'none';
+    tabContentEl.style.display = 'none';
+}
+window._filterHelpSearch = _filterHelpSearch;
 
 // Curated external financial resources, rendered as a card grid.
 const RESOURCE_LINKS = [
@@ -968,7 +1051,7 @@ const RESOURCE_LINKS = [
         ['Trade Republic', 'https://traderepublic.com', 'Mobile broker (EU).', 'bi-bank'],
         ['Interactive Brokers', 'https://www.interactivebrokers.com', 'Global multi-asset broker.', 'bi-bank'],
     ]},
-    { cat: 'Books', items: [
+    { cat: 'Books', theory: true, items: [
         ['One Up On Wall Street', 'https://en.wikipedia.org/wiki/One_Up_on_Wall_Street', 'Peter Lynch — invest in what you know. (read)', 'bi-bookmark-check'],
         ['The Essays of Warren Buffett', 'https://www.google.com/search?q=The+Essays+of+Warren+Buffett+book', 'Buffett on business & investing, by L. Cunningham. (read)', 'bi-bookmark-check'],
         ['The Little Book of Common Sense Investing', 'https://en.wikipedia.org/wiki/The_Little_Book_of_Common_Sense_Investing', 'John Bogle — low-cost index investing. (read)', 'bi-bookmark-check'],
@@ -977,7 +1060,7 @@ const RESOURCE_LINKS = [
         ['A Random Walk Down Wall Street', 'https://en.wikipedia.org/wiki/A_Random_Walk_Down_Wall_Street', 'Burton Malkiel — the case for index investing.', 'bi-book'],
         ['The Psychology of Money', 'https://en.wikipedia.org/wiki/The_Psychology_of_Money', 'Morgan Housel — behaviour & wealth.', 'bi-book'],
     ]},
-    { cat: 'Courses & learning', items: [
+    { cat: 'Courses & learning', theory: true, items: [
         ['Khan Academy — Finance', 'https://www.khanacademy.org/economics-finance-domain/core-finance', 'Free finance & capital-markets lessons.', 'bi-mortarboard'],
         ['Coursera — Financial Markets (Yale)', 'https://www.coursera.org/learn/financial-markets-global', 'Robert Shiller\'s markets course.', 'bi-mortarboard'],
         ['Bogleheads Wiki', 'https://www.bogleheads.org/wiki/Main_Page', 'Index-investing knowledge base & forum.', 'bi-mortarboard'],
@@ -987,7 +1070,7 @@ const RESOURCE_LINKS = [
 function renderResourcesPage() {
     const grid = document.getElementById('resourcesGrid');
     if (!grid) return;
-    grid.innerHTML = RESOURCE_LINKS.map(group => `
+    grid.innerHTML = RESOURCE_LINKS.filter(g => !g.theory).map(group => `
         <div class="col-12 col-lg-6">
             <div class="card h-100">
                 <div class="card-header fw-semibold">${group.cat}</div>
