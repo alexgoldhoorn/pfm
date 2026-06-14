@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 
 # Database version for migration tracking
-DATABASE_VERSION = 18
+DATABASE_VERSION = 19
 
 
 # black
@@ -501,6 +501,27 @@ class Database:
         """
         )
 
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS fixed_deposits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                portfolio_id INTEGER REFERENCES portfolios(id),
+                principal REAL NOT NULL,
+                currency TEXT NOT NULL DEFAULT 'EUR',
+                interest_rate REAL NOT NULL,
+                start_date TEXT NOT NULL,
+                maturity_date TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active'
+                    CHECK (status IN ('active', 'matured', 'closed')),
+                interest_paid REAL,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
         # Price-update run history (Diagnostics page). See _migrate_to_v17.
         conn.execute(
             """
@@ -576,6 +597,8 @@ class Database:
             self._migrate_to_v17(conn)
         if current_version < 18:
             self._migrate_to_v18(conn)
+        if current_version < 19:
+            self._migrate_to_v19(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -1184,6 +1207,30 @@ class Database:
         BTC-EUR) so API consumers can resolve tickers to held assets.
         """
         _add_column_if_missing(conn, "assets", "ticker", "TEXT")
+        conn.commit()
+
+    def _migrate_to_v19(self, conn: sqlite3.Connection):
+        """Migrate from v18 to v19 — add fixed_deposits table."""
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS fixed_deposits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                portfolio_id INTEGER REFERENCES portfolios(id),
+                principal REAL NOT NULL,
+                currency TEXT NOT NULL DEFAULT 'EUR',
+                interest_rate REAL NOT NULL,
+                start_date TEXT NOT NULL,
+                maturity_date TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'active'
+                    CHECK (status IN ('active', 'matured', 'closed')),
+                interest_paid REAL,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
         conn.commit()
 
     # ── Price-update run history (Diagnostics) ─────────────────────────────
