@@ -999,6 +999,41 @@ function createAPIClient() {
             return resp.json().catch(() => ({}));
         },
 
+        async getDeposits() {
+            const resp = await fetch(this.baseURL + '/api/v1/deposits/', { headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error('Failed to load deposits');
+            return resp.json();
+        },
+        async createDeposit(payload) {
+            const resp = await fetch(this.baseURL + '/api/v1/deposits/', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(payload)
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to create deposit');
+            return resp.json();
+        },
+        async deleteDeposit(id) {
+            const resp = await fetch(this.baseURL + '/api/v1/deposits/' + id, { method: 'DELETE', headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error('Failed to delete deposit');
+            return resp.json().catch(() => ({}));
+        },
+        async matureDeposit(id, payload) {
+            const resp = await fetch(this.baseURL + '/api/v1/deposits/' + id + '/mature', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(payload)
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to mature deposit');
+            return resp.json();
+        },
+        async extractDepositsLLM(text) {
+            const resp = await fetch(this.baseURL + '/api/v1/llm/extract-deposits', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify({ text })
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'LLM extraction failed');
+            return resp.json();
+        },
+
         async getTaxReport(year) {
             const resp = await fetch(this.baseURL + '/api/v1/analytics/tax-report' + (year ? `?year=${year}` : ''), {
                 headers: { 'X-API-Key': this.apiKey }
