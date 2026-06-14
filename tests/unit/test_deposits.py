@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock, patch
+
 import pytest
 from fastapi.testclient import TestClient
 from portf_manager.database import Database
@@ -168,3 +170,36 @@ def test_networth_includes_deposits(tmp_path):
     body = r.json()
     assert "deposits_eur" in body
     assert body["deposits_eur"] == 5000.0
+
+
+def test_extract_deposits_llm_endpoint(tmp_path):
+    extracted = [
+        {
+            "name": "Superdepósito PREMIUM 1 mes",
+            "principal": 5000.0,
+            "currency": "EUR",
+            "interest_rate": 4.0,
+            "start_date": "2026-06-12",
+            "maturity_date": "2026-07-12",
+        }
+    ]
+    client = _make_client(tmp_path)
+    with (
+        patch(
+            "portf_server.routers.llm.get_llm_client",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "portf_server.routers.llm.GeminiClient.extract_deposits",
+            return_value=extracted,
+        ),
+    ):
+        r = client.post(
+            "/api/v1/llm/extract-deposits",
+            json={"text": "Superdepósito PREMIUM 1 mes 5000€ TAE 4% vence 12/07/2026"},
+            headers=HEADERS,
+        )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["count"] == 1
+    assert body["deposits"][0]["interest_rate"] == 4.0
