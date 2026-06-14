@@ -120,7 +120,7 @@ async function loadGoals() {
                             <div class="row g-2 small">
                                 <div class="col-6">
                                     <div class="text-muted">Target date</div>
-                                    <div class="fw-semibold">${g.target_date || '—'}</div>
+                                    <div class="fw-semibold">${g.target_date ? Fmt.date(g.target_date) : '—'}</div>
                                 </div>
                                 <div class="col-6">
                                     <div class="text-muted">Months left</div>
@@ -464,12 +464,22 @@ function setupChatPage() {
         const rows = transactions.map((tx, i) => `
             <tr>
                 <td><input class="form-check-input chat-tx-select" type="checkbox" checked data-idx="${i}"></td>
-                <td>${tx.date || ''}</td>
-                <td><strong>${esc(tx.symbol || '')}</strong> <small class="text-muted">${esc(tx.asset_name || '')}</small></td>
-                <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : tx.tx_type === 'sell' ? 'danger' : 'info'}">${(tx.tx_type || '').toUpperCase()}</span></td>
-                <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(Fmt.loc(), {maximumFractionDigits:4})}</td>
-                <td class="text-end">${parseFloat(tx.price || 0).toFixed(4)} ${tx.currency || ''}</td>
-                <td class="text-end text-muted">${(parseFloat(tx.fees)||0) > 0 ? (parseFloat(tx.fees).toFixed(2) + ' ' + (tx.currency||'')) : '—'}</td>
+                <td><input type="date" class="form-control form-control-sm chat-tx-date" data-idx="${i}" value="${escapeForAttr(tx.date || '')}"></td>
+                <td>
+                    <input type="text" class="form-control form-control-sm chat-tx-symbol mb-1" data-idx="${i}" value="${escapeForAttr(tx.symbol || '')}" placeholder="Symbol">
+                    <input type="text" class="form-control form-control-sm chat-tx-name" data-idx="${i}" value="${escapeForAttr(tx.asset_name || '')}" placeholder="Name">
+                </td>
+                <td>
+                    <select class="form-select form-select-sm chat-tx-type" data-idx="${i}">
+                        ${['buy','sell','dividend','interest'].map(t => `<option value="${t}" ${(tx.tx_type||'') === t ? 'selected' : ''}>${t.toUpperCase()}</option>`).join('')}
+                    </select>
+                </td>
+                <td><input type="number" class="form-control form-control-sm chat-tx-qty" data-idx="${i}" value="${tx.quantity || 0}" step="any" min="0"></td>
+                <td>
+                    <input type="number" class="form-control form-control-sm chat-tx-price mb-1" data-idx="${i}" value="${tx.price || 0}" step="any" min="0">
+                    <input type="text" class="form-control form-control-sm chat-tx-currency" data-idx="${i}" value="${escapeForAttr(tx.currency || 'EUR')}" maxlength="3" style="width:5ch">
+                </td>
+                <td><input type="number" class="form-control form-control-sm chat-tx-fees" data-idx="${i}" value="${parseFloat(tx.fees)||0}" step="any" min="0"></td>
             </tr>`).join('');
 
         const card = document.createElement('div');
@@ -482,7 +492,7 @@ function setupChatPage() {
                 <div class="card-body p-2">
                     <div class="table-responsive">
                         <table class="table table-sm mb-2">
-                            <thead><tr><th></th><th>Date</th><th>Asset</th><th>Type</th><th class="text-end">Qty</th><th class="text-end">Price</th><th class="text-end">Fees</th></tr></thead>
+                            <thead><tr><th></th><th>Date</th><th>Asset</th><th>Type</th><th>Qty</th><th>Price / Cur</th><th>Fees</th></tr></thead>
                             <tbody>${rows}</tbody>
                         </table>
                     </div>
@@ -494,18 +504,24 @@ function setupChatPage() {
 
         card.querySelector('.chat-import-btn').addEventListener('click', async (e) => {
             const btn = e.currentTarget;
-            const selected = Array.from(card.querySelectorAll('.chat-tx-select:checked'))
-                .map(cb => transactions[parseInt(cb.dataset.idx)]);
-            if (selected.length === 0) { alert('Nothing selected.'); return; }
+            const checkedIdxs = Array.from(card.querySelectorAll('.chat-tx-select:checked'))
+                .map(cb => parseInt(cb.dataset.idx));
+            if (checkedIdxs.length === 0) { alert('Nothing selected.'); return; }
 
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
-            const normalized = selected.map(tx => ({
-                symbol: tx.symbol, name: tx.asset_name || tx.symbol,
-                asset_type: 'stock', tx_type: tx.tx_type, date: tx.date,
-                quantity: tx.quantity, price: tx.price,
-                currency: tx.currency || 'EUR', fees: parseFloat(tx.fees) || 0.0,
-                notes: tx.raw_text || ''
+            const f = (cls, i) => card.querySelector(`.${cls}[data-idx="${i}"]`);
+            const normalized = checkedIdxs.map(i => ({
+                symbol: f('chat-tx-symbol', i).value,
+                name: f('chat-tx-name', i).value || f('chat-tx-symbol', i).value,
+                asset_type: 'stock',
+                tx_type: f('chat-tx-type', i).value,
+                date: f('chat-tx-date', i).value,
+                quantity: parseFloat(f('chat-tx-qty', i).value) || 0,
+                price: parseFloat(f('chat-tx-price', i).value) || 0,
+                currency: (f('chat-tx-currency', i).value || 'EUR').toUpperCase(),
+                fees: parseFloat(f('chat-tx-fees', i).value) || 0,
+                notes: transactions[i] ? (transactions[i].raw_text || '') : ''
             }));
             try {
                 const result = await window.apiClient.saveImportedTransactions(normalized);
@@ -939,19 +955,30 @@ function setupImportExportPage() {
             const rows = extractedText.map((tx, i) => `
                 <tr class="${tx.is_duplicate ? 'table-warning' : ''}">
                     <td><input class="form-check-input io-tx-select" type="checkbox" checked data-idx="${i}"></td>
-                    <td>${tx.date || ''}${tx.is_duplicate ? dupBadge : ''}</td>
-                    <td><strong>${esc(tx.symbol || '')}</strong> <small class="text-muted">${esc(tx.asset_name || '')}</small></td>
-                    <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : tx.tx_type === 'sell' ? 'danger' : 'info'}">${(tx.tx_type || '').toUpperCase()}</span></td>
-                    <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(Fmt.loc(), {maximumFractionDigits:4})}</td>
-                    <td class="text-end">${parseFloat(tx.price || 0).toFixed(4)} ${tx.currency || ''}</td>
-                    <td class="text-end text-muted">${(parseFloat(tx.fees)||0) > 0 ? (parseFloat(tx.fees).toFixed(2) + ' ' + (tx.currency||'')) : '—'}</td>
+                    <td><input type="date" class="form-control form-control-sm" id="iotx_date_${i}" value="${escapeForAttr(tx.date || '')}">
+                        ${tx.is_duplicate ? dupBadge : ''}</td>
+                    <td>
+                        <input type="text" class="form-control form-control-sm mb-1" id="iotx_symbol_${i}" value="${escapeForAttr(tx.symbol || '')}" placeholder="Symbol">
+                        <input type="text" class="form-control form-control-sm" id="iotx_name_${i}" value="${escapeForAttr(tx.asset_name || '')}" placeholder="Name">
+                    </td>
+                    <td>
+                        <select class="form-select form-select-sm" id="iotx_type_${i}">
+                            ${['buy','sell','dividend','interest'].map(t => `<option value="${t}" ${(tx.tx_type||'') === t ? 'selected' : ''}>${t.toUpperCase()}</option>`).join('')}
+                        </select>
+                    </td>
+                    <td><input type="number" class="form-control form-control-sm" id="iotx_qty_${i}" value="${tx.quantity || 0}" step="any" min="0"></td>
+                    <td>
+                        <input type="number" class="form-control form-control-sm mb-1" id="iotx_price_${i}" value="${tx.price || 0}" step="any" min="0">
+                        <input type="text" class="form-control form-control-sm" id="iotx_currency_${i}" value="${escapeForAttr(tx.currency || 'EUR')}" maxlength="3" style="width:5ch">
+                    </td>
+                    <td><input type="number" class="form-control form-control-sm" id="iotx_fees_${i}" value="${parseFloat(tx.fees)||0}" step="any" min="0"></td>
                 </tr>`).join('');
             textPreview.innerHTML = extractedText.length === 0
                 ? (bookingsSummary + dupControl || '<div class="alert alert-warning">No transactions or cash movements could be extracted.</div>')
                 : bookingsSummary + dupControl
                    + `<p class="text-muted small mb-2">Found <strong>${extractedText.length}</strong> transaction(s). Uncheck any to skip.</p>
                    <div class="table-responsive"><table class="table table-sm table-hover">
-                   <thead><tr><th></th><th>Date</th><th>Asset</th><th>Type</th><th class="text-end">Qty</th><th class="text-end">Price</th><th class="text-end">Fees</th></tr></thead>
+                   <thead><tr><th></th><th>Date</th><th>Asset</th><th>Type</th><th>Qty</th><th>Price / Cur</th><th>Fees</th></tr></thead>
                    <tbody>${rows}</tbody></table></div>`;
         } catch (err) {
             alert('Error extracting: ' + err.message);
@@ -962,16 +989,22 @@ function setupImportExportPage() {
     });
 
     textSaveBtn.addEventListener('click', async () => {
-        const checked = Array.from(document.querySelectorAll('#ioTextPreview .io-tx-select:checked'))
-            .map(cb => extractedText[parseInt(cb.dataset.idx)]);
-        if (checked.length === 0 && extractedTextBookings.length === 0) {
+        const checkedIdxs = Array.from(document.querySelectorAll('#ioTextPreview .io-tx-select:checked'))
+            .map(cb => parseInt(cb.dataset.idx));
+        if (checkedIdxs.length === 0 && extractedTextBookings.length === 0) {
             alert('Nothing selected to save.'); return;
         }
-        const normalized = checked.map(tx => ({
-            symbol: tx.symbol, name: tx.asset_name || tx.symbol,
-            asset_type: 'stock', tx_type: tx.tx_type, date: tx.date,
-            quantity: tx.quantity, price: tx.price,
-            currency: tx.currency || 'EUR', fees: parseFloat(tx.fees) || 0.0, notes: tx.raw_text || ''
+        const normalized = checkedIdxs.map(i => ({
+            symbol: document.getElementById(`iotx_symbol_${i}`).value,
+            name: document.getElementById(`iotx_name_${i}`).value || document.getElementById(`iotx_symbol_${i}`).value,
+            asset_type: 'stock',
+            tx_type: document.getElementById(`iotx_type_${i}`).value,
+            date: document.getElementById(`iotx_date_${i}`).value,
+            quantity: parseFloat(document.getElementById(`iotx_qty_${i}`).value) || 0,
+            price: parseFloat(document.getElementById(`iotx_price_${i}`).value) || 0,
+            currency: (document.getElementById(`iotx_currency_${i}`).value || 'EUR').toUpperCase(),
+            fees: parseFloat(document.getElementById(`iotx_fees_${i}`).value) || 0,
+            notes: extractedText[i] ? (extractedText[i].raw_text || '') : ''
         }));
         textSaveBtn.disabled = true;
         textSaveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving…';
