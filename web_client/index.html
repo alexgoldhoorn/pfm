@@ -1928,22 +1928,34 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                     <div class="d-flex align-items-center justify-content-between mb-3">
                         <div>
                             <h4 class="mb-0"><i class="bi bi-question-circle me-2 text-primary"></i>Help &amp; Guide</h4>
-                            <p class="text-muted small mb-0">What each page does, where the numbers come from, and a glossary of the abbreviations used across the app.</p>
+                            <p class="text-muted small mb-0">App guide, glossary, recommended books and courses — all searchable.</p>
                         </div>
                     </div>
-                    <div class="row g-3">
-                        <div class="col-12 col-lg-7">
+                    <!-- Search -->
+                    <div class="mb-3">
+                        <input id="helpSearch" type="search" class="form-control"
+                               placeholder="Search pages, glossary, books…" autocomplete="off">
+                    </div>
+                    <!-- Search results (hidden when not searching) -->
+                    <div id="helpSearchResults" class="mb-3" style="display:none"></div>
+                    <!-- Tabs -->
+                    <ul class="nav nav-tabs mb-3" id="helpTabs">
+                        <li class="nav-item">
+                            <button class="nav-link active" type="button" data-bs-toggle="tab" data-bs-target="#helpTabGuide">
+                                <i class="bi bi-book me-1"></i>App Guide
+                            </button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link" type="button" data-bs-toggle="tab" data-bs-target="#helpTabTheory">
+                                <i class="bi bi-lightbulb me-1"></i>Investment Theory
+                            </button>
+                        </li>
+                    </ul>
+                    <div class="tab-content">
+                        <!-- Tab 1: App Guide -->
+                        <div class="tab-pane fade show active" id="helpTabGuide">
+                            <div class="accordion accordion-flush mb-3" id="helpAccordion"></div>
                             <div class="card">
-                                <div class="card-header fw-semibold"><i class="bi bi-book me-2"></i>Pages</div>
-                                <div class="card-body"><div class="accordion accordion-flush" id="helpAccordion"></div></div>
-                            </div>
-                        </div>
-                        <div class="col-12 col-lg-5">
-                            <div class="card">
-                                <div class="card-header fw-semibold"><i class="bi bi-translate me-2"></i>Glossary</div>
-                                <div class="card-body small" id="helpGlossary"></div>
-                            </div>
-                            <div class="card mt-3">
                                 <div class="card-header fw-semibold"><i class="bi bi-shield-lock me-2"></i>Data &amp; sources</div>
                                 <div class="card-body small text-muted">
                                     <p class="mb-2">Prices, fundamentals and news come from <strong>Yahoo Finance</strong> (refreshed daily at 20:00 UTC; fundamentals/news are cached briefly).</p>
@@ -1951,6 +1963,14 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                     <p class="mb-0">LLM/AI answers are generated from your data + cited news — informational, not financial advice.</p>
                                 </div>
                             </div>
+                        </div>
+                        <!-- Tab 2: Investment Theory -->
+                        <div class="tab-pane fade" id="helpTabTheory">
+                            <div class="card mb-3">
+                                <div class="card-header fw-semibold"><i class="bi bi-translate me-2"></i>Glossary</div>
+                                <div class="card-body small" id="helpGlossary"></div>
+                            </div>
+                            <div class="row g-3" id="helpTheoryResources"></div>
                         </div>
                     </div>
                 </div>
