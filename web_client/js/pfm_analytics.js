@@ -118,7 +118,7 @@ function _renderDeposits(deposits) {
             <td>${d.portfolio_id ? escapeForAttr(String(d.portfolio_id)) : '<span class="text-muted">—</span>'}</td>
             <td class="text-end">${Fmt.num(d.principal, 2, 2)} ${d.currency}</td>
             <td class="text-end">${Fmt.num(d.interest_rate, 2, 2)}%</td>
-            <td>${d.maturity_date}</td>
+            <td>${Fmt.date(d.maturity_date)}</td>
             <td class="text-end">${Fmt.num(d.projected_interest, 2, 2)} ${d.currency}</td>
             <td>${statusBadge}</td>
             <td class="pe-3 text-end">${matureBtn}<button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteDeposit(${d.id})"><i class="bi bi-trash"></i></button></td>
