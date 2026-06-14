@@ -127,12 +127,46 @@ window.PAGE_HELP = {
   importexport: {
     title: "Import / Export",
     body: `
-      <p>Bring data in and out, manage cash bookings and sync with Google Sheets.</p>
+      <p>Bring data in and out, manage cash bookings, back up your database and sync with Google Sheets.</p>
       <ul class="mb-2">
-        <li><strong>File import</strong> supports IndexaCapital and Coinbase CSV and PDT XLSX; <strong>text import</strong> uses AI extraction for any broker statement.</li>
+        <li><strong>File import</strong> supports IndexaCapital, MyInvestor, Mintos, Coinbase CSV and PDT XLSX; <strong>text import</strong> uses AI extraction for any broker statement.</li>
         <li><strong>Bookings</strong> are cash deposits and withdrawals (no asset).</li>
+        <li><strong>Backup</strong>: <em>Download DB backup</em> saves a full SQLite snapshot of your data. <em>Restore DB backup</em> replaces the live database from a .db or .db.gz file — a pre-restore snapshot is auto-saved if <code>PFM_BACKUP_DIR</code> is set.</li>
         <li><strong>Google Sheets sync</strong> pulls from / pushes to a spreadsheet in PDT format shared with the service account.</li>
       </ul>`
+  },
+  networth: {
+    title: "Net Worth",
+    body: `
+      <p>Your complete financial picture: brokerage investments plus off-brokerage assets and liabilities, all converted to EUR.</p>
+      <ul class="mb-2">
+        <li><strong>Investments</strong> are auto-calculated from your portfolio positions. <strong>Fixed Deposits</strong> tracks active term deposits; maturing one posts an interest transaction automatically.</li>
+        <li>Add <strong>manual assets</strong> (cash, property, pension) and <strong>liabilities</strong> (mortgage, loans) to complete the picture.</li>
+        <li>FIRE goals project from total net worth, not just the brokerage value.</li>
+      </ul>
+      <p class="text-muted small mb-0">All amounts converted to EUR at live FX rates.</p>`
+  },
+  research: {
+    title: "Research",
+    body: `
+      <p>Deep-dive on any ticker: fundamentals, your position, a thesis, and an LLM valuation backed by live news.</p>
+      <ul class="mb-2">
+        <li><strong>Workbench</strong>: search any symbol → see Yahoo Finance fundamentals (P/E, yield, sector), your cost basis and P/L, set fair/buy/sell prices, write a thesis and get an AI analysis with news citations.</li>
+        <li><strong>Save</strong> a research note to version your thinking over time. Saved price targets are pushed to your alerts so you get notified when a price is crossed.</li>
+        <li><strong>Compare</strong> tab shows the latest saved note per symbol with current price vs fair value and upside.</li>
+      </ul>
+      <p class="text-muted small mb-0">LLM analysis is informational, not financial advice. Fundamentals from Yahoo Finance.</p>`
+  },
+  diagnostics: {
+    title: "Diagnostics",
+    body: `
+      <p>Monitor the health of your price data and see a log of every price-update run.</p>
+      <ul class="mb-2">
+        <li><strong>Freshness</strong>: how many hours since prices last refreshed, and which held assets have stale or missing prices.</li>
+        <li><strong>Update history</strong>: each daily run records how many symbols were updated, skipped and errored — expand a row to see the full symbol lists.</li>
+        <li>Assets with auto-price disabled (manual prices) are excluded from the stale count.</li>
+      </ul>
+      <p class="text-muted small mb-0">Prices refresh daily at 20:00 UTC via the price cron script.</p>`
   },
   chat: {
     title: "Chat",
