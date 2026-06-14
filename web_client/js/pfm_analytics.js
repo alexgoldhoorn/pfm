@@ -178,8 +178,8 @@ function _wireDepositForm() {
                                 <td>${escapeForAttr(dep.name)}</td>
                                 <td>${Fmt.num(dep.principal, 2, 2)} ${dep.currency}</td>
                                 <td>${dep.interest_rate}%</td>
-                                <td>${dep.start_date}</td>
-                                <td>${dep.maturity_date}</td>
+                                <td>${escapeForAttr(dep.start_date)}</td>
+                                <td>${escapeForAttr(dep.maturity_date)}</td>
                             </tr>`).join('')}
                         </tbody>
                     </table>
