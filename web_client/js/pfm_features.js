@@ -954,7 +954,7 @@ function setupImportExportPage() {
                 : '';
             const rows = extractedText.map((tx, i) => `
                 <tr class="${tx.is_duplicate ? 'table-warning' : ''}">
-                    <td><input class="form-check-input io-tx-select" type="checkbox" checked data-idx="${i}"></td>
+                    <td><input class="form-check-input io-tx-select" type="checkbox" ${tx.is_duplicate ? '' : 'checked'} data-idx="${i}" data-dup="${tx.is_duplicate ? '1' : '0'}"></td>
                     <td><input type="date" class="form-control form-control-sm" id="iotx_date_${i}" value="${escapeForAttr(tx.date || '')}">
                         ${tx.is_duplicate ? dupBadge : ''}</td>
                     <td>
