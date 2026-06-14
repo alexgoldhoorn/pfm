@@ -116,6 +116,10 @@ SERVER_API_KEY=your_api_key
 # Google Sheets PDT sync
 GOOGLE_SERVICE_ACCOUNT_FILE=service-account.json
 GOOGLE_SPREADSHEET_ID=your_sheet_id_here   # optional default
+
+# Database backup (~/scripts/portf-backup.sh, daily cron at 03:00)
+PFM_BACKUP_DIR=/home/youruser/backups/pfm
+PFM_BACKUP_KEEP=30   # days of retention
 ```
 
 ---
@@ -342,6 +346,9 @@ python -m portf_manager extract-tax-report ...        # IRPF tax CSV
 |---|---|
 | `GET /api/v1/export/csv` | All transactions as UTF-8 CSV (BOM for Excel) |
 | `GET /api/v1/export/pdt` | Full PDT XLSX (Transactions + Dividends + Bookings) |
+| `GET /api/v1/export/backup` | Download a consistent SQLite snapshot (`.db` file) |
+| `POST /api/v1/system/restore` | Upload a `.db` or `.db.gz` backup to replace the live DB (validates schema version; auto-saves a pre-restore snapshot to `PFM_BACKUP_DIR` if set) |
+| `DELETE /api/v1/portfolios/{id}/transactions` | Delete all transactions for a broker (bulk clear; use before re-importing to fix date inconsistencies) |
 | `GET /api/v1/bookings/` | List all bookings (JSON) |
 | `POST /api/v1/sync/pdt-push` | Write to Google Sheet |
 
