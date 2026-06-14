@@ -11,7 +11,7 @@ from typing import Optional
 
 import pandas as pd
 import yfinance as yf
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from portf_manager.services.analytics_service import (
@@ -1128,3 +1128,146 @@ async def record_update_run(
         source=run.source,
     )
     return {"id": run_id}
+
+
+# ── Stress Testing ───────────────────────────────────────────────────────────
+
+
+@router.get("/stress-test")
+def stress_test(
+    scenario: Optional[str] = Query(None),
+    from_date: Optional[str] = Query(None, alias="from"),
+    to_date: Optional[str] = Query(None, alias="to"),
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Stress test portfolio against a historical crash scenario or custom date range.
+
+    Pass ``scenario`` (one of: 2008, 2020, 2022, dotcom) OR both ``from`` and
+    ``to`` (YYYY-MM-DD) for a custom period. Results for preset scenarios are
+    cached 7 days; custom queries run live.
+    """
+    if scenario is not None and scenario not in _STRESS_SCENARIOS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown scenario '{scenario}'. Valid: {list(_STRESS_SCENARIOS)}",
+        )
+
+    if scenario and scenario in _STRESS_SCENARIOS:
+        meta = _STRESS_SCENARIOS[scenario]
+        from_str = meta["from_date"]
+        to_str = meta["to_date"]
+        label = meta["label"]
+        scenario_key = scenario
+    elif from_date and to_date:
+        try:
+            fd = datetime.strptime(from_date, "%Y-%m-%d").date()
+            td = datetime.strptime(to_date, "%Y-%m-%d").date()
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Dates must be YYYY-MM-DD.")
+        if td <= fd:
+            raise HTTPException(
+                status_code=400, detail="End date must be after start date."
+            )
+        from_str = from_date
+        to_str = to_date
+        label = f"{from_date} to {to_date}"
+        scenario_key = "custom"
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide 'scenario' or both 'from' and 'to' query parameters.",
+        )
+
+    preset_fallbacks = _STRESS_FALLBACKS.get(scenario_key, _STRESS_FALLBACKS["2008"])
+
+    def _compute() -> dict:
+        positions, _ = _compute_positions(db)
+        assets_by_id = {a["id"]: a for a in db.get_all_assets(active_only=False)}
+
+        if scenario_key == "custom":
+            sp500_ret = _get_ticker_return("^GSPC", from_str, to_str)
+            equity_fb = sp500_ret if sp500_ret is not None else -30.0
+            active_fallbacks: dict[str, float] = {
+                "stock": equity_fb,
+                "etf": equity_fb,
+                "index": equity_fb,
+                "mutual_fund": round(equity_fb * 0.8, 2),
+                "bond": 0.0,
+                "crypto": round(equity_fb * 1.5, 2),
+                "commodity": 0.0,
+                "cash": 0.0,
+            }
+        else:
+            active_fallbacks = preset_fallbacks
+
+        assets_out = []
+        total_current = 0.0
+        total_stressed = 0.0
+
+        for aid, pos in positions.items():
+            if pos["quantity"] <= 0:
+                continue
+            asset = assets_by_id.get(aid)
+            if not asset:
+                continue
+            cur = asset.get("currency", "EUR")
+            price_data = db.get_latest_price(aid)
+            price = float(price_data["price"]) if price_data else 0.0
+            current_value_eur = pos["quantity"] * price * _fx(cur)
+            if current_value_eur <= 0:
+                continue
+
+            sym = asset.get("ticker") or asset.get("symbol", "")
+            hist_ret: float | None = None
+            data_source = "fallback"
+            if sym:
+                hist_ret = _get_ticker_return(sym, from_str, to_str)
+                if hist_ret is not None:
+                    data_source = "yfinance"
+
+            if hist_ret is None:
+                asset_type = asset.get("asset_type", "stock")
+                hist_ret = active_fallbacks.get(
+                    asset_type, active_fallbacks.get("stock", -30.0)
+                )
+
+            stressed_value_eur = current_value_eur * (1 + hist_ret / 100)
+            loss_eur = stressed_value_eur - current_value_eur
+            total_current += current_value_eur
+            total_stressed += stressed_value_eur
+
+            assets_out.append(
+                {
+                    "symbol": asset.get("symbol", ""),
+                    "name": asset.get("name", ""),
+                    "asset_type": asset.get("asset_type", ""),
+                    "current_value_eur": round(current_value_eur, 2),
+                    "historical_return_pct": round(hist_ret, 2),
+                    "stressed_value_eur": round(stressed_value_eur, 2),
+                    "loss_eur": round(loss_eur, 2),
+                    "data_source": data_source,
+                }
+            )
+
+        assets_out.sort(key=lambda a: a["loss_eur"])
+        total_loss = total_stressed - total_current
+        total_loss_pct = (
+            (total_loss / total_current * 100) if total_current > 0 else 0.0
+        )
+
+        return {
+            "scenario": scenario_key,
+            "label": label,
+            "from_date": from_str,
+            "to_date": to_str,
+            "portfolio_current_value_eur": round(total_current, 2),
+            "portfolio_stressed_value_eur": round(total_stressed, 2),
+            "total_loss_eur": round(total_loss, 2),
+            "total_loss_pct": round(total_loss_pct, 2),
+            "assets": assets_out,
+        }
+
+    if scenario_key != "custom":
+        return cached(db, f"stress:{scenario_key}", 7 * 24 * 3600, _compute)
+    return _compute()

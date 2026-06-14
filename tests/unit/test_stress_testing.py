@@ -1,6 +1,9 @@
 """Tests for portfolio stress testing — data tables, helper, endpoint."""
 
 import pandas as pd
+import pytest
+from fastapi import status
+from httpx import AsyncClient
 from unittest.mock import patch
 
 from portf_server.routers.analytics import (
@@ -79,3 +82,68 @@ class TestGetTickerReturn:
             mock_t.return_value.history.return_value = hist
             result = _get_ticker_return("AAPL", "2007-10-01", "2007-10-01")
         assert result is None
+
+
+class TestStressTestEndpoint:
+    @pytest.mark.asyncio
+    async def test_missing_params_returns_400(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        resp = await async_test_client.get(
+            "/api/v1/analytics/stress-test", headers=auth_headers
+        )
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+
+    @pytest.mark.asyncio
+    async def test_custom_to_before_from_returns_400(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        resp = await async_test_client.get(
+            "/api/v1/analytics/stress-test?from=2020-06-01&to=2020-01-01",
+            headers=auth_headers,
+        )
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
+        assert "after" in resp.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    async def test_preset_scenario_returns_correct_shape(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        with patch("portf_server.routers.analytics.yf.Ticker") as mock_t:
+            mock_t.return_value.history.return_value = pd.DataFrame()
+            resp = await async_test_client.get(
+                "/api/v1/analytics/stress-test?scenario=2008", headers=auth_headers
+            )
+        assert resp.status_code == status.HTTP_200_OK
+        d = resp.json()
+        assert d["scenario"] == "2008"
+        assert d["label"] == "2008 Financial Crisis"
+        assert d["from_date"] == "2007-10-01"
+        assert d["to_date"] == "2009-03-09"
+        assert "portfolio_current_value_eur" in d
+        assert "portfolio_stressed_value_eur" in d
+        assert "total_loss_eur" in d
+        assert "total_loss_pct" in d
+        assert isinstance(d["assets"], list)
+
+    @pytest.mark.asyncio
+    async def test_custom_date_range_returns_custom_scenario_key(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        with patch("portf_server.routers.analytics.yf.Ticker") as mock_t:
+            mock_t.return_value.history.return_value = pd.DataFrame()
+            resp = await async_test_client.get(
+                "/api/v1/analytics/stress-test?from=2020-02-01&to=2020-04-01",
+                headers=auth_headers,
+            )
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.json()["scenario"] == "custom"
+
+    @pytest.mark.asyncio
+    async def test_unknown_preset_returns_400(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        resp = await async_test_client.get(
+            "/api/v1/analytics/stress-test?scenario=notreal", headers=auth_headers
+        )
+        assert resp.status_code == status.HTTP_400_BAD_REQUEST
