@@ -34,6 +34,7 @@ from portf_manager.currency_utils import normalize_gbx_amounts
 from portf_manager.parsers.indexacapital_csv_parser import parse_indexacapital_csv
 from portf_manager.parsers.coinbase_csv_parser import parse_coinbase_csv
 from portf_manager.parsers.bookings_csv_parser import parse_bookings_csv
+from portf_manager.parsers.deposits_csv_parser import parse_deposits_csv
 from portf_manager.parsers.myinvestor_csv_parser import parse_myinvestor_csv
 from portf_manager.parsers.mintos_csv_parser import (
     parse_mintos_csv,
@@ -58,6 +59,7 @@ SUPPORTED_BROKERS = [
     "coinbase",
     "pdt",
     "bookings",
+    "deposits",
     "myinvestor",
     "mintos",
 ]
@@ -95,10 +97,23 @@ class PreviewBooking(BaseModel):
     is_duplicate: bool = False
 
 
+class PreviewDeposit(BaseModel):
+    name: str
+    principal: float
+    currency: str = "EUR"
+    interest_rate: float
+    start_date: str
+    maturity_date: str
+    broker: Optional[str] = None
+    notes: Optional[str] = None
+    is_duplicate: bool = False
+
+
 class UploadPreviewResponse(BaseModel):
     broker: str
     transactions: List[PreviewTransaction]
     bookings: List[PreviewBooking] = []
+    deposits: List[PreviewDeposit] = []
     skipped_count: int
     skipped: List[dict]
     duplicate_count: int = 0
@@ -111,6 +126,7 @@ DuplicateAction = Literal["skip", "add", "overwrite"]
 class SaveRequest(BaseModel):
     transactions: List[PreviewTransaction]
     bookings: List[PreviewBooking] = []
+    deposits: List[PreviewDeposit] = []
     portfolio_id: Optional[int] = None
     # skip = ignore duplicates (default), add = import anyway, overwrite = update
     # the existing row. `force` is kept for backwards compatibility (== "add").
@@ -121,6 +137,7 @@ class SaveRequest(BaseModel):
 class SaveResponse(BaseModel):
     saved: int
     saved_bookings: int = 0
+    saved_deposits: int = 0
     duplicates_skipped: int = 0
     overwritten: int = 0
     errors: List[str]
@@ -399,6 +416,7 @@ def _flag_duplicates(
     previews: List[PreviewTransaction],
     bookings: List[PreviewBooking],
     portfolio_id: Optional[int] = None,
+    deposits: Optional[List[PreviewDeposit]] = None,
 ) -> int:
     """Mark preview rows that already exist in the DB (best-effort). Returns count."""
     n = 0
@@ -444,6 +462,18 @@ def _flag_duplicates(
                 n += 1
         except Exception:
             continue
+    if deposits:
+        existing_deps = db.get_fixed_deposits()
+        for dep in deposits:
+            try:
+                if any(
+                    e["name"] == dep.name and e["maturity_date"] == dep.maturity_date
+                    for e in existing_deps
+                ):
+                    dep.is_duplicate = True
+                    n += 1
+            except Exception:
+                continue
     return n
 
 
@@ -467,6 +497,10 @@ async def upload_broker_file(
         )
 
     file_bytes = await file.read()
+    previews: List[PreviewTransaction] = []
+    bookings: List[PreviewBooking] = []
+    deposits: List[PreviewDeposit] = []
+    skipped: List[dict] = []
 
     try:
         if broker == "indexacapital":
@@ -489,6 +523,12 @@ async def upload_broker_file(
             result = parse_bookings_csv(content)
             bookings = [PreviewBooking(**bk) for bk in result.bookings]
             skipped = [{"row": r, "reason": reason} for r, reason in result.skipped]
+        elif broker == "deposits":
+            content = file_bytes.decode("utf-8-sig")
+            previews = []
+            result = parse_deposits_csv(content)
+            deposits = [PreviewDeposit(**d) for d in result.deposits]
+            skipped = [{"row": r, "reason": reason} for r, reason in result.skipped]
         else:
             raise HTTPException(status_code=500, detail="Unreachable broker branch")
     except HTTPException:
@@ -500,12 +540,13 @@ async def upload_broker_file(
             detail=f"Failed to parse file: {str(e)}",
         )
 
-    dup_count = _flag_duplicates(db, previews, bookings)
+    dup_count = _flag_duplicates(db, previews, bookings, deposits=deposits)
 
     return UploadPreviewResponse(
         broker=broker,
         transactions=previews,
         bookings=bookings,
+        deposits=deposits,
         skipped_count=len(skipped),
         skipped=skipped,
         duplicate_count=dup_count,
@@ -653,9 +694,44 @@ async def save_imported_transactions(
             errors.append(f"Booking {bk.action} {bk.date}: {str(e)}")
             logger.warning(f"Failed to save booking {bk.date}: {e}")
 
+    saved_deposits = 0
+    existing_deps = db.get_fixed_deposits() if body.deposits else []
+    for dep in body.deposits:
+        try:
+            dep_portfolio_id = body.portfolio_id
+            if dep.broker:
+                dep_portfolio_id = db.get_or_create_portfolio(
+                    dep.broker, base_currency=dep.currency or "EUR"
+                )
+            is_dup = any(
+                e["name"] == dep.name and e["maturity_date"] == dep.maturity_date
+                for e in existing_deps
+            )
+            if is_dup and action != "add":
+                duplicates_skipped += 1
+                errors.append(
+                    f"DUPLICATE: deposit '{dep.name}' (maturity {dep.maturity_date})"
+                )
+                continue
+            db.create_fixed_deposit(
+                name=dep.name,
+                principal=dep.principal,
+                currency=dep.currency,
+                interest_rate=dep.interest_rate,
+                start_date=dep.start_date,
+                maturity_date=dep.maturity_date,
+                portfolio_id=dep_portfolio_id,
+                notes=dep.notes,
+            )
+            saved_deposits += 1
+        except Exception as e:
+            errors.append(f"Deposit '{dep.name}': {str(e)}")
+            logger.warning(f"Failed to save deposit {dep.name!r}: {e}")
+
     return SaveResponse(
         saved=saved,
         saved_bookings=saved_bookings,
+        saved_deposits=saved_deposits,
         duplicates_skipped=duplicates_skipped,
         overwritten=overwritten,
         errors=errors,
@@ -673,9 +749,12 @@ async def check_duplicates(
     Lets the text/LLM import preview show duplicates before saving, the same way
     the file-upload preview does.
     """
-    n = _flag_duplicates(db, body.transactions, body.bookings, body.portfolio_id)
+    n = _flag_duplicates(
+        db, body.transactions, body.bookings, body.portfolio_id, deposits=body.deposits
+    )
     return {
         "transactions": body.transactions,
         "bookings": body.bookings,
+        "deposits": body.deposits,
         "duplicate_count": n,
     }

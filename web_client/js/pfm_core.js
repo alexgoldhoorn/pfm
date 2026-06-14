@@ -919,11 +919,11 @@ function createAPIClient() {
             return response.json();
         },
 
-        async saveImportedTransactions(transactions, bookings = [], portfolioId = null, duplicateAction = 'skip') {
+        async saveImportedTransactions(transactions, bookings = [], portfolioId = null, duplicateAction = 'skip', deposits = []) {
             const response = await fetch(this.baseURL + '/api/v1/import/save', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
-                body: JSON.stringify({ transactions, bookings, portfolio_id: portfolioId, duplicate_action: duplicateAction })
+                body: JSON.stringify({ transactions, bookings, deposits, portfolio_id: portfolioId, duplicate_action: duplicateAction })
             });
             if (!response.ok) {
                 const err = await response.text();
@@ -1522,22 +1522,24 @@ const BROKER_HINTS = {
     coinbase: 'Export from Coinbase → Reports → Generate → Transaction History CSV.',
     pdt: 'Export from Portfolio Dividend Tracker (app.portfoliodividendtracker.com) → Download XLSX.',
     bookings: 'Generic cash CSV with columns: date, action (deposit/withdrawal), amount, currency, broker (optional). Delimiter and decimal style are auto-detected.',
+    deposits: 'Generic fixed-deposit CSV with columns: name, principal, interest_rate, start_date, maturity_date, currency (default EUR), portfolio (optional). Delimiter and European/US numbers are auto-detected.',
 };
 
 // Toggle duplicate-row checkboxes when the dup action changes.
 function _applyDupCheckboxes(action) {
     const shouldCheck = action !== 'skip';
-    document.querySelectorAll('.file-tx-select[data-dup="1"], .io-tx-select[data-dup="1"]').forEach(cb => {
+    document.querySelectorAll('.file-tx-select[data-dup="1"], .io-tx-select[data-dup="1"], .file-dep-select[data-dup="1"]').forEach(cb => {
         cb.checked = shouldCheck;
     });
 }
 
 // Shown above an import preview when some rows already exist in the DB. The
 // <select id="ioDupAction"> value is read by the save handlers.
-function _dupControl(transactions, bookings) {
+function _dupControl(transactions, bookings, deposits) {
     const dupTx = (transactions || []).filter(t => t.is_duplicate).length;
     const dupBk = (bookings || []).filter(b => b.is_duplicate).length;
-    const total = dupTx + dupBk;
+    const dupDep = (deposits || []).filter(d => d.is_duplicate).length;
+    const total = dupTx + dupBk + dupDep;
     if (total === 0) return '';
     return `
         <div class="alert alert-warning py-2 small d-flex flex-wrap align-items-center gap-2 mb-2">
@@ -1557,9 +1559,10 @@ function _dupAction() {
     return el ? el.value : 'skip';
 }
 
-function _buildPreviewTable(transactions, bookings) {
+function _buildPreviewTable(transactions, bookings, deposits) {
     bookings = bookings || [];
-    const dupControl = _dupControl(transactions, bookings);
+    deposits = deposits || [];
+    const dupControl = _dupControl(transactions, bookings, deposits);
     const hasBroker = transactions.some(tx => tx.broker) || bookings.some(b => b.broker);
     const dupBadge = '<span class="badge bg-warning text-dark ms-1">dup</span>';
 
@@ -1591,23 +1594,48 @@ function _buildPreviewTable(transactions, bookings) {
         </tr>
     `).join('');
 
-    const totalRows = transactions.length + bookings.length;
+    const depRows = deposits.map((dep, i) => `
+        <tr class="${dep.is_duplicate ? 'table-warning' : ''}">
+            <td><input class="form-check-input file-dep-select" type="checkbox" ${dep.is_duplicate ? '' : 'checked'} data-idx="${i}" data-dup="${dep.is_duplicate ? '1' : '0'}"></td>
+            <td>${esc(dep.name || '')}${dep.is_duplicate ? dupBadge : ''}</td>
+            <td class="text-end">${parseFloat(dep.principal || 0).toFixed(2)} ${dep.currency || ''}</td>
+            <td class="text-end">${parseFloat(dep.interest_rate || 0).toFixed(3)}%</td>
+            <td>${dep.start_date || ''}</td>
+            <td>${dep.maturity_date || ''}</td>
+            <td>${esc(dep.broker || '')}</td>
+        </tr>
+    `).join('');
+
+    const totalRows = transactions.length + bookings.length + deposits.length;
     if (totalRows === 0) {
-        return dupControl + '<div class="alert alert-warning">No importable transactions found in this file.</div>';
+        return dupControl + '<div class="alert alert-warning">No importable data found in this file.</div>';
     }
     const bkNote = bookings.length > 0
         ? ` <span class="badge bg-info"><i class="bi bi-bank me-1"></i>${bookings.length} cash booking(s) auto-saved</span>`
         : '';
-    return dupControl + `
-        <p class="text-muted small mb-2">Found <strong>${transactions.length}</strong> transaction(s)${bookings.length > 0 ? ` + <strong>${bookings.length}</strong> cash booking(s)` : ''}. Uncheck transactions to skip.
-        ${hasBroker ? ' <span class="badge bg-secondary">Portfolios auto-assigned</span>' : ''}${bkNote}</p>
+    let html = dupControl + `
+        <p class="text-muted small mb-2">Found <strong>${transactions.length}</strong> transaction(s)${bookings.length > 0 ? ` + <strong>${bookings.length}</strong> cash booking(s)` : ''}${deposits.length > 0 ? ` + <strong>${deposits.length}</strong> fixed deposit(s)` : ''}. Uncheck rows to skip.
+        ${hasBroker ? ' <span class="badge bg-secondary">Portfolios auto-assigned</span>' : ''}${bkNote}</p>`;
+    if (transactions.length > 0 || bookings.length > 0) {
+        html += `
         <div class="table-responsive">
             <table class="table table-sm table-hover">
                 <thead><tr><th></th>${hasBroker ? '<th>Portfolio</th>' : ''}<th>Date</th><th>Asset / Action</th><th>Type</th><th class="text-end">Qty / Amount</th><th class="text-end">Price</th><th>Currency</th><th class="text-end">Fees</th></tr></thead>
                 <tbody>${txRows}${bkRows}</tbody>
             </table>
-        </div>
-    `;
+        </div>`;
+    }
+    if (deposits.length > 0) {
+        html += `
+        <h6 class="mt-3 mb-1">Fixed Deposits <span class="badge bg-secondary">${deposits.length}</span></h6>
+        <div class="table-responsive">
+            <table class="table table-sm table-hover">
+                <thead><tr><th></th><th>Name</th><th class="text-end">Principal</th><th class="text-end">Rate</th><th>Start</th><th>Maturity</th><th>Broker</th></tr></thead>
+                <tbody>${depRows}</tbody>
+            </table>
+        </div>`;
+    }
+    return html;
 }
 
 // ---------------------------------------------------------------------------
@@ -1630,6 +1658,7 @@ function setupFileImportModal() {
 
     let parsedTransactions = [];
     let parsedBookings = [];
+    let parsedDeposits = [];
 
     brokerSelect.addEventListener('change', () => {
         const h = BROKER_HINTS[brokerSelect.value];
@@ -1645,13 +1674,14 @@ function setupFileImportModal() {
         backBtn.style.display = 'none';
     }
 
-    function showStep2(transactions, bookings, skippedCount) {
+    function showStep2(transactions, bookings, skippedCount, deposits) {
+        deposits = deposits || [];
         step1.style.display = 'none';
         step2.style.display = '';
         parseBtn.style.display = 'none';
-        saveBtn.style.display = (transactions.length > 0 || bookings.length > 0) ? '' : 'none';
+        saveBtn.style.display = (transactions.length > 0 || bookings.length > 0 || deposits.length > 0) ? '' : 'none';
         backBtn.style.display = '';
-        let html = _buildPreviewTable(transactions, bookings);
+        let html = _buildPreviewTable(transactions, bookings, deposits);
         if (skippedCount > 0) {
             html += `<p class="text-muted small mt-2"><i class="bi bi-info-circle me-1"></i>${skippedCount} row(s) skipped (non-trade entries, incomplete data, etc.)</p>`;
         }
@@ -1664,6 +1694,7 @@ function setupFileImportModal() {
         hint.style.display = 'none';
         parsedTransactions = [];
         parsedBookings = [];
+        parsedDeposits = [];
         showStep1();
     });
 
@@ -1681,7 +1712,8 @@ function setupFileImportModal() {
             const data = await window.apiClient.uploadBrokerFile(broker, file);
             parsedTransactions = data.transactions || [];
             parsedBookings = data.bookings || [];
-            showStep2(parsedTransactions, parsedBookings, data.skipped_count || 0);
+            parsedDeposits = data.deposits || [];
+            showStep2(parsedTransactions, parsedBookings, data.skipped_count || 0, parsedDeposits);
         } catch (err) {
             alert('Error parsing file: ' + err.message);
         } finally {
@@ -1693,19 +1725,22 @@ function setupFileImportModal() {
     saveBtn.addEventListener('click', async () => {
         const selected = Array.from(document.querySelectorAll('.file-tx-select:checked'))
             .map(cb => parsedTransactions[parseInt(cb.dataset.idx)]);
-        if (selected.length === 0 && parsedBookings.length === 0) { alert('No transactions selected.'); return; }
+        const selectedDeps = Array.from(document.querySelectorAll('.file-dep-select:checked'))
+            .map(cb => parsedDeposits[parseInt(cb.dataset.idx)]);
+        if (selected.length === 0 && parsedBookings.length === 0 && selectedDeps.length === 0) { alert('No data selected.'); return; }
 
         saveBtn.disabled = true;
         saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving...';
         try {
-            const result = await window.apiClient.saveImportedTransactions(selected, parsedBookings, null, _dupAction());
+            const result = await window.apiClient.saveImportedTransactions(selected, parsedBookings, null, _dupAction(), selectedDeps);
             saveBtn.disabled = false;
             saveBtn.innerHTML = '<i class="bi bi-check-lg me-2"></i>Save Selected';
             bootstrap.Modal.getInstance(modal).hide();
             const bkMsg = result.saved_bookings > 0 ? ` + ${result.saved_bookings} booking(s)` : '';
+            const depMsg = result.saved_deposits > 0 ? ` + ${result.saved_deposits} deposit(s)` : '';
             const msg = result.errors.length > 0
-                ? `Saved ${result.saved}${bkMsg}. Errors:\n${result.errors.join('\n')}`
-                : `Successfully imported ${result.saved} transaction(s)${bkMsg}.`;
+                ? `Saved ${result.saved}${bkMsg}${depMsg}. Errors:\n${result.errors.join('\n')}`
+                : `Successfully imported ${result.saved} transaction(s)${bkMsg}${depMsg}.`;
             alert(msg);
             window.pageManager.loadTransactionsPage();
         } catch (err) {
