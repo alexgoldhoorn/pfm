@@ -64,7 +64,7 @@ def _brokerage_value_eur(db) -> float:
 
 @router.get("/")
 def get_networth(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
-    """Brokerage value + manual assets/liabilities + total net worth (EUR)."""
+    """Brokerage value + manual assets/liabilities + deposits + total net worth (EUR)."""
     items = db.get_manual_assets()
     assets_eur = 0.0
     liabilities_eur = 0.0
@@ -77,12 +77,19 @@ def get_networth(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
             assets_eur += amt_eur
         out.append({**it, "amount_eur": round(amt_eur, 2)})
 
+    raw_deposits = db.get_fixed_deposits(status="active")
+    deposits_eur = sum(
+        float(d["principal"]) * _fx(d.get("currency", "EUR")) for d in raw_deposits
+    )
+
     brokerage = round(_brokerage_value_eur(db), 2)
-    net_worth = round(brokerage + assets_eur - liabilities_eur, 2)
+    net_worth = round(brokerage + assets_eur - liabilities_eur + deposits_eur, 2)
     return {
         "brokerage_eur": brokerage,
         "manual_assets_eur": round(assets_eur, 2),
         "manual_liabilities_eur": round(liabilities_eur, 2),
+        "deposits_eur": round(deposits_eur, 2),
+        "deposits": raw_deposits,
         "net_worth_eur": net_worth,
         "items": out,
     }
