@@ -1524,6 +1524,14 @@ const BROKER_HINTS = {
     bookings: 'Generic cash CSV with columns: date, action (deposit/withdrawal), amount, currency, broker (optional). Delimiter and decimal style are auto-detected.',
 };
 
+// Toggle duplicate-row checkboxes when the dup action changes.
+function _applyDupCheckboxes(action) {
+    const shouldCheck = action !== 'skip';
+    document.querySelectorAll('.file-tx-select[data-dup="1"], .io-tx-select[data-dup="1"]').forEach(cb => {
+        cb.checked = shouldCheck;
+    });
+}
+
 // Shown above an import preview when some rows already exist in the DB. The
 // <select id="ioDupAction"> value is read by the save handlers.
 function _dupControl(transactions, bookings) {
@@ -1533,9 +1541,9 @@ function _dupControl(transactions, bookings) {
     if (total === 0) return '';
     return `
         <div class="alert alert-warning py-2 small d-flex flex-wrap align-items-center gap-2 mb-2">
-            <span><i class="bi bi-exclamation-triangle me-1"></i><strong>${total}</strong> row(s) already exist (marked <span class="badge bg-warning text-dark">dup</span> below).</span>
+            <span><i class="bi bi-exclamation-triangle me-1"></i><strong>${total}</strong> row(s) already exist (marked <span class="badge bg-warning text-dark">dup</span> below). Duplicates are unchecked by default.</span>
             <label class="ms-auto mb-0 d-flex align-items-center">On duplicates:
-                <select id="ioDupAction" class="form-select form-select-sm d-inline-block w-auto ms-1">
+                <select id="ioDupAction" class="form-select form-select-sm d-inline-block w-auto ms-1" onchange="_applyDupCheckboxes(this.value)">
                     <option value="skip">Skip them</option>
                     <option value="add">Import anyway (add copy)</option>
                     <option value="overwrite">Overwrite existing</option>
@@ -1557,7 +1565,7 @@ function _buildPreviewTable(transactions, bookings) {
 
     const txRows = transactions.map((tx, i) => `
         <tr class="${tx.is_duplicate ? 'table-warning' : ''}">
-            <td><input class="form-check-input file-tx-select" type="checkbox" checked data-idx="${i}"></td>
+            <td><input class="form-check-input file-tx-select" type="checkbox" ${tx.is_duplicate ? '' : 'checked'} data-idx="${i}" data-dup="${tx.is_duplicate ? '1' : '0'}"></td>
             ${hasBroker ? `<td><small>${esc(tx.broker || '')}</small></td>` : ''}
             <td>${tx.date || ''}${tx.is_duplicate ? dupBadge : ''}</td>
             <td><strong>${esc(tx.symbol || '')}</strong><br><small class="text-muted">${esc(tx.name || '')}</small></td>
