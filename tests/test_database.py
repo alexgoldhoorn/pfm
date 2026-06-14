@@ -12,6 +12,18 @@ from datetime import datetime
 from portf_manager.database import Database, DatabaseError
 
 
+def test_fixed_deposits_table_exists(tmp_path):
+    from portf_manager.database import Database
+
+    db = Database(str(tmp_path / "test.db"))
+    with db.get_connection() as conn:
+        tables = {
+            row["name"]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+    assert "fixed_deposits" in tables
+
+
 class TestDatabase:
     """Test suite for Database class."""
 
@@ -38,7 +50,7 @@ class TestDatabase:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             result = cursor.fetchone()
-            assert result[0] == 18  # Current schema version
+            assert result[0] == 19  # Current schema version
 
     def test_v18_assets_have_ticker_column(self):
         """v18 adds the nullable ticker alias column to assets."""
@@ -986,7 +998,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 18
+            assert version == 19
 
             # Assert columns exist
             for table in ["entities", "portfolios", "transactions"]:
@@ -1016,7 +1028,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 18
+            assert version == 19
 
             # Check all tables exist
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -1085,7 +1097,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 18
+            assert version == 19
 
             # Check new tables exist
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
