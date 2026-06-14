@@ -9,6 +9,7 @@ import threading
 from datetime import date, datetime, timedelta
 from typing import Optional
 
+import pandas as pd
 import yfinance as yf
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel
@@ -63,45 +64,41 @@ _STRESS_FALLBACKS: dict[str, dict[str, float]] = {
         "stock": -50.0,
         "etf": -50.0,
         "index": -50.0,
-        "fund": -40.0,
+        "mutual_fund": -40.0,
         "bond": -5.0,
         "crypto": 0.0,
         "commodity": -30.0,
-        "interest": 0.0,
-        "deposit": 0.0,
+        "cash": 0.0,
     },
     "2020": {
         "stock": -32.0,
         "etf": -32.0,
         "index": -32.0,
-        "fund": -25.0,
+        "mutual_fund": -25.0,
         "bond": 5.0,
         "crypto": -50.0,
         "commodity": -20.0,
-        "interest": 0.0,
-        "deposit": 0.0,
+        "cash": 0.0,
     },
     "2022": {
         "stock": -22.0,
         "etf": -22.0,
         "index": -22.0,
-        "fund": -18.0,
+        "mutual_fund": -18.0,
         "bond": -15.0,
         "crypto": -65.0,
         "commodity": 20.0,
-        "interest": 0.0,
-        "deposit": 0.0,
+        "cash": 0.0,
     },
     "dotcom": {
         "stock": -60.0,
         "etf": -60.0,
         "index": -60.0,
-        "fund": -45.0,
+        "mutual_fund": -45.0,
         "bond": 5.0,
         "crypto": 0.0,
         "commodity": -15.0,
-        "interest": 0.0,
-        "deposit": 0.0,
+        "cash": 0.0,
     },
 }
 
@@ -120,6 +117,7 @@ def _get_ticker_return(sym: str, from_date: str, to_date: str) -> float | None:
         if hist.empty:
             return None
         closes = hist["Close"].dropna()
+        closes = closes[closes.index <= pd.Timestamp(to_date)]
         if len(closes) < 2:
             return None
         price_from = float(closes.iloc[0])

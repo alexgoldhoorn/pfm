@@ -24,12 +24,11 @@ class TestStressFallbacks:
             "stock",
             "etf",
             "index",
-            "fund",
+            "mutual_fund",
             "bond",
             "crypto",
             "commodity",
-            "interest",
-            "deposit",
+            "cash",
         }
         for scenario_key, table in _STRESS_FALLBACKS.items():
             for asset_type in required:
@@ -41,10 +40,9 @@ class TestStressFallbacks:
     def test_2022_bonds_are_negative(self):
         assert _STRESS_FALLBACKS["2022"]["bond"] < 0
 
-    def test_deposits_always_zero_in_all_scenarios(self):
+    def test_cash_always_zero_in_all_scenarios(self):
         for table in _STRESS_FALLBACKS.values():
-            assert table["deposit"] == 0.0
-            assert table["interest"] == 0.0
+            assert table["cash"] == 0.0
 
 
 class TestGetTickerReturn:
