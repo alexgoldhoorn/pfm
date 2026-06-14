@@ -1342,6 +1342,98 @@ class Database:
             conn.commit()
             return cur.rowcount > 0
 
+    # ── Fixed Deposits ──────────────────────────────────────────────────────
+
+    def create_fixed_deposit(
+        self,
+        name: str,
+        principal: float,
+        currency: str = "EUR",
+        interest_rate: float = 0.0,
+        start_date: str = "",
+        maturity_date: str = "",
+        portfolio_id: int = None,
+        notes: str = None,
+    ) -> int:
+        """Create a fixed deposit record."""
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO fixed_deposits
+                    (name, portfolio_id, principal, currency, interest_rate,
+                     start_date, maturity_date, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    name,
+                    portfolio_id,
+                    principal,
+                    currency.upper(),
+                    interest_rate,
+                    start_date,
+                    maturity_date,
+                    notes,
+                ),
+            )
+            conn.commit()
+            return cur.lastrowid
+
+    def get_fixed_deposit(self, deposit_id: int) -> Optional[Dict]:
+        """Get a single fixed deposit by id."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM fixed_deposits WHERE id = ?", (deposit_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_fixed_deposits(self, status: str = None) -> List[Dict]:
+        """List fixed deposits, optionally filtered by status."""
+        with self.get_connection() as conn:
+            if status:
+                rows = conn.execute(
+                    "SELECT * FROM fixed_deposits WHERE status = ? ORDER BY maturity_date",
+                    (status,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM fixed_deposits ORDER BY maturity_date"
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+    def update_fixed_deposit(self, deposit_id: int, **fields) -> bool:
+        """Update fixed deposit fields."""
+        valid = {
+            "name",
+            "portfolio_id",
+            "principal",
+            "currency",
+            "interest_rate",
+            "start_date",
+            "maturity_date",
+            "status",
+            "interest_paid",
+            "notes",
+        }
+        update = {k: v for k, v in fields.items() if k in valid}
+        if not update:
+            return False
+        with self.get_connection() as conn:
+            cols = ", ".join(f"{k} = ?" for k in update)
+            vals = list(update.values()) + [deposit_id]
+            cur = conn.execute(
+                f"UPDATE fixed_deposits SET {cols}, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                vals,
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def delete_fixed_deposit(self, deposit_id: int) -> bool:
+        """Delete a fixed deposit."""
+        with self.get_connection() as conn:
+            cur = conn.execute("DELETE FROM fixed_deposits WHERE id = ?", (deposit_id,))
+            conn.commit()
+            return cur.rowcount > 0
+
     # ── Generic key/value cache ────────────────────────────────────────────
 
     def cache_get(self, key: str) -> Any:
