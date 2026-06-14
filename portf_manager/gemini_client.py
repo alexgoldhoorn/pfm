@@ -364,6 +364,72 @@ Now extract cash movements from this text:
             logger.error(f"Error extracting bookings: {str(e)}")
             return []
 
+    def extract_deposits(self, text: str) -> list:
+        """Extract fixed-deposit records from a bank statement or overview text.
+
+        Returns a list of dicts with keys: name, principal, currency,
+        interest_rate (annual %), start_date, maturity_date.
+        Returns [] on any failure.
+        """
+        prompt = f"""
+You extract FIXED-TERM DEPOSITS (depósitos a plazo fijo) from a bank statement
+or product overview. Each deposit is a fixed-term savings product with a
+principal amount, an annual interest rate (TAE/APR), a start date and a
+maturity date.
+
+Return ONLY a JSON array. Each object has these exact fields:
+- name: product name as a string (e.g. "Superdepósito PREMIUM 1 mes")
+- principal: deposit amount as a positive float
+- currency: ISO currency code (default "EUR")
+- interest_rate: annual rate as a percentage float (e.g. 4.0 for 4%)
+- start_date: ISO date YYYY-MM-DD (if not stated, use today)
+- maturity_date: ISO date YYYY-MM-DD
+
+RULES:
+- Return ONLY the JSON array, no prose.
+- If no fixed deposits are described, return [].
+- "TAE" / "TIN" / "APR" / "rendimiento anual" → interest_rate
+- "vence" / "fecha vencimiento" / "maturity" / "plazo" → maturity_date
+- European number format: "5.000,00" → 5000.0
+- "€" → "EUR", "$" → "USD"
+
+EXAMPLE
+Input: "Superdepósito 3 meses 10.000€ TAE 3,5% apertura 01/01/2026 vence 01/04/2026"
+Output: [{{"name": "Superdepósito 3 meses", "principal": 10000.0, "currency": "EUR",
+           "interest_rate": 3.5, "start_date": "2026-01-01", "maturity_date": "2026-04-01"}}]
+
+Now extract deposits from this text:
+
+{text}
+"""
+        try:
+            response_text = self.llm.generate(prompt).strip()
+            if response_text.startswith("```"):
+                lines = response_text.split("\n")
+                response_text = "\n".join(
+                    ln for ln in lines if not ln.strip().startswith("```")
+                )
+            data = json.loads(response_text)
+            deposits = []
+            for item in data if isinstance(data, list) else []:
+                try:
+                    deposits.append(
+                        {
+                            "name": str(item.get("name", "")).strip(),
+                            "principal": float(item.get("principal", 0)),
+                            "currency": str(item.get("currency", "EUR")).upper(),
+                            "interest_rate": float(item.get("interest_rate", 0)),
+                            "start_date": str(item.get("start_date", "")),
+                            "maturity_date": str(item.get("maturity_date", "")),
+                        }
+                    )
+                except (TypeError, ValueError):
+                    continue
+            return deposits
+        except Exception:
+            logger.exception("extract_deposits failed")
+            return []
+
     def chat(self, prompt: str) -> str:
         """
         Generate a chat response using the configured LLM.
