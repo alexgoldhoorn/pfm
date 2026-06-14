@@ -16,6 +16,7 @@ from portf_manager.positions import compute_positions
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
+from .deposits import _enrich as _enrich_deposit
 from .portfolios import _get_fx_rate as _fx
 
 router = APIRouter()
@@ -89,7 +90,7 @@ def get_networth(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
         "manual_assets_eur": round(assets_eur, 2),
         "manual_liabilities_eur": round(liabilities_eur, 2),
         "deposits_eur": round(deposits_eur, 2),
-        "deposits": raw_deposits,
+        "deposits": [_enrich_deposit(dict(d)) for d in raw_deposits],
         "net_worth_eur": net_worth,
         "items": out,
     }
