@@ -907,6 +907,7 @@ const _ANALYTICS_LOADERS = {
     tax: () => { loadAnalyticsTax(); loadAnalyticsTaxReport(); loadTaxOptimizer(); },
     risk: () => { loadAnalyticsRisk(); _wireDiversificationButtons(); },
     fees: () => { loadAnalyticsFees(); },
+    stress: () => { loadAnalyticsStress('2008'); },
 };
 let _analyticsLoaded = {};
 let _analyticsActiveTab = 'performance';
@@ -1334,6 +1335,143 @@ async function loadAnalyticsFees() {
         body.innerHTML = `<div class="text-danger small">Error loading fees: ${err.message}</div>`;
     }
     initTooltips();
+}
+
+// h) Stress Testing section
+async function loadAnalyticsStress(scenario, fromDate, toDate) {
+    const body = document.getElementById('anStressBody');
+    if (!body) return;
+
+    // Build the scenario selector UI once; preserve it across scenario switches.
+    if (!body.dataset.wired) {
+        body.dataset.wired = '1';
+        const scenarioDefs = [
+            { key: '2008', label: '2008 Crisis' },
+            { key: '2020', label: '2020 COVID' },
+            { key: '2022', label: '2022 Rates' },
+            { key: 'dotcom', label: 'Dot-com' },
+        ];
+        body.innerHTML = `
+            <div class="mb-3">
+                <div class="d-flex flex-wrap gap-1" id="stressScenarioBtns">
+                    ${scenarioDefs.map(s =>
+                        `<button type="button" class="btn btn-sm ${s.key === '2008' ? 'btn-secondary' : 'btn-outline-secondary'}" data-stress-scenario="${s.key}">${esc(s.label)}</button>`
+                    ).join('')}
+                    <button type="button" class="btn btn-sm btn-outline-secondary" data-stress-scenario="custom">Custom</button>
+                </div>
+                <div id="stressCustomRow" class="mt-2 d-none d-flex align-items-center gap-2">
+                    <input type="date" class="form-control form-control-sm" style="width:auto" id="stressFrom">
+                    <span class="text-muted small">to</span>
+                    <input type="date" class="form-control form-control-sm" style="width:auto" id="stressTo">
+                    <button class="btn btn-sm btn-primary" id="stressRunCustom">Run</button>
+                </div>
+            </div>
+            <div id="stressResults"><div class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm me-2" role="status"></div>Fetching historical data&hellip;</div></div>`;
+
+        document.querySelectorAll('#stressScenarioBtns [data-stress-scenario]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const s = btn.dataset.stressScenario;
+                document.querySelectorAll('#stressScenarioBtns [data-stress-scenario]').forEach(b => {
+                    b.classList.toggle('btn-secondary', b === btn);
+                    b.classList.toggle('btn-outline-secondary', b !== btn);
+                });
+                const customRow = document.getElementById('stressCustomRow');
+                if (s === 'custom') {
+                    customRow.classList.remove('d-none');
+                } else {
+                    customRow.classList.add('d-none');
+                    loadAnalyticsStress(s);
+                }
+            });
+        });
+
+        document.getElementById('stressRunCustom').addEventListener('click', () => {
+            const from = document.getElementById('stressFrom').value;
+            const to = document.getElementById('stressTo').value;
+            if (!from || !to) return;
+            loadAnalyticsStress(null, from, to);
+        });
+    }
+
+    const resultsDiv = document.getElementById('stressResults');
+    if (!resultsDiv) return;
+    resultsDiv.innerHTML = '<div class="text-center text-muted py-3"><div class="spinner-border spinner-border-sm me-2" role="status"></div>Fetching historical data&hellip;</div>';
+
+    try {
+        const d = await window.apiClient.getStressTest(scenario, fromDate, toDate);
+        _renderStressResults(resultsDiv, d);
+    } catch (err) {
+        resultsDiv.innerHTML = `<div class="text-danger small">Error loading stress test: ${esc(err.message)}</div>`;
+    }
+}
+
+function _renderStressResults(resultsDiv, d) {
+    if (!resultsDiv || !d) return;
+    const lossCls = d.total_loss_pct < 0 ? 'text-danger' : 'text-success';
+    const signStr = (v) => v >= 0 ? '+' : '';
+    const hasFallback = d.assets.some(a => a.data_source === 'fallback');
+    const maxLoss = Math.max(...d.assets.map(a => Math.abs(a.loss_eur)), 1);
+
+    const rows = d.assets.map(a => {
+        const pct = parseFloat(a.historical_return_pct);
+        const opacity = Math.min(0.75, Math.abs(a.loss_eur) / maxLoss).toFixed(2);
+        const cellStyle = a.loss_eur < 0 ? ` style="background:rgba(220,53,69,${opacity})"` : '';
+        return `<tr>
+            <td class="fw-semibold">${esc(a.symbol)}</td>
+            <td class="text-muted small">${esc(a.name)}</td>
+            <td class="text-end">${anFmtEur(a.current_value_eur)}</td>
+            <td class="text-end ${pct < 0 ? 'text-danger' : 'text-success'}">${signStr(pct)}${pct.toFixed(1)}%${a.data_source === 'fallback' ? '<sup>*</sup>' : ''}</td>
+            <td class="text-end">${anFmtEur(a.stressed_value_eur)}</td>
+            <td class="text-end fw-semibold"${cellStyle}>${signStr(a.loss_eur)}${anFmtEur(a.loss_eur)}</td>
+        </tr>`;
+    }).join('');
+
+    resultsDiv.innerHTML = `
+        <div class="row g-3 mb-4">
+            <div class="col-6 col-md-3">
+                <div class="border rounded p-3">
+                    <div class="small text-muted mb-1">Current value</div>
+                    <div class="fs-6 fw-bold">${anFmtEur(d.portfolio_current_value_eur)}</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="border rounded p-3">
+                    <div class="small text-muted mb-1">Stressed value</div>
+                    <div class="fs-6 fw-bold">${anFmtEur(d.portfolio_stressed_value_eur)}</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="border rounded p-3">
+                    <div class="small text-muted mb-1">Estimated loss</div>
+                    <div class="fs-6 fw-bold ${lossCls}">${signStr(d.total_loss_eur)}${anFmtEur(d.total_loss_eur)}</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="border rounded p-3">
+                    <div class="small text-muted mb-1">Loss %</div>
+                    <div class="fs-6 fw-bold ${lossCls}">${signStr(d.total_loss_pct)}${parseFloat(d.total_loss_pct).toFixed(1)}%</div>
+                </div>
+            </div>
+        </div>
+        ${d.assets.length === 0
+            ? '<p class="text-muted small">No priced positions found.</p>'
+            : `<div class="table-responsive">
+                <table class="table table-sm table-hover mb-1">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Name</th>
+                            <th class="text-end">Value</th>
+                            <th class="text-end">Scenario drop</th>
+                            <th class="text-end">Stressed</th>
+                            <th class="text-end">Loss</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+               </div>
+               ${hasFallback ? '<p class="text-muted small mb-0">* Estimated — no historical market data for this asset; asset-type average used.</p>' : ''}`
+        }`;
 }
 
 // ---------------------------------------------------------------------------
