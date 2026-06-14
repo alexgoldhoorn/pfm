@@ -46,6 +46,7 @@ from .routers import (
     networth,
     market,
     system,
+    deposits,
 )
 from .dependencies import (
     get_database,
@@ -359,6 +360,13 @@ app.include_router(
     networth.router,
     prefix="/api/v1/networth",
     tags=["Net Worth"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    deposits.router,
+    prefix="/api/v1/deposits",
+    tags=["Deposits"],
     dependencies=_PROTECTED,
 )
 
