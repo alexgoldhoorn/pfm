@@ -117,7 +117,7 @@ def _get_ticker_return(sym: str, from_date: str, to_date: str) -> float | None:
         if hist.empty:
             return None
         closes = hist["Close"].dropna()
-        closes = closes[closes.index <= pd.Timestamp(to_date)]
+        closes = closes[closes.index.date <= pd.Timestamp(to_date).date()]
         if len(closes) < 2:
             return None
         price_from = float(closes.iloc[0])
@@ -1218,7 +1218,7 @@ def stress_test(
             if current_value_eur <= 0:
                 continue
 
-            sym = asset.get("ticker") or asset.get("symbol", "")
+            sym = _yf_symbol(asset)
             hist_ret: float | None = None
             data_source = "fallback"
             if sym:
