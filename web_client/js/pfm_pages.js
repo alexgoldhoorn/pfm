@@ -972,8 +972,80 @@ function renderHelpPage() {
         searchInput.removeEventListener('input', _filterHelpSearch);
         searchInput.addEventListener('input', _filterHelpSearch);
     }
+    setupHelpAi();
 }
 window.renderHelpPage = renderHelpPage;
+
+function setupHelpAi() {
+    const sendBtn = document.getElementById('helpAiSend');
+    const input = document.getElementById('helpAiInput');
+    const historyEl = document.getElementById('helpAiHistory');
+    if (!sendBtn || !input || sendBtn._helpAiReady) return;
+    sendBtn._helpAiReady = true;
+
+    const sessionId = 'help-' + Math.random().toString(36).slice(2);
+    let contextSent = false;
+
+    function buildContext() {
+        const lines = ['You are a concise help assistant for Portfolio Manager, a self-hosted investment tracker. Answer questions using only the documentation below. Be brief.\n\n## Pages'];
+        if (window.PAGE_HELP) {
+            Object.entries(window.PAGE_HELP).forEach(([key, h]) => {
+                const text = (h.body || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+                lines.push(`### ${h.title || key}\n${text}`);
+            });
+        }
+        lines.push('\n## Glossary');
+        if (typeof HELP_GLOSSARY !== 'undefined') {
+            HELP_GLOSSARY.forEach(([term, def]) => lines.push(`${term}: ${def}`));
+        }
+        if (window.METRIC_HELP) {
+            lines.push('\n## Metrics');
+            Object.entries(window.METRIC_HELP).forEach(([k, v]) => lines.push(`${k}: ${v}`));
+        }
+        return lines.join('\n');
+    }
+
+    function appendMsg(role, text) {
+        if (!historyEl) return;
+        historyEl.style.display = '';
+        const isUser = role === 'user';
+        const div = document.createElement('div');
+        div.className = `d-flex mb-2${isUser ? ' justify-content-end' : ''}`;
+        const bubble = document.createElement('div');
+        bubble.className = `rounded p-2 small ${isUser ? 'bg-primary text-white' : 'bg-body-secondary'}`;
+        bubble.style.maxWidth = '85%';
+        if (isUser) {
+            bubble.textContent = text;
+        } else {
+            bubble.innerHTML = window.marked ? marked.parse(text) : esc(text);
+        }
+        div.appendChild(bubble);
+        historyEl.appendChild(div);
+        historyEl.scrollTop = historyEl.scrollHeight;
+    }
+
+    async function send() {
+        const q = (input.value || '').trim();
+        if (!q) return;
+        input.value = '';
+        sendBtn.disabled = true;
+        appendMsg('user', q);
+        const message = contextSent ? q : buildContext() + '\n\nUser question: ' + q;
+        contextSent = true;
+        try {
+            const res = await window.apiClient.sendChat(message, sessionId);
+            appendMsg('assistant', res.answer || '(no response)');
+        } catch (e) {
+            appendMsg('assistant', 'Error: ' + e.message);
+        } finally {
+            sendBtn.disabled = false;
+            input.focus();
+        }
+    }
+
+    sendBtn.addEventListener('click', send);
+    input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } });
+}
 
 function _filterHelpSearch() {
     const q = (document.getElementById('helpSearch').value || '').trim().toLowerCase();
