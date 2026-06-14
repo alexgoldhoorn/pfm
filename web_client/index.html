@@ -2108,6 +2108,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                     <div class="row g-3 mb-4">
                         <div class="col-6 col-md-3"><div class="card h-100"><div class="card-body py-3"><div class="small text-muted mb-1">Investments</div><div class="fs-5 fw-bold" id="nwBrokerage">—</div></div></div></div>
                         <div class="col-6 col-md-3"><div class="card h-100"><div class="card-body py-3"><div class="small text-muted mb-1">Other assets</div><div class="fs-5 fw-bold text-success" id="nwAssets">—</div></div></div></div>
+                        <div class="col-6 col-md-3"><div class="card h-100"><div class="card-body py-3"><div class="small text-muted mb-1">Fixed deposits</div><div class="fs-5 fw-bold text-info" id="nwDeposits">—</div></div></div></div>
                         <div class="col-6 col-md-3"><div class="card h-100"><div class="card-body py-3"><div class="small text-muted mb-1">Liabilities</div><div class="fs-5 fw-bold text-danger" id="nwLiabilities">—</div></div></div></div>
                         <div class="col-6 col-md-3"><div class="card h-100 text-white" id="nwTotalCard" style="background:#0d6efd;"><div class="card-body py-3"><div class="small opacity-75 mb-1">Net worth</div><div class="fs-5 fw-bold" id="nwTotal">—</div></div></div></div>
                     </div>
@@ -2174,6 +2175,73 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                         <thead><tr><th class="ps-3">Name</th><th>Type</th><th class="text-end">Amount</th><th class="text-end">EUR</th><th class="pe-3"></th></tr></thead>
                                         <tbody id="nwItemsBody"><tr><td colspan="5" class="text-center text-muted py-4">Loading…</td></tr></tbody>
                                     </table>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Fixed Deposits section -->
+                        <div class="col-12 mt-2">
+                            <div class="card">
+                                <div class="card-header fw-semibold d-flex align-items-center justify-content-between">
+                                    <span><i class="bi bi-bank me-2"></i>Fixed Deposits</span>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="table table-hover mb-0">
+                                        <thead><tr>
+                                            <th class="ps-3">Name</th>
+                                            <th>Broker</th>
+                                            <th class="text-end">Principal</th>
+                                            <th class="text-end">Rate</th>
+                                            <th>Maturity</th>
+                                            <th class="text-end">Projected Interest</th>
+                                            <th>Status</th>
+                                            <th class="pe-3"></th>
+                                        </tr></thead>
+                                        <tbody id="nwDepositsBody"><tr><td colspan="8" class="text-center text-muted py-3">No fixed deposits yet.</td></tr></tbody>
+                                    </table>
+                                </div>
+                                <!-- Add deposit form -->
+                                <div class="card-body border-top">
+                                    <p class="small text-muted mb-2">Add a fixed-term deposit manually:</p>
+                                    <form id="nwDepositForm" class="row g-2 align-items-end">
+                                        <div class="col-12 col-sm-4">
+                                            <label class="form-label small mb-1">Name *</label>
+                                            <input class="form-control form-control-sm" id="depName" placeholder="e.g. Superdepósito 1 mes" required>
+                                        </div>
+                                        <div class="col-6 col-sm-2">
+                                            <label class="form-label small mb-1">Principal *</label>
+                                            <input type="number" step="any" class="form-control form-control-sm" id="depPrincipal" placeholder="5000" required>
+                                        </div>
+                                        <div class="col-6 col-sm-1">
+                                            <label class="form-label small mb-1">Currency</label>
+                                            <input class="form-control form-control-sm" id="depCurrency" value="EUR" maxlength="3">
+                                        </div>
+                                        <div class="col-6 col-sm-1">
+                                            <label class="form-label small mb-1">Rate % *</label>
+                                            <input type="number" step="any" class="form-control form-control-sm" id="depRate" placeholder="4.0" required>
+                                        </div>
+                                        <div class="col-6 col-sm-2">
+                                            <label class="form-label small mb-1">Start date *</label>
+                                            <input type="date" class="form-control form-control-sm" id="depStart" required>
+                                        </div>
+                                        <div class="col-6 col-sm-2">
+                                            <label class="form-label small mb-1">Maturity date *</label>
+                                            <input type="date" class="form-control form-control-sm" id="depMaturity" required>
+                                        </div>
+                                        <div class="col-12 col-sm-2">
+                                            <button type="submit" class="btn btn-sm btn-primary w-100"><i class="bi bi-plus-lg me-1"></i>Add deposit</button>
+                                        </div>
+                                        <div class="col-12"><div class="small" id="depAddStatus"></div></div>
+                                    </form>
+                                    <!-- LLM paste panel -->
+                                    <div class="mt-3">
+                                        <label class="form-label small mb-1"><i class="bi bi-magic me-1"></i>Or paste a statement and let AI extract deposits:</label>
+                                        <textarea class="form-control form-control-sm mb-2" id="depLlmText" rows="3" placeholder="Paste bank statement or deposit overview here…"></textarea>
+                                        <div class="d-flex gap-2 align-items-center">
+                                            <button class="btn btn-sm btn-outline-secondary" id="depExtractBtn"><i class="bi bi-cpu me-1"></i>Extract deposits</button>
+                                            <span class="small text-muted" id="depExtractStatus"></span>
+                                        </div>
+                                        <div id="depExtractPreview" class="mt-2"></div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -2777,6 +2845,38 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         </div>
                     </form>
                     <div id="researchTargetsStatus" class="small mt-2"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mature Deposit Modal -->
+    <div class="modal fade" id="depositMatureModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-check-circle me-2"></i>Mark Deposit as Matured</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <input type="hidden" id="matureDepositId">
+                    <div class="mb-3">
+                        <label class="form-label">Actual interest paid</label>
+                        <div class="input-group">
+                            <span class="input-group-text">€</span>
+                            <input type="number" step="any" class="form-control" id="matureInterestPaid" placeholder="8.35">
+                        </div>
+                        <div class="form-text">This will be recorded as an interest transaction.</div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Payout date</label>
+                        <input type="date" class="form-control" id="maturePayoutDate">
+                    </div>
+                    <div class="small text-danger" id="matureDepositError"></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="button" class="btn btn-success" id="matureDepositConfirm"><i class="bi bi-check-lg me-1"></i>Confirm maturity</button>
                 </div>
             </div>
         </div>
