@@ -1336,13 +1336,12 @@ def dq_reconciliation(db=Depends(get_database), api_key_info: dict = Depends(_au
             if pos["quantity"] <= 0:
                 continue
             price_data = db.get_latest_price(asset_id_key)
-            if price_data and price_data.get("close"):
-                price = float(price_data["close"])
-                currency = price_data.get("currency") or "EUR"
+            asset = db.get_asset(asset_id_key)
+            currency = (asset.get("currency") or "EUR") if asset else "EUR"
+            if price_data and price_data.get("price"):
+                price = float(price_data["price"])
                 invested_value += pos["quantity"] * price * _fx(currency)
             else:
-                asset = db.get_asset(asset_id_key)
-                currency = (asset.get("currency") or "EUR") if asset else "EUR"
                 invested_value += pos["cost"] * _fx(currency)
 
         result.append(
