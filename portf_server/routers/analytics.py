@@ -1271,3 +1271,93 @@ def stress_test(
     if scenario_key != "custom":
         return cached(db, f"stress:{scenario_key}", 7 * 24 * 3600, _compute)
     return _compute()
+
+
+# ── Data Quality ──────────────────────────────────────────────────────────────
+
+
+@router.get("/dq/reconciliation")
+def dq_reconciliation(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+    """Per-portfolio cash reconciliation.
+
+    Computes the 'implied cash' each portfolio should hold at the broker
+    (deposits − withdrawals − buy costs + sell proceeds + dividends + interest)
+    and the current invested value from stored prices. Both figures are EUR.
+    The caller compares implied_cash against the broker's cash balance.
+
+    Plain ``def`` because _fx() may make a blocking yfinance call for
+    non-EUR assets.
+    """
+    portfolios = db.get_all_portfolios()
+    result = []
+
+    for p in portfolios:
+        pid = p["id"]
+        txns = db.get_all_transactions(portfolio_id=pid)
+        bookings = db.get_all_bookings(portfolio_id=pid)
+
+        deposits = sum(
+            float(b["amount"] or 0) for b in bookings if b["action"] == "Deposit"
+        )
+        withdrawals = sum(
+            float(b["amount"] or 0) for b in bookings if b["action"] == "Withdrawal"
+        )
+        net_bookings = deposits - withdrawals
+
+        buy_costs = 0.0
+        sell_proceeds = 0.0
+        dividend_income_total = 0.0
+        interest_income_total = 0.0
+        for tx in txns:
+            amt = float(tx["total_amount"] or 0)
+            tx_type = tx["transaction_type"]
+            if tx_type == "buy":
+                buy_costs += amt
+            elif tx_type == "sell":
+                sell_proceeds += amt
+            elif tx_type == "dividend":
+                dividend_income_total += amt
+            elif tx_type == "interest":
+                interest_income_total += amt
+
+        implied_cash = (
+            net_bookings
+            - buy_costs
+            + sell_proceeds
+            + dividend_income_total
+            + interest_income_total
+        )
+
+        # Invested value: held quantity × latest stored price (EUR-converted).
+        # Falls back to cost basis when no price is stored.
+        positions, _ = compute_positions(txns)
+        invested_value = 0.0
+        for asset_id_key, pos in positions.items():
+            if pos["quantity"] <= 0:
+                continue
+            price_data = db.get_latest_price(asset_id_key)
+            if price_data and price_data.get("close"):
+                price = float(price_data["close"])
+                currency = price_data.get("currency") or "EUR"
+                invested_value += pos["quantity"] * price * _fx(currency)
+            else:
+                asset = db.get_asset(asset_id_key)
+                currency = (asset.get("currency") or "EUR") if asset else "EUR"
+                invested_value += pos["cost"] * _fx(currency)
+
+        result.append(
+            {
+                "portfolio_id": pid,
+                "portfolio_name": p["name"],
+                "net_bookings": round(net_bookings, 2),
+                "buy_costs": round(buy_costs, 2),
+                "sell_proceeds": round(sell_proceeds, 2),
+                "dividend_income": round(dividend_income_total, 2),
+                "interest_income": round(interest_income_total, 2),
+                "implied_cash": round(implied_cash, 2),
+                "invested_value": round(invested_value, 2),
+                "total_accounted": round(implied_cash + invested_value, 2),
+            }
+        )
+
+    return {"portfolios": result}
