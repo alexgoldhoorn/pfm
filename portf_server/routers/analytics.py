@@ -1360,3 +1360,108 @@ def dq_reconciliation(db=Depends(get_database), api_key_info: dict = Depends(_au
         )
 
     return {"portfolios": result}
+
+
+def _within_pct(a: float, b: float, pct: float) -> bool:
+    """Return True when a and b are within pct (0–1) of each other."""
+    if a == 0 and b == 0:
+        return True
+    if a == 0 or b == 0:
+        return False
+    return abs(a - b) / max(abs(a), abs(b)) <= pct
+
+
+@router.get("/dq/duplicates")
+async def dq_duplicates(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+    """Scan all transactions for fuzzy near-duplicates.
+
+    Groups by (portfolio_id, asset_id, transaction_type). Within each group,
+    flags pairs where date is within ±3 days AND quantity within ±5% AND
+    price within ±5%. Labels 'likely' when same day + qty/price within ±1%.
+    """
+    from collections import defaultdict
+
+    txns = db.get_all_transactions()
+    groups: dict = defaultdict(list)
+    for tx in txns:
+        key = (
+            tx.get("portfolio_id"),
+            tx.get("asset_id"),
+            tx.get("transaction_type"),
+        )
+        groups[key].append(tx)
+
+    duplicates = []
+    seen_pairs: set = set()
+
+    for group_txns in groups.values():
+        group_txns.sort(key=lambda t: str(t.get("transaction_date") or ""))
+        n = len(group_txns)
+        for i in range(n):
+            tx_a = group_txns[i]
+            date_a_str = str(tx_a.get("transaction_date") or "")[:10]
+            try:
+                d_a = datetime.strptime(date_a_str, "%Y-%m-%d").date()
+            except (ValueError, TypeError):
+                continue
+
+            for j in range(i + 1, n):
+                tx_b = group_txns[j]
+                date_b_str = str(tx_b.get("transaction_date") or "")[:10]
+                try:
+                    d_b = datetime.strptime(date_b_str, "%Y-%m-%d").date()
+                except (ValueError, TypeError):
+                    continue
+
+                day_diff = abs((d_b - d_a).days)
+                if day_diff > 3:
+                    # list is sorted by date; no closer matches ahead
+                    break
+
+                qty_a = float(tx_a.get("quantity") or 0)
+                qty_b = float(tx_b.get("quantity") or 0)
+                price_a = float(tx_a.get("price") or 0)
+                price_b = float(tx_b.get("price") or 0)
+
+                if not (
+                    _within_pct(qty_a, qty_b, 0.05)
+                    and _within_pct(price_a, price_b, 0.05)
+                ):
+                    continue
+
+                id_a, id_b = tx_a["id"], tx_b["id"]
+                pair_key = f"dup:{min(id_a, id_b)}:{max(id_a, id_b)}"
+                if pair_key in seen_pairs:
+                    continue
+                seen_pairs.add(pair_key)
+
+                label = (
+                    "likely"
+                    if day_diff == 0
+                    and _within_pct(qty_a, qty_b, 0.01)
+                    and _within_pct(price_a, price_b, 0.01)
+                    else "possible"
+                )
+
+                def _summary(tx: dict) -> dict:
+                    return {
+                        "id": tx["id"],
+                        "date": str(tx.get("transaction_date") or "")[:10],
+                        "asset": tx.get("symbol") or "",
+                        "asset_name": tx.get("name") or "",
+                        "type": tx.get("transaction_type") or "",
+                        "quantity": float(tx.get("quantity") or 0),
+                        "price": float(tx.get("price") or 0),
+                        "portfolio": tx.get("portfolio_name") or "",
+                    }
+
+                duplicates.append(
+                    {
+                        "label": label,
+                        "key": pair_key,
+                        "tx_a": _summary(tx_a),
+                        "tx_b": _summary(tx_b),
+                    }
+                )
+
+    return {"duplicates": duplicates}
