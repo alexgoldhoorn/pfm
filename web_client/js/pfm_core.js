@@ -395,12 +395,44 @@ async function loadDiagnosticsPage() {
     const runsBody = document.getElementById('diagRunsBody');
     if (!freshBox) return;
 
+    _dqLoaded = false; // reset so DQ refreshes when tab is next activated
+
     // Wire the refresh button once.
     const refreshBtn = document.getElementById('refreshDiagnostics');
     if (refreshBtn && !refreshBtn._wired) {
         refreshBtn._wired = true;
-        refreshBtn.addEventListener('click', () => loadDiagnosticsPage());
+        refreshBtn.addEventListener('click', () => {
+            const dqPane = document.getElementById('diagDataQuality');
+            const dqActive = dqPane && dqPane.classList.contains('active');
+            if (dqActive) {
+                _dqLoaded = false;
+                loadDataQualityTab();
+            } else {
+                loadDiagnosticsPage();
+            }
+        });
     }
+
+    // Wire DQ tab activation (lazy load on first switch)
+    const dqTabBtn = document.getElementById('diagTabDQ');
+    if (dqTabBtn && !dqTabBtn._dqWired) {
+        dqTabBtn._dqWired = true;
+        dqTabBtn.addEventListener('shown.bs.tab', () => loadDataQualityTab());
+    }
+
+    // Restore last active tab from localStorage
+    const lastTab = localStorage.getItem('pfmDiagTab');
+    if (lastTab === 'dq') {
+        const dqBtn = document.getElementById('diagTabDQ');
+        if (dqBtn && window.bootstrap) new window.bootstrap.Tab(dqBtn).show();
+    }
+
+    // Persist active tab to localStorage on switch
+    document.querySelectorAll('#diagTabs button[data-bs-toggle="tab"]').forEach(btn => {
+        btn.addEventListener('shown.bs.tab', () => {
+            localStorage.setItem('pfmDiagTab', btn.id === 'diagTabDQ' ? 'dq' : 'price');
+        });
+    });
 
     const esc = s => String(s == null ? '' : s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 
@@ -462,6 +494,245 @@ async function loadDiagnosticsPage() {
     }
 }
 window.loadDiagnosticsPage = loadDiagnosticsPage;
+
+// ── Data Quality tab ──────────────────────────────────────────────────────────
+
+let _dqLoaded = false;
+
+function _dqDismissed(check, key) {
+    const items = JSON.parse(localStorage.getItem('pfmDismissedIssues') || '[]');
+    return items.some(i => i.check === check && i.key === key);
+}
+function _dqDismiss(check, key) {
+    const items = JSON.parse(localStorage.getItem('pfmDismissedIssues') || '[]');
+    if (!items.some(i => i.check === check && i.key === key)) {
+        items.push({ check, key, dismissed_at: new Date().toISOString() });
+        localStorage.setItem('pfmDismissedIssues', JSON.stringify(items));
+    }
+}
+function _dqUndismiss(check, key) {
+    const items = JSON.parse(localStorage.getItem('pfmDismissedIssues') || '[]');
+    localStorage.setItem('pfmDismissedIssues',
+        JSON.stringify(items.filter(i => !(i.check === check && i.key === key))));
+}
+
+async function loadDataQualityTab(force = false) {
+    if (_dqLoaded && !force) return;
+    _dqLoaded = true;
+
+    function _wireOnce(id, fn) {
+        const btn = document.getElementById(id);
+        if (btn && !btn._dqWired) { btn._dqWired = true; btn.addEventListener('click', fn); }
+    }
+    _wireOnce('dqRerunRecon', () => { _dqLoaded = false; _loadReconCard(); });
+    _wireOnce('dqRerunDups',  () => { _dqLoaded = false; _loadDupsCard(); });
+    _wireOnce('dqRerunSusp',  () => { _dqLoaded = false; _loadSuspCard(); });
+
+    await Promise.all([_loadReconCard(), _loadDupsCard(), _loadSuspCard()]);
+
+    async function _loadReconCard() {
+        const el = document.getElementById('dqReconBody');
+        if (!el) return;
+        el.innerHTML = '<tr><td colspan="5" class="text-muted small p-3">Loading…</td></tr>';
+        const data = await window.apiClient.getDQReconciliation().catch(() => null);
+        if (!data) {
+            el.innerHTML = '<tr><td colspan="5" class="text-danger small p-3">Could not load reconciliation data.</td></tr>';
+            return;
+        }
+        if (!data.portfolios.length) {
+            el.innerHTML = '<tr><td colspan="5" class="text-muted small p-3">No portfolios found.</td></tr>';
+            return;
+        }
+        el.innerHTML = data.portfolios.map(p => `
+            <tr>
+                <td class="fw-semibold">${esc(p.portfolio_name)}</td>
+                <td class="text-end font-monospace">${Fmt.money(p.implied_cash, 'EUR')}</td>
+                <td class="text-end font-monospace">${Fmt.money(p.invested_value, 'EUR')}</td>
+                <td class="text-end font-monospace fw-semibold">${Fmt.money(p.total_accounted, 'EUR')}</td>
+                <td class="text-end small text-muted">${Fmt.money(p.net_bookings, 'EUR')}</td>
+            </tr>`).join('');
+    }
+
+    async function _loadDupsCard() {
+        const body   = document.getElementById('dqDupsBody');
+        const footer = document.getElementById('dqDupsFooter');
+        if (!body) return;
+        body.innerHTML = '<div class="text-muted small p-3">Loading…</div>';
+        const data = await window.apiClient.getDQDuplicates().catch(() => null);
+        if (!data) {
+            body.innerHTML = '<div class="text-danger small p-3">Could not load duplicates.</div>';
+            return;
+        }
+        const dups = data.duplicates || [];
+        if (!dups.length) {
+            body.innerHTML = '<div class="text-success small p-3"><i class="bi bi-check-circle me-1"></i>No possible duplicates found.</div>';
+            if (footer) footer.innerHTML = '';
+            return;
+        }
+
+        let showDismissed = false;
+
+        function _renderDups() {
+            const toShow = showDismissed ? dups : dups.filter(d => !_dqDismissed('dup', d.key));
+            if (!toShow.length) {
+                body.innerHTML = '<div class="text-success small p-3"><i class="bi bi-check-circle me-1"></i>All findings dismissed.</div>';
+            } else {
+                body.innerHTML = toShow.map(d => {
+                    const isDism = _dqDismissed('dup', d.key);
+                    const badge = d.label === 'likely'
+                        ? '<span class="badge bg-danger">LIKELY</span>'
+                        : '<span class="badge bg-warning text-dark">POSSIBLE</span>';
+                    const olderId = d.tx_a.date <= d.tx_b.date ? d.tx_a.id : d.tx_b.id;
+                    const op = isDism ? ' opacity-50' : '';
+                    return `<div class="border-bottom p-2${op}" data-dup-key="${esc(d.key)}">
+                        <div class="d-flex justify-content-between align-items-start mb-1">
+                            <div>${badge} <span class="small text-muted">${esc(d.tx_a.portfolio)}</span></div>
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-danger btn-sm dq-del-older" data-id="${olderId}" data-key="${esc(d.key)}">Delete older</button>
+                                <button class="btn btn-outline-danger btn-sm dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown"></button>
+                                <ul class="dropdown-menu dropdown-menu-end">
+                                    <li><button class="dropdown-item dq-del-tx" data-id="${d.tx_a.id}" data-key="${esc(d.key)}">Delete #${d.tx_a.id} (${esc(d.tx_a.date)})</button></li>
+                                    <li><button class="dropdown-item dq-del-tx" data-id="${d.tx_b.id}" data-key="${esc(d.key)}">Delete #${d.tx_b.id} (${esc(d.tx_b.date)})</button></li>
+                                </ul>
+                                <button class="btn btn-outline-secondary btn-sm dq-dism-dup" data-key="${esc(d.key)}">${isDism ? 'Undismiss' : '×'}</button>
+                            </div>
+                        </div>
+                        <div class="row small g-1">
+                            <div class="col-6 bg-body-secondary rounded p-1">
+                                <div class="fw-semibold">${esc(d.tx_a.asset)}</div>
+                                <div>${esc(d.tx_a.type)} · ${Fmt.num(d.tx_a.quantity, 4)} @ ${Fmt.num(d.tx_a.price, 4)}</div>
+                                <div class="text-muted">${esc(d.tx_a.date)} · #${d.tx_a.id}</div>
+                            </div>
+                            <div class="col-6 bg-body-secondary rounded p-1">
+                                <div class="fw-semibold">${esc(d.tx_b.asset)}</div>
+                                <div>${esc(d.tx_b.type)} · ${Fmt.num(d.tx_b.quantity, 4)} @ ${Fmt.num(d.tx_b.price, 4)}</div>
+                                <div class="text-muted">${esc(d.tx_b.date)} · #${d.tx_b.id}</div>
+                            </div>
+                        </div>
+                    </div>`;
+                }).join('');
+
+                body.querySelectorAll('.dq-del-older, .dq-del-tx').forEach(btn => {
+                    btn.addEventListener('click', async () => {
+                        const id  = parseInt(btn.dataset.id);
+                        const key = btn.dataset.key;
+                        if (!confirm(`Delete transaction #${id}?`)) return;
+                        try {
+                            await window.apiClient.deleteTransaction(id);
+                            _dqDismiss('dup', key);
+                            await _loadDupsCard();
+                        } catch (e) {
+                            alert('Failed to delete: ' + e.message);
+                        }
+                    });
+                });
+
+                body.querySelectorAll('.dq-dism-dup').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        const key = btn.dataset.key;
+                        _dqDismissed('dup', key) ? _dqUndismiss('dup', key) : _dqDismiss('dup', key);
+                        _renderDups();
+                        _renderDupsFooter();
+                    });
+                });
+            }
+        }
+
+        function _renderDupsFooter() {
+            if (!footer) return;
+            const n = dups.filter(d => _dqDismissed('dup', d.key)).length;
+            if (!n) { footer.innerHTML = ''; return; }
+            footer.innerHTML = `<button class="btn btn-link btn-sm p-0 text-muted">${showDismissed ? 'Hide' : 'Show'} ${n} dismissed</button>`;
+            footer.querySelector('button').addEventListener('click', () => {
+                showDismissed = !showDismissed;
+                _renderDups();
+                _renderDupsFooter();
+            });
+        }
+
+        _renderDups();
+        _renderDupsFooter();
+    }
+
+    async function _loadSuspCard() {
+        const body   = document.getElementById('dqSuspBody');
+        const footer = document.getElementById('dqSuspFooter');
+        if (!body) return;
+        body.innerHTML = '<tr><td colspan="6" class="text-muted small p-3">Loading…</td></tr>';
+        const data = await window.apiClient.getDQSuspicious().catch(() => null);
+        if (!data) {
+            body.innerHTML = '<tr><td colspan="6" class="text-danger small p-3">Could not load suspicious patterns.</td></tr>';
+            return;
+        }
+        const issues = data.issues || [];
+        if (!issues.length) {
+            body.innerHTML = '<tr><td colspan="6" class="text-success small p-3"><i class="bi bi-check-circle me-1"></i>No suspicious patterns found.</td></tr>';
+            if (footer) footer.innerHTML = '';
+            return;
+        }
+
+        let showDismissed = false;
+
+        function _renderSusp() {
+            const toShow = showDismissed ? issues : issues.filter(i => !_dqDismissed('susp', i.key));
+            if (!toShow.length) {
+                body.innerHTML = '<tr><td colspan="6" class="text-success small p-3"><i class="bi bi-check-circle me-1"></i>All findings dismissed.</td></tr>';
+            } else {
+                body.innerHTML = toShow.map(i => {
+                    const isDism = _dqDismissed('susp', i.key);
+                    const badge = i.severity === 'warning'
+                        ? '<span class="badge bg-warning text-dark">warning</span>'
+                        : '<span class="badge bg-info text-dark">info</span>';
+                    const op = isDism ? ' class="opacity-50"' : '';
+                    return `<tr${op}>
+                        <td>${badge}</td>
+                        <td><code>${esc(i.asset)}</code><div class="small text-muted">${esc(i.asset_name)}</div></td>
+                        <td class="small">${esc(i.date)}</td>
+                        <td class="small">${esc(i.type)}</td>
+                        <td class="small">${esc(i.description)}</td>
+                        <td class="text-nowrap">
+                            <button class="btn btn-link btn-sm p-0 me-2 dq-view-tx" data-asset="${esc(i.asset)}">View</button>
+                            <button class="btn btn-link btn-sm p-0 text-muted dq-dism-susp" data-key="${esc(i.key)}">${isDism ? 'Undismiss' : '×'}</button>
+                        </td>
+                    </tr>`;
+                }).join('');
+
+                body.querySelectorAll('.dq-view-tx').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        if (window.navigationManager) window.navigationManager.showPage('transactions');
+                        const f = document.getElementById('txAssetFilter');
+                        if (f) { f.value = btn.dataset.asset; f.dispatchEvent(new Event('change')); }
+                    });
+                });
+
+                body.querySelectorAll('.dq-dism-susp').forEach(btn => {
+                    btn.addEventListener('click', () => {
+                        const key = btn.dataset.key;
+                        _dqDismissed('susp', key) ? _dqUndismiss('susp', key) : _dqDismiss('susp', key);
+                        _renderSusp();
+                        _renderSuspFooter();
+                    });
+                });
+            }
+        }
+
+        function _renderSuspFooter() {
+            if (!footer) return;
+            const n = issues.filter(i => _dqDismissed('susp', i.key)).length;
+            if (!n) { footer.innerHTML = ''; return; }
+            footer.innerHTML = `<button class="btn btn-link btn-sm p-0 text-muted">${showDismissed ? 'Hide' : 'Show'} ${n} dismissed</button>`;
+            footer.querySelector('button').addEventListener('click', () => {
+                showDismissed = !showDismissed;
+                _renderSusp();
+                _renderSuspFooter();
+            });
+        }
+
+        _renderSusp();
+        _renderSuspFooter();
+    }
+}
+window.loadDataQualityTab = loadDataQualityTab;
 
 // Apply the user's default currency to the static "new entry" form fields
 // (Add booking, new broker). Add-asset is handled on modal-show.
