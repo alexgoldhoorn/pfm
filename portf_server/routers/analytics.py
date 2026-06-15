@@ -1464,3 +1464,110 @@ def dq_duplicates(db=Depends(get_database), api_key_info: dict = Depends(_auth))
                 )
 
     return {"duplicates": duplicates}
+
+
+@router.get("/dq/suspicious")
+def dq_suspicious(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+    """Scan transactions for data anomalies.
+
+    Checks (per transaction, chronologically):
+    - zero_price: buy or sell with price = 0 (splits and dividends excluded)
+    - zero_qty: non-split, non-dividend transaction with quantity = 0
+    - negative_position: sell that pushes the running quantity below zero
+    - dividend_before_buy: dividend recorded before the first buy for that asset
+    - price_outlier: price > 5× or < 0.2× the median for that asset
+      (requires ≥3 price data points to compute median)
+    """
+    txns = db.get_all_transactions()
+    txns_sorted = sorted(txns, key=lambda t: str(t.get("transaction_date") or ""))
+
+    # Pre-compute per-asset price median (buy/sell only, price > 0)
+    asset_prices: dict = {}
+    for tx in txns_sorted:
+        if tx.get("transaction_type") in ("buy", "sell"):
+            p = float(tx.get("price") or 0)
+            if p > 0:
+                asset_prices.setdefault(tx.get("asset_id"), []).append(p)
+
+    asset_median: dict = {}
+    for aid, prices in asset_prices.items():
+        if len(prices) >= 3:
+            asset_median[aid] = statistics.median(prices)
+
+    running_qty: dict = {}
+    first_buy: dict = {}
+    issues = []
+
+    for tx in txns_sorted:
+        aid = tx.get("asset_id")
+        tx_type = tx.get("transaction_type") or ""
+        qty = float(tx.get("quantity") or 0)
+        price = float(tx.get("price") or 0)
+        tx_id = tx["id"]
+        tx_date = str(tx.get("transaction_date") or "")[:10]
+        asset_sym = tx.get("symbol") or ""
+        asset_nm = tx.get("name") or ""
+
+        def _flag(severity: str, check: str, description: str) -> None:
+            issues.append(
+                {
+                    "severity": severity,
+                    "key": f"susp:{tx_id}:{check}",
+                    "check": check,
+                    "transaction_id": tx_id,
+                    "asset": asset_sym,
+                    "asset_name": asset_nm,
+                    "date": tx_date,
+                    "type": tx_type,
+                    "description": description,
+                }
+            )
+
+        # zero_price: buy/sell only (splits and dividends legitimately have price 0)
+        if tx_type in ("buy", "sell") and price == 0:
+            _flag(
+                "warning",
+                "zero_price",
+                f"{tx_type.capitalize()} transaction has price = 0",
+            )
+
+        # zero_qty: any non-split, non-dividend transaction
+        if tx_type not in ("split", "dividend") and qty == 0:
+            _flag("warning", "zero_qty", "Transaction has quantity = 0")
+
+        # dividend_before_buy
+        if tx_type == "dividend" and aid not in first_buy:
+            _flag(
+                "info",
+                "dividend_before_buy",
+                "Dividend recorded before any buy for this asset",
+            )
+
+        # price_outlier (buy/sell, price > 0, median established)
+        if tx_type in ("buy", "sell") and price > 0 and aid in asset_median:
+            med = asset_median[aid]
+            if med > 0 and (price > 5.0 * med or price < 0.2 * med):
+                _flag(
+                    "warning",
+                    "price_outlier",
+                    f"Price {price:.4f} is far from median {med:.4f} (possible unit error)",
+                )
+
+        # Update running state
+        if tx_type == "buy":
+            running_qty[aid] = running_qty.get(aid, 0.0) + qty
+            first_buy.setdefault(aid, tx_date)
+        elif tx_type == "sell":
+            prev = running_qty.get(aid, 0.0)
+            new_qty = prev - qty
+            if new_qty < -0.001:
+                _flag(
+                    "warning",
+                    "negative_position",
+                    f"Sell results in negative quantity ({new_qty:.4f}); missing buy transaction?",
+                )
+            running_qty[aid] = new_qty
+        elif tx_type == "split":
+            running_qty[aid] = running_qty.get(aid, 0.0) * qty
+
+    return {"issues": issues}
