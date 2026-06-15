@@ -6,6 +6,7 @@ import logging
 import math
 import statistics
 import threading
+from collections import defaultdict
 from datetime import date, datetime, timedelta
 from typing import Optional
 
@@ -1372,15 +1373,13 @@ def _within_pct(a: float, b: float, pct: float) -> bool:
 
 
 @router.get("/dq/duplicates")
-async def dq_duplicates(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def dq_duplicates(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
     """Scan all transactions for fuzzy near-duplicates.
 
     Groups by (portfolio_id, asset_id, transaction_type). Within each group,
     flags pairs where date is within ±3 days AND quantity within ±5% AND
     price within ±5%. Labels 'likely' when same day + qty/price within ±1%.
     """
-    from collections import defaultdict
-
     txns = db.get_all_transactions()
     groups: dict = defaultdict(list)
     for tx in txns:
@@ -1390,6 +1389,18 @@ async def dq_duplicates(db=Depends(get_database), api_key_info: dict = Depends(_
             tx.get("transaction_type"),
         )
         groups[key].append(tx)
+
+    def _summary(tx: dict) -> dict:
+        return {
+            "id": tx["id"],
+            "date": str(tx.get("transaction_date") or "")[:10],
+            "asset": tx.get("symbol") or "",
+            "asset_name": tx.get("name") or "",
+            "type": tx.get("transaction_type") or "",
+            "quantity": float(tx.get("quantity") or 0),
+            "price": float(tx.get("price") or 0),
+            "portfolio": tx.get("portfolio_name") or "",
+        }
 
     duplicates = []
     seen_pairs: set = set()
@@ -1442,18 +1453,6 @@ async def dq_duplicates(db=Depends(get_database), api_key_info: dict = Depends(_
                     and _within_pct(price_a, price_b, 0.01)
                     else "possible"
                 )
-
-                def _summary(tx: dict) -> dict:
-                    return {
-                        "id": tx["id"],
-                        "date": str(tx.get("transaction_date") or "")[:10],
-                        "asset": tx.get("symbol") or "",
-                        "asset_name": tx.get("name") or "",
-                        "type": tx.get("transaction_type") or "",
-                        "quantity": float(tx.get("quantity") or 0),
-                        "price": float(tx.get("price") or 0),
-                        "portfolio": tx.get("portfolio_name") or "",
-                    }
 
                 duplicates.append(
                     {
