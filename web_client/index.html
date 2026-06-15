@@ -1762,6 +1762,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                                 <option value="">Select broker…</option>
                                                 <option value="indexacapital">IndexaCapital (CSV)</option>
                                                 <option value="myinvestor">MyInvestor (CSV)</option>
+                                                <option value="myinvestor_paste">MyInvestor (Paste)</option>
                                                 <option value="mintos">Mintos P2P (CSV)</option>
                                                 <option value="coinbase">Coinbase (CSV)</option>
                                                 <option value="pdt">Portfolio Dividend Tracker (XLSX)</option>
@@ -1769,10 +1770,19 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                                 <option value="deposits">Fixed Deposits (CSV)</option>
                                             </select>
                                         </div>
+                                        <div class="mb-2">
+                                            <select class="form-select form-select-sm" id="ioFilePortfolio">
+                                                <option value="">Portfolio — None / auto-detect by broker name</option>
+                                            </select>
+                                        </div>
                                         <div id="ioFileHint" class="alert alert-info py-2 small" style="display:none;"></div>
-                                        <div class="mb-3">
+                                        <div class="mb-3" id="ioFileInputWrap">
                                             <label class="form-label" for="ioFileInput">File</label>
                                             <input type="file" class="form-control" id="ioFileInput" accept=".csv,.xlsx,.xls">
+                                        </div>
+                                        <div class="mb-3" id="ioFilePasteWrap" style="display:none;">
+                                            <label class="form-label" for="ioFilePasteArea">Paste statement text</label>
+                                            <textarea class="form-control font-monospace" id="ioFilePasteArea" rows="8" placeholder="Paste your MyInvestor transaction history here…"></textarea>
                                         </div>
                                     </div>
                                     <div id="ioFileStep2" style="display:none;">
@@ -2104,47 +2114,127 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                     <div class="d-flex align-items-center justify-content-between mb-3">
                         <div>
                             <h4 class="mb-0"><i class="bi bi-activity me-2 text-primary"></i>Diagnostics</h4>
-                            <p class="text-muted small mb-0">Price-data freshness and the daily price-update history — when prices last refreshed, what was skipped, and why.</p>
+                            <p class="text-muted small mb-0">Price-data health, update history, and data-quality checks.</p>
                         </div>
                         <div class="d-flex gap-2">
-                            <button class="btn btn-sm btn-outline-secondary" id="refreshDiagnostics" title="Refresh diagnostics"><i class="bi bi-arrow-clockwise"></i></button>
+                            <button class="btn btn-sm btn-outline-secondary" id="refreshDiagnostics" title="Refresh current tab"><i class="bi bi-arrow-clockwise"></i></button>
                             <button class="btn btn-sm btn-outline-secondary" onclick="showPageHelp('diagnostics')" title="Help"><i class="bi bi-question-circle"></i></button>
                         </div>
                     </div>
 
-                    <!-- Price-data freshness -->
-                    <div class="card mb-3">
-                        <div class="card-header fw-semibold"><i class="bi bi-clock-history me-2"></i>Price data freshness</div>
-                        <div class="card-body" id="diagFreshness">
-                            <div class="text-muted small">Loading…</div>
-                        </div>
-                    </div>
+                    <!-- Tab navigation -->
+                    <ul class="nav nav-tabs mb-3" id="diagTabs">
+                        <li class="nav-item">
+                            <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#diagPriceHealth" id="diagTabPrice">
+                                <i class="bi bi-clock-history me-1"></i>Price Health
+                            </button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link" data-bs-toggle="tab" data-bs-target="#diagDataQuality" id="diagTabDQ">
+                                <i class="bi bi-shield-check me-1"></i>Data Quality
+                            </button>
+                        </li>
+                    </ul>
 
-                    <!-- Stale / unpriced holdings -->
-                    <div class="card mb-3">
-                        <div class="card-header fw-semibold"><i class="bi bi-exclamation-triangle me-2"></i>Stale &amp; unpriced holdings</div>
-                        <div class="card-body p-0">
-                            <div class="table-responsive">
-                                <table class="table table-sm mb-0 align-middle">
-                                    <thead><tr><th>Symbol</th><th>Name</th><th class="text-end">Age</th><th>Reason</th></tr></thead>
-                                    <tbody id="diagStaleBody"><tr><td colspan="4" class="text-muted small">Loading…</td></tr></tbody>
-                                </table>
+                    <div class="tab-content">
+
+                        <!-- Price Health tab -->
+                        <div class="tab-pane fade show active" id="diagPriceHealth">
+                            <!-- Price-data freshness -->
+                            <div class="card mb-3">
+                                <div class="card-header fw-semibold"><i class="bi bi-clock-history me-2"></i>Price data freshness</div>
+                                <div class="card-body" id="diagFreshness">
+                                    <div class="text-muted small">Loading…</div>
+                                </div>
+                            </div>
+
+                            <!-- Stale / unpriced holdings -->
+                            <div class="card mb-3">
+                                <div class="card-header fw-semibold"><i class="bi bi-exclamation-triangle me-2"></i>Stale &amp; unpriced holdings</div>
+                                <div class="card-body p-0">
+                                    <div class="table-responsive">
+                                        <table class="table table-sm mb-0 align-middle">
+                                            <thead><tr><th>Symbol</th><th>Name</th><th class="text-end">Age</th><th>Reason</th></tr></thead>
+                                            <tbody id="diagStaleBody"><tr><td colspan="4" class="text-muted small">Loading…</td></tr></tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Update history -->
+                            <div class="card mb-3">
+                                <div class="card-header fw-semibold"><i class="bi bi-list-check me-2"></i>Price-update history</div>
+                                <div class="card-body p-0">
+                                    <div class="table-responsive">
+                                        <table class="table table-sm mb-0 align-middle">
+                                            <thead><tr><th>When</th><th>Source</th><th class="text-end">Duration</th><th class="text-end">Updated</th><th class="text-end">Skipped</th><th class="text-end">Errors</th><th>Skipped symbols</th></tr></thead>
+                                            <tbody id="diagRunsBody"><tr><td colspan="7" class="text-muted small">Loading…</td></tr></tbody>
+                                        </table>
+                                    </div>
+                                </div>
                             </div>
                         </div>
-                    </div>
 
-                    <!-- Update history -->
-                    <div class="card mb-3">
-                        <div class="card-header fw-semibold"><i class="bi bi-list-check me-2"></i>Price-update history</div>
-                        <div class="card-body p-0">
-                            <div class="table-responsive">
-                                <table class="table table-sm mb-0 align-middle">
-                                    <thead><tr><th>When</th><th>Source</th><th class="text-end">Duration</th><th class="text-end">Updated</th><th class="text-end">Skipped</th><th class="text-end">Errors</th><th>Skipped symbols</th></tr></thead>
-                                    <tbody id="diagRunsBody"><tr><td colspan="7" class="text-muted small">Loading…</td></tr></tbody>
-                                </table>
+                        <!-- Data Quality tab -->
+                        <div class="tab-pane fade" id="diagDataQuality">
+
+                            <!-- Reconciliation -->
+                            <div class="card mb-3">
+                                <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+                                    <span>
+                                        <i class="bi bi-calculator me-2"></i>Cash &amp; Position Reconciliation
+                                        <span class="ms-1 text-muted" style="cursor:help" title="Implied cash = deposits − withdrawals − buys + sells + dividends + interest. Compare against your broker's cash balance."><i class="bi bi-info-circle"></i></span>
+                                    </span>
+                                    <button class="btn btn-sm btn-outline-secondary" id="dqRerunRecon" title="Re-run"><i class="bi bi-arrow-clockwise"></i></button>
+                                </div>
+                                <div class="card-body p-0">
+                                    <div class="table-responsive">
+                                        <table class="table table-sm mb-0 align-middle">
+                                            <thead><tr>
+                                                <th>Portfolio</th>
+                                                <th class="text-end">Implied Cash</th>
+                                                <th class="text-end">Invested Value</th>
+                                                <th class="text-end">Total Accounted</th>
+                                                <th class="text-end">Net Bookings</th>
+                                            </tr></thead>
+                                            <tbody id="dqReconBody"><tr><td colspan="5" class="text-muted small p-3">Load the Data Quality tab to run checks.</td></tr></tbody>
+                                        </table>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
-                    </div>
+
+                            <!-- Duplicates -->
+                            <div class="card mb-3">
+                                <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+                                    <span><i class="bi bi-files me-2"></i>Possible Duplicate Transactions</span>
+                                    <button class="btn btn-sm btn-outline-secondary" id="dqRerunDups" title="Re-run"><i class="bi bi-arrow-clockwise"></i></button>
+                                </div>
+                                <div id="dqDupsBody"><div class="text-muted small p-3">Load the Data Quality tab to run checks.</div></div>
+                                <div class="card-footer py-1 border-top-0" id="dqDupsFooter" style="min-height:0"></div>
+                            </div>
+
+                            <!-- Suspicious patterns -->
+                            <div class="card mb-3">
+                                <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
+                                    <span><i class="bi bi-exclamation-circle me-2"></i>Suspicious Patterns</span>
+                                    <button class="btn btn-sm btn-outline-secondary" id="dqRerunSusp" title="Re-run"><i class="bi bi-arrow-clockwise"></i></button>
+                                </div>
+                                <div class="card-body p-0">
+                                    <div class="table-responsive">
+                                        <table class="table table-sm mb-0 align-middle">
+                                            <thead><tr>
+                                                <th>Severity</th><th>Asset</th><th>Date</th><th>Type</th><th>Issue</th><th>Actions</th>
+                                            </tr></thead>
+                                            <tbody id="dqSuspBody"><tr><td colspan="6" class="text-muted small p-3">Load the Data Quality tab to run checks.</td></tr></tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                                <div class="card-footer py-1 border-top-0" id="dqSuspFooter" style="min-height:0"></div>
+                            </div>
+
+                        </div><!-- /diagDataQuality -->
+
+                    </div><!-- /tab-content -->
                 </div>
 
                 <!-- Net Worth Page -->
@@ -2814,11 +2904,17 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
           </div>
           <div class="modal-body">
-            <p>This will permanently delete <strong>all transactions</strong> for <strong id="clearPortfolioName"></strong>. This cannot be undone.</p>
+            <p>This will permanently delete data for <strong id="clearPortfolioName"></strong>. This cannot be undone.</p>
             <div class="mb-3">
               <button class="btn btn-sm btn-outline-secondary" id="clearModalBackupBtn">
                 <i class="bi bi-database-down me-1"></i>Download DB backup first
               </button>
+            </div>
+            <div class="form-check mb-2">
+              <input class="form-check-input" type="checkbox" id="clearIncludeBookings" checked>
+              <label class="form-check-label" for="clearIncludeBookings">
+                Also delete cash bookings (deposits / withdrawals)
+              </label>
             </div>
             <div class="form-check">
               <input class="form-check-input" type="checkbox" id="clearConfirmCheck">
@@ -2830,7 +2926,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
           <div class="modal-footer">
             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
             <button type="button" class="btn btn-danger" id="clearTransactionsConfirmBtn" disabled>
-              Clear transactions
+              Clear
             </button>
           </div>
         </div>
@@ -2954,8 +3050,8 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
          core → pages → analytics → features (features carries the
          DOMContentLoaded bootstrap, so it loads last). -->
     <script src="js/pfm_core.js?v=1780000054"></script>
-    <script src="js/pfm_pages.js?v=1780000050"></script>
+    <script src="js/pfm_pages.js?v=1780000051"></script>
     <script src="js/pfm_analytics.js?v=1780000054"></script>
-    <script src="js/pfm_features.js?v=1780000053"></script>
+    <script src="js/pfm_features.js?v=1780000055"></script>
 </body>
 </html>
