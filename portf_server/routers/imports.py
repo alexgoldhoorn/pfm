@@ -36,6 +36,7 @@ from portf_manager.parsers.coinbase_csv_parser import parse_coinbase_csv
 from portf_manager.parsers.bookings_csv_parser import parse_bookings_csv
 from portf_manager.parsers.deposits_csv_parser import parse_deposits_csv
 from portf_manager.parsers.myinvestor_csv_parser import parse_myinvestor_csv
+from portf_manager.parsers.myinvestor_paste_parser import parse_myinvestor_paste
 from portf_manager.parsers.mintos_csv_parser import (
     parse_mintos_csv,
     MINTOS_SYMBOL,
@@ -61,6 +62,7 @@ SUPPORTED_BROKERS = [
     "bookings",
     "deposits",
     "myinvestor",
+    "myinvestor_paste",
     "mintos",
 ]
 
@@ -86,6 +88,8 @@ class PreviewTransaction(BaseModel):
     broker: Optional[str] = None
     # Set by the preview endpoint when a matching transaction already exists.
     is_duplicate: bool = False
+    # Unchecked by default in the preview (e.g. buy/sell from brokers without ISIN detail).
+    skip: bool = False
 
 
 class PreviewBooking(BaseModel):
@@ -280,9 +284,42 @@ def _parse_myinvestor(
             currency=tx.currency or "EUR",
             fees=tx.fees,
             broker="MyInvestor",
+            skip=tx.tx_type in ("buy", "sell"),
             notes=(tx.raw_text or "")
             + (
-                " · review: MyInvestor gives no ISIN/fees"
+                " · no ISIN/fees — use LLM import for full detail"
+                if tx.tx_type in ("buy", "sell")
+                else ""
+            ),
+        )
+        for tx in result.transactions
+    ]
+    bookings = [PreviewBooking(**bk) for bk in result.bookings]
+    skipped = [{"type": t, "reason": r} for t, r in result.skipped]
+    return previews, bookings, skipped
+
+
+def _parse_myinvestor_paste(
+    content: str,
+) -> tuple[List[PreviewTransaction], List[PreviewBooking], List[dict]]:
+    """MyInvestor copy/paste statement → trades + dividends + deposit bookings."""
+    result = parse_myinvestor_paste(content)
+    previews = [
+        PreviewTransaction(
+            symbol=tx.symbol,
+            name=tx.asset_name,
+            asset_type=_detect_asset_type(tx.asset_name, ""),
+            tx_type=tx.tx_type,
+            date=tx.date,
+            quantity=tx.quantity,
+            price=tx.price,
+            currency=tx.currency or "EUR",
+            fees=tx.fees,
+            broker="MyInvestor",
+            skip=tx.tx_type in ("buy", "sell"),
+            notes=(tx.raw_text or "")
+            + (
+                " · no ISIN/fees — use LLM import for full detail"
                 if tx.tx_type in ("buy", "sell")
                 else ""
             ),
@@ -423,7 +460,9 @@ def _flag_duplicates(
     for tx in previews:
         try:
             symbol = tx.symbol.upper()
-            asset = db.get_asset_by_symbol(symbol)
+            asset = db.get_asset_by_symbol(symbol) or (
+                db.get_asset_by_name(tx.name) if tx.name else None
+            )
             if not asset:
                 continue  # new asset → can't be a duplicate yet
             price, _t, _fees, _cur = normalize_gbx_amounts(
@@ -512,6 +551,9 @@ async def upload_broker_file(
         elif broker == "myinvestor":
             content = file_bytes.decode("utf-8-sig")
             previews, bookings, skipped = _parse_myinvestor(content)
+        elif broker == "myinvestor_paste":
+            content = file_bytes.decode("utf-8")
+            previews, bookings, skipped = _parse_myinvestor_paste(content)
         elif broker == "mintos":
             content = file_bytes.decode("utf-8-sig")
             previews, bookings, skipped = _parse_mintos(content)
@@ -582,8 +624,12 @@ async def save_imported_transactions(
                 symbol, tx.price, None, tx.fees, tx.currency
             )
 
-            # Find or create asset
-            asset = db.get_asset_by_symbol(symbol)
+            # Find or create asset.  Try symbol first; fall back to name so that a
+            # CSV import (name-as-symbol) and an LLM import (ISIN-as-symbol) both
+            # resolve to the same existing record instead of creating a duplicate.
+            asset = db.get_asset_by_symbol(symbol) or (
+                db.get_asset_by_name(tx.name) if tx.name else None
+            )
             if asset:
                 asset_id = asset["id"]
             else:
