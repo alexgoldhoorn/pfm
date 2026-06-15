@@ -1479,7 +1479,10 @@ def dq_suspicious(db=Depends(get_database), api_key_info: dict = Depends(_auth))
       (requires ≥3 price data points to compute median)
     """
     txns = db.get_all_transactions()
-    txns_sorted = sorted(txns, key=lambda t: str(t.get("transaction_date") or ""))
+    txns_sorted = sorted(
+        txns,
+        key=lambda t: (str(t.get("transaction_date") or ""), t.get("id", 0) or 0),
+    )
 
     # Pre-compute per-asset price median (buy/sell only, price > 0)
     asset_prices: dict = {}
@@ -1531,8 +1534,8 @@ def dq_suspicious(db=Depends(get_database), api_key_info: dict = Depends(_auth))
                 f"{tx_type.capitalize()} transaction has price = 0",
             )
 
-        # zero_qty: any non-split, non-dividend transaction
-        if tx_type not in ("split", "dividend") and qty == 0:
+        # zero_qty: buy/sell only (interest, transfer_in/out etc. legitimately omit qty)
+        if tx_type in ("buy", "sell") and qty == 0:
             _flag("warning", "zero_qty", "Transaction has quantity = 0")
 
         # dividend_before_buy
@@ -1567,6 +1570,10 @@ def dq_suspicious(db=Depends(get_database), api_key_info: dict = Depends(_auth))
                     f"Sell results in negative quantity ({new_qty:.4f}); missing buy transaction?",
                 )
             running_qty[aid] = new_qty
+        elif tx_type == "transfer_in":
+            running_qty[aid] = running_qty.get(aid, 0.0) + qty
+        elif tx_type == "transfer_out":
+            running_qty[aid] = running_qty.get(aid, 0.0) - qty
         elif tx_type == "split":
             running_qty[aid] = running_qty.get(aid, 0.0) * qty
 
