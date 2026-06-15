@@ -1876,6 +1876,18 @@ class Database:
                 row = cursor.fetchone()
             return dict(row) if row else None
 
+    def get_asset_by_name(self, name: str) -> Optional[Dict]:
+        """Get asset by exact name match (case-insensitive). Returns the record with an
+        ISIN-style symbol (12 chars) preferentially so CSV/LLM imports resolve to the
+        canonical record rather than creating a name-keyed duplicate."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM assets WHERE name = ? COLLATE NOCASE ORDER BY LENGTH(symbol) DESC LIMIT 1",
+                (name,),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
     def get_all_assets(self, active_only: bool = True) -> List[Dict]:
         """Get all assets."""
         with self.get_connection() as conn:
@@ -2143,6 +2155,16 @@ class Database:
         with self.get_connection() as conn:
             cursor = conn.execute(
                 "DELETE FROM transactions WHERE portfolio_id = ?",
+                (portfolio_id,),
+            )
+            conn.commit()
+            return cursor.rowcount
+
+    def delete_bookings_by_portfolio(self, portfolio_id: int) -> int:
+        """Delete all bookings for a portfolio. Returns number of deleted rows."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "DELETE FROM bookings WHERE portfolio_id = ?",
                 (portfolio_id,),
             )
             conn.commit()
