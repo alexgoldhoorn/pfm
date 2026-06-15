@@ -158,6 +158,7 @@ The **Research workbench** (web page `researchPage`, `setupResearchPage()`): pic
 - `GET /api/v1/analytics/fees` — total fees/tax per broker, fee drag % of invested
 - `GET /api/v1/analytics/tax-report?year=` — per-lot FIFO realised gains + dividend withholding summary
 - `GET /api/v1/analytics/data-freshness?stale_days=4` — price-data freshness behind value/gain-loss: `last_refresh` (max `prices.created_at`), `prices_as_of` (max `price_date`), `refresh_age_hours`, and held **auto-priced** assets whose latest price is older than `stale_days` or missing. Powers the dashboard freshness chip (`loadDataFreshness`) + a "DATA" item in the alerts banner.
+- **Data Quality** (`GET /api/v1/analytics/dq/reconciliation`, `/dq/duplicates`, `/dq/suspicious`) — three pure-DB checks with no yfinance calls (all plain `def`). Powers the **Data Quality tab** on the Diagnostics page (`loadDataQualityTab()` in `pfm_core.js`): (1) per-portfolio cash reconciliation (net_bookings − buy_costs + sell_proceeds + dividends + interest = implied_cash, plus invested_value from latest stored prices); (2) fuzzy duplicate scan (±3 days, ±5% qty/price, labelled `likely`/`possible`); (3) suspicious pattern detection (zero_price, zero_qty on buy/sell, negative_position, dividend_before_buy, price_outlier). Dismissals persist in `localStorage["pfmDismissedIssues"]`; inline delete uses `DELETE /api/v1/transactions/{id}`.
 - `services/tax_rates.py` — progressive savings-base brackets per jurisdiction (Spain default); `irpf_savings_tax` delegates here
 - `GET /api/v1/public/summary` (router `public.py`) — %-only allocation + return, NO amounts; off unless `PORTF_PUBLIC_VIEW=true`. Standalone page: `web_client/public.html`
 - Web client is **same-origin**: calls `/api/...` proxied by the web container's nginx to `portf_backend_dev:8000` (see `web_client/nginx.conf`). External access via nginx-proxy-manager → `docs/EXTERNAL_ACCESS.md`
@@ -265,6 +266,13 @@ Signature: `saveImportedTransactions(transactions, bookings = [], portfolioId = 
 - PDT Sheets sync tests: `tests/test_pdt_sheets_sync.py` (40 tests — all mocked, no real API calls)
 - Import/export + sync API tests: `tests/unit/test_imports_exports.py` (30 tests)
 - DB tests: `tests/test_database.py` — version assertion is `== 17` (bump it with `DATABASE_VERSION`)
+
+## Documentation (Default Behaviour)
+When adding or changing any feature, always update **both**:
+1. `PROJECT_STATUS.md` — bump the "Last updated" date and add the feature to the Recent summary line.
+2. Relevant inline sections of `CLAUDE.md` — add endpoint signatures, schema notes, key patterns, or gotchas that would not be obvious from reading the code. Keep it concise; duplicate the code's public interface only when the behaviour is non-obvious.
+
+This is mandatory, not optional. A feature is not done until the docs reflect it.
 
 ## Git
 - Public repo `github.com:alexgoldhoorn/pfm` — develop and push on `main`. Push with `GIT_SSH_COMMAND="ssh -o IdentitiesOnly=no" git push origin main`.
