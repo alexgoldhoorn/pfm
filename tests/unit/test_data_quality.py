@@ -264,3 +264,165 @@ class TestDQDuplicates:
             "/api/v1/analytics/dq/duplicates", headers=auth_headers
         )
         assert resp.json()["duplicates"] == []
+
+
+# ── suspicious ────────────────────────────────────────────────────────────────
+
+
+class TestDQSuspicious:
+    @pytest.mark.asyncio
+    async def test_no_issues_when_empty(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        resp = await async_test_client.get(
+            "/api/v1/analytics/dq/suspicious", headers=auth_headers
+        )
+        assert resp.status_code == 200
+        assert resp.json()["issues"] == []
+
+    @pytest.mark.asyncio
+    async def test_flags_zero_price_buy(
+        self, async_test_client: AsyncClient, auth_headers, test_database
+    ):
+        pid = test_database.get_or_create_portfolio("ZP", base_currency="EUR")
+        aid = test_database.create_asset("AMZN", "Amazon", "stock", currency="USD")
+        test_database.create_transaction(
+            asset_id=aid,
+            transaction_type="buy",
+            quantity=1.0,
+            price=0.0,
+            total_amount=0.0,
+            transaction_date="2025-01-10",
+            portfolio_id=pid,
+        )
+        resp = await async_test_client.get(
+            "/api/v1/analytics/dq/suspicious", headers=auth_headers
+        )
+        issues = resp.json()["issues"]
+        zero_price = [i for i in issues if i["check"] == "zero_price"]
+        assert len(zero_price) == 1
+        assert zero_price[0]["severity"] == "warning"
+        assert zero_price[0]["key"].startswith("susp:")
+
+    @pytest.mark.asyncio
+    async def test_does_not_flag_split_with_zero_price(
+        self, async_test_client: AsyncClient, auth_headers, test_database
+    ):
+        pid = test_database.get_or_create_portfolio("SP", base_currency="EUR")
+        aid = test_database.create_asset("TSLA", "Tesla", "stock", currency="USD")
+        test_database.create_transaction(
+            asset_id=aid,
+            transaction_type="buy",
+            quantity=10.0,
+            price=200.0,
+            total_amount=2000.0,
+            transaction_date="2025-01-01",
+            portfolio_id=pid,
+        )
+        test_database.create_transaction(
+            asset_id=aid,
+            transaction_type="split",
+            quantity=3.0,
+            price=0.0,
+            total_amount=0.0,
+            transaction_date="2025-02-01",
+            portfolio_id=pid,
+        )
+        resp = await async_test_client.get(
+            "/api/v1/analytics/dq/suspicious", headers=auth_headers
+        )
+        issues = resp.json()["issues"]
+        assert not any(i["check"] == "zero_price" for i in issues)
+
+    @pytest.mark.asyncio
+    async def test_flags_negative_position(
+        self, async_test_client: AsyncClient, auth_headers, test_database
+    ):
+        pid = test_database.get_or_create_portfolio("NP", base_currency="EUR")
+        aid = test_database.create_asset("GOOG", "Alphabet", "stock", currency="USD")
+        # Sell without a prior buy
+        test_database.create_transaction(
+            asset_id=aid,
+            transaction_type="sell",
+            quantity=5.0,
+            price=150.0,
+            total_amount=750.0,
+            transaction_date="2025-03-01",
+            portfolio_id=pid,
+        )
+        resp = await async_test_client.get(
+            "/api/v1/analytics/dq/suspicious", headers=auth_headers
+        )
+        issues = resp.json()["issues"]
+        neg = [i for i in issues if i["check"] == "negative_position"]
+        assert len(neg) == 1
+        assert neg[0]["severity"] == "warning"
+
+    @pytest.mark.asyncio
+    async def test_flags_dividend_before_buy(
+        self, async_test_client: AsyncClient, auth_headers, test_database
+    ):
+        pid = test_database.get_or_create_portfolio("DB", base_currency="EUR")
+        aid = test_database.create_asset(
+            "JNJ", "Johnson & Johnson", "stock", currency="USD"
+        )
+        test_database.create_transaction(
+            asset_id=aid,
+            transaction_type="dividend",
+            quantity=0.0,
+            price=0.0,
+            total_amount=25.0,
+            transaction_date="2025-01-15",
+            portfolio_id=pid,
+        )
+        test_database.create_transaction(
+            asset_id=aid,
+            transaction_type="buy",
+            quantity=10.0,
+            price=160.0,
+            total_amount=1600.0,
+            transaction_date="2025-02-01",
+            portfolio_id=pid,
+        )
+        resp = await async_test_client.get(
+            "/api/v1/analytics/dq/suspicious", headers=auth_headers
+        )
+        issues = resp.json()["issues"]
+        dbf = [i for i in issues if i["check"] == "dividend_before_buy"]
+        assert len(dbf) == 1
+        assert dbf[0]["severity"] == "info"
+
+    @pytest.mark.asyncio
+    async def test_flags_price_outlier(
+        self, async_test_client: AsyncClient, auth_headers, test_database
+    ):
+        pid = test_database.get_or_create_portfolio("PO", base_currency="EUR")
+        aid = test_database.create_asset("BRK", "Berkshire", "stock", currency="USD")
+        # 3 normal buys at ~300 to establish median
+        for price in [298.0, 300.0, 302.0]:
+            test_database.create_transaction(
+                asset_id=aid,
+                transaction_type="buy",
+                quantity=1.0,
+                price=price,
+                total_amount=price,
+                transaction_date="2025-01-01",
+                portfolio_id=pid,
+            )
+        # One buy at 300 × 6 = 1800 (5x outlier, from e.g. GBX import)
+        test_database.create_transaction(
+            asset_id=aid,
+            transaction_type="buy",
+            quantity=1.0,
+            price=1800.0,
+            total_amount=1800.0,
+            transaction_date="2025-01-02",
+            portfolio_id=pid,
+        )
+        resp = await async_test_client.get(
+            "/api/v1/analytics/dq/suspicious", headers=auth_headers
+        )
+        issues = resp.json()["issues"]
+        outliers = [i for i in issues if i["check"] == "price_outlier"]
+        assert len(outliers) == 1
+        assert outliers[0]["severity"] == "warning"
