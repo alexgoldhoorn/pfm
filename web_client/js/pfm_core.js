@@ -420,11 +420,22 @@ async function loadDiagnosticsPage() {
         dqTabBtn.addEventListener('shown.bs.tab', () => loadDataQualityTab());
     }
 
-    // Restore last active tab from localStorage
+    // Restore last active tab, or ensure Price Health is active (nav clearing may have
+    // stripped the active class from both tab buttons).
     const lastTab = localStorage.getItem('pfmDiagTab');
-    if (lastTab === 'dq') {
-        const dqBtn = document.getElementById('diagTabDQ');
-        if (dqBtn && window.bootstrap) new window.bootstrap.Tab(dqBtn).show();
+    const dqBtn2  = document.getElementById('diagTabDQ');
+    const phBtn   = document.getElementById('diagTabPrice');
+    const dqPane  = document.getElementById('diagDataQuality');
+    if (lastTab === 'dq' && dqBtn2 && window.bootstrap) {
+        if (dqPane && dqPane.classList.contains('active')) {
+            // Pane already visible; shown.bs.tab won't fire — load directly.
+            loadDataQualityTab();
+        } else {
+            new window.bootstrap.Tab(dqBtn2).show();
+            // shown.bs.tab fires → loadDataQualityTab() via listener above
+        }
+    } else if (phBtn && window.bootstrap && !phBtn.classList.contains('active')) {
+        new window.bootstrap.Tab(phBtn).show();
     }
 
     // Persist active tab to localStorage on switch
@@ -588,13 +599,13 @@ async function loadDataQualityTab(force = false) {
                         <div class="d-flex justify-content-between align-items-start mb-1">
                             <div>${badge} <span class="small text-muted">${esc(d.tx_a.portfolio)}</span></div>
                             <div class="btn-group btn-group-sm">
-                                <button class="btn btn-outline-danger btn-sm dq-del-older" data-id="${olderId}" data-key="${esc(d.key)}">Delete older</button>
-                                <button class="btn btn-outline-danger btn-sm dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown"></button>
+                                <button type="button" class="btn btn-outline-danger btn-sm dq-del-older" data-id="${olderId}" data-key="${esc(d.key)}"><i class="bi bi-trash me-1"></i>Delete older</button>
+                                <button type="button" class="btn btn-outline-danger btn-sm dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-label="More delete options"><span class="visually-hidden">Toggle dropdown</span></button>
                                 <ul class="dropdown-menu dropdown-menu-end">
-                                    <li><button class="dropdown-item dq-del-tx" data-id="${d.tx_a.id}" data-key="${esc(d.key)}">Delete #${d.tx_a.id} (${esc(d.tx_a.date)})</button></li>
-                                    <li><button class="dropdown-item dq-del-tx" data-id="${d.tx_b.id}" data-key="${esc(d.key)}">Delete #${d.tx_b.id} (${esc(d.tx_b.date)})</button></li>
+                                    <li><button type="button" class="dropdown-item dq-del-tx" data-id="${d.tx_a.id}" data-key="${esc(d.key)}">Delete #${esc(d.tx_a.id)} (${esc(d.tx_a.date)})</button></li>
+                                    <li><button type="button" class="dropdown-item dq-del-tx" data-id="${d.tx_b.id}" data-key="${esc(d.key)}">Delete #${esc(d.tx_b.id)} (${esc(d.tx_b.date)})</button></li>
                                 </ul>
-                                <button class="btn btn-outline-secondary btn-sm dq-dism-dup" data-key="${esc(d.key)}">${isDism ? 'Undismiss' : '×'}</button>
+                                <button type="button" class="btn btn-outline-secondary btn-sm dq-dism-dup" data-key="${esc(d.key)}" title="${isDism ? 'Undismiss' : 'Dismiss'}">${isDism ? '<i class="bi bi-eye"></i>' : '<i class="bi bi-eye-slash"></i>'}</button>
                             </div>
                         </div>
                         <div class="row small g-1">
@@ -642,7 +653,7 @@ async function loadDataQualityTab(force = false) {
             if (!footer) return;
             const n = dups.filter(d => _dqDismissed('dup', d.key)).length;
             if (!n) { footer.innerHTML = ''; return; }
-            footer.innerHTML = `<button class="btn btn-link btn-sm p-0 text-muted">${showDismissed ? 'Hide' : 'Show'} ${n} dismissed</button>`;
+            footer.innerHTML = `<button type="button" class="btn btn-link btn-sm p-0 text-muted">${showDismissed ? 'Hide' : 'Show'} ${n} dismissed</button>`;
             footer.querySelector('button').addEventListener('click', () => {
                 showDismissed = !showDismissed;
                 _renderDups();
@@ -691,8 +702,8 @@ async function loadDataQualityTab(force = false) {
                         <td class="small">${esc(i.type)}</td>
                         <td class="small">${esc(i.description)}</td>
                         <td class="text-nowrap">
-                            <button class="btn btn-link btn-sm p-0 me-2 dq-view-tx" data-asset="${esc(i.asset)}">View</button>
-                            <button class="btn btn-link btn-sm p-0 text-muted dq-dism-susp" data-key="${esc(i.key)}">${isDism ? 'Undismiss' : '×'}</button>
+                            <button type="button" class="btn btn-link btn-sm p-0 me-2 dq-view-tx" data-asset="${esc(i.asset)}">View</button>
+                            <button type="button" class="btn btn-link btn-sm p-0 text-muted dq-dism-susp" data-key="${esc(i.key)}" title="${isDism ? 'Undismiss' : 'Dismiss'}">${isDism ? '<i class="bi bi-eye"></i>' : '<i class="bi bi-eye-slash"></i>'}</button>
                         </td>
                     </tr>`;
                 }).join('');
@@ -720,7 +731,7 @@ async function loadDataQualityTab(force = false) {
             if (!footer) return;
             const n = issues.filter(i => _dqDismissed('susp', i.key)).length;
             if (!n) { footer.innerHTML = ''; return; }
-            footer.innerHTML = `<button class="btn btn-link btn-sm p-0 text-muted">${showDismissed ? 'Hide' : 'Show'} ${n} dismissed</button>`;
+            footer.innerHTML = `<button type="button" class="btn btn-link btn-sm p-0 text-muted">${showDismissed ? 'Hide' : 'Show'} ${n} dismissed</button>`;
             footer.querySelector('button').addEventListener('click', () => {
                 showDismissed = !showDismissed;
                 _renderSusp();

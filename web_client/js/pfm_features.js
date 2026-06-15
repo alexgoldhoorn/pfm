@@ -209,7 +209,8 @@ function createNavigationManager() {
 
             // Clear active state on all nav links (sidebar + offcanvas) and set
             // it on every link for this page (there are two copies of each).
-            document.querySelectorAll('.sidebar-nav-link, .nav-link').forEach(
+            // Only target data-page links, NOT Bootstrap tab buttons (also .nav-link).
+            document.querySelectorAll('[data-page]').forEach(
                 link => link.classList.remove('active')
             );
             document.querySelectorAll(`[data-page="${pageName}"]`).forEach(
@@ -666,13 +667,43 @@ window.confirmDeleteBooking = async function(id) {
 // Portfolios page
 // ---------------------------------------------------------------------------
 
+const KNOWN_BROKERS_HINTS = {
+    'myinvestor':            { website: 'https://myinvestor.es',                  description: 'Spanish online bank and low-cost broker.' },
+    'indexa capital':        { website: 'https://indexacapital.com',              description: 'Spanish automated index-fund manager (robo-advisor).' },
+    'degiro':                { website: 'https://www.degiro.com',                 description: 'European low-cost online broker.' },
+    'trade republic':        { website: 'https://traderepublic.com',              description: 'European mobile-first broker and savings app.' },
+    'coinbase':              { website: 'https://www.coinbase.com',               description: 'Cryptocurrency exchange and brokerage.' },
+    'binance':               { website: 'https://www.binance.com',                description: 'Cryptocurrency exchange.' },
+    'mintos':                { website: 'https://www.mintos.com',                 description: 'Peer-to-peer lending marketplace.' },
+    'bondora':               { website: 'https://www.bondora.com',                description: 'Peer-to-peer lending platform.' },
+    'interactive brokers':   { website: 'https://www.interactivebrokers.com',     description: 'Global online broker with broad market access.' },
+    'ibkr':                  { website: 'https://www.interactivebrokers.com',     description: 'Global online broker with broad market access.' },
+    'etoro':                 { website: 'https://www.etoro.com',                  description: 'Multi-asset social-investing broker.' },
+    'revolut':               { website: 'https://www.revolut.com',                description: 'Fintech app with investing and trading features.' },
+    'xtb':                   { website: 'https://www.xtb.com',                    description: 'European online broker (stocks, ETFs, CFDs).' },
+};
+
 function setupPortfoliosPage() {
     const addBtn = document.getElementById('addPortfolioBtn');
     const form   = document.getElementById('portfolioForm');
     const modal  = document.getElementById('portfolioModal');
     if (!addBtn || !form || !modal) return;
 
-    const bsModal = new bootstrap.Modal(modal);
+    // Always use getOrCreateInstance so all code shares the same Bootstrap
+    // modal object — creating a second instance via `new bootstrap.Modal()`
+    // overwrites Bootstrap's registry, causing the dismiss buttons to call
+    // hide() on the wrong (non-shown) instance and do nothing.
+    const bsModal = bootstrap.Modal.getOrCreateInstance(modal);
+
+    const nameInput = document.getElementById('portfolioName');
+    nameInput && nameInput.addEventListener('input', () => {
+        const hint = KNOWN_BROKERS_HINTS[nameInput.value.trim().toLowerCase()];
+        if (!hint) return;
+        const desc = document.getElementById('portfolioDescription');
+        const site = document.getElementById('portfolioWebsite');
+        if (desc && !desc.value) desc.value = hint.description;
+        if (site && !site.value) site.value = hint.website;
+    });
 
     addBtn.addEventListener('click', () => {
         document.getElementById('portfolioModalTitle').textContent = 'Add Portfolio';
@@ -730,7 +761,7 @@ window.editPortfolio = function(id, name, currency, description, website) {
     document.getElementById('portfolioCurrency').value         = currency;
     document.getElementById('portfolioDescription').value      = description === 'null' ? '' : (description || '');
     document.getElementById('portfolioWebsite').value          = website === 'null' ? '' : (website || '');
-    new bootstrap.Modal(document.getElementById('portfolioModal')).show();
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('portfolioModal')).show();
 };
 
 window.deletePortfolio = async function(id, name) {
@@ -750,12 +781,14 @@ window.clearPortfolioTransactions = async function(id, name) {
     const bsModal = bootstrap.Modal.getOrCreateInstance(modal);
     const nameEl = document.getElementById('clearPortfolioName');
     const checkbox = document.getElementById('clearConfirmCheck');
+    const bookingsCheck = document.getElementById('clearIncludeBookings');
     const confirmBtn = document.getElementById('clearTransactionsConfirmBtn');
     const backupBtn = document.getElementById('clearModalBackupBtn');
 
     // Reset state
     nameEl.textContent = name;
     checkbox.checked = false;
+    if (bookingsCheck) bookingsCheck.checked = true;
     confirmBtn.disabled = true;
 
     checkbox.onchange = () => { confirmBtn.disabled = !checkbox.checked; };
@@ -771,16 +804,17 @@ window.clearPortfolioTransactions = async function(id, name) {
 
     confirmBtn.onclick = async () => {
         confirmBtn.disabled = true;
+        const includeBookings = bookingsCheck ? bookingsCheck.checked : false;
         try {
-            const resp = await fetch(
-                window.apiClient.baseURL + `/api/v1/portfolios/${id}/transactions`,
-                { method: 'DELETE', headers: { 'X-API-Key': window.apiClient.apiKey } }
-            );
+            const url = window.apiClient.baseURL + `/api/v1/portfolios/${id}/transactions` +
+                (includeBookings ? '?include_bookings=true' : '');
+            const resp = await fetch(url, { method: 'DELETE', headers: { 'X-API-Key': window.apiClient.apiKey } });
             const data = await resp.json();
             if (!resp.ok) throw new Error(data.detail || resp.statusText);
             bsModal.hide();
             checkbox.checked = false;
-            window.showToast(`Deleted ${data.deleted} transaction${data.deleted !== 1 ? 's' : ''} from ${name}.`, 'success');
+            const bkMsg = data.deleted_bookings ? ` + ${data.deleted_bookings} booking(s)` : '';
+            window.showToast(`Deleted ${data.deleted} transaction${data.deleted !== 1 ? 's' : ''}${bkMsg} from ${name}.`, 'success');
             window.pageManager.loadPortfoliosPage();
         } catch (err) {
             alert('Error clearing transactions: ' + err.message);
@@ -797,25 +831,66 @@ window.clearPortfolioTransactions = async function(id, name) {
 
 function setupImportExportPage() {
     // --- File import section ---
-    const fileBroker   = document.getElementById('ioFileBroker');
-    const fileInput    = document.getElementById('ioFileInput');
-    const fileHint     = document.getElementById('ioFileHint');
-    const fileStep1    = document.getElementById('ioFileStep1');
-    const fileStep2    = document.getElementById('ioFileStep2');
-    const fileParseBtn = document.getElementById('ioFileParseBtn');
-    const fileSaveBtn  = document.getElementById('ioFileSaveBtn');
-    const fileBackBtn  = document.getElementById('ioFileBackBtn');
-    const filePreview  = document.getElementById('ioFilePreview');
+    const fileBroker      = document.getElementById('ioFileBroker');
+    const ioFilePortfolio = document.getElementById('ioFilePortfolio');
+    const fileInput       = document.getElementById('ioFileInput');
+    const fileInputWrap   = document.getElementById('ioFileInputWrap');
+    const filePasteWrap   = document.getElementById('ioFilePasteWrap');
+    const filePasteArea   = document.getElementById('ioFilePasteArea');
+    const fileHint        = document.getElementById('ioFileHint');
+    const fileStep1       = document.getElementById('ioFileStep1');
+    const fileStep2       = document.getElementById('ioFileStep2');
+    const fileParseBtn    = document.getElementById('ioFileParseBtn');
+    const fileSaveBtn     = document.getElementById('ioFileSaveBtn');
+    const fileBackBtn     = document.getElementById('ioFileBackBtn');
+    const filePreview     = document.getElementById('ioFilePreview');
     if (!fileBroker) return;
 
     let parsedFile = [];
     let parsedFileBookings = [];
     let parsedFileDeposits = [];
+    let _filePortfolios = [];
+
+    // Populate portfolio dropdown and keep a local copy for broker auto-matching.
+    (async () => {
+        if (ioFilePortfolio && ioFilePortfolio.options.length <= 1) {
+            try {
+                _filePortfolios = await window.apiClient.getPortfolios();
+                _filePortfolios.forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p.id; opt.textContent = p.name;
+                    ioFilePortfolio.appendChild(opt);
+                });
+            } catch (e) { /* silent */ }
+        }
+    })();
+
+    // Map broker dropdown value → canonical portfolio name fragment for auto-selection.
+    const BROKER_TO_PORTFOLIO = {
+        indexacapital:    'indexa',
+        myinvestor:       'myinvestor',
+        myinvestor_paste: 'myinvestor',
+        mintos:           'mintos',
+        coinbase:         'coinbase',
+    };
 
     fileBroker.addEventListener('change', () => {
+        const isPaste = fileBroker.value === 'myinvestor_paste';
+        if (fileInputWrap) fileInputWrap.style.display = isPaste ? 'none' : '';
+        if (filePasteWrap) filePasteWrap.style.display = isPaste ? '' : 'none';
         const h = BROKER_HINTS[fileBroker.value];
         if (h) { fileHint.textContent = h; fileHint.style.display = ''; }
         else fileHint.style.display = 'none';
+        // Auto-select portfolio matching the chosen broker (user can override).
+        if (ioFilePortfolio && _filePortfolios.length) {
+            const fragment = BROKER_TO_PORTFOLIO[fileBroker.value];
+            if (fragment) {
+                const match = _filePortfolios.find(p => p.name.toLowerCase().includes(fragment));
+                ioFilePortfolio.value = match ? match.id : '';
+            } else {
+                ioFilePortfolio.value = '';
+            }
+        }
     });
 
     function fileShowStep1() {
@@ -825,19 +900,26 @@ function setupImportExportPage() {
         parsedFile = [];
         parsedFileBookings = [];
         parsedFileDeposits = [];
+        if (filePasteArea) filePasteArea.value = '';
     }
 
     fileBackBtn.addEventListener('click', fileShowStep1);
 
     fileParseBtn.addEventListener('click', async () => {
-        const broker = fileBroker.value;
-        const file   = fileInput.files[0];
-        if (!broker) { alert('Please select a broker.'); return; }
-        if (!file)   { alert('Please select a file.'); return; }
+        const broker   = fileBroker.value;
+        const isPaste  = broker === 'myinvestor_paste';
+        const file     = isPaste ? null : fileInput.files[0];
+        const pasteText = isPaste && filePasteArea ? filePasteArea.value.trim() : '';
+        if (!broker)              { alert('Please select a broker.'); return; }
+        if (!isPaste && !file)    { alert('Please select a file.'); return; }
+        if (isPaste && !pasteText){ alert('Please paste statement text first.'); return; }
+        const uploadFile = isPaste
+            ? new File([pasteText], 'myinvestor_paste.txt', { type: 'text/plain' })
+            : file;
         fileParseBtn.disabled = true;
         fileParseBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Parsing…';
         try {
-            const data = await window.apiClient.uploadBrokerFile(broker, file);
+            const data = await window.apiClient.uploadBrokerFile(broker, uploadFile);
             parsedFile = data.transactions || [];
             parsedFileBookings = data.bookings || [];
             parsedFileDeposits = data.deposits || [];
@@ -864,7 +946,8 @@ function setupImportExportPage() {
         fileSaveBtn.disabled = true;
         fileSaveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving…';
         try {
-            const result = await window.apiClient.saveImportedTransactions(selected, parsedFileBookings, null, _dupAction(), selectedDeps);
+            const filePortfolioId = ioFilePortfolio && ioFilePortfolio.value ? parseInt(ioFilePortfolio.value) : null;
+            const result = await window.apiClient.saveImportedTransactions(selected, parsedFileBookings, filePortfolioId, _dupAction(), selectedDeps);
             const bkMsg = result.saved_bookings > 0 ? ` + ${result.saved_bookings} booking(s)` : '';
             const depMsg = result.saved_deposits > 0 ? ` + ${result.saved_deposits} deposit(s)` : '';
             const owMsg = result.overwritten > 0 ? `, ${result.overwritten} overwritten` : '';
