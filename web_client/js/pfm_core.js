@@ -1082,6 +1082,30 @@ function createAPIClient() {
             return resp.json();
         },
 
+        async getDQReconciliation() {
+            const resp = await fetch(this.baseURL + '/api/v1/analytics/dq/reconciliation', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error('Failed to load reconciliation data');
+            return resp.json();
+        },
+
+        async getDQDuplicates() {
+            const resp = await fetch(this.baseURL + '/api/v1/analytics/dq/duplicates', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error('Failed to load duplicates');
+            return resp.json();
+        },
+
+        async getDQSuspicious() {
+            const resp = await fetch(this.baseURL + '/api/v1/analytics/dq/suspicious', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error('Failed to load suspicious patterns');
+            return resp.json();
+        },
+
         async deleteBooking(id) {
             const resp = await fetch(this.baseURL + '/api/v1/bookings/' + id, {
                 method: 'DELETE',
@@ -1571,6 +1595,18 @@ function _dupAction() {
     return el ? el.value : 'skip';
 }
 
+function _toggleImportType(btn, type) {
+    // btn lives in a flex div that is a direct child of the preview container (#ioFilePreview etc.)
+    const container = btn.parentElement && btn.parentElement.parentElement;
+    if (!container) return;
+    const checkboxes = [...container.querySelectorAll('.file-tx-select')];
+    if (type === 'all')  { checkboxes.forEach(cb => cb.checked = true);  return; }
+    if (type === 'none') { checkboxes.forEach(cb => cb.checked = false); return; }
+    const targets = checkboxes.filter(cb => cb.closest('tr') && cb.closest('tr').dataset.txtype === type);
+    const allChecked = targets.length > 0 && targets.every(cb => cb.checked);
+    targets.forEach(cb => cb.checked = !allChecked);
+}
+
 function _buildPreviewTable(transactions, bookings, deposits) {
     bookings = bookings || [];
     deposits = deposits || [];
@@ -1578,9 +1614,18 @@ function _buildPreviewTable(transactions, bookings, deposits) {
     const hasBroker = transactions.some(tx => tx.broker) || bookings.some(b => b.broker);
     const dupBadge = '<span class="badge bg-warning text-dark ms-1">dup</span>';
 
-    const txRows = transactions.map((tx, i) => `
-        <tr class="${tx.is_duplicate ? 'table-warning' : ''}">
-            <td><input class="form-check-input file-tx-select" type="checkbox" ${tx.is_duplicate ? '' : 'checked'} data-idx="${i}" data-dup="${tx.is_duplicate ? '1' : '0'}"></td>
+    // Merge transactions + bookings sorted newest-first so dates interleave correctly.
+    const merged = [
+        ...transactions.map((tx, i) => ({ kind: 'tx', i, date: tx.date || '', d: tx })),
+        ...bookings.map((bk, i)    => ({ kind: 'bk', i, date: bk.date || '', d: bk })),
+    ].sort((a, b) => b.date.localeCompare(a.date));
+
+    const mergedRows = merged.map(({ kind, i, d }) => {
+        if (kind === 'tx') {
+            const tx = d;
+            return `
+        <tr class="${tx.is_duplicate ? 'table-warning' : ''}" data-txtype="${esc(tx.tx_type || '')}">
+            <td><input class="form-check-input file-tx-select" type="checkbox" ${(tx.is_duplicate || tx.skip) ? '' : 'checked'} data-idx="${i}" data-dup="${tx.is_duplicate ? '1' : '0'}"></td>
             ${hasBroker ? `<td><small>${esc(tx.broker || '')}</small></td>` : ''}
             <td>${tx.date || ''}${tx.is_duplicate ? dupBadge : ''}</td>
             <td><strong>${esc(tx.symbol || '')}</strong><br><small class="text-muted">${esc(tx.name || '')}</small></td>
@@ -1589,11 +1634,11 @@ function _buildPreviewTable(transactions, bookings, deposits) {
             <td class="text-end">${parseFloat(tx.price || 0).toFixed(4)}</td>
             <td>${esc(tx.currency || '')}</td>
             <td class="text-end">${parseFloat(tx.fees || 0).toFixed(2)}</td>
-        </tr>
-    `).join('');
-
-    const bkRows = bookings.map(bk => `
-        <tr class="table-info${bk.is_duplicate ? ' table-warning' : ''}">
+        </tr>`;
+        } else {
+            const bk = d;
+            return `
+        <tr class="table-info${bk.is_duplicate ? ' table-warning' : ''}" data-txtype="deposit">
             <td><i class="bi bi-bank text-muted" title="Cash booking — saved automatically"></i></td>
             ${hasBroker ? `<td><small>${esc(bk.broker || '')}</small></td>` : ''}
             <td>${bk.date || ''}${bk.is_duplicate ? dupBadge : ''}</td>
@@ -1603,8 +1648,9 @@ function _buildPreviewTable(transactions, bookings, deposits) {
             <td class="text-end">—</td>
             <td>${esc(bk.currency || '')}</td>
             <td class="text-end">—</td>
-        </tr>
-    `).join('');
+        </tr>`;
+        }
+    }).join('');
 
     const depRows = deposits.map((dep, i) => `
         <tr class="${dep.is_duplicate ? 'table-warning' : ''}">
@@ -1625,15 +1671,30 @@ function _buildPreviewTable(transactions, bookings, deposits) {
     const bkNote = bookings.length > 0
         ? ` <span class="badge bg-info"><i class="bi bi-bank me-1"></i>${bookings.length} cash booking(s) auto-saved</span>`
         : '';
+    const types = [...new Set(transactions.map(t => t.tx_type))];
+    const hasDeposits = bookings.length > 0;
+    const filterBtns = (types.length + (hasDeposits ? 1 : 0)) > 1 ? `
+        <div class="d-flex align-items-center gap-1 flex-wrap mb-2">
+            <small class="text-muted me-1">Select:</small>
+            <button type="button" class="btn btn-sm py-0 btn-outline-secondary" onclick="_toggleImportType(this,'all')">All</button>
+            <button type="button" class="btn btn-sm py-0 btn-outline-secondary" onclick="_toggleImportType(this,'none')">None</button>
+            ${types.includes('buy')      ? '<button type="button" class="btn btn-sm py-0 btn-outline-success"   onclick="_toggleImportType(this,\'buy\')">Buy</button>' : ''}
+            ${types.includes('sell')     ? '<button type="button" class="btn btn-sm py-0 btn-outline-danger"    onclick="_toggleImportType(this,\'sell\')">Sell</button>' : ''}
+            ${types.includes('dividend') ? '<button type="button" class="btn btn-sm py-0 btn-outline-secondary" onclick="_toggleImportType(this,\'dividend\')">Dividend</button>' : ''}
+            ${types.includes('interest') ? '<button type="button" class="btn btn-sm py-0 btn-outline-info"      onclick="_toggleImportType(this,\'interest\')">Interest</button>' : ''}
+            ${hasDeposits               ? '<button type="button" class="btn btn-sm py-0 btn-outline-info"      onclick="_toggleImportType(this,\'deposit\')">Deposit</button>' : ''}
+        </div>` : '';
+
     let html = dupControl + `
         <p class="text-muted small mb-2">Found <strong>${transactions.length}</strong> transaction(s)${bookings.length > 0 ? ` + <strong>${bookings.length}</strong> cash booking(s)` : ''}${deposits.length > 0 ? ` + <strong>${deposits.length}</strong> fixed deposit(s)` : ''}. Uncheck rows to skip.
-        ${hasBroker ? ' <span class="badge bg-secondary">Portfolios auto-assigned</span>' : ''}${bkNote}</p>`;
+        ${hasBroker ? ' <span class="badge bg-secondary">Portfolios auto-assigned</span>' : ''}${bkNote}</p>
+        ${filterBtns}`;
     if (transactions.length > 0 || bookings.length > 0) {
         html += `
         <div class="table-responsive">
             <table class="table table-sm table-hover">
                 <thead><tr><th></th>${hasBroker ? '<th>Portfolio</th>' : ''}<th>Date</th><th>Asset / Action</th><th>Type</th><th class="text-end">Qty / Amount</th><th class="text-end">Price</th><th>Currency</th><th class="text-end">Fees</th></tr></thead>
-                <tbody>${txRows}${bkRows}</tbody>
+                <tbody>${mergedRows}</tbody>
             </table>
         </div>`;
     }
