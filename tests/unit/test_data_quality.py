@@ -128,3 +128,139 @@ class TestDQReconciliation:
             "/api/v1/analytics/dq/reconciliation", headers=auth_headers
         )
         assert resp.status_code == 200
+
+
+# ── duplicates ────────────────────────────────────────────────────────────────
+
+
+class TestDQDuplicates:
+    @pytest.mark.asyncio
+    async def test_no_duplicates_when_empty(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        resp = await async_test_client.get(
+            "/api/v1/analytics/dq/duplicates", headers=auth_headers
+        )
+        assert resp.status_code == 200
+        assert resp.json()["duplicates"] == []
+
+    @pytest.mark.asyncio
+    async def test_detects_exact_same_day_duplicate(
+        self, async_test_client: AsyncClient, auth_headers, test_database
+    ):
+        pid = test_database.get_or_create_portfolio("Broker", base_currency="EUR")
+        aid = test_database.create_asset("SPY", "S&P 500 ETF", "etf", currency="USD")
+        for _ in range(2):
+            test_database.create_transaction(
+                asset_id=aid,
+                transaction_type="buy",
+                quantity=10.0,
+                price=500.0,
+                total_amount=5000.0,
+                transaction_date="2025-03-15",
+                portfolio_id=pid,
+                currency="USD",
+            )
+        resp = await async_test_client.get(
+            "/api/v1/analytics/dq/duplicates", headers=auth_headers
+        )
+        dups = resp.json()["duplicates"]
+        assert len(dups) == 1
+        assert dups[0]["label"] == "likely"
+        assert dups[0]["key"].startswith("dup:")
+
+    @pytest.mark.asyncio
+    async def test_detects_within_3_day_window(
+        self, async_test_client: AsyncClient, auth_headers, test_database
+    ):
+        pid = test_database.get_or_create_portfolio("Broker2", base_currency="EUR")
+        aid = test_database.create_asset("QQQ", "Nasdaq ETF", "etf", currency="USD")
+        test_database.create_transaction(
+            asset_id=aid,
+            transaction_type="buy",
+            quantity=5.0,
+            price=400.0,
+            total_amount=2000.0,
+            transaction_date="2025-04-01",
+            portfolio_id=pid,
+            currency="USD",
+        )
+        test_database.create_transaction(
+            asset_id=aid,
+            transaction_type="buy",
+            quantity=5.0,
+            price=402.0,
+            total_amount=2010.0,
+            transaction_date="2025-04-03",
+            portfolio_id=pid,
+            currency="USD",
+        )
+        resp = await async_test_client.get(
+            "/api/v1/analytics/dq/duplicates", headers=auth_headers
+        )
+        dups = resp.json()["duplicates"]
+        assert len(dups) == 1
+        assert dups[0]["label"] == "possible"
+
+    @pytest.mark.asyncio
+    async def test_no_duplicate_outside_3_day_window(
+        self, async_test_client: AsyncClient, auth_headers, test_database
+    ):
+        pid = test_database.get_or_create_portfolio("Broker3", base_currency="EUR")
+        aid = test_database.create_asset("GLD", "Gold ETF", "etf", currency="USD")
+        test_database.create_transaction(
+            asset_id=aid,
+            transaction_type="buy",
+            quantity=10.0,
+            price=180.0,
+            total_amount=1800.0,
+            transaction_date="2025-05-01",
+            portfolio_id=pid,
+            currency="USD",
+        )
+        test_database.create_transaction(
+            asset_id=aid,
+            transaction_type="buy",
+            quantity=10.0,
+            price=180.0,
+            total_amount=1800.0,
+            transaction_date="2025-05-10",
+            portfolio_id=pid,
+            currency="USD",
+        )
+        resp = await async_test_client.get(
+            "/api/v1/analytics/dq/duplicates", headers=auth_headers
+        )
+        assert resp.json()["duplicates"] == []
+
+    @pytest.mark.asyncio
+    async def test_no_duplicate_different_quantity(
+        self, async_test_client: AsyncClient, auth_headers, test_database
+    ):
+        pid = test_database.get_or_create_portfolio("Broker4", base_currency="EUR")
+        aid = test_database.create_asset("MSFT", "Microsoft", "stock", currency="USD")
+        test_database.create_transaction(
+            asset_id=aid,
+            transaction_type="buy",
+            quantity=5.0,
+            price=300.0,
+            total_amount=1500.0,
+            transaction_date="2025-06-01",
+            portfolio_id=pid,
+            currency="USD",
+        )
+        test_database.create_transaction(
+            asset_id=aid,
+            transaction_type="buy",
+            quantity=10.0,
+            price=300.0,
+            total_amount=3000.0,
+            transaction_date="2025-06-01",
+            portfolio_id=pid,
+            currency="USD",
+        )
+        # quantities differ by >5% (5 vs 10 = 100% diff)
+        resp = await async_test_client.get(
+            "/api/v1/analytics/dq/duplicates", headers=auth_headers
+        )
+        assert resp.json()["duplicates"] == []
