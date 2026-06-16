@@ -920,7 +920,9 @@
 
                     <div class="card mb-4" data-an-section="tax">
                         <div class="card-header fw-semibold d-flex justify-content-between align-items-center flex-wrap gap-2">
-                            <span><i class="bi bi-receipt me-2 text-danger"></i>Tax Estimate (Spanish IRPF)</span>
+                            <span><i class="bi bi-receipt me-2 text-danger"></i>Tax Estimate (Spanish IRPF)
+                                <i class="bi bi-info-circle text-muted ms-1" style="cursor:help;" data-bs-toggle="tooltip" title="Sums FIFO realised gains + dividends + interest received this year (base del ahorro) and applies the progressive savings-base brackets: 19% up to €6k, 21% €6k–€50k, 23% €50k–€200k, 27% €200k–€300k, 28% above €300k. An estimate — consult a tax adviser."></i>
+                            </span>
                             <div class="d-flex align-items-center gap-2">
                                 <label class="small text-muted mb-0" for="anTaxYear">Year</label>
                                 <select class="form-select form-select-sm" id="anTaxYear" style="width:auto;"></select>
@@ -2334,7 +2336,9 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         <div class="col-12 mt-2">
                             <div class="card">
                                 <div class="card-header fw-semibold d-flex align-items-center justify-content-between">
-                                    <span><i class="bi bi-bank me-2"></i>Fixed Deposits</span>
+                                    <span><i class="bi bi-bank me-2"></i>Fixed Deposits
+                                        <span class="ms-1 text-muted" style="cursor:help" title="Track fixed-term deposits. When the maturity date arrives and you mark it matured, an interest transaction is automatically posted to a synthetic DEPOSITS cash asset. Active deposit principals are included in your Net Worth total."><i class="bi bi-info-circle"></i></span>
+                                    </span>
                                 </div>
                                 <div class="table-responsive">
                                     <table class="table table-hover mb-0">
