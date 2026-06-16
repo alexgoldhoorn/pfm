@@ -75,9 +75,7 @@ def parse_mintos_csv(csv_content: str) -> MintosParseResult:
             m[2] += 1
             if date > m[3]:
                 m[3] = date
-        elif any(
-            k in low for k in ("depósit", "deposit", "ingreso", "incoming client")
-        ):
+        elif any(k in low for k in ("depósit", "deposit", "incoming client")):
             res.bookings.append(
                 {
                     "date": date,
@@ -86,7 +84,7 @@ def parse_mintos_csv(csv_content: str) -> MintosParseResult:
                     "currency": cur,
                 }
             )
-        elif any(k in low for k in ("retirada", "withdrawal", "outgoing")):
+        elif any(k in low for k in ("retirada", "withdrawal", "outgoing", "saliente")):
             res.bookings.append(
                 {
                     "date": date,

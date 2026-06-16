@@ -42,14 +42,17 @@ window.PAGE_HELP = {
   analytics: {
     title: "Analytics",
     body: `
-      <p>Deeper performance, risk and cost analysis of your portfolio.</p>
-      <ul class="mb-2">
-        <li><strong>Performance</strong> compares your total/period return against a market benchmark over the selected window.</li>
-        <li><strong>Net Worth Over Time</strong> and the period returns are built from daily snapshots, so history starts when snapshots began accumulating.</li>
-        <li><strong>Tax Estimate</strong> applies the Spanish IRPF savings-base brackets to FIFO realised gains. It is an estimate, not tax advice.</li>
-        <li><strong>Diversification</strong>, <strong>Risk</strong> (volatility, drawdown, Sharpe) and <strong>Fees</strong> summarise concentration, swings and costs.</li>
+      <p>Seven tabs covering every angle of portfolio analysis. All values in EUR, prices from Yahoo Finance refreshed daily at 20:00 UTC.</p>
+      <ul class="mb-2 small">
+        <li><strong>Performance</strong>: total return (FIFO cost basis), money-weighted IRR, and period return vs a market benchmark over a selectable window (YTD / 1Y / 3Y / All). Period return needs daily snapshots.</li>
+        <li><strong>Dividends</strong>: monthly bar chart of dividend income, trailing-12-month total, projected annual income, yield on cost per position, and an upcoming dividend calendar.</li>
+        <li><strong>Gain / Loss</strong>: unrealised winners and losers leaderboard for your open positions, plus a year-by-year realised gains summary with a tax-report CSV export.</li>
+        <li><strong>Tax</strong>: Spanish IRPF savings-base estimate — FIFO realised gains + dividends + interest taxed on the progressive 19/21/23/27/28% brackets. Also shows tax-loss harvesting candidates (open losses, with 2-month wash-sale flag). An estimate, not tax advice.</li>
+        <li><strong>Risk</strong>: maximum drawdown, annualised volatility, and Sharpe ratio — computed from daily snapshots (needs at least 3).</li>
+        <li><strong>Fees</strong>: total fees and withholding tax paid per broker, plus fee drag % of amount invested.</li>
+        <li><strong>Diversification</strong>: sector, country, currency and asset-type breakdown with Herfindahl concentration index (HHI). Fetches fundamentals from Yahoo Finance — can be slow.</li>
       </ul>
-      <p class="text-muted small mb-0">All values in EUR. Prices from Yahoo Finance, refreshed daily at 20:00 UTC. Hover any metric label for its definition.</p>`
+      <p class="text-muted small mb-0">Hover any metric label for its definition. Net Worth Over Time chart uses daily snapshots; history starts from the first recorded snapshot.</p>`
   },
   holdings: {
     title: "Holdings",
@@ -87,12 +90,25 @@ window.PAGE_HELP = {
     title: "Wealth Simulator",
     body: `
       <p>Projects your future net worth using a Geometric Brownian Motion (GBM) model per asset class, plus deterministic mortgage amortization.</p>
-      <ul class="mb-2">
-        <li>The <strong>mean</strong> path is compound growth; the <strong>confidence bands</strong> widen over time with each asset's volatility.</li>
-        <li>Your current stocks/ETF value is pre-filled from your live holdings; add cash, bonds and a mortgage to model net worth.</li>
-        <li>Net Worth = liquid assets (cash + stocks + bonds) − remaining mortgage at each year.</li>
+
+      <h6 class="fw-semibold mt-2 mb-1">Inputs</h6>
+      <ul class="small mb-2">
+        <li><strong>Stocks / ETFs</strong> value is auto-populated from your live holdings when the page loads. Hit the refresh icon <i class="bi bi-arrow-clockwise"></i> to reload it.</li>
+        <li><strong>Load from Net Worth</strong> pre-fills Cash, Bonds and Mortgage amounts from your Net Worth page (manual assets + liabilities).</li>
+        <li><strong>Use my history</strong> sets the Stocks annual return and volatility from your own portfolio's recorded snapshot history, replacing the defaults.</li>
+        <li><strong>Annual return %</strong> per asset class is your assumed long-run real return, e.g. 8% for stocks, 4% for bonds, 1.5% for cash.</li>
+        <li><strong>Volatility %</strong> (stocks only) controls how wide the confidence band is. Default 16%; your historical figure may differ.</li>
+        <li><strong>Monthly contribution</strong> is added to the liquid pool each month before compounding.</li>
       </ul>
-      <p class="text-muted small mb-0">A statistical projection, not a guarantee. See the Methodology panel for the formulas.</p>`
+
+      <h6 class="fw-semibold mt-2 mb-1">Chart</h6>
+      <ul class="small mb-2">
+        <li>The <strong>mean</strong> line is deterministic compound growth. The <strong>shaded band</strong> is the GBM confidence interval, widening over time as uncertainty compounds.</li>
+        <li><strong>95% interval</strong> (default): ~1 in 20 outcomes falls outside the band. <strong>99%</strong> is wider but still not exhaustive — extreme events aren't modelled.</li>
+        <li>Net Worth = cash + stocks + bonds − remaining mortgage balance at each year.</li>
+      </ul>
+
+      <p class="text-muted small mb-0">A statistical projection, not financial advice. See the <em>Methodology</em> panel on the page for the exact GBM formula.</p>`
   },
   transactions: {
     title: "Transactions",
@@ -160,13 +176,41 @@ window.PAGE_HELP = {
   diagnostics: {
     title: "Diagnostics",
     body: `
-      <p>Monitor the health of your price data and see a log of every price-update run.</p>
-      <ul class="mb-2">
-        <li><strong>Freshness</strong>: how many hours since prices last refreshed, and which held assets have stale or missing prices.</li>
-        <li><strong>Update history</strong>: each daily run records how many symbols were updated, skipped and errored — expand a row to see the full symbol lists.</li>
-        <li>Assets with auto-price disabled (manual prices) are excluded from the stale count.</li>
+      <p>Two tabs: <strong>Price Health</strong> monitors live price data; <strong>Data Quality</strong> runs automated checks on your transaction records.</p>
+
+      <h6 class="fw-semibold mt-3 mb-1">Price Health tab</h6>
+      <ul class="mb-2 small">
+        <li><strong>Freshness</strong>: hours since the last price refresh. <em>Fresh</em> = under 30 h; <em>Aging</em> = 30–48 h or one or more stale holdings; <em>Very stale</em> = over 48 h.</li>
+        <li><strong>Stale &amp; unpriced holdings</strong>: auto-priced assets whose latest stored price is older than 4 days, or that have never been priced. Assets with auto-price disabled (manual prices) are excluded.</li>
+        <li><strong>Update history</strong>: each daily run (20:00 UTC) logs duration, updated/skipped/error counts and the list of skipped symbols.</li>
       </ul>
-      <p class="text-muted small mb-0">Prices refresh daily at 20:00 UTC via the price cron script.</p>`
+
+      <h6 class="fw-semibold mt-3 mb-1">Data Quality tab</h6>
+
+      <p class="small mb-1"><strong>Cash &amp; Position Reconciliation</strong><br>
+      For each portfolio, computes:<br>
+      <code>Implied Cash = Deposits − Withdrawals − Buy costs + Sell proceeds + Dividends + Interest</code><br>
+      <em>Invested Value</em> = held shares × latest stored price (EUR). <em>Total Accounted</em> = Implied Cash + Invested Value.
+      Compare <em>Implied Cash</em> against your broker's actual cash balance to spot missing transactions.</p>
+
+      <p class="small mb-1"><strong>Possible Duplicate Transactions</strong><br>
+      Groups transactions by portfolio / asset / type, then flags pairs where:
+      <ul class="small mb-1">
+        <li><strong>LIKELY</strong> (red): same calendar date <em>and</em> quantity within ±1% <em>and</em> price within ±1%.</li>
+        <li><strong>POSSIBLE</strong> (yellow): dates within ±3 days <em>and</em> quantity within ±5% <em>and</em> price within ±5%.</li>
+      </ul>
+      Use <em>Delete older</em> to remove the earlier of the two, or pick a specific row from the dropdown. Dismiss findings that are intentional (e.g. two separate partial fills on the same day).</p>
+
+      <p class="small mb-1"><strong>Suspicious Patterns</strong><br>
+      Five automated checks run chronologically across all transactions:
+      <ul class="small mb-0">
+        <li><strong>zero_price</strong> (warning): a buy or sell recorded with price = 0 (splits and dividends are exempt).</li>
+        <li><strong>zero_qty</strong> (warning): a buy or sell with quantity = 0.</li>
+        <li><strong>negative_position</strong> (warning): a sell that would push the running held quantity below zero — usually a missing buy.</li>
+        <li><strong>dividend_before_buy</strong> (info): a dividend recorded before the first buy for that asset — may indicate an import ordering issue.</li>
+        <li><strong>price_outlier</strong> (warning): a buy/sell price that is more than 5× or less than 0.2× the median price for that asset (requires at least 3 price data points). Common cause: GBX/GBP unit confusion.</li>
+      </ul></p>
+      <p class="text-muted small mb-0">Dismissals are stored in your browser (localStorage) and survive page reloads.</p>`
   },
   chat: {
     title: "Chat",

@@ -39,8 +39,8 @@ class LLMTransaction:
             return "Raw text is required for traceability"
 
         # Validate transaction type
-        if self.tx_type.lower() not in ["buy", "sell", "dividend"]:
-            return "Transaction type must be 'buy', 'sell' or 'dividend'"
+        if self.tx_type.lower() not in ["buy", "sell", "dividend", "interest"]:
+            return "Transaction type must be 'buy', 'sell', 'dividend' or 'interest'"
 
         # Validate quantity is positive
         if self.quantity <= 0:

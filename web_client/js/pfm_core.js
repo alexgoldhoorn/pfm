@@ -413,10 +413,13 @@ async function loadDiagnosticsPage() {
         });
     }
 
-    // Wire DQ tab activation (lazy load on first switch)
+    // Wire DQ tab activation.  Use both shown.bs.tab (after animation) and click
+    // (immediate, before Bootstrap fires its event) so loading is reliable regardless
+    // of Bootstrap version or animation state.
     const dqTabBtn = document.getElementById('diagTabDQ');
     if (dqTabBtn && !dqTabBtn._dqWired) {
         dqTabBtn._dqWired = true;
+        dqTabBtn.addEventListener('click', () => setTimeout(() => loadDataQualityTab(), 50));
         dqTabBtn.addEventListener('shown.bs.tab', () => loadDataQualityTab());
     }
 
@@ -539,28 +542,34 @@ async function loadDataQualityTab(force = false) {
     _wireOnce('dqRerunDups',  () => { _dqLoaded = false; _loadDupsCard(); });
     _wireOnce('dqRerunSusp',  () => { _dqLoaded = false; _loadSuspCard(); });
 
-    await Promise.all([_loadReconCard(), _loadDupsCard(), _loadSuspCard()]);
+    await Promise.all([
+        _loadReconCard().catch(() => {}),
+        _loadDupsCard().catch(() => {}),
+        _loadSuspCard().catch(() => {}),
+    ]);
 
     async function _loadReconCard() {
         const el = document.getElementById('dqReconBody');
         if (!el) return;
         el.innerHTML = '<tr><td colspan="5" class="text-muted small p-3">Loading…</td></tr>';
-        const data = await window.apiClient.getDQReconciliation().catch(() => null);
+        let data = null;
+        try { data = await window.apiClient.getDQReconciliation(); } catch (_) {}
         if (!data) {
             el.innerHTML = '<tr><td colspan="5" class="text-danger small p-3">Could not load reconciliation data.</td></tr>';
             return;
         }
-        if (!data.portfolios.length) {
+        const portfolios = Array.isArray(data) ? data : (data.portfolios || []);
+        if (!portfolios.length) {
             el.innerHTML = '<tr><td colspan="5" class="text-muted small p-3">No portfolios found.</td></tr>';
             return;
         }
-        el.innerHTML = data.portfolios.map(p => `
+        el.innerHTML = portfolios.map(p => `
             <tr>
                 <td class="fw-semibold">${esc(p.portfolio_name)}</td>
-                <td class="text-end font-monospace">${Fmt.money(p.implied_cash, 'EUR')}</td>
-                <td class="text-end font-monospace">${Fmt.money(p.invested_value, 'EUR')}</td>
-                <td class="text-end font-monospace fw-semibold">${Fmt.money(p.total_accounted, 'EUR')}</td>
-                <td class="text-end small text-muted">${Fmt.money(p.net_bookings, 'EUR')}</td>
+                <td class="text-end font-monospace">${Fmt.amt(Fmt.num(p.implied_cash, 2, 2))}</td>
+                <td class="text-end font-monospace">${Fmt.amt(Fmt.num(p.invested_value, 2, 2))}</td>
+                <td class="text-end font-monospace fw-semibold">${Fmt.amt(Fmt.num(p.total_accounted, 2, 2))}</td>
+                <td class="text-end small text-muted">${Fmt.amt(Fmt.num(p.net_bookings, 2, 2))}</td>
             </tr>`).join('');
     }
 
@@ -569,7 +578,8 @@ async function loadDataQualityTab(force = false) {
         const footer = document.getElementById('dqDupsFooter');
         if (!body) return;
         body.innerHTML = '<div class="text-muted small p-3">Loading…</div>';
-        const data = await window.apiClient.getDQDuplicates().catch(() => null);
+        let data = null;
+        try { data = await window.apiClient.getDQDuplicates(); } catch (_) {}
         if (!data) {
             body.innerHTML = '<div class="text-danger small p-3">Could not load duplicates.</div>';
             return;
@@ -610,13 +620,13 @@ async function loadDataQualityTab(force = false) {
                         </div>
                         <div class="row small g-1">
                             <div class="col-6 bg-body-secondary rounded p-1">
-                                <div class="fw-semibold">${esc(d.tx_a.asset)}</div>
-                                <div>${esc(d.tx_a.type)} · ${Fmt.num(d.tx_a.quantity, 4)} @ ${Fmt.num(d.tx_a.price, 4)}</div>
+                                <div class="fw-semibold">${esc(d.tx_a.asset)}${d.tx_a.asset_name && d.tx_a.asset_name !== d.tx_a.asset ? `<div class="small text-muted fw-normal">${esc(d.tx_a.asset_name)}</div>` : ''}</div>
+                                <div>${esc(d.tx_a.type)} · ${Fmt.num(d.tx_a.quantity, 0, 4)} @ ${Fmt.num(d.tx_a.price, 0, 4)}</div>
                                 <div class="text-muted">${esc(d.tx_a.date)} · #${d.tx_a.id}</div>
                             </div>
                             <div class="col-6 bg-body-secondary rounded p-1">
-                                <div class="fw-semibold">${esc(d.tx_b.asset)}</div>
-                                <div>${esc(d.tx_b.type)} · ${Fmt.num(d.tx_b.quantity, 4)} @ ${Fmt.num(d.tx_b.price, 4)}</div>
+                                <div class="fw-semibold">${esc(d.tx_b.asset)}${d.tx_b.asset_name && d.tx_b.asset_name !== d.tx_b.asset ? `<div class="small text-muted fw-normal">${esc(d.tx_b.asset_name)}</div>` : ''}</div>
+                                <div>${esc(d.tx_b.type)} · ${Fmt.num(d.tx_b.quantity, 0, 4)} @ ${Fmt.num(d.tx_b.price, 0, 4)}</div>
                                 <div class="text-muted">${esc(d.tx_b.date)} · #${d.tx_b.id}</div>
                             </div>
                         </div>
@@ -670,7 +680,8 @@ async function loadDataQualityTab(force = false) {
         const footer = document.getElementById('dqSuspFooter');
         if (!body) return;
         body.innerHTML = '<tr><td colspan="6" class="text-muted small p-3">Loading…</td></tr>';
-        const data = await window.apiClient.getDQSuspicious().catch(() => null);
+        let data = null;
+        try { data = await window.apiClient.getDQSuspicious(); } catch (_) {}
         if (!data) {
             body.innerHTML = '<tr><td colspan="6" class="text-danger small p-3">Could not load suspicious patterns.</td></tr>';
             return;
@@ -702,7 +713,8 @@ async function loadDataQualityTab(force = false) {
                         <td class="small">${esc(i.type)}</td>
                         <td class="small">${esc(i.description)}</td>
                         <td class="text-nowrap">
-                            <button type="button" class="btn btn-link btn-sm p-0 me-2 dq-view-tx" data-asset="${esc(i.asset)}">View</button>
+                            <button type="button" class="btn btn-link btn-sm p-0 me-1 dq-view-tx" data-asset="${esc(i.asset)}" title="View transactions"><i class="bi bi-box-arrow-up-right"></i></button>
+                            ${i.transaction_id ? `<button type="button" class="btn btn-link btn-sm p-0 me-1 text-danger dq-del-susp" data-id="${i.transaction_id}" title="Delete transaction"><i class="bi bi-trash"></i></button>` : ''}
                             <button type="button" class="btn btn-link btn-sm p-0 text-muted dq-dism-susp" data-key="${esc(i.key)}" title="${isDism ? 'Undismiss' : 'Dismiss'}">${isDism ? '<i class="bi bi-eye"></i>' : '<i class="bi bi-eye-slash"></i>'}</button>
                         </td>
                     </tr>`;
@@ -713,6 +725,19 @@ async function loadDataQualityTab(force = false) {
                         if (window.navigationManager) window.navigationManager.showPage('transactions');
                         const f = document.getElementById('txAssetFilter');
                         if (f) { f.value = btn.dataset.asset; f.dispatchEvent(new Event('change')); }
+                    });
+                });
+
+                body.querySelectorAll('.dq-del-susp').forEach(btn => {
+                    btn.addEventListener('click', async () => {
+                        const id = parseInt(btn.dataset.id);
+                        if (!confirm(`Delete transaction #${id}?`)) return;
+                        try {
+                            await window.apiClient.deleteTransaction(id);
+                            await _loadSuspCard();
+                        } catch (e) {
+                            alert('Failed to delete: ' + e.message);
+                        }
                     });
                 });
 

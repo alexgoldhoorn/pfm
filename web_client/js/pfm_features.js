@@ -2746,7 +2746,7 @@ function setupResearchPage() {
                 const up = r.upside_pct;
                 const upCls = up == null ? 'text-muted' : up >= 0 ? 'text-success' : 'text-danger';
                 return `<tr style="cursor:pointer" data-sym="${r.symbol}">
-                    <td class="ps-3"><strong>${esc(r.symbol)}</strong></td>
+                    <td class="ps-3"><strong>${esc(r.symbol)}</strong>${r.name && r.name !== r.symbol ? `<div class="small text-muted">${esc(r.name)}</div>` : ''}</td>
                     <td class="text-end">${money(r.current_price, '')}</td>
                     <td class="text-end">${money(r.fair_value, '')}</td>
                     <td class="text-end ${upCls}">${up == null ? '—' : anFmtPct(up)}</td>
