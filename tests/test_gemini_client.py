@@ -412,7 +412,8 @@ class TestLLMTransaction:
         validation_error = transaction.validate()
         assert validation_error is not None
         assert (
-            "Transaction type must be 'buy', 'sell' or 'dividend'" in validation_error
+            "Transaction type must be 'buy', 'sell', 'dividend' or 'interest'"
+            in validation_error
         )
 
     def test_transaction_validation_zero_quantity(self):

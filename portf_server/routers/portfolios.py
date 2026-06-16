@@ -472,12 +472,16 @@ async def delete_portfolio(
 @router.delete("/{portfolio_id}/transactions")
 async def clear_portfolio_transactions(
     portfolio_id: int,
+    include_bookings: bool = Query(False),
     database: Database = Depends(get_database),
     api_key_info: dict = Depends(_get_api_key_auth),
 ):
-    """Delete all transactions for a portfolio. Returns count of deleted rows."""
+    """Delete all transactions (and optionally bookings) for a portfolio."""
     portfolio = database.get_portfolio(portfolio_id)
     if not portfolio:
         raise HTTPException(status_code=404, detail="Portfolio not found")
     deleted = database.delete_transactions_by_portfolio(portfolio_id)
-    return {"deleted": deleted}
+    deleted_bookings = 0
+    if include_bookings:
+        deleted_bookings = database.delete_bookings_by_portfolio(portfolio_id)
+    return {"deleted": deleted, "deleted_bookings": deleted_bookings}

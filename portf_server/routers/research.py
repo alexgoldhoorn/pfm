@@ -172,6 +172,7 @@ async def compare(db=Depends(get_database), api_key_info: dict = Depends(_auth))
         out.append(
             {
                 "symbol": sym,
+                "name": asset.get("name", "") if asset else "",
                 "current_price": round(price, 4),
                 "currency": cur,
                 "fair_value": fair,

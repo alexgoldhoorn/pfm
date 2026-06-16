@@ -41,3 +41,36 @@ def test_trade_still_imported_and_crypto_transfer_skipped():
     # The crypto Receive is skipped, NOT a booking.
     assert any(t == "Receive" for t, _reason in r.skipped)
     assert all(b["currency"] == "EUR" for b in r.bookings)  # no crypto bookings
+
+
+STAKING_CSV = (
+    "Transactions\nuser@example.com\n"
+    + HEADER
+    + "\n"
+    + "\n".join(
+        [
+            "2026-06-15 16:45:19 UTC,Staking Income,ETH,0.000008460585,EUR,€1589.651922,€0.01345,",
+            "2026-06-14 02:28:11 UTC,Staking Income,SOL,0.001667306,EUR,€59.56112,€0.09931,",
+        ]
+    )
+)
+
+
+def test_staking_income_imported_as_interest():
+    r = parse_coinbase_csv(STAKING_CSV)
+    assert len(r.importable) == 2
+    eth = next(t for t in r.importable if t.symbol == "ETH")
+    sol = next(t for t in r.importable if t.symbol == "SOL")
+
+    assert eth.tx_type == "interest"
+    assert sol.tx_type == "interest"
+
+    # Price holds the EUR total of the staking reward; qty=1 for display clarity.
+    assert eth.quantity == 1.0
+    assert abs(eth.price - 0.01345) < 0.0001
+
+    assert sol.quantity == 1.0
+    assert abs(sol.price - 0.09931) < 0.0001
+
+    assert eth.fees == 0.0
+    assert sol.fees == 0.0

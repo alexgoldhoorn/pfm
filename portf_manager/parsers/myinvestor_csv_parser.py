@@ -6,9 +6,9 @@ Columns (semicolon-delimited, European comma decimals):
 
 The ``Concepto`` encodes the movement; we classify by pattern + amount sign:
   - ``INVEST``                       → cash deposit into the account (booking)
-  - ``NAME @ QTY`` with Importe < 0  → BUY  (QTY units, cost = |Importe|)
-  - ``NAME @ QTY`` with Importe > 0  → SELL (QTY units, proceeds = Importe)
-  - ``NAME`` (no @), Importe > 0     → cash DIVIDEND for that holding
+  - ``NAME @ QTY`` with Importe < 0  → BUY      (QTY units, cost = |Importe|)
+  - ``NAME @ QTY`` with Importe > 0  → DIVIDEND (QTY = shares held; amount = payout)
+  - ``NAME`` (no @), Importe > 0     → DIVIDEND (lump-sum payout or fund redemption)
   - anything else (e.g. SUSCRIPCIÓN PREMIUM, a platform fee) → skipped
 
 NOTE: MyInvestor gives no ISIN, truncates names (~30 chars) and reports only an
@@ -115,7 +115,7 @@ def parse_myinvestor_csv(csv_content: str) -> MyInvestorParseResult:
             total = abs(importe)
             res.transactions.append(
                 LLMTransaction(
-                    tx_type="sell" if importe > 0 else "buy",
+                    tx_type="dividend" if importe > 0 else "buy",
                     symbol=name,
                     asset_name=name,
                     quantity=qty,

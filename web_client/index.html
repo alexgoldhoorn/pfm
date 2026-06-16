@@ -2206,7 +2206,10 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                             <!-- Duplicates -->
                             <div class="card mb-3">
                                 <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
-                                    <span><i class="bi bi-files me-2"></i>Possible Duplicate Transactions</span>
+                                    <span>
+                                        <i class="bi bi-files me-2"></i>Possible Duplicate Transactions
+                                        <span class="ms-1 text-muted" style="cursor:help" title="LIKELY = same date + qty within ±1% + price within ±1%. POSSIBLE = dates within ±3 days + qty within ±5% + price within ±5%. Grouped by portfolio / asset / transaction type."><i class="bi bi-info-circle"></i></span>
+                                    </span>
                                     <button class="btn btn-sm btn-outline-secondary" id="dqRerunDups" title="Re-run"><i class="bi bi-arrow-clockwise"></i></button>
                                 </div>
                                 <div id="dqDupsBody"><div class="text-muted small p-3">Load the Data Quality tab to run checks.</div></div>
@@ -2216,7 +2219,10 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                             <!-- Suspicious patterns -->
                             <div class="card mb-3">
                                 <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
-                                    <span><i class="bi bi-exclamation-circle me-2"></i>Suspicious Patterns</span>
+                                    <span>
+                                        <i class="bi bi-exclamation-circle me-2"></i>Suspicious Patterns
+                                        <span class="ms-1 text-muted" style="cursor:help" title="Checks: zero_price (buy/sell at 0), zero_qty (buy/sell qty = 0), negative_position (sell exceeds held qty), dividend_before_buy (dividend recorded before any buy), price_outlier (price >5× or <0.2× median, requires ≥3 data points)."><i class="bi bi-info-circle"></i></span>
+                                    </span>
                                     <button class="btn btn-sm btn-outline-secondary" id="dqRerunSusp" title="Re-run"><i class="bi bi-arrow-clockwise"></i></button>
                                 </div>
                                 <div class="card-body p-0">
@@ -3043,13 +3049,13 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
 
     <!-- Centralized help text (must load before the app scripts) -->
-    <script src="js/help_text.js?v=1780000006"></script>
+    <script src="js/help_text.js?v=1780000007"></script>
 
     <!-- App scripts: portfolio_debug.js was split into these four classic
          scripts. They share one global scope and MUST load in this order:
          core → pages → analytics → features (features carries the
          DOMContentLoaded bootstrap, so it loads last). -->
-    <script src="js/pfm_core.js?v=1780000057"></script>
+    <script src="js/pfm_core.js?v=1780000060"></script>
     <script src="js/pfm_pages.js?v=1780000051"></script>
     <script src="js/pfm_analytics.js?v=1780000054"></script>
     <script src="js/pfm_features.js?v=1780000057"></script>
