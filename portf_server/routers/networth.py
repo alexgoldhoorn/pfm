@@ -47,6 +47,18 @@ class ManualAssetUpdate(BaseModel):
     notes: Optional[str] = None
 
 
+_CF_INCOME_CATS = {"salary", "other_income"}
+_CF_ALL_CATS = {"salary", "other_income", "mortgage", "loan", "rest"}
+
+
+class CashflowBody(BaseModel):
+    label: str
+    category: str
+    amount: float = 0.0
+    currency: str = "EUR"
+    notes: Optional[str] = None
+
+
 def _brokerage_value_eur(db) -> float:
     """EUR value of currently-held tracked positions."""
     positions, _ = compute_positions(db.get_all_transactions())
@@ -131,5 +143,64 @@ def delete_manual_asset(
     asset_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
 ):
     if not db.delete_manual_asset(asset_id):
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"deleted": True}
+
+
+@router.get("/cashflow")
+def get_cashflow(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+    """List monthly cash flow entries with income/expense summary."""
+    items = db.get_monthly_cashflow()
+    out = []
+    income_eur = 0.0
+    expenses_eur = 0.0
+    by_category = {cat: 0.0 for cat in _CF_ALL_CATS}
+    for it in items:
+        amt_eur = float(it["amount"] or 0) * _fx(it.get("currency", "EUR"))
+        out.append({**it, "amount_eur": round(amt_eur, 2)})
+        if it["category"] in _CF_INCOME_CATS:
+            income_eur += amt_eur
+        else:
+            expenses_eur += amt_eur
+        if it["category"] in by_category:
+            by_category[it["category"]] += amt_eur
+    return {
+        "items": out,
+        "income_eur": round(income_eur, 2),
+        "expenses_eur": round(expenses_eur, 2),
+        "net_monthly_eur": round(income_eur - expenses_eur, 2),
+        "by_category": {k: round(v, 2) for k, v in by_category.items()},
+    }
+
+
+@router.post("/cashflow")
+def create_cashflow(
+    body: CashflowBody,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Create a monthly cash flow entry."""
+    if body.category not in _CF_ALL_CATS:
+        raise HTTPException(
+            status_code=422, detail=f"Invalid category '{body.category}'"
+        )
+    new_id = db.create_monthly_cashflow(
+        label=body.label,
+        category=body.category,
+        amount=body.amount,
+        currency=(body.currency or "EUR").upper(),
+        notes=body.notes,
+    )
+    return {"id": new_id}
+
+
+@router.delete("/cashflow/{entry_id}")
+def delete_cashflow(
+    entry_id: int,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Delete a monthly cash flow entry."""
+    if not db.delete_monthly_cashflow(entry_id):
         raise HTTPException(status_code=404, detail="Not found")
     return {"deleted": True}
