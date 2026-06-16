@@ -2401,6 +2401,114 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                 </div>
                             </div>
                         </div>
+                        <!-- Monthly Cash Flow section -->
+                        <div class="col-12 mt-2">
+                            <div class="card">
+                                <div class="card-header fw-semibold d-flex align-items-center justify-content-between">
+                                    <span><i class="bi bi-arrow-left-right me-2"></i>Monthly Cash Flow
+                                        <span class="ms-1 text-muted" style="cursor:help" title="Rough monthly income and recurring expenses. Update when your situation changes. Used by Goals and Forecast projections."><i class="bi bi-info-circle"></i></span>
+                                    </span>
+                                </div>
+                                <!-- Summary cards -->
+                                <div class="card-body pb-0">
+                                    <div class="row g-2 mb-3">
+                                        <div class="col-6 col-md-2">
+                                            <div class="card h-100 border-success">
+                                                <div class="card-body py-2">
+                                                    <div class="small text-muted mb-1">Monthly income</div>
+                                                    <div class="fs-6 fw-bold text-success" id="cfIncome">—</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-6 col-md-2">
+                                            <div class="card h-100">
+                                                <div class="card-body py-2">
+                                                    <div class="small text-muted mb-1">Mortgage</div>
+                                                    <div class="fs-6 fw-bold text-danger" id="cfMortgage">—</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-6 col-md-2">
+                                            <div class="card h-100">
+                                                <div class="card-body py-2">
+                                                    <div class="small text-muted mb-1">Loan</div>
+                                                    <div class="fs-6 fw-bold text-danger" id="cfLoan">—</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-6 col-md-2">
+                                            <div class="card h-100">
+                                                <div class="card-body py-2">
+                                                    <div class="small text-muted mb-1">Rest</div>
+                                                    <div class="fs-6 fw-bold text-danger" id="cfRest">—</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-12 col-md-4">
+                                            <div class="card h-100 text-white" id="cfNetCard" style="background:#0d6efd;">
+                                                <div class="card-body py-2">
+                                                    <div class="small opacity-75 mb-1">Net / month</div>
+                                                    <div class="fs-6 fw-bold" id="cfNet">—</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <!-- Entries table -->
+                                <div class="table-responsive">
+                                    <table class="table table-hover mb-0">
+                                        <thead><tr>
+                                            <th class="ps-3">Label</th>
+                                            <th>Category</th>
+                                            <th class="text-end">Amount / month</th>
+                                            <th class="text-end">EUR</th>
+                                            <th class="pe-3"></th>
+                                        </tr></thead>
+                                        <tbody id="cfItemsBody"><tr><td colspan="5" class="text-center text-muted py-3">No entries yet.</td></tr></tbody>
+                                    </table>
+                                </div>
+                                <!-- Add form -->
+                                <div class="card-body border-top">
+                                    <p class="small text-muted mb-2">Add a recurring monthly income or expense:</p>
+                                    <form id="cfAddForm" class="row g-2 align-items-end">
+                                        <div class="col-12 col-sm-3">
+                                            <label class="form-label small mb-1">Label *</label>
+                                            <input class="form-control form-control-sm" id="cfLabel" placeholder="e.g. Salary, Mortgage payment" required>
+                                        </div>
+                                        <div class="col-6 col-sm-2">
+                                            <label class="form-label small mb-1">Category</label>
+                                            <select class="form-select form-select-sm" id="cfCategory">
+                                                <optgroup label="Income">
+                                                    <option value="salary">Salary</option>
+                                                    <option value="other_income">Other income</option>
+                                                </optgroup>
+                                                <optgroup label="Expenses">
+                                                    <option value="mortgage">Mortgage</option>
+                                                    <option value="loan">Loan</option>
+                                                    <option value="rest">Rest</option>
+                                                </optgroup>
+                                            </select>
+                                        </div>
+                                        <div class="col-6 col-sm-2">
+                                            <label class="form-label small mb-1">Amount / month *</label>
+                                            <input type="number" step="any" class="form-control form-control-sm" id="cfAmount" placeholder="0.00" required>
+                                        </div>
+                                        <div class="col-4 col-sm-1">
+                                            <label class="form-label small mb-1">Currency</label>
+                                            <input class="form-control form-control-sm" id="cfCurrency" value="EUR" maxlength="3">
+                                        </div>
+                                        <div class="col-8 col-sm-2">
+                                            <label class="form-label small mb-1">Notes</label>
+                                            <input class="form-control form-control-sm" id="cfNotes" placeholder="Optional">
+                                        </div>
+                                        <div class="col-12 col-sm-2">
+                                            <button type="submit" class="btn btn-sm btn-primary w-100"><i class="bi bi-plus-lg me-1"></i>Add</button>
+                                        </div>
+                                        <div class="col-12"><div class="small" id="cfAddStatus"></div></div>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 

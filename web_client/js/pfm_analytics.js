@@ -17,10 +17,16 @@ const NW_CATEGORY_LABELS = {
 // Type values that count as liabilities (debt). Used to derive is_liability
 // from the chosen type (the separate checkbox was removed).
 const NW_LIABILITY_CATS = new Set(['mortgage', 'personal_loan', 'car_loan', 'credit_card', 'other_debt', 'loan', 'credit']);
+const CF_INCOME_CATS = new Set(['salary', 'other_income']);
+const CF_CATEGORY_LABELS = {
+    salary: 'Salary', other_income: 'Other income',
+    mortgage: 'Mortgage', loan: 'Loan', rest: 'Rest',
+};
 async function loadNetworthPage() {
     const $ = id => document.getElementById(id);
     _wireNetworthForm();
     _wireDepositForm();
+    _wireCashflowForm();
     const body = $('nwItemsBody');
     if (body) body.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm me-2"></span>Loading…</td></tr>';
     try {
@@ -48,6 +54,7 @@ async function loadNetworthPage() {
                 </tr>`).join('');
         }
         _renderDeposits(d.deposits || []);
+        _loadCashflow();
     } catch (err) {
         if (body) body.innerHTML = `<tr><td colspan="5" class="text-center text-danger py-3">${err.message}</td></tr>`;
     }
@@ -231,6 +238,71 @@ function _wireDepositForm() {
         });
     }
 }
+
+async function _loadCashflow() {
+    const body = document.getElementById('cfItemsBody');
+    if (!body) return;
+    body.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3"><span class="spinner-border spinner-border-sm me-2"></span>Loading…</td></tr>';
+    const eur = v => Fmt.amt('€' + Fmt.num(v, 0, 0));
+    try {
+        const d = await window.apiClient.getCashflow();
+        const el = id => document.getElementById(id);
+        if (el('cfIncome')) el('cfIncome').innerHTML = eur(d.income_eur);
+        if (el('cfMortgage')) el('cfMortgage').innerHTML = eur(d.by_category.mortgage);
+        if (el('cfLoan')) el('cfLoan').innerHTML = eur(d.by_category.loan);
+        if (el('cfRest')) el('cfRest').innerHTML = eur(d.by_category.rest);
+        if (el('cfNet')) el('cfNet').innerHTML = eur(d.net_monthly_eur);
+        const card = el('cfNetCard');
+        if (card) card.style.background = d.net_monthly_eur >= 0 ? '#0d6efd' : '#dc3545';
+        if (!d.items.length) {
+            body.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">No entries yet. Add income and expenses below.</td></tr>';
+            return;
+        }
+        body.innerHTML = d.items.map(it => `
+            <tr>
+                <td class="ps-3"><strong>${escapeForAttr(it.label)}</strong>${it.notes ? `<br><small class="text-muted">${escapeForAttr(it.notes)}</small>` : ''}</td>
+                <td><span class="badge ${CF_INCOME_CATS.has(it.category) ? 'bg-success' : 'bg-danger'}">${CF_CATEGORY_LABELS[it.category] || it.category}</span></td>
+                <td class="text-end">${Fmt.num(it.amount, 2, 2)} ${it.currency || ''}</td>
+                <td class="text-end ${CF_INCOME_CATS.has(it.category) ? 'text-success' : 'text-danger'}">${CF_INCOME_CATS.has(it.category) ? '' : '−'}${Fmt.amt('€' + Fmt.num(it.amount_eur, 0, 0))}</td>
+                <td class="pe-3 text-end"><button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteCashflow(${it.id})"><i class="bi bi-trash"></i></button></td>
+            </tr>`).join('');
+    } catch (err) {
+        body.innerHTML = `<tr><td colspan="5" class="text-center text-danger py-3">${err.message}</td></tr>`;
+    }
+}
+
+function _wireCashflowForm() {
+    const form = document.getElementById('cfAddForm');
+    if (form && !form.dataset.wired) {
+        form.dataset.wired = '1';
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const status = document.getElementById('cfAddStatus');
+            const payload = {
+                label: document.getElementById('cfLabel').value.trim(),
+                category: document.getElementById('cfCategory').value,
+                amount: parseFloat(document.getElementById('cfAmount').value) || 0,
+                currency: (document.getElementById('cfCurrency').value || 'EUR').toUpperCase(),
+                notes: document.getElementById('cfNotes').value.trim() || null,
+            };
+            if (!payload.label) return;
+            status.className = 'small text-muted'; status.textContent = 'Adding…';
+            try {
+                await window.apiClient.createCashflowEntry(payload);
+                form.reset();
+                document.getElementById('cfCurrency').value = 'EUR';
+                status.textContent = '';
+                _loadCashflow();
+            } catch (err) { status.className = 'small text-danger'; status.textContent = err.message; }
+        });
+    }
+}
+
+window.confirmDeleteCashflow = async function (id) {
+    if (!confirm('Delete this entry?')) return;
+    try { await window.apiClient.deleteCashflowEntry(id); _loadCashflow(); }
+    catch (err) { alert('Error: ' + err.message); }
+};
 
 window.confirmDeleteDeposit = async function (id) {
     if (!confirm('Delete this deposit?')) return;
