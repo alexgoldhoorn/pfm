@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 
 # Database version for migration tracking
-DATABASE_VERSION = 19
+DATABASE_VERSION = 20
 
 
 # black
@@ -522,6 +522,21 @@ class Database:
             """
         )
 
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS monthly_cashflow (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                label       TEXT NOT NULL,
+                category    TEXT NOT NULL CHECK(category IN
+                                ('salary','other_income','mortgage','loan','rest')),
+                amount      REAL NOT NULL DEFAULT 0,
+                currency    TEXT NOT NULL DEFAULT 'EUR',
+                notes       TEXT,
+                created_at  TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
         # Price-update run history (Diagnostics page). See _migrate_to_v17.
         conn.execute(
             """
@@ -599,6 +614,8 @@ class Database:
             self._migrate_to_v18(conn)
         if current_version < 19:
             self._migrate_to_v19(conn)
+        if current_version < 20:
+            self._migrate_to_v20(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -1233,6 +1250,24 @@ class Database:
         )
         conn.commit()
 
+    def _migrate_to_v20(self, conn: sqlite3.Connection):
+        """Migrate from v19 to v20 — add monthly_cashflow table."""
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS monthly_cashflow (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                label       TEXT NOT NULL,
+                category    TEXT NOT NULL CHECK(category IN
+                                ('salary','other_income','mortgage','loan','rest')),
+                amount      REAL NOT NULL DEFAULT 0,
+                currency    TEXT NOT NULL DEFAULT 'EUR',
+                notes       TEXT,
+                created_at  TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.commit()
+
     # ── Price-update run history (Diagnostics) ─────────────────────────────
 
     def record_price_update_run(
@@ -1431,6 +1466,41 @@ class Database:
         """Delete a fixed deposit."""
         with self.get_connection() as conn:
             cur = conn.execute("DELETE FROM fixed_deposits WHERE id = ?", (deposit_id,))
+            conn.commit()
+            return cur.rowcount > 0
+
+    # ── Monthly Cash Flow ──────────────────────────────────────────────────
+
+    def get_monthly_cashflow(self) -> List[Dict]:
+        """List all monthly cash flow entries ordered by id."""
+        with self.get_connection() as conn:
+            rows = conn.execute("SELECT * FROM monthly_cashflow ORDER BY id").fetchall()
+            return [dict(r) for r in rows]
+
+    def create_monthly_cashflow(
+        self,
+        label: str,
+        category: str,
+        amount: float,
+        currency: str = "EUR",
+        notes: str = None,
+    ) -> int:
+        """Create a monthly cash flow entry, return new id."""
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO monthly_cashflow (label, category, amount, currency, notes)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (label, category, amount, currency.upper(), notes),
+            )
+            conn.commit()
+            return cur.lastrowid
+
+    def delete_monthly_cashflow(self, entry_id: int) -> bool:
+        """Delete a monthly cash flow entry. Returns True if found."""
+        with self.get_connection() as conn:
+            cur = conn.execute("DELETE FROM monthly_cashflow WHERE id = ?", (entry_id,))
             conn.commit()
             return cur.rowcount > 0
 
