@@ -158,6 +158,7 @@ window.PAGE_HELP = {
       <ul class="mb-2">
         <li><strong>Investments</strong> are auto-calculated from your portfolio positions. <strong>Fixed Deposits</strong> tracks active term deposits; maturing one posts an interest transaction automatically.</li>
         <li>Add <strong>manual assets</strong> (cash, property, pension) and <strong>liabilities</strong> (mortgage, loans) to complete the picture.</li>
+        <li><strong>Monthly Cash Flow</strong> tracks rough recurring income (salary, other) vs expenses (mortgage payment, loan, rest). The net figure feeds Goals and Forecast projections.</li>
         <li>FIRE goals project from total net worth, not just the brokerage value.</li>
       </ul>
       <p class="text-muted small mb-0">All amounts converted to EUR at live FX rates.</p>`
