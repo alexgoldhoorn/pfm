@@ -1324,6 +1324,24 @@ function createAPIClient() {
             if (!resp.ok) throw new Error('Failed to delete deposit');
             return resp.json().catch(() => ({}));
         },
+        async getCashflow() {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/cashflow', { headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error('Failed to load cash flow');
+            return resp.json();
+        },
+        async createCashflowEntry(payload) {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/cashflow', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(payload)
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to add entry');
+            return resp.json();
+        },
+        async deleteCashflowEntry(id) {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/cashflow/' + id, { method: 'DELETE', headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error('Failed to delete entry');
+            return resp.json().catch(() => ({}));
+        },
         async matureDeposit(id, payload) {
             const resp = await fetch(this.baseURL + '/api/v1/deposits/' + id + '/mature', {
                 method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
