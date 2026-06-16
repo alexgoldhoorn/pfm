@@ -36,20 +36,23 @@ def test_at_qty_negative_is_a_buy_with_unit_price():
     assert buy.date == "2026-05-28"
 
 
-def test_at_qty_positive_is_a_sell():
+def test_at_qty_positive_is_a_dividend():
+    # MyInvestor uses "NAME @ QTY" for dividends (QTY = shares held); we no
+    # longer misclassify these as sells.
     r = _result()
     sells = [t for t in r.transactions if t.tx_type == "sell"]
-    assert len(sells) == 1
-    assert sells[0].symbol == "BAR LTD"
-    assert sells[0].quantity == 20.0
+    assert len(sells) == 0
+    divs = [t for t in r.transactions if t.tx_type == "dividend"]
+    bar = next(d for d in divs if d.symbol == "BAR LTD")
+    assert bar.quantity == 20.0
 
 
-def test_positive_no_at_is_a_dividend():
+def test_positive_no_at_is_also_a_dividend():
     r = _result()
     divs = [t for t in r.transactions if t.tx_type == "dividend"]
-    assert len(divs) == 1
-    assert divs[0].symbol == "ACME CORP"
-    assert divs[0].price == 7.61
+    assert len(divs) == 2
+    acme = next(d for d in divs if d.symbol == "ACME CORP")
+    assert acme.price == 7.61
 
 
 def test_fee_and_unitless_buy_are_skipped_with_clear_reasons():

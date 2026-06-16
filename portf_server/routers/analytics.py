@@ -932,6 +932,12 @@ async def get_tax_report(
     calc = TaxCalculator(db)
     lots = []
     total_gain = 0.0
+    # Build symbol → name lookup once so lot rows can include a friendly name.
+    asset_names: dict[str, str] = {
+        a["symbol"]: a.get("name", "") or ""
+        for a in db.get_all_assets()
+        if a.get("symbol")
+    }
     try:
         report = calc.calculate_tax_report(user_id=1, start_date=start, end_date=end)
         for symbol, txns in report.items():
@@ -941,6 +947,7 @@ async def get_tax_report(
                 lots.append(
                     {
                         "symbol": symbol,
+                        "name": asset_names.get(symbol, ""),
                         "sell_date": str(getattr(t, "sell_date", "")),
                         "quantity": float(getattr(t, "quantity", 0) or 0),
                         "proceeds": round(float(getattr(t, "proceeds", 0) or 0), 2),

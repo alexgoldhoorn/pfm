@@ -1025,7 +1025,7 @@ async function loadAnalyticsTaxReport() {
         const lots = d.realised_lots || [];
         const lotRows = lots.length ? lots.map(l => `
             <tr>
-                <td><strong>${esc(l.symbol)}</strong></td>
+                <td><strong>${esc(l.symbol)}</strong>${l.name && l.name !== l.symbol ? `<div class="small text-muted">${esc(l.name)}</div>` : ''}</td>
                 <td>${Fmt.date(l.sell_date)}</td>
                 <td class="text-end">${Fmt.num(l.quantity, 0, 4)}</td>
                 <td class="text-end">${anFmtEur2(l.proceeds)}</td>

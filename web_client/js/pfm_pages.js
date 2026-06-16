@@ -760,8 +760,8 @@ function createPageManager() {
                 const portfolios = await window.apiClient.getPortfolios();
                 let values = { portfolios: [], total_value_eur: 0, total_cost_eur: 0, total_pnl_eur: 0 };
                 try { values = await window.apiClient.getPortfolioValues(); } catch (e) { /* values optional */ }
-                const valByName = {};
-                (values.portfolios || []).forEach(v => { valByName[v.name] = v; });
+                const valById = {};
+                (values.portfolios || []).forEach(v => { valById[v.portfolio_id] = v; });
 
                 const eur = n => Fmt.amt('€' + Fmt.num(Math.round(n), 0, 0));
                 const pnlCell = v => {
@@ -782,7 +782,7 @@ function createPageManager() {
                     tableBody.innerHTML = '<tr><td colspan="7" class="text-center text-muted">No brokers yet. Click "Add Portfolio" to create one.</td></tr>';
                 } else {
                     const renderBrokerRow = (p) => {
-                        const v = valByName[p.name];
+                        const v = valById[p.id];
                         const site = p.website
                             ? ` <a href="${p.website}" target="_blank" rel="noopener" title="${p.website}${p.website_is_default ? ' (suggested)' : ''}" class="text-decoration-none"><i class="bi bi-box-arrow-up-right small ${p.website_is_default ? 'text-muted' : ''}"></i></a>`
                             : '';
@@ -813,7 +813,7 @@ function createPageManager() {
                     // Merge per-broker EUR values onto the rows so the shared table
                     // can sort by value_eur / pnl_eur (they live on valByName).
                     this._brokerRows = portfolios.map(p => {
-                        const v = valByName[p.name] || {};
+                        const v = valById[p.id] || {};
                         return Object.assign({}, p, {
                             value_eur: v.value_eur == null ? null : v.value_eur,
                             pnl_eur: v.pnl_eur == null ? null : v.pnl_eur,

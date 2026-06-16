@@ -178,10 +178,11 @@ class CoinbaseCSVParser:
                 f"Invalid price at transaction: {price_at_transaction_str}"
             )
 
-        # For income types, use market price as cost basis (no fees)
+        # For income types, store as price=EUR total, qty=1 (earnings pattern)
         # For trades, calculate from total (includes fees)
         if is_income:
-            unit_price = coinbase_unit_price
+            unit_price = total_amount  # EUR value of the staking reward
+            quantity = 1.0
             fees_amount = 0.0
         else:
             # FIX: Calculate the correct unit price from total_amount / quantity
@@ -203,16 +204,15 @@ class CoinbaseCSVParser:
         except ValueError:
             raise ValueError(f"Invalid timestamp format: {timestamp_str}")
 
-        # Determine transaction type (buy/sell)
-        # Income types are treated as buy (cost basis = market price at receipt)
+        # Determine transaction type
         if is_income:
-            llm_tx_type = "buy"
+            llm_tx_type = "interest"
         else:
             llm_tx_type = "buy" if "Buy" in tx_type else "sell"
 
         # Create raw text for traceability
         if is_income:
-            raw_text = f"{tx_type}: {quantity} {asset} @ {unit_price:.4f} {price_currency} (income, cost basis at market price) - {timestamp_str}"
+            raw_text = f"{tx_type}: {float(quantity_str):.8f} {asset} @ {coinbase_unit_price:.4f} {price_currency} = {total_amount:.5f} {price_currency} (staking income) - {timestamp_str}"
         else:
             raw_text = f"{tx_type}: {quantity} {asset} for {total_str} total (calculated unit price {unit_price:.4f} {price_currency}, fees ~{fees_amount:.4f}) - {timestamp_str}"
 

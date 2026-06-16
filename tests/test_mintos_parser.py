@@ -53,6 +53,8 @@ DEPOSIT_SAMPLE = HEADER + "\n".join(
         '"2025-11-02 09:00:00",d1,"Ingreso de fondos",100.00,100.00,EUR,"Depósito"',
         '"2025-11-03 02:52:28",i1,"Préstamo X Intereses recibidos",0.10,100.10,EUR,"Intereses recibidos"',
         '"2025-11-20 09:00:00",w1,"Retirada de fondos",-40.00,60.10,EUR,"Retirada de fondos"',
+        '"2025-11-21 10:00:00",w2,"Transferencia saliente",-200.00,-139.90,EUR,"Pago mediante transferencia electrónica saliente"',
+        '"2025-11-22 11:00:00",p1,"Buyback principal",5.00,5.00,EUR,"Ingresos del principal recibidos por la recompra del préstamo"',
     ]
 )
 
@@ -62,6 +64,22 @@ def test_deposits_and_withdrawals_become_bookings():
     pairs = {(b["action"], b["amount"], b["currency"]) for b in r.bookings}
     assert ("Deposit", 100.0, "EUR") in pairs
     assert ("Withdrawal", 40.0, "EUR") in pairs
-    assert len(r.bookings) == 2
+    assert len(r.bookings) == 3
     # Interest is still aggregated, unaffected by the new booking rows.
     assert any(e["amount"] == 0.10 for e in r.interest)
+
+
+def test_outgoing_wire_is_withdrawal():
+    r = parse_mintos_csv(DEPOSIT_SAMPLE)
+    pairs = {(b["action"], b["amount"], b["currency"]) for b in r.bookings}
+    assert ("Withdrawal", 200.0, "EUR") in pairs
+
+
+def test_buyback_principal_is_ignored_not_deposit():
+    r = parse_mintos_csv(DEPOSIT_SAMPLE)
+    # principal repayment from buyback guarantee must not become a booking
+    assert not any(b["amount"] == 5.0 for b in r.bookings)
+    assert (
+        "Ingresos del principal recibidos por la recompra del préstamo"
+        in r.ignored_summary
+    )
