@@ -24,7 +24,7 @@ Portfolio Manager: a Python CLI + FastAPI server + web client for tracking stock
 ### Database
 SQLite by default (`portfolio.db`), PostgreSQL via `DATABASE_URL` env var. Use `portf_manager/database.py` for SQLite, `database_factory.py` for auto-detection.
 
-**Current schema version: 19.** Migrations run automatically on startup.
+**Current schema version: 20.** Migrations run automatically on startup.
 
 Key fields added in recent migrations:
 - v5: `tax REAL DEFAULT 0` on `transactions`; new `bookings` table (deposits/withdrawals)
@@ -42,6 +42,7 @@ Key fields added in recent migrations:
 - v17: `price_update_runs` table (each price-refresh run: timing, updated/skipped/error counts, JSON symbol lists). **New schema tables must be added in BOTH `_create_all_tables` (fresh DBs) AND a `_migrate_to_vN` (existing DBs)** — a migration-only add breaks fresh installs/tests with "no such table". Recorded by `cli.update_prices` (via `db.record_price_update_run`, mirrored on `http_client.PortfolioHTTPClient` → `POST /analytics/update-runs` in server mode); read by `GET /analytics/update-runs`. Powers the **Diagnostics** web page (sidebar Tools → `diagnosticsPage`, `loadDiagnosticsPage()`): freshness summary + stale/unpriced table + update history.
 - v18: `assets.ticker` nullable column (yfinance-style market symbol for ISIN-keyed assets).
 - v19: `fixed_deposits` table — fixed-term deposit tracking (name, portfolio_id, principal, currency, interest_rate, start_date, maturity_date, status CHECK 'active'/'matured'/'closed', interest_paid, notes). CRUD via `db.create/get/get_all/update/delete_fixed_deposit`. Router at `/api/v1/deposits`; maturity posts an `interest` transaction against a synthetic `DEPOSITS` cash asset (`auto_price=0`). Active principals included in `GET /api/v1/networth` as `deposits_eur`. LLM extraction via `POST /api/v1/llm/extract-deposits` → `GeminiClient.extract_deposits`. Web UI on Net Worth page.
+- v20: `monthly_cashflow` table (`id, label, category CHECK('salary'|'other_income'|'mortgage'|'loan'|'rest'), amount, currency, notes, created_at`). Category implies income/expense (salary/other_income = income; mortgage/loan/rest = expense). CRUD: `db.get/create/delete_monthly_cashflow`. Router at `GET|POST|DELETE /api/v1/networth/cashflow`; GET returns `items`, `income_eur`, `expenses_eur`, `net_monthly_eur`, `by_category`. Web: Monthly Cash Flow section on Net Worth page (5 summary cards + entries table + add form). No update endpoint — delete and re-add.
 
 ### Performance / event loop
 - Endpoints doing blocking yfinance I/O are plain `def` (not `async`) so FastAPI runs them in a threadpool — an `async` handler calling `yf` blocks the event loop and stalls every other request. Applies to: diversification, performance, snapshot, rebalance analysis, research generate/lookup, watchlist list/alerts. Keep new blocking-IO endpoints sync.
