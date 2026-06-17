@@ -52,7 +52,10 @@ from .pdt_xlsx_parser import (
     _to_date,
 )
 
-SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
 
 # Number of header rows before data starts
 _N_HEADERS = 3
@@ -391,6 +394,90 @@ class PDTSheetsSync:
     # Push (DB → Google Sheet)
     # ------------------------------------------------------------------
 
+    def export_bytes(
+        self,
+        mime_type: str = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    ) -> bytes:
+        """
+        Download the spreadsheet via Drive API export_media and return the raw bytes.
+        Works with any MIME type Google Sheets supports (xlsx, ods, pdf).
+        Requires the drive scope (reads only — no storage quota consumed).
+        """
+        from io import BytesIO
+        from googleapiclient.http import MediaIoBaseDownload
+
+        creds = Credentials.from_service_account_file(
+            self.service_account_file, scopes=SCOPES
+        )
+        drive_svc = build("drive", "v3", credentials=creds)
+        buf = BytesIO()
+        request = drive_svc.files().export_media(
+            fileId=self.spreadsheet_id, mimeType=mime_type
+        )
+        downloader = MediaIoBaseDownload(buf, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        return buf.getvalue()
+
+    def backup_in_place(self, label: Optional[str] = None) -> str:
+        """
+        Overwrite fixed backup tabs (Backup — Transactions / Dividends / Bookings)
+        within the same spreadsheet.  Only needs the spreadsheets scope.
+        Returns the URL of the spreadsheet.
+        """
+
+        svc = self._svc()
+        sheets_api = svc.spreadsheets()
+
+        meta = sheets_api.get(spreadsheetId=self.spreadsheet_id).execute()
+        sheets_by_title = {
+            s["properties"]["title"]: s["properties"]["sheetId"]
+            for s in meta.get("sheets", [])
+        }
+
+        data_sheets = ["Transactions", "Dividends", "Bookings"]
+        backup_names = {s: f"Backup — {s}" for s in data_sheets}
+
+        # Delete stale backup tabs first
+        delete_requests = [
+            {"deleteSheet": {"sheetId": sheets_by_title[bname]}}
+            for bname in backup_names.values()
+            if bname in sheets_by_title
+        ]
+        if delete_requests:
+            sheets_api.batchUpdate(
+                spreadsheetId=self.spreadsheet_id,
+                body={"requests": delete_requests},
+            ).execute()
+            meta = sheets_api.get(spreadsheetId=self.spreadsheet_id).execute()
+            sheets_by_title = {
+                s["properties"]["title"]: s["properties"]["sheetId"]
+                for s in meta.get("sheets", [])
+            }
+
+        dup_requests = [
+            {
+                "duplicateSheet": {
+                    "sourceSheetId": sheets_by_title[name],
+                    "newSheetName": backup_names[name],
+                }
+            }
+            for name in data_sheets
+            if name in sheets_by_title
+        ]
+        if not dup_requests:
+            raise ValueError(
+                "No data sheets found to back up (Transactions/Dividends/Bookings)"
+            )
+
+        sheets_api.batchUpdate(
+            spreadsheetId=self.spreadsheet_id,
+            body={"requests": dup_requests},
+        ).execute()
+
+        return f"https://docs.google.com/spreadsheets/d/{self.spreadsheet_id}"
+
     def push(self, db_adapter: Any, portfolio_id: Optional[int] = None) -> dict:
         """Write all portfolio data to the PDT-format Google Spreadsheet."""
         tx_rows = self._build_transactions_rows(db_adapter, portfolio_id)
@@ -429,10 +516,14 @@ class PDTSheetsSync:
     def _parse_tx_date(self, tx: dict) -> Optional[date]:
         v = tx.get("transaction_date")
         if isinstance(v, str):
-            try:
-                return datetime.strptime(v, "%Y-%m-%d").date()
-            except ValueError:
-                return None
+            for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+                try:
+                    return datetime.strptime(v, fmt).date()
+                except ValueError:
+                    continue
+            return None
+        if isinstance(v, datetime):
+            return v.date()
         return v
 
     def _build_transactions_rows(
@@ -453,7 +544,9 @@ class PDTSheetsSync:
             fees = tx.get("fees") or 0
             tax = tx.get("tax") or 0
             currency = tx.get("currency") or asset.get("currency", "EUR")
-            exchange = _pdt_exchange(asset.get("exchange"), asset_type)
+            exchange = _pdt_exchange(
+                asset.get("exchange"), asset_type, asset.get("symbol")
+            )
             rows.append(
                 [
                     broker,
@@ -500,7 +593,9 @@ class PDTSheetsSync:
                 (tx.get("price") or 0) * (tx.get("quantity") or 1)
             )
             tax = tx.get("tax") or 0
-            exchange = _pdt_exchange(asset.get("exchange"), asset_type)
+            exchange = _pdt_exchange(
+                asset.get("exchange"), asset_type, asset.get("symbol")
+            )
             rows.append(
                 [
                     broker,

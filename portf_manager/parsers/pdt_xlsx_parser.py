@@ -584,14 +584,39 @@ _PDT_SETTINGS_VERSION = 2.0
 _PDT_SETTINGS_URL = "https://beta.portfoliodividendtracker.com/api/import/data"
 
 
-def _pdt_exchange(exchange: Optional[str], asset_type: str) -> str:
+_ISIN_EXCHANGE_FALLBACK: dict = {
+    "US": "Nasdaq",
+    "DE": "XETRA Exchange",
+    "GB": "London Stock Exchange",
+    "FR": "Euronext",
+    "NL": "Euronext",
+    "BE": "Euronext",
+}
+
+
+def _pdt_exchange(
+    exchange: Optional[str],
+    asset_type: str,
+    symbol: Optional[str] = None,
+) -> str:
     """Return the PDT-canonical exchange value for a given asset type.
 
     Crypto and commodity assets must have an empty exchange field per PDT spec.
+    When exchange is None for a stock/ETF/index with an ISIN symbol, infer a
+    reasonable default from the ISIN country prefix to avoid PDT validation
+    errors.
     """
     if asset_type.lower() in ("crypto", "commodity"):
         return ""
-    return exchange or ""
+    if exchange:
+        return exchange
+    # Try to infer from ISIN country prefix (first 2 chars)
+    if symbol and len(symbol) == 12 and symbol[:2].isalpha():
+        prefix = symbol[:2].upper()
+        inferred = _ISIN_EXCHANGE_FALLBACK.get(prefix)
+        if inferred:
+            return inferred
+    return ""
 
 
 class PDTXLSXExporter:
@@ -666,7 +691,9 @@ class PDTXLSXExporter:
             tax = tx.get("tax") or 0
             # tx["currency"] is COALESCE(t.currency, a.currency) — correct per transaction
             currency = tx.get("currency") or asset.get("currency", "EUR")
-            exchange = _pdt_exchange(asset.get("exchange"), asset_type)
+            exchange = _pdt_exchange(
+                asset.get("exchange"), asset_type, asset.get("symbol")
+            )
 
             ws.append(
                 [
@@ -728,7 +755,9 @@ class PDTXLSXExporter:
                 (tx.get("price") or 0) * (tx.get("quantity") or 1)
             )
             tax = tx.get("tax") or 0
-            exchange = _pdt_exchange(asset.get("exchange"), asset_type)
+            exchange = _pdt_exchange(
+                asset.get("exchange"), asset_type, asset.get("symbol")
+            )
 
             ws.append(
                 [

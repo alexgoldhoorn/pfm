@@ -1787,6 +1787,9 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         <li class="nav-item">
                             <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#ioTabData" id="ioTabBtnData"><i class="bi bi-bank me-1"></i>Data</button>
                         </li>
+                        <li class="nav-item">
+                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#ioTabSync" id="ioTabBtnSync"><i class="bi bi-file-earmark-spreadsheet me-1"></i>Google Sheets</button>
+                        </li>
                     </ul>
                     <div class="tab-content">
                         <div class="tab-pane fade show active" id="ioTabImport">
@@ -2012,40 +2015,117 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                             </div>
                         </div>
 
-                        <!-- Google Sheets PDT Sync -->
-                        <div class="col-12">
-                            <div class="card">
-                                <div class="card-header fw-semibold">
-                                    <i class="bi bi-cloud-arrow-up-fill me-2 text-success"></i>Google Sheets — PDT Sync
-                                </div>
-                                <div class="card-body">
-                                    <p class="text-muted small mb-3">
-                                        Sync directly with a Google Spreadsheet in Portfolio Dividend Tracker format.
-                                        The sheet must be shared with the service account email shown below.
-                                    </p>
-                                    <div id="syncConfigInfo" class="mb-3"></div>
-                                    <div class="mb-3">
-                                        <label class="form-label" for="syncSheetId">Spreadsheet ID
-                                            <span class="text-muted small">(the long ID from the URL: /spreadsheets/d/<strong>ID</strong>/)</span>
-                                        </label>
-                                        <input type="text" class="form-control font-monospace" id="syncSheetId"
-                                            placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms">
-                                    </div>
-                                    <div class="d-flex gap-3 flex-wrap">
-                                        <button class="btn btn-sm btn-outline-success" id="syncPullBtn">
-                                            <i class="bi bi-cloud-arrow-down me-2"></i>Pull from Sheet
-                                        </button>
-                                        <button class="btn btn-sm btn-outline-primary" id="syncPushBtn">
-                                            <i class="bi bi-cloud-arrow-up me-2"></i>Push to Sheet
-                                        </button>
-                                    </div>
-                                    <div id="syncStatus" class="mt-3"></div>
-                                </div>
-                            </div>
-                        </div>
                             </div>
                         </div><!-- /#ioTabData -->
+
+                        <div class="tab-pane fade" id="ioTabSync">
+                            <div class="row g-3">
+                                <!-- Config card -->
+                                <div class="col-12">
+                                    <div class="card">
+                                        <div class="card-header fw-semibold">
+                                            <i class="bi bi-file-earmark-spreadsheet me-2 text-success"></i>Google Sheets — PDT Sync
+                                        </div>
+                                        <div class="card-body">
+                                            <p class="text-muted small mb-3">
+                                                Sync directly with a Google Spreadsheet in Portfolio Dividend Tracker format.
+                                                The sheet must be shared with the service account email shown below.
+                                            </p>
+                                            <div id="syncConfigInfo" class="mb-3"></div>
+                                            <div class="mb-3">
+                                                <label class="form-label" for="syncSheetId">Spreadsheet ID
+                                                    <span class="text-muted small">(the long ID from the URL: /spreadsheets/d/<strong>ID</strong>/)</span>
+                                                </label>
+                                                <div class="input-group">
+                                                    <input type="text" class="form-control font-monospace" id="syncSheetId"
+                                                        placeholder="1A2B3C4D5E6F7G8H9I0J1K2L3M4N5O6P7Q8R9S0T1U2">
+                                                    <button class="btn btn-outline-secondary" id="syncSaveIdBtn" title="Save spreadsheet ID">
+                                                        <i class="bi bi-floppy me-1"></i>Save
+                                                    </button>
+                                                </div>
+                                                <div id="syncSaveStatus" class="form-text"></div>
+                                            </div>
+                                            <div class="d-flex gap-3 flex-wrap">
+                                                <button class="btn btn-sm btn-outline-success" id="syncPullBtn">
+                                                    <i class="bi bi-cloud-arrow-down me-2"></i>Pull from Sheet
+                                                </button>
+                                                <button class="btn btn-sm btn-outline-primary" id="syncPushBtn">
+                                                    <i class="bi bi-cloud-arrow-up me-2"></i>Push to Sheet
+                                                </button>
+                                                <button class="btn btn-sm btn-outline-secondary" id="syncBackupBtn" title="Overwrites Backup — Transactions/Dividends/Bookings tabs in this sheet">
+                                                    <i class="bi bi-copy me-2"></i>Backup Tabs
+                                                </button>
+                                                <button class="btn btn-sm btn-outline-secondary" id="syncDownloadBtn" title="Download a snapshot of the sheet as Excel">
+                                                    <i class="bi bi-file-earmark-arrow-down me-2"></i>Download as Excel
+                                                </button>
+                                            </div>
+                                            <div id="syncStatus" class="mt-3"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div><!-- /#ioTabSync -->
+
                     </div><!-- /.tab-content -->
+                </div>
+
+                <!-- Pull confirmation modal -->
+                <div class="modal fade" id="syncPullModal" tabindex="-1" aria-labelledby="syncPullModalLabel" aria-hidden="true">
+                    <div class="modal-dialog">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="syncPullModalLabel"><i class="bi bi-cloud-arrow-down me-2 text-success"></i>Pull from Google Sheet</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <p>This will import all transactions, dividends and bookings from your Google Sheet into the database.</p>
+                                <ul class="small text-muted">
+                                    <li>Duplicates are detected automatically and skipped.</li>
+                                    <li>New assets and portfolios are created as needed.</li>
+                                    <li>Existing records are <strong>not</strong> overwritten.</li>
+                                </ul>
+                                <p class="mb-0">Continue?</p>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                <button type="button" class="btn btn-success" id="syncPullConfirmBtn">
+                                    <i class="bi bi-cloud-arrow-down me-2"></i>Yes, Pull
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Push confirmation modal -->
+                <div class="modal fade" id="syncPushModal" tabindex="-1" aria-labelledby="syncPushModalLabel" aria-hidden="true">
+                    <div class="modal-dialog">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title" id="syncPushModalLabel"><i class="bi bi-cloud-arrow-up me-2 text-primary"></i>Push to Google Sheet</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="alert alert-warning py-2 small">
+                                    <i class="bi bi-exclamation-triangle me-1"></i>
+                                    This will <strong>overwrite</strong> the Transactions, Dividends and Bookings sheets with data from the database.
+                                </div>
+                                <div class="form-check mb-3">
+                                    <input class="form-check-input" type="checkbox" id="syncPushBackupCheck" checked>
+                                    <label class="form-check-label" for="syncPushBackupCheck">
+                                        Backup data tabs first
+                                        <span class="text-muted small d-block">Overwrites <em>Backup — Transactions / Dividends / Bookings</em> tabs in the same sheet.</span>
+                                    </label>
+                                </div>
+                                <div id="syncPushModalStatus"></div>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                                <button type="button" class="btn btn-primary" id="syncPushConfirmBtn">
+                                    <i class="bi bi-cloud-arrow-up me-2"></i>Push
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Help Page -->
