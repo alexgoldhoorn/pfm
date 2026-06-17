@@ -232,7 +232,7 @@ function createNavigationManager() {
                 case 'watchlist':    window.pageManager.loadWatchlistPage(); break;
                 case 'goals':        window.pageManager.loadGoalsPage(); break;
                 case 'chat':         break;
-                case 'importexport': break;
+                case 'importexport': if (window.loadImportExportPage) window.loadImportExportPage(); break;
                 case 'portfolios':   window.pageManager.loadPortfoliosPage(); break;
                 case 'research':     if (window.loadResearchPage) window.loadResearchPage(); break;
                 case 'forecast':     if (window._fcLoadStartValue) window._fcLoadStartValue(); break;
@@ -1109,7 +1109,7 @@ function setupImportExportPage() {
                 : `Successfully imported ${result.saved} transaction(s)${bkMsg}${owMsg}${dupNote}.`);
             textShowStep1();
             textarea.value = '';
-            loadBookings();
+            if (_ioDataTabLoaded) loadBookings(); else _ioDataTabLoaded = false;
         } catch (err) {
             alert('Error saving: ' + err.message);
         } finally {
@@ -1271,7 +1271,6 @@ function setupImportExportPage() {
         }
     }
 
-    loadBookings();
     const refreshBookingsBtn = document.getElementById('ioRefreshBookingsBtn');
     if (refreshBookingsBtn) refreshBookingsBtn.addEventListener('click', loadBookings);
 
@@ -1316,7 +1315,7 @@ function setupImportExportPage() {
             try {
                 await window.apiClient.createBooking(payload);
                 document.getElementById('addBookingAmount').value = '';
-                loadBookings();
+                if (_ioDataTabLoaded) loadBookings(); else _ioDataTabLoaded = false;
             } catch (err) {
                 alert('Error adding booking: ' + err.message);
             } finally {
@@ -1382,7 +1381,7 @@ function setupImportExportPage() {
                 + (r.errors.length ? `<br>${r.errors.length} error(s): ${r.errors[0]}` : ''),
                 r.errors.length ? 'warning' : 'success'
             );
-            loadBookings();
+            if (_ioDataTabLoaded) loadBookings(); else _ioDataTabLoaded = false;
         } catch (err) {
             setSyncStatus(`Pull failed: ${err.message}`, 'danger');
         } finally {
@@ -1413,6 +1412,35 @@ function setupImportExportPage() {
     });
 
     loadSyncConfig();
+
+    let _ioDataTabLoaded = false;
+
+    function showImportExportTab(tab) {
+        document.querySelectorAll('#ioTabs [data-io-tab]').forEach(b =>
+            b.classList.toggle('active', b.dataset.ioTab === tab));
+        document.querySelectorAll('#importexportPage [data-io-section]').forEach(card => {
+            card.style.display = card.dataset.ioSection === tab ? '' : 'none';
+        });
+        if (tab === 'data' && !_ioDataTabLoaded) {
+            _ioDataTabLoaded = true;
+            loadBookings();
+        }
+    }
+
+    function setupImportExportTabs() {
+        const tabs = document.getElementById('ioTabs');
+        if (tabs && !tabs.dataset.wired) {
+            tabs.dataset.wired = '1';
+            tabs.querySelectorAll('[data-io-tab]').forEach(btn => {
+                btn.addEventListener('click', () => showImportExportTab(btn.dataset.ioTab));
+            });
+        }
+        _ioDataTabLoaded = false;
+        showImportExportTab('import');
+    }
+
+    setupImportExportTabs();
+    window.loadImportExportPage = () => setupImportExportTabs();
 }
 
 // ---------------------------------------------------------------------------
