@@ -1559,6 +1559,41 @@ function createAPIClient() {
             return resp.json();
         },
 
+        async saveSyncConfig(sheetId) {
+            const resp = await fetch(this.baseURL + '/api/v1/sync/pdt-config', {
+                method: 'PUT',
+                headers: { 'X-API-Key': this.apiKey, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ spreadsheet_id: sheetId }),
+            });
+            if (!resp.ok) { const t = await resp.text(); throw new Error(t); }
+            return resp.json();
+        },
+
+        async syncBackup(sheetId) {
+            const params = new URLSearchParams();
+            if (sheetId) params.set('spreadsheet_id', sheetId);
+            const url = this.baseURL + '/api/v1/sync/pdt-backup?' + params.toString();
+            const resp = await fetch(url, { method: 'POST', headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) { const t = await resp.text(); throw new Error(t); }
+            return resp.json();
+        },
+
+        async syncDownload(sheetId, fmt = 'xlsx') {
+            const params = new URLSearchParams({ fmt });
+            if (sheetId) params.set('spreadsheet_id', sheetId);
+            const url = this.baseURL + '/api/v1/sync/pdt-download?' + params.toString();
+            const resp = await fetch(url, { headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) { const t = await resp.text(); throw new Error(t); }
+            const blob = await resp.blob();
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = `pdt-backup-${new Date().toISOString().slice(0, 10)}.${fmt}`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(a.href);
+        },
+
         async syncPull(sheetId) {
             const url = this.baseURL + '/api/v1/sync/pdt-pull'
                 + (sheetId ? `?spreadsheet_id=${encodeURIComponent(sheetId)}` : '');

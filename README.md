@@ -171,11 +171,11 @@ python -m portf_manager export-pdt --output my_portfolio.xlsx --portfolio "MyInv
 
 ```bash
 # Pull from a PDT-format Google Spreadsheet into DB
-python -m portf_manager sync-pdt-pull --sheet-id 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms
+python -m portf_manager sync-pdt-pull --sheet-id YOUR_SPREADSHEET_ID
 python -m portf_manager sync-pdt-pull   # uses GOOGLE_SPREADSHEET_ID env var
 
 # Push DB data to the Google Spreadsheet (overwrites Transactions/Dividends/Bookings sheets)
-python -m portf_manager sync-pdt-push --sheet-id 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms
+python -m portf_manager sync-pdt-push --sheet-id YOUR_SPREADSHEET_ID
 python -m portf_manager sync-pdt-push --portfolio "MyInvestor"
 ```
 

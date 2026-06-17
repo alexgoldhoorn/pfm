@@ -1325,94 +1325,6 @@ function setupImportExportPage() {
         });
     }
 
-    // --- Google Sheets PDT Sync section ---
-    const syncSheetInput = document.getElementById('syncSheetId');
-    const syncConfigInfo = document.getElementById('syncConfigInfo');
-    const syncStatus     = document.getElementById('syncStatus');
-    const syncPullBtn    = document.getElementById('syncPullBtn');
-    const syncPushBtn    = document.getElementById('syncPushBtn');
-
-    async function loadSyncConfig() {
-        if (!syncConfigInfo) return;
-        try {
-            const cfg = await window.apiClient.getSyncConfig();
-            const saStatus = cfg.service_account_configured
-                ? `<span class="badge bg-success">Configured</span> <code class="small">${cfg.service_account_email || ''}</code>`
-                : `<span class="badge bg-danger">Not configured</span> — set <code>GOOGLE_SERVICE_ACCOUNT_FILE</code>`;
-            const sheetInfo = cfg.default_spreadsheet_id
-                ? `<span class="text-muted small">Default sheet: <code>${cfg.default_spreadsheet_id}</code></span>`
-                : `<span class="text-muted small">No default sheet — enter ID below or set <code>GOOGLE_SPREADSHEET_ID</code></span>`;
-            syncConfigInfo.innerHTML = `
-                <div class="d-flex flex-column gap-1">
-                    <div><span class="text-muted small me-2">Service account:</span>${saStatus}</div>
-                    <div>${sheetInfo}</div>
-                    ${cfg.service_account_configured && cfg.service_account_email ?
-                        `<div class="alert alert-info py-1 mb-0 small"><i class="bi bi-info-circle me-1"></i>Share your Google Sheet with <strong>${cfg.service_account_email}</strong> (Editor access).</div>` : ''}
-                </div>`;
-            if (cfg.default_spreadsheet_id && syncSheetInput && !syncSheetInput.value)
-                syncSheetInput.placeholder = cfg.default_spreadsheet_id;
-        } catch (e) {
-            if (syncConfigInfo) syncConfigInfo.innerHTML = `<span class="text-danger small">${e.message}</span>`;
-        }
-    }
-
-    function setSyncStatus(msg, type = 'info') {
-        if (!syncStatus) return;
-        syncStatus.innerHTML = `<div class="alert alert-${type} py-2 small mb-0">${msg}</div>`;
-    }
-
-    function getSheetId() {
-        return syncSheetInput && syncSheetInput.value.trim()
-            ? syncSheetInput.value.trim()
-            : null;
-    }
-
-    if (syncPullBtn) syncPullBtn.addEventListener('click', async () => {
-        const sheetId = getSheetId();
-        syncPullBtn.disabled = true;
-        syncPullBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Pulling…';
-        setSyncStatus('Pulling data from Google Sheet…');
-        try {
-            const r = await window.apiClient.syncPull(sheetId);
-            setSyncStatus(
-                `Pulled from <code>${r.spreadsheet_id}</code>: `
-                + `${r.imported_transactions} transactions, ${r.imported_dividends} dividends, `
-                + `${r.imported_bookings} bookings.`
-                + (r.errors.length ? `<br>${r.errors.length} error(s): ${r.errors[0]}` : ''),
-                r.errors.length ? 'warning' : 'success'
-            );
-            if (_ioDataTabLoaded) loadBookings(); else _ioDataTabLoaded = false;
-        } catch (err) {
-            setSyncStatus(`Pull failed: ${err.message}`, 'danger');
-        } finally {
-            syncPullBtn.disabled = false;
-            syncPullBtn.innerHTML = '<i class="bi bi-cloud-arrow-down me-2"></i>Pull from Sheet';
-        }
-    });
-
-    if (syncPushBtn) syncPushBtn.addEventListener('click', async () => {
-        const sheetId = getSheetId();
-        syncPushBtn.disabled = true;
-        syncPushBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Pushing…';
-        setSyncStatus('Pushing data to Google Sheet…');
-        try {
-            const r = await window.apiClient.syncPush(sheetId);
-            setSyncStatus(
-                `Pushed to <a href="${r.spreadsheet_url}" target="_blank">${r.spreadsheet_id}</a>: `
-                + `${r.transactions_written} transactions, ${r.dividends_written} dividends, `
-                + `${r.bookings_written} bookings.`,
-                'success'
-            );
-        } catch (err) {
-            setSyncStatus(`Push failed: ${err.message}`, 'danger');
-        } finally {
-            syncPushBtn.disabled = false;
-            syncPushBtn.innerHTML = '<i class="bi bi-cloud-arrow-up me-2"></i>Push to Sheet';
-        }
-    });
-
-    loadSyncConfig();
-
     let _ioDataTabLoaded = false;
 
     function _triggerDataTabLoad() {
@@ -1434,10 +1346,194 @@ function setupImportExportPage() {
                 new window.bootstrap.Tab(importBtn).show();
             }
         }
+        // Wire Sync tab to load config on first show
+        const syncBtn = document.getElementById('ioTabBtnSync');
+        if (syncBtn && !syncBtn._syncWired) {
+            syncBtn._syncWired = true;
+            syncBtn.addEventListener('shown.bs.tab', () => {
+                if (window._syncPageLoaded) return;
+                window._syncPageLoaded = true;
+                setupGoogleSheetsPage();
+            });
+        }
     }
 
     setupImportExportTabs();
     window.loadImportExportPage = () => setupImportExportTabs();
+}
+
+// ---------------------------------------------------------------------------
+// Google Sheets sync page
+// ---------------------------------------------------------------------------
+function setupGoogleSheetsPage() {
+    const syncSheetInput  = document.getElementById('syncSheetId');
+    const syncConfigInfo  = document.getElementById('syncConfigInfo');
+    const syncStatus      = document.getElementById('syncStatus');
+    const syncSaveIdBtn   = document.getElementById('syncSaveIdBtn');
+    const syncSaveStatus  = document.getElementById('syncSaveStatus');
+    const syncPullBtn     = document.getElementById('syncPullBtn');
+    const syncPushBtn     = document.getElementById('syncPushBtn');
+    const syncBackupBtn   = document.getElementById('syncBackupBtn');
+    const syncDownloadBtn = document.getElementById('syncDownloadBtn');
+    const pullModal       = document.getElementById('syncPullModal');
+    const pushModal       = document.getElementById('syncPushModal');
+    const pullConfirmBtn  = document.getElementById('syncPullConfirmBtn');
+    const pushConfirmBtn  = document.getElementById('syncPushConfirmBtn');
+    const pushBackupCheck = document.getElementById('syncPushBackupCheck');
+    const pushModalStatus = document.getElementById('syncPushModalStatus');
+
+    async function loadSyncConfig() {
+        if (!syncConfigInfo) return;
+        try {
+            const cfg = await window.apiClient.getSyncConfig();
+            const saStatus = cfg.service_account_configured
+                ? `<span class="badge bg-success">Configured</span> <code class="small">${cfg.service_account_email || ''}</code>`
+                : `<span class="badge bg-danger">Not configured</span> — set <code>GOOGLE_SERVICE_ACCOUNT_FILE</code>`;
+            syncConfigInfo.innerHTML = `
+                <div class="d-flex flex-column gap-1">
+                    <div><span class="text-muted small me-2">Service account:</span>${saStatus}</div>
+                    ${cfg.service_account_configured && cfg.service_account_email ?
+                        `<div class="alert alert-info py-1 mb-0 small"><i class="bi bi-info-circle me-1"></i>Share your Google Sheet with <strong>${cfg.service_account_email}</strong> (Editor access).</div>` : ''}
+                </div>`;
+            if (cfg.default_spreadsheet_id && syncSheetInput && !syncSheetInput.value)
+                syncSheetInput.value = cfg.default_spreadsheet_id;
+        } catch (e) {
+            if (syncConfigInfo) syncConfigInfo.innerHTML = `<span class="text-danger small">${e.message}</span>`;
+        }
+    }
+
+    function setSyncStatus(msg, type = 'info') {
+        if (!syncStatus) return;
+        syncStatus.innerHTML = `<div class="alert alert-${type} py-2 small mb-0">${msg}</div>`;
+    }
+
+    function getSheetId() {
+        return syncSheetInput && syncSheetInput.value.trim() ? syncSheetInput.value.trim() : null;
+    }
+
+    // Save spreadsheet ID explicitly
+    if (syncSaveIdBtn) syncSaveIdBtn.addEventListener('click', async () => {
+        const id = getSheetId();
+        if (!id) { if (syncSaveStatus) syncSaveStatus.textContent = 'Enter a spreadsheet ID first.'; return; }
+        try {
+            syncSaveIdBtn.disabled = true;
+            await window.apiClient.saveSyncConfig(id);
+            if (syncSaveStatus) { syncSaveStatus.textContent = 'Saved.'; setTimeout(() => { syncSaveStatus.textContent = ''; }, 2000); }
+        } catch (e) {
+            if (syncSaveStatus) syncSaveStatus.textContent = `Error: ${e.message}`;
+        } finally {
+            syncSaveIdBtn.disabled = false;
+        }
+    });
+
+    // Pull — show confirmation modal
+    if (syncPullBtn) syncPullBtn.addEventListener('click', () => {
+        if (pullModal && window.bootstrap) new window.bootstrap.Modal(pullModal).show();
+    });
+
+    // Pull confirmed
+    if (pullConfirmBtn) pullConfirmBtn.addEventListener('click', async () => {
+        const bsModal = window.bootstrap && window.bootstrap.Modal.getInstance(pullModal);
+        if (bsModal) bsModal.hide();
+        const sheetId = getSheetId();
+        syncPullBtn.disabled = true;
+        syncPullBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Pulling…';
+        setSyncStatus('Pulling data from Google Sheet…');
+        try {
+            if (sheetId) await window.apiClient.saveSyncConfig(sheetId).catch(() => {});
+            const r = await window.apiClient.syncPull(sheetId);
+            setSyncStatus(
+                `Pulled from <code>${r.spreadsheet_id}</code>: `
+                + `${r.imported_transactions} transactions, ${r.imported_dividends} dividends, `
+                + `${r.imported_bookings} bookings.`
+                + (r.errors.length ? `<br>${r.errors.length} error(s): ${r.errors[0]}` : ''),
+                r.errors.length ? 'warning' : 'success'
+            );
+        } catch (err) {
+            setSyncStatus(`Pull failed: ${err.message}`, 'danger');
+        } finally {
+            syncPullBtn.disabled = false;
+            syncPullBtn.innerHTML = '<i class="bi bi-cloud-arrow-down me-2"></i>Pull from Sheet';
+        }
+    });
+
+    // Push — show confirmation modal
+    if (syncPushBtn) syncPushBtn.addEventListener('click', () => {
+        if (pushModalStatus) pushModalStatus.innerHTML = '';
+        if (pushModal && window.bootstrap) new window.bootstrap.Modal(pushModal).show();
+    });
+
+    // Push confirmed
+    if (pushConfirmBtn) pushConfirmBtn.addEventListener('click', async () => {
+        const sheetId = getSheetId();
+        const doBackup = pushBackupCheck && pushBackupCheck.checked;
+        pushConfirmBtn.disabled = true;
+        pushConfirmBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Working…';
+        if (pushModalStatus) pushModalStatus.innerHTML = '';
+
+        try {
+            if (sheetId) await window.apiClient.saveSyncConfig(sheetId).catch(() => {});
+
+            if (doBackup) {
+                if (pushModalStatus) pushModalStatus.innerHTML = '<div class="alert alert-info py-1 small mb-2"><span class="spinner-border spinner-border-sm me-2"></span>Duplicating data tabs as backup…</div>';
+                const bk = await window.apiClient.syncBackup(sheetId);
+                if (pushModalStatus) pushModalStatus.innerHTML = `<div class="alert alert-success py-1 small mb-2"><i class="bi bi-check-circle me-1"></i>Backup tabs updated: <a href="${bk.backup_url}" target="_blank">open sheet</a></div>`;
+            }
+
+            if (pushModalStatus) pushModalStatus.innerHTML += '<div class="alert alert-info py-1 small mb-0"><span class="spinner-border spinner-border-sm me-2"></span>Pushing data…</div>';
+            const r = await window.apiClient.syncPush(sheetId);
+
+            const bsModal = window.bootstrap && window.bootstrap.Modal.getInstance(pushModal);
+            if (bsModal) bsModal.hide();
+            setSyncStatus(
+                `Pushed to <a href="${r.spreadsheet_url}" target="_blank">${r.spreadsheet_id}</a>: `
+                + `${r.transactions_written} transactions, ${r.dividends_written} dividends, `
+                + `${r.bookings_written} bookings.`,
+                'success'
+            );
+        } catch (err) {
+            if (pushModalStatus) pushModalStatus.innerHTML += `<div class="alert alert-danger py-1 small mb-0">${err.message}</div>`;
+        } finally {
+            pushConfirmBtn.disabled = false;
+            pushConfirmBtn.innerHTML = '<i class="bi bi-cloud-arrow-up me-2"></i>Push';
+        }
+    });
+
+    // Standalone backup button — overwrites fixed Backup tabs in same sheet
+    if (syncBackupBtn) syncBackupBtn.addEventListener('click', async () => {
+        const sheetId = getSheetId();
+        syncBackupBtn.disabled = true;
+        syncBackupBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Backing up…';
+        setSyncStatus('Duplicating data tabs as backup tabs…');
+        try {
+            const bk = await window.apiClient.syncBackup(sheetId);
+            setSyncStatus(`Backup tabs updated: <a href="${bk.backup_url}" target="_blank">open sheet</a>`, 'success');
+        } catch (err) {
+            setSyncStatus(`Backup failed: ${err.message}`, 'danger');
+        } finally {
+            syncBackupBtn.disabled = false;
+            syncBackupBtn.innerHTML = '<i class="bi bi-copy me-2"></i>Backup Tabs';
+        }
+    });
+
+    // Download as Excel
+    if (syncDownloadBtn) syncDownloadBtn.addEventListener('click', async () => {
+        const sheetId = getSheetId();
+        syncDownloadBtn.disabled = true;
+        syncDownloadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Downloading…';
+        setSyncStatus('Exporting sheet as Excel…');
+        try {
+            await window.apiClient.syncDownload(sheetId, 'xlsx');
+            setSyncStatus('Excel file downloaded.', 'success');
+        } catch (err) {
+            setSyncStatus(`Download failed: ${err.message}`, 'danger');
+        } finally {
+            syncDownloadBtn.disabled = false;
+            syncDownloadBtn.innerHTML = '<i class="bi bi-file-earmark-arrow-down me-2"></i>Download as Excel';
+        }
+    });
+
+    loadSyncConfig();
 }
 
 // ---------------------------------------------------------------------------
