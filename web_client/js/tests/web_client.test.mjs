@@ -77,7 +77,7 @@ test("split loads in one scope and defines functions from every file", () => {
     assert.equal(typeof w.esc, "function", "pfm_core: esc");
     assert.equal(typeof w.createAPIClient, "function", "pfm_core: createAPIClient");
     assert.equal(typeof w.createPageManager, "function", "pfm_pages: createPageManager");
-    assert.equal(typeof w.showAnalyticsTab, "function", "pfm_analytics: showAnalyticsTab");
+    assert.equal(typeof w.setupAnalyticsTabs, "function", "pfm_analytics: setupAnalyticsTabs");
     assert.equal(typeof w.setupResearchPage, "function", "pfm_features: setupResearchPage");
     assert.equal(typeof w.setupSettings, "function", "pfm_features: setupSettings");
     // Shared singletons exported onto window.
