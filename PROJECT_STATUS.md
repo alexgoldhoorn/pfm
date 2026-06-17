@@ -42,18 +42,17 @@ Last updated: 2026-06-17
 - Routers: auth, assets, transactions, portfolios, entities, sectors, LLM, tax
 - Docker support with docker-compose
 
-### Frontend (`web_client/`) — ⚠️ Exists, Not Actively Maintained
-- Bootstrap 5 + Chart.js dashboard
-- Vanilla JS, no build step
-- API key login, asset/transaction views
-- Needs running server to function
-- Not tested recently
+### Frontend (`web_client/`) — ✅ Working, Actively Maintained
+- Bootstrap 5 + Chart.js, Vanilla JS, no build step
+- 14+ pages: dashboard, holdings, transactions, analytics (tabbed), research, net worth, goals, forecast, import/export, watchlist, chat, diagnostics, and more
+- API key + password login, dark/light theme, sortable/filterable tables, privacy blur
+- PDT / Google Sheets sync, platform export (Yahoo Finance, Simply Wall St)
+- Actively maintained; tested with Node.js built-in test runner (`make test-js`)
 
-### Database — ✅ Working, Empty
+### Database — ✅ Working
 - SQLite (default) + PostgreSQL support via database factory
-- Schema v4 with automatic migrations
-- Tables: users, assets, transactions, portfolios, entities, prices, portfolio_config
-- **Currently empty** — no real data imported yet
+- Schema v21 with automatic migrations on startup
+- Tables: assets, transactions, portfolios, prices, bookings, dividends, watchlist, goals, research_notes, price_targets, networth snapshots, fixed_deposits, monthly_cashflow, app_settings, kv_cache, and more
 
 ### LLM Integration — ✅ Working
 - Provider-agnostic abstraction (`llm_client.py`)
@@ -64,14 +63,21 @@ Last updated: 2026-06-17
 
 ## Test Status
 
-**429 passed, 0 failed, 0 errors, 6 skipped** (unit tests, excluding integration/e2e)
+**524 passed, 0 failed, 0 errors** (unit tests, excluding integration/e2e)
 
-All tests passing as of 2026-06-10.
+All tests passing as of 2026-06-17.
 
-## Recent Changes (develop branch)
+## Recent Changes (main)
 
-1. **LLM abstraction** (commit `59c59f7`) — Provider-agnostic `LLMClient` protocol with Gemini + Ollama support
-2. **Portfolio-level reporting** (commit `732f0e9`) — `--portfolio` filter on `portfolio-value`, `list-transactions`, `extract-tax-report`
+See `git log --oneline` for full history. Key v2.1 additions:
+
+1. **Monthly cash flow tracker** (db v20) — salary/income/mortgage/loan entries; net monthly figure on Net Worth page
+2. **Platform export** — Yahoo Finance + Simply Wall St CSV (transactions or positions)
+3. **Data Quality tab** on Diagnostics page — cash reconciliation, fuzzy duplicate detection, suspicious pattern checks
+4. **Fixed deposits** (db v19) — fixed-term deposit tracking with maturity and interest-posting
+5. **Bootstrap tabs** — Analytics and Import/Export pages migrated to Bootstrap nav-tabs
+6. **Net Worth page** — manual assets (cash/property/pension/mortgage), fixed deposits, monthly cashflow combined with brokerage value
+7. **Parser improvements** — Coinbase staking → interest tx, MyInvestor paste parser, Mintos keyword fixes
 
 ## Pending Work
 
