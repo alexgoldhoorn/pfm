@@ -19,6 +19,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 
 from portf_manager.parsers.pdt_xlsx_parser import PDTXLSXExporter
+from portf_manager.platform_export import (
+    build_yahoo_finance_csv,
+    build_simply_wall_st_csv,
+)
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
@@ -158,4 +162,58 @@ async def export_db_backup(
         content=data,
         media_type="application/octet-stream",
         headers={"Content-Disposition": f"attachment; filename={fname}"},
+    )
+
+
+@router.get("/yahoo-finance")
+async def export_yahoo_finance(
+    portfolio_id: Optional[int] = Query(
+        default=None, description="Filter by portfolio ID"
+    ),
+    mode: str = Query(
+        default="transactions",
+        description="'transactions' for full history, 'positions' for current holdings",
+    ),
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Download portfolio in Yahoo Finance CSV import format."""
+    csv_content, skipped = build_yahoo_finance_csv(db, portfolio_id, mode)
+    csv_bytes = b"\xef\xbb\xbf" + csv_content.encode("utf-8")
+    return StreamingResponse(
+        io.BytesIO(csv_bytes),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": "attachment; filename=yahoo_finance_portfolio.csv",
+            "X-Skipped-Count": str(len(skipped)),
+            "X-Skipped-Symbols": ",".join(skipped),
+            "Access-Control-Expose-Headers": "X-Skipped-Count,X-Skipped-Symbols",
+        },
+    )
+
+
+@router.get("/simply-wall-st")
+async def export_simply_wall_st(
+    portfolio_id: Optional[int] = Query(
+        default=None, description="Filter by portfolio ID"
+    ),
+    mode: str = Query(
+        default="transactions",
+        description="'transactions' for full history, 'positions' for current holdings",
+    ),
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Download portfolio in Simply Wall St CSV import format."""
+    csv_content, skipped = build_simply_wall_st_csv(db, portfolio_id, mode)
+    csv_bytes = b"\xef\xbb\xbf" + csv_content.encode("utf-8")
+    return StreamingResponse(
+        io.BytesIO(csv_bytes),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": "attachment; filename=simply_wall_st_portfolio.csv",
+            "X-Skipped-Count": str(len(skipped)),
+            "X-Skipped-Symbols": ",".join(skipped),
+            "Access-Control-Expose-Headers": "X-Skipped-Count,X-Skipped-Symbols",
+        },
     )
