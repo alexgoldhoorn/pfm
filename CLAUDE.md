@@ -123,6 +123,9 @@ Auth: `GOOGLE_SERVICE_ACCOUNT_FILE=service-account.json` (already configured).
 - `GET /api/v1/export/csv` — all transactions as UTF-8 CSV (Excel BOM)
 - `GET /api/v1/export/pdt` — full PDT XLSX (5 sheets: Transactions, Dividends, Bookings, Expenses, Settings)
 - Both accept optional `?portfolio_id=` query param
+- `GET /api/v1/export/yahoo-finance?portfolio_id=&mode=transactions|positions` — Yahoo Finance CSV (Symbol/Shares/Purchase Price/Purchase Date/Commission); sells = negative Shares; date MM/DD/YYYY; assets without `ticker` skipped (X-Skipped-Count / X-Skipped-Symbols response headers)
+- `GET /api/v1/export/simply-wall-st?portfolio_id=&mode=transactions|positions` — Simply Wall St CSV (Ticker Symbol/Shares/Price/Date/Currency); sells = negative shares; date YYYY-MM-DD; same skip behaviour
+- Platform export logic lives in `portf_manager/platform_export.py`: `_is_isin`, `_resolve_ticker`, `build_yahoo_finance_csv`, `build_simply_wall_st_csv`. Uses dedicated SQL query (not `_TX_COLS`) to include `a.ticker`.
 
 ### Bookings API (`portf_server/routers/bookings.py`)
 - `GET /api/v1/bookings/` — list bookings, optional `?portfolio_id=`
