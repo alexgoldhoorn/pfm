@@ -1415,28 +1415,25 @@ function setupImportExportPage() {
 
     let _ioDataTabLoaded = false;
 
-    function showImportExportTab(tab) {
-        document.querySelectorAll('#ioTabs [data-io-tab]').forEach(b =>
-            b.classList.toggle('active', b.dataset.ioTab === tab));
-        document.querySelectorAll('#importexportPage [data-io-section]').forEach(card => {
-            card.style.display = card.dataset.ioSection === tab ? '' : 'none';
-        });
-        if (tab === 'data' && !_ioDataTabLoaded) {
-            _ioDataTabLoaded = true;
-            loadBookings();
-        }
+    function _triggerDataTabLoad() {
+        if (!_ioDataTabLoaded) { _ioDataTabLoaded = true; loadBookings(); }
     }
 
     function setupImportExportTabs() {
-        const tabs = document.getElementById('ioTabs');
-        if (tabs && !tabs.dataset.wired) {
-            tabs.dataset.wired = '1';
-            tabs.querySelectorAll('[data-io-tab]').forEach(btn => {
-                btn.addEventListener('click', () => showImportExportTab(btn.dataset.ioTab));
-            });
+        const dataBtn = document.getElementById('ioTabBtnData');
+        if (dataBtn && !dataBtn._ioWired) {
+            dataBtn._ioWired = true;
+            dataBtn.addEventListener('shown.bs.tab', _triggerDataTabLoad);
+            dataBtn.addEventListener('click', () => setTimeout(_triggerDataTabLoad, 50));
         }
         _ioDataTabLoaded = false;
-        showImportExportTab('import');
+        const importBtn = document.getElementById('ioTabBtnImport');
+        if (importBtn && window.bootstrap) {
+            const pane = document.getElementById('ioTabImport');
+            if (!pane || !pane.classList.contains('active')) {
+                new window.bootstrap.Tab(importBtn).show();
+            }
+        }
     }
 
     setupImportExportTabs();
