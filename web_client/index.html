@@ -824,18 +824,33 @@
                     </div>
 
                     <!-- Sub-navigation: each tab lazy-loads only its own sections -->
-                    <div class="d-flex flex-wrap gap-1 mb-3" id="analyticsTabs">
-                        <button type="button" class="btn btn-sm btn-outline-secondary active" data-an-tab="performance"><i class="bi bi-speedometer2 me-1"></i>Performance &amp; Net Worth</button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" data-an-tab="dividends"><i class="bi bi-cash-coin me-1"></i>Dividends</button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" data-an-tab="gainloss"><i class="bi bi-trophy me-1"></i>Gain / Loss</button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" data-an-tab="tax"><i class="bi bi-receipt me-1"></i>Tax</button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" data-an-tab="risk"><i class="bi bi-shield-check me-1"></i>Risk &amp; Diversification</button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" data-an-tab="fees"><i class="bi bi-cash-stack me-1"></i>Fees &amp; Costs</button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" data-an-tab="stress"><i class="bi bi-lightning-charge me-1"></i>Stress Test</button>
-                    </div>
-
+                    <ul class="nav nav-tabs mb-3" id="analyticsTabs">
+                        <li class="nav-item">
+                            <button type="button" class="nav-link active" data-bs-toggle="tab" data-bs-target="#anPanePerformance" id="anTabPerformance"><i class="bi bi-speedometer2 me-1"></i>Performance &amp; Net Worth</button>
+                        </li>
+                        <li class="nav-item">
+                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#anPaneDividends" id="anTabDividends"><i class="bi bi-cash-coin me-1"></i>Dividends</button>
+                        </li>
+                        <li class="nav-item">
+                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#anPaneGainLoss" id="anTabGainLoss"><i class="bi bi-trophy me-1"></i>Gain / Loss</button>
+                        </li>
+                        <li class="nav-item">
+                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#anPaneTax" id="anTabTax"><i class="bi bi-receipt me-1"></i>Tax</button>
+                        </li>
+                        <li class="nav-item">
+                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#anPaneRisk" id="anTabRisk"><i class="bi bi-shield-check me-1"></i>Risk &amp; Diversification</button>
+                        </li>
+                        <li class="nav-item">
+                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#anPaneFees" id="anTabFees"><i class="bi bi-cash-stack me-1"></i>Fees &amp; Costs</button>
+                        </li>
+                        <li class="nav-item">
+                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#anPaneStress" id="anTabStress"><i class="bi bi-lightning-charge me-1"></i>Stress Test</button>
+                        </li>
+                    </ul>
+                    <div class="tab-content">
+                    <div class="tab-pane fade show active" id="anPanePerformance">
                     <!-- a) Performance -->
-                    <div class="card mb-4" data-an-section="performance">
+                    <div class="card mb-4">
                         <div class="card-header fw-semibold d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <span><i class="bi bi-speedometer2 me-2 text-primary"></i>Performance</span>
                             <div class="d-flex align-items-center gap-2 flex-wrap">
@@ -872,7 +887,7 @@
                     </div>
 
                     <!-- b) Net worth over time -->
-                    <div class="card mb-4" data-an-section="performance">
+                    <div class="card mb-4">
                         <div class="card-header fw-semibold d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <span><i class="bi bi-graph-up me-2 text-primary"></i>Net Worth Over Time</span>
                             <div class="d-flex gap-3 align-items-center" style="font-size:0.8rem;">
@@ -892,9 +907,10 @@
                             </div>
                         </div>
                     </div>
-
+                    </div><!-- /#anPanePerformance -->
+                    <div class="tab-pane fade" id="anPaneDividends">
                     <!-- c) Dividend income -->
-                    <div class="card mb-4" data-an-section="dividends">
+                    <div class="card mb-4">
                         <div class="card-header fw-semibold">
                             <i class="bi bi-cash-coin me-2 text-success"></i>Dividend Income
                         </div>
@@ -905,9 +921,11 @@
                         </div>
                     </div>
 
+                    </div><!-- /#anPaneDividends -->
+                    <div class="tab-pane fade" id="anPaneGainLoss">
                     <!-- d) Tax estimate -->
                     <!-- Gain / Loss leaderboard -->
-                    <div class="card mb-4" data-an-section="gainloss">
+                    <div class="card mb-4">
                         <div class="card-header fw-semibold">
                             <i class="bi bi-trophy me-2 text-warning"></i>Gain / Loss leaders
                         </div>
@@ -918,7 +936,9 @@
                         </div>
                     </div>
 
-                    <div class="card mb-4" data-an-section="tax">
+                    </div><!-- /#anPaneGainLoss -->
+                    <div class="tab-pane fade" id="anPaneTax">
+                    <div class="card mb-4">
                         <div class="card-header fw-semibold d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <span><i class="bi bi-receipt me-2 text-danger"></i>Tax Estimate (Spanish IRPF)
                                 <i class="bi bi-info-circle text-muted ms-1" style="cursor:help;" data-bs-toggle="tooltip" title="Sums FIFO realised gains + dividends + interest received this year (base del ahorro) and applies the progressive savings-base brackets: 19% up to €6k, 21% €6k–€50k, 23% €50k–€200k, 27% €200k–€300k, 28% above €300k. An estimate — consult a tax adviser."></i>
@@ -936,7 +956,7 @@
                     </div>
 
                     <!-- Detailed tax report (per-lot FIFO + dividend withholding) -->
-                    <div class="card mb-4" data-an-section="tax">
+                    <div class="card mb-4">
                         <div class="card-header fw-semibold d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <span><i class="bi bi-file-earmark-spreadsheet me-2 text-secondary"></i>Detailed tax report
                                 <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="Per-lot realised gains (FIFO) for the selected year plus dividend gross income and withholding tax already paid at source — for your IRPF filing."></i>
@@ -951,7 +971,7 @@
                     </div>
 
                     <!-- Year-end tax optimizer -->
-                    <div class="card mb-4" data-an-section="tax">
+                    <div class="card mb-4">
                         <div class="card-header fw-semibold">
                             <i class="bi bi-scissors me-2 text-success"></i>Year-end tax optimizer
                             <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="Estimates the tax you could save by harvesting unrealised losses before year-end to offset realised gains and income. Flags positions you bought in the last 60 days (Spain's 2-month rule). Informational, not advice."></i>
@@ -963,8 +983,10 @@
                         </div>
                     </div>
 
+                    </div><!-- /#anPaneTax -->
+                    <div class="tab-pane fade" id="anPaneRisk">
                     <!-- e) Diversification & concentration -->
-                    <div class="card mb-4" data-an-section="risk">
+                    <div class="card mb-4">
                         <div class="card-header fw-semibold d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <span><i class="bi bi-pie-chart-fill me-2 text-primary"></i>Diversification &amp; Concentration</span>
                             <button class="btn btn-sm btn-outline-primary" id="anDiversificationBtn" title="Fetches sector/country data from Yahoo Finance — takes ~20-30s">
@@ -980,7 +1002,7 @@
                     </div>
 
                     <!-- f) Risk metrics -->
-                    <div class="card mb-4" data-an-section="risk">
+                    <div class="card mb-4">
                         <div class="card-header fw-semibold">
                             <i class="bi bi-shield-exclamation me-2 text-danger"></i>Risk
                         </div>
@@ -991,8 +1013,10 @@
                         </div>
                     </div>
 
+                    </div><!-- /#anPaneRisk -->
+                    <div class="tab-pane fade" id="anPaneFees">
                     <!-- g) Fees & costs -->
-                    <div class="card mb-4" data-an-section="fees">
+                    <div class="card mb-4">
                         <div class="card-header fw-semibold">
                             <i class="bi bi-cash-stack me-2 text-warning"></i>Fees &amp; Costs
                         </div>
@@ -1003,8 +1027,10 @@
                         </div>
                     </div>
 
+                    </div><!-- /#anPaneFees -->
+                    <div class="tab-pane fade" id="anPaneStress">
                     <!-- h) Stress Test -->
-                    <div class="card mb-4" data-an-section="stress" style="display:none;">
+                    <div class="card mb-4">
                         <div class="card-header fw-semibold">
                             <i class="bi bi-lightning-charge me-2 text-danger"></i>Stress Testing
                         </div>
@@ -1014,6 +1040,8 @@
                             </div>
                         </div>
                     </div>
+                    </div><!-- /#anPaneStress -->
+                    </div><!-- /.tab-content -->
                 </div>
 
                 <!-- Watchlist Page -->
