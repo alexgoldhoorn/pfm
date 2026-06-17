@@ -1866,6 +1866,52 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                             </div>
                         </div>
 
+                        <!-- Platform Export -->
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-header fw-semibold">
+                                    <i class="bi bi-cloud-upload me-2"></i>Platform Export
+                                </div>
+                                <div class="card-body">
+                                    <p class="text-muted small mb-3">Export your portfolio for Yahoo Finance or Simply Wall St. Download the file and upload it to that platform&rsquo;s portfolio tracker.</p>
+                                    <div class="row g-3 align-items-end">
+                                        <div class="col-auto">
+                                            <label class="form-label small mb-1" for="platformExportSelect">Platform</label>
+                                            <select class="form-select form-select-sm" id="platformExportSelect">
+                                                <option value="yahoo-finance">Yahoo Finance</option>
+                                                <option value="simply-wall-st">Simply Wall St</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-auto">
+                                            <label class="form-label small mb-1">Data</label>
+                                            <div class="d-flex gap-3">
+                                                <div class="form-check mb-0">
+                                                    <input class="form-check-input" type="radio" name="platformExportMode" id="platformExportModeTransactions" value="transactions" checked>
+                                                    <label class="form-check-label small" for="platformExportModeTransactions">Full transaction history</label>
+                                                </div>
+                                                <div class="form-check mb-0">
+                                                    <input class="form-check-input" type="radio" name="platformExportMode" id="platformExportModePositions" value="positions">
+                                                    <label class="form-check-label small" for="platformExportModePositions">Current positions only</label>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-auto">
+                                            <label class="form-label small mb-1" for="platformExportPortfolio">Portfolio</label>
+                                            <select class="form-select form-select-sm" id="platformExportPortfolio">
+                                                <option value="">All portfolios</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-auto">
+                                            <button class="btn btn-sm btn-outline-primary" id="platformExportBtn">
+                                                <i class="bi bi-download me-2"></i>Download
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div id="platformExportWarning" class="alert alert-warning mt-3 mb-0 py-2 small d-none" role="alert"></div>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- Bookings (cash transactions: deposits / withdrawals) -->
                         <div class="col-12">
                             <div class="card">
