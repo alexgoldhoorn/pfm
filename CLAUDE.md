@@ -43,6 +43,7 @@ Key fields added in recent migrations:
 - v18: `assets.ticker` nullable column (yfinance-style market symbol for ISIN-keyed assets).
 - v19: `fixed_deposits` table — fixed-term deposit tracking (name, portfolio_id, principal, currency, interest_rate, start_date, maturity_date, status CHECK 'active'/'matured'/'closed', interest_paid, notes). CRUD via `db.create/get/get_all/update/delete_fixed_deposit`. Router at `/api/v1/deposits`; maturity posts an `interest` transaction against a synthetic `DEPOSITS` cash asset (`auto_price=0`). Active principals included in `GET /api/v1/networth` as `deposits_eur`. LLM extraction via `POST /api/v1/llm/extract-deposits` → `GeminiClient.extract_deposits`. Web UI on Net Worth page.
 - v20: `monthly_cashflow` table (`id, label, category CHECK('salary'|'other_income'|'mortgage'|'loan'|'rest'), amount, currency, notes, created_at`). Category implies income/expense (salary/other_income = income; mortgage/loan/rest = expense). CRUD: `db.get/create/delete_monthly_cashflow`. Router at `GET|POST|DELETE /api/v1/networth/cashflow`; GET returns `items`, `income_eur`, `expenses_eur`, `net_monthly_eur`, `by_category`. Web: Monthly Cash Flow section on Net Worth page (5 summary cards + entries table + add form). No update endpoint — delete and re-add.
+- v21: `app_settings` table (`key TEXT PRIMARY KEY, value TEXT, updated_at`). Persistent key/value store for app-wide settings (no TTL, unlike `kv_cache`). `db.get_setting(key)` / `db.set_setting(key, value)`. Currently stores `google_spreadsheet_id` (the PDT sync sheet ID, editable from the Google Sheets page and persisted across browsers).
 
 ### Performance / event loop
 - Endpoints doing blocking yfinance I/O are plain `def` (not `async`) so FastAPI runs them in a threadpool — an `async` handler calling `yf` blocks the event loop and stalls every other request. Applies to: diversification, performance, snapshot, rebalance analysis, research generate/lookup, watchlist list/alerts. Keep new blocking-IO endpoints sync.
@@ -179,10 +180,13 @@ The **Research workbench** (web page `researchPage`, `setupResearchPage()`): pic
 - FIRE/savings targets; GET computes progress %, projected value (monthly compounding from latest snapshot), on-track flag, and required monthly contribution
 
 ### Sync API (`portf_server/routers/sync.py`)
-- `GET /api/v1/sync/pdt-config` — service account status + default spreadsheet ID
+- `GET /api/v1/sync/pdt-config` — service account status + spreadsheet ID (DB first, then env var)
+- `PUT /api/v1/sync/pdt-config` body `{spreadsheet_id}` — persist sheet ID to `app_settings`
 - `POST /api/v1/sync/pdt-pull?spreadsheet_id=` — Google Sheet → DB (reads Transactions, Dividends, Bookings)
 - `POST /api/v1/sync/pdt-push?spreadsheet_id=` — DB → Google Sheet (writes all 5 PDT sheets)
-- Falls back to `GOOGLE_SPREADSHEET_ID` env var if no `spreadsheet_id` query param.
+- `POST /api/v1/sync/pdt-backup?spreadsheet_id=&title=` — copies the sheet to a new "PFM Backup YYYY-MM-DD" using Sheets API `sheets.copyTo` (no Drive scope needed); returns `{backup_url, title}`
+- Resolution order for `spreadsheet_id`: query param → DB `app_settings` → `GOOGLE_SPREADSHEET_ID` env var
+- Web: dedicated **Google Sheets** sidebar page (Tools section) with config card, pull/push/backup buttons, pull confirmation modal, push confirmation modal with optional pre-push backup checkbox.
 
 ### LLM API (`portf_server/routers/llm.py`)
 - `POST /api/v1/llm/extract-transactions` — text body → LLM extracts buy/sell transactions
@@ -280,6 +284,25 @@ When adding or changing any feature, always update **both**:
 2. Relevant inline sections of `CLAUDE.md` — add endpoint signatures, schema notes, key patterns, or gotchas that would not be obvious from reading the code. Keep it concise; duplicate the code's public interface only when the behaviour is non-obvious.
 
 This is mandatory, not optional. A feature is not done until the docs reflect it.
+
+## Privacy and Demo Data
+
+This is a public repository. Never commit real personal or financial data.
+
+**Forbidden in source, tests, docs, and plan files:**
+- Real API keys, tokens, passwords, or secret values — use env var references or placeholder strings like `YOUR_API_KEY`
+- Real Google Spreadsheet IDs — use `YOUR_SPREADSHEET_ID` in docs/examples and a generic-looking string for UI placeholders
+- Real ISIN codes that correspond to actual held assets — use fictional ISINs: `US0000000001`, `LU0000000001`, `ES0000000001`, etc.
+- Real portfolio amounts, prices, or quantities that reflect actual holdings
+- Home directory paths (`/home/agoldhoorn/`) — write `~/` or `$HOME/` in docs
+
+**Acceptable in public files:**
+- Well-known tickers (`AAPL`, `TSLA`, `BTC-EUR`) used purely as API/CLI format examples
+- Apple's ISIN `US0378331005` in prompt-template examples (widely cited, not personal)
+- Personal website and GitHub links in the About page (intentionally public)
+- Generic fictional prices and amounts in test fixtures
+
+When writing tests, use ISINs from the `US0000000000` / `LU0000000000` / `ES0000000000` family and invent asset names (e.g. "Example Corp", "Global Bond Fund"). Same rule applies to plan documents committed under `docs/superpowers/`.
 
 ## Git
 - Public repo `github.com:alexgoldhoorn/pfm` — develop and push on `main`. Push with `GIT_SSH_COMMAND="ssh -o IdentitiesOnly=no" git push origin main`.
