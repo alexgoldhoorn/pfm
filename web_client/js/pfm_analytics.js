@@ -969,51 +969,55 @@ async function loadAnalyticsTax() {
     }
 }
 
-// Analytics sub-navigation: show one tab's sections at a time and lazy-load
-// each tab's data on first activation. Loaders per tab reuse the existing
-// section render functions.
-const _ANALYTICS_LOADERS = {
-    performance: () => { loadAnalyticsPerformance(); loadAnalyticsNetworth(); },
-    dividends: () => { loadAnalyticsDividends(); },
-    gainloss: () => { loadAnalyticsGainLoss(); },
-    tax: () => { loadAnalyticsTax(); loadAnalyticsTaxReport(); loadTaxOptimizer(); },
-    risk: () => { loadAnalyticsRisk(); _wireDiversificationButtons(); },
-    fees: () => { loadAnalyticsFees(); },
-    stress: () => { loadAnalyticsStress('2008'); },
+// Analytics tab map: button id → { key for state tracking, loader function }
+const _AN_TAB_MAP = {
+    anTabPerformance: { key: 'performance', loader: () => { loadAnalyticsPerformance(); loadAnalyticsNetworth(); } },
+    anTabDividends:   { key: 'dividends',   loader: () => { loadAnalyticsDividends(); } },
+    anTabGainLoss:    { key: 'gainloss',    loader: () => { loadAnalyticsGainLoss(); } },
+    anTabTax:         { key: 'tax',         loader: () => { loadAnalyticsTax(); loadAnalyticsTaxReport(); loadTaxOptimizer(); } },
+    anTabRisk:        { key: 'risk',        loader: () => { loadAnalyticsRisk(); _wireDiversificationButtons(); } },
+    anTabFees:        { key: 'fees',        loader: () => { loadAnalyticsFees(); } },
+    anTabStress:      { key: 'stress',      loader: () => { loadAnalyticsStress('2008'); } },
 };
 let _analyticsLoaded = {};
 let _analyticsActiveTab = 'performance';
-
-function showAnalyticsTab(tab, forceReload) {
-    _analyticsActiveTab = tab;
-    // Toggle nav pill active state
-    document.querySelectorAll('#analyticsTabs [data-an-tab]').forEach(b =>
-        b.classList.toggle('active', b.dataset.anTab === tab));
-    // Show only this tab's section cards
-    document.querySelectorAll('#analyticsPage [data-an-section]').forEach(card => {
-        card.style.display = card.dataset.anSection === tab ? '' : 'none';
-    });
-    // Lazy-load (once) unless a refresh is forced
-    if (forceReload || !_analyticsLoaded[tab]) {
-        _analyticsLoaded[tab] = true;
-        (_ANALYTICS_LOADERS[tab] || (() => {}))();
-    }
-}
 
 function setupAnalyticsTabs() {
     const tabs = document.getElementById('analyticsTabs');
     if (tabs && !tabs.dataset.wired) {
         tabs.dataset.wired = '1';
-        tabs.querySelectorAll('[data-an-tab]').forEach(btn => {
-            btn.addEventListener('click', () => showAnalyticsTab(btn.dataset.anTab));
+        // Wire shown.bs.tab on each button; Bootstrap fires this after the pane fades in.
+        Object.entries(_AN_TAB_MAP).forEach(([btnId, { key, loader }]) => {
+            const btn = document.getElementById(btnId);
+            if (!btn) return;
+            btn.addEventListener('shown.bs.tab', () => {
+                _analyticsActiveTab = key;
+                if (!_analyticsLoaded[key]) {
+                    _analyticsLoaded[key] = true;
+                    loader();
+                }
+            });
         });
-        // Note: the #refreshAnalytics button calls loadAnalyticsPage() (which
-        // re-enters here), so refresh is handled by the reset below — no extra
-        // listener needed.
     }
-    // Reset load state each time the page opens so data stays fresh per visit
+    // Reset per-visit so each page open gets fresh data
     _analyticsLoaded = {};
-    showAnalyticsTab(_analyticsActiveTab || 'performance');
+    // Restore last active tab (or performance)
+    const targetBtnId = (Object.entries(_AN_TAB_MAP)
+        .find(([, { key }]) => key === _analyticsActiveTab) || ['anTabPerformance'])[0];
+    const targetBtn = document.getElementById(targetBtnId);
+    if (targetBtn && window.bootstrap) {
+        const paneId = targetBtn.dataset.bsTarget;
+        const pane = paneId && document.querySelector(paneId);
+        if (pane && pane.classList.contains('active')) {
+            // Pane already shown — shown.bs.tab won't fire; trigger loader directly
+            const { key, loader } = _AN_TAB_MAP[targetBtnId];
+            _analyticsLoaded[key] = true;
+            loader();
+        } else {
+            new window.bootstrap.Tab(targetBtn).show();
+            // shown.bs.tab fires → loader runs via the listener above
+        }
+    }
 }
 
 // Gain / Loss leaderboard: top unrealised winners & losers (from holdings)
