@@ -1749,9 +1749,14 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                             <p class="text-muted small mb-0">Import transactions from broker files or text, export your data, manage bookings and sync with Google Sheets.</p>
                         </div>
                     </div>
+                    <div class="d-flex flex-wrap gap-1 mb-3" id="ioTabs">
+                        <button type="button" class="btn btn-sm btn-outline-secondary active" data-io-tab="import"><i class="bi bi-file-earmark-arrow-up me-1"></i>Import</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-io-tab="export"><i class="bi bi-file-earmark-arrow-down me-1"></i>Export</button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" data-io-tab="data"><i class="bi bi-bank me-1"></i>Data</button>
+                    </div>
                     <div class="row g-4">
                         <!-- File Import -->
-                        <div class="col-12 col-lg-6">
+                        <div class="col-12 col-lg-6" data-io-section="import">
                             <div class="card h-100">
                                 <div class="card-header fw-semibold">
                                     <i class="bi bi-file-earmark-arrow-up me-2"></i>Import from File
@@ -1806,7 +1811,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         </div>
 
                         <!-- LLM Text Import -->
-                        <div class="col-12 col-lg-6">
+                        <div class="col-12 col-lg-6" data-io-section="import">
                             <div class="card h-100">
                                 <div class="card-header fw-semibold">
                                     <i class="bi bi-magic me-2"></i>Import from Text (AI Extraction)
@@ -1841,7 +1846,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         </div>
 
                         <!-- Export -->
-                        <div class="col-12 col-lg-6">
+                        <div class="col-12" data-io-section="export">
                             <div class="card">
                                 <div class="card-header fw-semibold">
                                     <i class="bi bi-file-earmark-arrow-down me-2"></i>Export
@@ -1867,7 +1872,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         </div>
 
                         <!-- Platform Export -->
-                        <div class="col-12">
+                        <div class="col-12" data-io-section="export">
                             <div class="card">
                                 <div class="card-header fw-semibold">
                                     <i class="bi bi-cloud-upload me-2"></i>Platform Export
@@ -1913,7 +1918,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         </div>
 
                         <!-- Bookings (cash transactions: deposits / withdrawals) -->
-                        <div class="col-12">
+                        <div class="col-12" data-io-section="data">
                             <div class="card">
                                 <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
                                     <span><i class="bi bi-bank me-2"></i>Cash Transactions (Deposits &amp; Withdrawals)</span>
@@ -1964,7 +1969,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         </div>
 
                         <!-- Google Sheets PDT Sync -->
-                        <div class="col-12">
+                        <div class="col-12" data-io-section="data">
                             <div class="card">
                                 <div class="card-header fw-semibold">
                                     <i class="bi bi-cloud-arrow-up-fill me-2 text-success"></i>Google Sheets — PDT Sync
