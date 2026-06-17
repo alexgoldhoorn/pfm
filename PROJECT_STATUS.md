@@ -63,7 +63,7 @@ Last updated: 2026-06-17
 
 ## Test Status
 
-**524 passed, 0 failed, 0 errors** (unit tests, excluding integration/e2e)
+**561 passed, 0 failed, 6 skipped** (unit tests, excluding integration/e2e)
 
 All tests passing as of 2026-06-17.
 
@@ -85,8 +85,6 @@ See `git log --oneline` for full history. Key v2.1 additions:
 - [ ] **Import real data** — DB is empty; need to import from actual broker accounts
 - [ ] **MyInvestor structured parser** — Extract inline parsing from `import_csv()` into standalone `myinvestor_csv_parser.py` module (like IndexaCapital has)
 - [ ] **Mintos parser** — CSV account statement parser for P2P loans, fractional bonds, and ETFs. Format: `Date`, `Details`, `Transaction ID`, `Turnover`. Mintos interest = same Spanish tax category as stock dividends (rendimientos del capital mobiliario, Box 27)
-- [x] **Fix pre-existing test failures** — Fixed Google Sheets mock, LLM router tests, chat engine init (224/224 passing)
-- [ ] **Merge develop → main** — All new work is on `develop` branch
 
 ### Medium Priority
 - [ ] **Price fetching** — `update-prices` command exists but prices table is empty; no scheduled updates
