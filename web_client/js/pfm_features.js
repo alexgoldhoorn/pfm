@@ -1184,6 +1184,66 @@ function setupImportExportPage() {
         });
     }
 
+    // --- Platform Export section ---
+    (async () => {
+        const platformExportBtn = document.getElementById('platformExportBtn');
+        const platformExportSelect = document.getElementById('platformExportSelect');
+        const platformExportPortfolio = document.getElementById('platformExportPortfolio');
+        const platformExportWarning = document.getElementById('platformExportWarning');
+        if (!platformExportBtn) return;
+
+        try {
+            const portfolios = await window.apiClient.getPortfolios();
+            portfolios.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.id;
+                opt.textContent = p.name;
+                platformExportPortfolio.appendChild(opt);
+            });
+        } catch (_) {}
+
+        platformExportBtn.addEventListener('click', async () => {
+            const platform = platformExportSelect ? platformExportSelect.value : 'yahoo-finance';
+            const modeEl = document.querySelector('input[name="platformExportMode"]:checked');
+            const mode = modeEl ? modeEl.value : 'transactions';
+            const portfolioId = platformExportPortfolio && platformExportPortfolio.value
+                ? platformExportPortfolio.value : '';
+            const filenames = {
+                'yahoo-finance': 'yahoo_finance_portfolio.csv',
+                'simply-wall-st': 'simply_wall_st_portfolio.csv',
+            };
+            const filename = filenames[platform] || 'portfolio.csv';
+            let url = `${window.apiClient.baseURL}/api/v1/export/${platform}?mode=${mode}`;
+            if (portfolioId) url += `&portfolio_id=${portfolioId}`;
+
+            platformExportBtn.disabled = true;
+            if (platformExportWarning) platformExportWarning.classList.add('d-none');
+
+            try {
+                const resp = await fetch(url, { headers: { 'X-API-Key': window.apiClient.apiKey } });
+                if (!resp.ok) throw new Error('Export failed: ' + resp.status);
+                const skippedCount = parseInt(resp.headers.get('X-Skipped-Count') || '0');
+                const skippedSymbols = resp.headers.get('X-Skipped-Symbols') || '';
+                const blob = await resp.blob();
+                const objectUrl = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = objectUrl;
+                link.download = filename;
+                link.click();
+                URL.revokeObjectURL(objectUrl);
+                if (skippedCount > 0 && platformExportWarning) {
+                    platformExportWarning.textContent =
+                        `${skippedCount} asset(s) skipped (no ticker assigned): ${skippedSymbols}`;
+                    platformExportWarning.classList.remove('d-none');
+                }
+            } catch (err) {
+                alert('Platform export error: ' + err.message);
+            } finally {
+                platformExportBtn.disabled = false;
+            }
+        });
+    })();
+
     // --- Bookings section ---
     async function loadBookings() {
         const container = document.getElementById('ioBookingsTable');
