@@ -3,6 +3,7 @@ PDT Google Sheets Sync Router.
 
 Endpoints:
   GET  /api/v1/sync/pdt-config   – return configured spreadsheet ID / service account status
+  PUT  /api/v1/sync/pdt-config   – persist spreadsheet ID to DB (app_settings)
   POST /api/v1/sync/pdt-pull     – read from Google Sheet → save to DB
   POST /api/v1/sync/pdt-push     – write DB data → Google Sheet
 """
@@ -45,6 +46,25 @@ async def _auth(
     return await require_api_key(api_key_manager)(request)
 
 
+def _google_error_detail(e: Exception) -> str:
+    """Extract a human-readable string from a googleapiclient HttpError.
+
+    HttpError.__str__ wraps the message in angle brackets which become invisible
+    when rendered as innerHTML.  This pulls the plain message out of the JSON body.
+    """
+    try:
+        from googleapiclient.errors import HttpError as _HttpError
+        import json as _json
+
+        if isinstance(e, _HttpError):
+            content = _json.loads(e.content or b"{}").get("error", {})
+            msg = content.get("message") or f"HTTP {e.status_code}"
+            return f"Google API {e.status_code}: {msg}"
+    except Exception:
+        pass
+    return str(e) or repr(e)
+
+
 def _get_sync(spreadsheet_id: str):
     """Return a PDTSheetsSync instance; raises 503 if Google libs missing."""
     try:
@@ -68,6 +88,10 @@ class SyncConfigResponse(BaseModel):
     default_spreadsheet_id: Optional[str] = None
 
 
+class SyncConfigUpdate(BaseModel):
+    spreadsheet_id: str
+
+
 class PullResponse(BaseModel):
     spreadsheet_id: str
     imported_transactions: int
@@ -85,14 +109,49 @@ class PushResponse(BaseModel):
     spreadsheet_url: str
 
 
+class BackupResponse(BaseModel):
+    backup_url: str
+    title: str
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
 
 
 @router.get("/pdt-config", response_model=SyncConfigResponse)
-async def get_sync_config(api_key_info: dict = Depends(_auth)):
+async def get_sync_config(
+    db=Depends(get_database), api_key_info: dict = Depends(_auth)
+):
     """Return current Google Sheets sync configuration."""
+    sa_file = _google_service_account_file()
+    email = None
+    configured = os.path.exists(sa_file)
+    if configured:
+        try:
+            import json
+
+            with open(sa_file) as f:
+                email = json.load(f).get("client_email")
+        except Exception:
+            pass
+    # DB-stored ID takes precedence over env var
+    sheet_id = db.get_setting("google_spreadsheet_id") or _default_spreadsheet_id()
+    return SyncConfigResponse(
+        service_account_configured=configured,
+        service_account_email=email,
+        default_spreadsheet_id=sheet_id,
+    )
+
+
+@router.put("/pdt-config", response_model=SyncConfigResponse)
+async def update_sync_config(
+    body: SyncConfigUpdate,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Persist the Google Spreadsheet ID to the database."""
+    db.set_setting("google_spreadsheet_id", body.spreadsheet_id.strip())
     sa_file = _google_service_account_file()
     email = None
     configured = os.path.exists(sa_file)
@@ -107,7 +166,7 @@ async def get_sync_config(api_key_info: dict = Depends(_auth)):
     return SyncConfigResponse(
         service_account_configured=configured,
         service_account_email=email,
-        default_spreadsheet_id=_default_spreadsheet_id(),
+        default_spreadsheet_id=body.spreadsheet_id.strip(),
     )
 
 
@@ -128,7 +187,11 @@ async def pull_from_sheets(
     Transactions, dividends, and bookings are imported; assets and portfolios
     are auto-created where needed.
     """
-    sheet_id = spreadsheet_id or _default_spreadsheet_id()
+    sheet_id = (
+        spreadsheet_id
+        or db.get_setting("google_spreadsheet_id")
+        or _default_spreadsheet_id()
+    )
     if not sheet_id:
         raise HTTPException(
             status_code=400,
@@ -144,7 +207,9 @@ async def pull_from_sheets(
         result = sync.pull()
     except Exception as e:
         logger.exception("Google Sheets pull failed")
-        raise HTTPException(status_code=502, detail=f"Sheets pull failed: {e}")
+        raise HTTPException(
+            status_code=502, detail=f"Sheets pull failed: {_google_error_detail(e)}"
+        )
 
     saved_tx = saved_div = saved_bk = 0
     errors: list[str] = []
@@ -290,7 +355,11 @@ async def push_to_sheets(
     Push all portfolio data to a PDT-format Google Spreadsheet.
     Overwrites the Transactions, Dividends, and Bookings sheets.
     """
-    sheet_id = spreadsheet_id or _default_spreadsheet_id()
+    sheet_id = (
+        spreadsheet_id
+        or db.get_setting("google_spreadsheet_id")
+        or _default_spreadsheet_id()
+    )
     if not sheet_id:
         raise HTTPException(
             status_code=400,
@@ -306,7 +375,9 @@ async def push_to_sheets(
         counts = sync.push(db, portfolio_id)
     except Exception as e:
         logger.exception("Google Sheets push failed")
-        raise HTTPException(status_code=502, detail=f"Sheets push failed: {e}")
+        raise HTTPException(
+            status_code=502, detail=f"Sheets push failed: {_google_error_detail(e)}"
+        )
 
     return PushResponse(
         spreadsheet_id=sheet_id,
@@ -314,4 +385,87 @@ async def push_to_sheets(
         dividends_written=counts["dividends"],
         bookings_written=counts["bookings"],
         spreadsheet_url=f"https://docs.google.com/spreadsheets/d/{sheet_id}/",
+    )
+
+
+@router.post("/pdt-backup", response_model=BackupResponse)
+async def backup_sheet(
+    spreadsheet_id: Optional[str] = Query(default=None),
+    title: Optional[str] = Query(default=None),
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """
+    Overwrite the fixed 'Backup — Transactions/Dividends/Bookings' tabs in the
+    same spreadsheet with a snapshot of the current data tabs.
+    """
+    sheet_id = (
+        spreadsheet_id
+        or db.get_setting("google_spreadsheet_id")
+        or _default_spreadsheet_id()
+    )
+    if not sheet_id:
+        raise HTTPException(status_code=400, detail="No spreadsheet_id configured.")
+
+    sync = _get_sync(sheet_id)
+    try:
+        backup_url = sync.backup_in_place(title)
+    except Exception as e:
+        logger.exception("Google Sheets backup failed")
+        raise HTTPException(
+            status_code=502, detail=f"Sheets backup failed: {_google_error_detail(e)}"
+        )
+
+    from datetime import date
+
+    backup_title = title or f"PFM Backup {date.today().isoformat()}"
+    return BackupResponse(backup_url=backup_url, title=backup_title)
+
+
+@router.get("/pdt-download")
+async def download_sheet(
+    spreadsheet_id: Optional[str] = Query(default=None),
+    fmt: str = Query(default="xlsx"),
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """
+    Download the Google Spreadsheet via Drive API export (read-only, no quota consumed).
+    fmt: xlsx (default) | ods | pdf
+    """
+    from fastapi.responses import Response
+
+    MIME_TYPES = {
+        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "ods": "application/vnd.oasis.opendocument.spreadsheet",
+        "pdf": "application/pdf",
+    }
+    if fmt not in MIME_TYPES:
+        fmt = "xlsx"
+    mime = MIME_TYPES[fmt]
+
+    sheet_id = (
+        spreadsheet_id
+        or db.get_setting("google_spreadsheet_id")
+        or _default_spreadsheet_id()
+    )
+    if not sheet_id:
+        raise HTTPException(status_code=400, detail="No spreadsheet_id configured.")
+
+    sync = _get_sync(sheet_id)
+    try:
+        content = sync.export_bytes(mime)
+    except Exception as e:
+        logger.exception("Google Sheets download failed")
+        raise HTTPException(
+            status_code=502, detail=f"Sheets download failed: {_google_error_detail(e)}"
+        )
+
+    from datetime import date
+
+    filename = f"pdt-backup-{date.today().isoformat()}.{fmt}"
+    return Response(
+        content=content,
+        media_type=mime,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

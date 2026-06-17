@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 
 # Database version for migration tracking
-DATABASE_VERSION = 20
+DATABASE_VERSION = 21
 
 
 # black
@@ -556,6 +556,17 @@ class Database:
         """
         )
 
+        # Persistent app settings (key/value, no TTL). See _migrate_to_v21.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key        TEXT PRIMARY KEY,
+                value      TEXT NOT NULL,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
         # Create triggers for updated_at timestamps
         for table in [
             "entities",
@@ -616,6 +627,8 @@ class Database:
             self._migrate_to_v19(conn)
         if current_version < 20:
             self._migrate_to_v20(conn)
+        if current_version < 21:
+            self._migrate_to_v21(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -1267,6 +1280,73 @@ class Database:
             """
         )
         conn.commit()
+
+    def _migrate_to_v21(self, conn: sqlite3.Connection):
+        """Migrate from v20 to v21 — add app_settings table."""
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key        TEXT PRIMARY KEY,
+                value      TEXT NOT NULL,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.commit()
+
+    # ── App settings (persistent key/value) ────────────────────────────────
+
+    def _ensure_app_settings(self, conn: sqlite3.Connection) -> None:
+        """Create app_settings table if missing (defensive — migration may not have run)."""
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key        TEXT PRIMARY KEY,
+                value      TEXT NOT NULL,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.commit()
+
+    def get_setting(self, key: str) -> Optional[str]:
+        """Return the stored value for *key*, or None if not set."""
+        with self.get_connection() as conn:
+            try:
+                row = conn.execute(
+                    "SELECT value FROM app_settings WHERE key = ?", (key,)
+                ).fetchone()
+                return row["value"] if row else None
+            except Exception:
+                self._ensure_app_settings(conn)
+                return None
+
+    def set_setting(self, key: str, value: str) -> None:
+        """Upsert a persistent app setting."""
+        with self.get_connection() as conn:
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO app_settings (key, value, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+                                                   updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (key, value),
+                )
+                conn.commit()
+            except Exception:
+                self._ensure_app_settings(conn)
+                conn.execute(
+                    """
+                    INSERT INTO app_settings (key, value, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                    ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+                                                   updated_at = CURRENT_TIMESTAMP
+                    """,
+                    (key, value),
+                )
+                conn.commit()
 
     # ── Price-update run history (Diagnostics) ─────────────────────────────
 

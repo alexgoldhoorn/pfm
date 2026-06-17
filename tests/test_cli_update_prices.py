@@ -94,8 +94,8 @@ class TestUpdatePricesCLI:
         ticker, and the returned price is stored under the asset's ISIN symbol."""
         # A fund whose ISIN Yahoo can't price, but whose exchange listing can.
         self.cli.db_manager.create_asset(
-            symbol="LU0389812693",
-            name="Amundi JPM Global Govt Bond",
+            symbol="LU0000000099",
+            name="Example Global Bond Fund",
             asset_type="index",
             currency="EUR",
         )
@@ -103,28 +103,28 @@ class TestUpdatePricesCLI:
         with self.cli.db_manager.get_connection() as conn:
             conn.execute(
                 "UPDATE assets SET ticker = ? WHERE symbol = ?",
-                ("LU0389812693.LU", "LU0389812693"),
+                ("LU0000000099.LU", "LU0000000099"),
             )
             conn.commit()
 
         # The batch fetch is keyed by the Yahoo ticker, not the ISIN.
         mock_api_client = MagicMock(spec=APIClient)
-        mock_api_client.fetch_latest_prices.return_value = {"LU0389812693.LU": 1276.8}
+        mock_api_client.fetch_latest_prices.return_value = {"LU0000000099.LU": 125.50}
         mock_get_client.return_value = mock_api_client
         self.cli.db_manager.insert_price_record = MagicMock()
 
         with patch("sys.stdout", new_callable=StringIO):
-            self.cli.update_prices(symbols=["LU0389812693"])
+            self.cli.update_prices(symbols=["LU0000000099"])
 
         # fetch_latest_prices was asked for the ticker, not the ISIN.
         requested = mock_api_client.fetch_latest_prices.call_args[0][0]
-        assert "LU0389812693.LU" in requested
-        assert "LU0389812693" not in requested
+        assert "LU0000000099.LU" in requested
+        assert "LU0000000099" not in requested
 
         # The price is stored under the DB symbol (the ISIN).
         self.cli.db_manager.insert_price_record.assert_called_once_with(
-            symbol="LU0389812693",
-            price=1276.8,
+            symbol="LU0000000099",
+            price=125.50,
             fetched_ts=ANY,
             source="yfinance",
         )
