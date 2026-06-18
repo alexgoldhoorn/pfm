@@ -272,7 +272,7 @@ Signature: `saveImportedTransactions(transactions, bookings = [], portfolioId = 
 
 ## Testing
 - Run tests: `uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e`
-- **429 passing**, 0 failures, 6 skipped (as of last session).
+- **580 passing**, 0 failures, 6 skipped (as of last session).
 - **Web client JS tests**: `make test-js` (or `node --test web_client/js/tests/`) — Node's built-in runner, no npm deps. Loads the 4 split scripts (`pfm_core`/`pfm_pages`/`pfm_analytics`/`pfm_features`) into one vm scope with DOM stubs: a load/smoke test (catches a broken split) plus `esc()` XSS-escaping and `Fmt` number/date formatting. CI runs it as the `test-js` job.
 - Pre-push hook runs the full unit test suite automatically (`git push` will fail if tests fail).
 - Safe F541 fixer: `uv run python scripts/fix_f541.py` — strips `f` from f-strings without `{}` using a regex that correctly excludes triple-quoted strings.
