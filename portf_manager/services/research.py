@@ -18,7 +18,10 @@ import yfinance as yf
 
 import os
 
-from portf_manager.llm_client import OpenRouterLLMClient, get_llm_client
+from portf_manager.llm_client import (
+    OpenRouterLLMClient,
+    get_llm_client,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +187,48 @@ def _num(v):
         return None
 
 
+def _build_search_prompt(
+    symbol: str,
+    asset_name: str,
+    asset_type: str,
+    current_price: float,
+    avg_cost: float,
+    currency: str,
+    fund_str: str,
+    pnl_str: str,
+) -> str:
+    return f"""You are a professional equity analyst with access to web search.
+
+POSITION:
+- Symbol: {symbol}
+- Name: {asset_name}
+- Type: {asset_type}
+- Current price: {current_price} {currency}
+- Investor's average cost: {avg_cost} {currency}
+- Unrealised P&L vs cost: {pnl_str}
+
+FUNDAMENTALS (from Yahoo Finance):
+{fund_str}
+
+Use your web search to look up current news, recent earnings results, and analyst price targets for {symbol}. Base your analysis on what you find.
+
+Return ONLY a valid JSON object with exactly these fields:
+{{
+  "fair_value": <float — your intrinsic/fair value estimate in {currency}, or null if insufficient data>,
+  "recommendation": "<BUY | HOLD | SELL>",
+  "confidence": "<high | medium | low>",
+  "summary": "<2-3 sentence plain-English summary of the investment case>",
+  "rationale": "<why you give this recommendation, max 100 words>",
+  "risks": ["<risk 1>", "<risk 2>", "<risk 3>"],
+  "catalysts": ["<catalyst 1>", "<catalyst 2>"],
+  "buy_below": <float — price below which the stock is attractive, or null>,
+  "sell_above": <float — price above which you would take profit, or null>
+}}
+
+Be concise and data-driven. If this is a crypto, ETF, or P2P asset where DCF does not apply, base the recommendation on momentum, relative value, and risk/reward instead.
+"""
+
+
 def generate_valuation_report(
     symbol: str,
     asset_name: str,
@@ -246,22 +291,61 @@ Be concise and data-driven. If this is a crypto, ETF, or P2P asset where DCF doe
 
     try:
         llm = get_llm_client()
-        try:
-            raw = llm.generate(prompt).strip()
-        except Exception as e:
-            if _is_rate_limited(e):
-                or_key = os.getenv("OPENROUTER_API_KEY") or os.getenv(
-                    "PORTF_OPENROUTER_API_KEY"
-                )
-                if or_key:
-                    logger.warning(
-                        f"Primary LLM rate-limited for {symbol}, retrying with OpenRouter"
+
+        if hasattr(llm, "generate_with_search") and callable(llm.generate_with_search):
+            search_prompt = _build_search_prompt(
+                symbol,
+                asset_name,
+                asset_type,
+                current_price,
+                avg_cost,
+                currency,
+                fund_str,
+                pnl_str,
+            )
+            try:
+                envelope_str = llm.generate_with_search(search_prompt, symbol)
+                envelope = json.loads(envelope_str)
+                raw = envelope["text"].strip()
+                grounding_sources: list = envelope.get("sources", [])
+            except Exception as e:
+                if _is_rate_limited(e):
+                    or_key = os.getenv("OPENROUTER_API_KEY") or os.getenv(
+                        "PORTF_OPENROUTER_API_KEY"
                     )
-                    raw = OpenRouterLLMClient(api_key=or_key).generate(prompt).strip()
+                    if or_key:
+                        logger.warning(
+                            f"Search LLM rate-limited for {symbol}, retrying with OpenRouter"
+                        )
+                        raw = (
+                            OpenRouterLLMClient(api_key=or_key).generate(prompt).strip()
+                        )
+                        grounding_sources = news or []
+                    else:
+                        raise
                 else:
                     raise
-            else:
-                raise
+        else:
+            try:
+                raw = llm.generate(prompt).strip()
+            except Exception as e:
+                if _is_rate_limited(e):
+                    or_key = os.getenv("OPENROUTER_API_KEY") or os.getenv(
+                        "PORTF_OPENROUTER_API_KEY"
+                    )
+                    if or_key:
+                        logger.warning(
+                            f"Primary LLM rate-limited for {symbol}, retrying with OpenRouter"
+                        )
+                        raw = (
+                            OpenRouterLLMClient(api_key=or_key).generate(prompt).strip()
+                        )
+                    else:
+                        raise
+                else:
+                    raise
+            grounding_sources = news or []
+
         # Strip markdown code fences if present
         if raw.startswith("```"):
             raw = "\n".join(
@@ -272,7 +356,7 @@ Be concise and data-driven. If this is a crypto, ETF, or P2P asset where DCF doe
         for key in ("recommendation", "confidence", "summary"):
             if key not in report:
                 raise ValueError(f"Missing key: {key}")
-        report["sources"] = news or []
+        report["sources"] = grounding_sources
         return report
     except Exception as e:
         logger.error(f"LLM valuation failed for {symbol}: {e}")
