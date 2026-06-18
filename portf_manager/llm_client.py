@@ -94,6 +94,48 @@ class GeminiLLMClient:
             raise RuntimeError("Empty response from Gemini API")
         return response.text
 
+    def generate_with_search(self, prompt: str, symbol: str) -> str:
+        """Google Search grounded generation via the new google-genai SDK."""
+        import json
+
+        try:
+            text, sources = self._gemini_search(prompt)
+        except ImportError:
+            logger.warning(
+                "google-genai SDK not installed; falling back to generate() without search"
+            )
+            return json.dumps({"text": self.generate(prompt), "sources": []})
+        return json.dumps({"text": text, "sources": sources})
+
+    def _gemini_search(self, prompt: str) -> tuple[str, list[dict]]:
+        """Call Gemini with Google Search grounding using the new google-genai SDK."""
+        from google import genai as genai_new
+        from google.genai import types as genai_types
+
+        client = genai_new.Client(api_key=self.api_key)
+        config = genai_types.GenerateContentConfig(
+            tools=[genai_types.Tool(google_search=genai_types.GoogleSearch())]
+        )
+        response = client.models.generate_content(
+            model=self.model_name, contents=prompt, config=config
+        )
+        text = response.text or ""
+        sources: list[dict] = []
+        try:
+            gm = response.candidates[0].grounding_metadata
+            for chunk in gm.grounding_chunks or []:
+                web = getattr(chunk, "web", None)
+                if web:
+                    sources.append(
+                        {
+                            "title": getattr(web, "title", ""),
+                            "url": getattr(web, "uri", ""),
+                        }
+                    )
+        except (AttributeError, IndexError):
+            pass
+        return text, sources
+
 
 class OllamaLLMClient:
     """Ollama local LLM client. Requires a running Ollama instance."""
