@@ -292,6 +292,7 @@ Be concise and data-driven. If this is a crypto, ETF, or P2P asset where DCF doe
     try:
         llm = get_llm_client()
 
+        grounding_sources: list = []
         if hasattr(llm, "generate_with_search") and callable(llm.generate_with_search):
             search_prompt = _build_search_prompt(
                 symbol,
