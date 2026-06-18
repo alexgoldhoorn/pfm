@@ -67,10 +67,14 @@ Provider-agnostic via `portf_manager/llm_client.py`. Factory `get_llm_client()` 
 1. Ollama (`OLLAMA_HOST:OLLAMA_PORT`) — local, no API key
 2. Gemini (`GEMINI_API_KEY`) — default model `gemini-2.5-flash`
 3. OpenRouter (`OPENROUTER_API_KEY`) — default model `openai/gpt-4o-mini`
+4. Anthropic (`ANTHROPIC_API_KEY`) — default model `claude-sonnet-4-6`
 
 Override with env vars:
-- `PORTF_LLM_PROVIDER=auto|ollama|gemini|openrouter`
+- `PORTF_LLM_PROVIDER=auto|ollama|gemini|openrouter|anthropic`
 - `PORTF_LLM_MODEL=<model-name>`
+- `ANTHROPIC_API_KEY` — required when provider=anthropic
+
+**Search grounding**: `GeminiLLMClient` and `AnthropicLLMClient` implement `generate_with_search(prompt, symbol) -> str`. The research `generate_valuation_report()` detects this via `hasattr(llm, "generate_with_search")` and calls it instead of pre-fetching yfinance news. Gemini uses the `google-genai` SDK with the `google_search` tool; Anthropic uses the `web_search_20250305` built-in tool (up to 5 searches). Both return a JSON envelope `{"text": "<llm json>", "sources": [...]}`. The SDKs are lazy-imported; a missing package falls back gracefully to the non-search path. Ollama and OpenRouter do NOT implement search grounding.
 
 `docker-compose.yml` sets `PORTF_LLM_PROVIDER=gemini` for the backend (the container has `GEMINI_API_KEY`). These `environment:` entries override `.env*`, so change the provider there, not only in `.env.local`. `GeminiClient.extract_transactions` keeps a statement's time (`...THH:MM:SS`) when present; `extract_bookings` pulls cash deposits/withdrawals.
 

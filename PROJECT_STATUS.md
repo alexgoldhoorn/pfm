@@ -5,9 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-06-17
+Last updated: 2026-06-18
 
-**Recent (v2.1):** **monthly cash flow tracker** (salary/income/mortgage/loan/rest entries on Net Worth page, net monthly figure, db v20); **Platform Export: Yahoo Finance + Simply Wall St CSV download** (transactions or positions, ticker-resolved, skip warning for ISIN-only assets); AI chat reads the real portfolio; research workbench (position panel, sell calculator, cost chart, downloadable report); analytics split into lazy tabs with a gain/loss leaderboard, dividend forward-income/calendar, and a per-lot tax report + CSV; dashboard alerts banner; `index` asset type; yfinance caching (`kv_cache`, schema v14); per-user settings (default currency/broker, holdings sort, hide-tiny, change password); grouped/collapsible sidebar with Help/About/Resources pages; stress-test endpoint + UI; **Data Quality tab on Diagnostics page** (cash reconciliation, fuzzy duplicate detection, suspicious pattern checks — inline delete/dismiss); **parser fixes** (Coinbase staking income → `interest` tx, MyInvestor `@QTY` positive = dividend not sell, Mintos keyword fixes, new `myinvestor_paste_parser.py`); **comprehensive help text** (`help_text.js` `PAGE_HELP`/`METRIC_HELP` covering all 14 pages + card-level ⓘ tooltips). Tests: 524 passing.
+**Recent (v2.1):** **search-grounded research** (Gemini `google_search` + Anthropic `web_search` tool; `SearchCapableLLMClient` protocol; graceful fallback to yfinance headlines when neither search provider is configured); **monthly cash flow tracker** (salary/income/mortgage/loan/rest entries on Net Worth page, net monthly figure, db v20); **Platform Export: Yahoo Finance + Simply Wall St CSV download** (transactions or positions, ticker-resolved, skip warning for ISIN-only assets); AI chat reads the real portfolio; research workbench (position panel, sell calculator, cost chart, downloadable report); analytics split into lazy tabs with a gain/loss leaderboard, dividend forward-income/calendar, and a per-lot tax report + CSV; dashboard alerts banner; `index` asset type; yfinance caching (`kv_cache`, schema v14); per-user settings (default currency/broker, holdings sort, hide-tiny, change password); grouped/collapsible sidebar with Help/About/Resources pages; stress-test endpoint + UI; **Data Quality tab on Diagnostics page** (cash reconciliation, fuzzy duplicate detection, suspicious pattern checks — inline delete/dismiss); **parser fixes** (Coinbase staking income → `interest` tx, MyInvestor `@QTY` positive = dividend not sell, Mintos keyword fixes, new `myinvestor_paste_parser.py`); **comprehensive help text** (`help_text.js` `PAGE_HELP`/`METRIC_HELP` covering all 14 pages + card-level ⓘ tooltips). Tests: 580 passing.
 
 ## Architecture Overview
 
@@ -56,16 +56,17 @@ Last updated: 2026-06-17
 
 ### LLM Integration — ✅ Working
 - Provider-agnostic abstraction (`llm_client.py`)
-- **Default: auto-detect** — tries Ollama locally first (zero config), falls back to Gemini
-- Default model: `llama3.2` (Ollama) or `gemini-2.5-flash` (Gemini)
-- Config via `PORTF_LLM_PROVIDER` (`auto`/`ollama`/`gemini`) + `PORTF_LLM_MODEL` env vars
+- **Default: auto-detect** — tries Ollama locally first (zero config), falls back to Gemini, then OpenRouter, then Anthropic
+- Default models: `llama3.2` (Ollama), `gemini-2.5-flash` (Gemini), `claude-sonnet-4-6` (Anthropic)
+- Config via `PORTF_LLM_PROVIDER` (`auto`/`ollama`/`gemini`/`openrouter`/`anthropic`) + `PORTF_LLM_MODEL` + `ANTHROPIC_API_KEY`
+- Search-grounded research: Gemini/Anthropic implement `generate_with_search()`; research endpoint uses it when available, falls back to yfinance headlines
 - Three use cases: transaction extraction, stock reports, chat/advisor
 
 ## Test Status
 
-**561 passed, 0 failed, 6 skipped** (unit tests, excluding integration/e2e)
+**580 passed, 0 failed, 6 skipped** (unit tests, excluding integration/e2e)
 
-All tests passing as of 2026-06-17.
+All tests passing as of 2026-06-18.
 
 ## Recent Changes (main)
 
