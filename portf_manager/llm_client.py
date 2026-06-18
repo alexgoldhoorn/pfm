@@ -262,6 +262,76 @@ class OpenRouterLLMClient:
         return text
 
 
+DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6"
+
+
+class AnthropicLLMClient:
+    """Anthropic Claude LLM client with web_search tool support."""
+
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
+    ):
+        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        if not self.api_key:
+            raise ValueError(
+                "Anthropic API key required. Set ANTHROPIC_API_KEY environment variable."
+            )
+        self.model_name = model or os.getenv("PORTF_LLM_MODEL", DEFAULT_ANTHROPIC_MODEL)
+        logger.info(f"Anthropic LLM client initialized (model={self.model_name})")
+
+    def generate(self, prompt: str) -> str:
+        """Generate text using Anthropic Claude (no search tools)."""
+        return self._anthropic_generate(prompt)
+
+    def _anthropic_generate(self, prompt: str) -> str:
+        try:
+            import anthropic as anthropic_sdk
+        except ImportError:
+            raise ImportError(
+                "anthropic package required for Anthropic provider. "
+                "Install with: pip install anthropic"
+            )
+        client = anthropic_sdk.Anthropic(api_key=self.api_key)
+        msg = client.messages.create(
+            model=self.model_name,
+            max_tokens=4096,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return msg.content[0].text
+
+    def generate_with_search(self, prompt: str, symbol: str) -> str:
+        """Generate with Anthropic web_search tool (up to 5 searches)."""
+        import json
+
+        text = self._anthropic_search(prompt)
+        return json.dumps({"text": text, "sources": []})
+
+    def _anthropic_search(self, prompt: str) -> str:
+        try:
+            import anthropic as anthropic_sdk
+        except ImportError:
+            raise ImportError(
+                "anthropic package required for Anthropic provider. "
+                "Install with: pip install anthropic"
+            )
+        client = anthropic_sdk.Anthropic(api_key=self.api_key)
+        msg = client.messages.create(
+            model=self.model_name,
+            max_tokens=4096,
+            tools=[
+                {"type": "web_search_20250305", "name": "web_search", "max_uses": 5}
+            ],
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = ""
+        for block in msg.content:
+            if hasattr(block, "type") and block.type == "text":
+                text = block.text
+        return text
+
+
 # Singleton cache
 _llm_client: Optional[LLMClient] = None
 
@@ -299,10 +369,12 @@ def get_llm_client(
         client = OllamaLLMClient(model=model)
     elif provider == "openrouter":
         client = OpenRouterLLMClient(model=model)
+    elif provider == "anthropic":
+        client = AnthropicLLMClient(model=model)
     else:
         raise ValueError(
             f"Unknown LLM provider: '{provider}'. "
-            "Supported: 'auto', 'gemini', 'ollama', 'openrouter'"
+            "Supported: 'auto', 'gemini', 'ollama', 'openrouter', 'anthropic'"
         )
 
     _llm_client = client
@@ -338,12 +410,19 @@ def _auto_detect_provider(model: Optional[str] = None) -> LLMClient:
         logger.info("Auto-detected OpenRouter API key, using OpenRouter")
         return OpenRouterLLMClient(api_key=openrouter_key, model=model)
 
+    # Try Anthropic if API key is available
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    if anthropic_key:
+        logger.info("Auto-detected Anthropic API key, using Claude")
+        return AnthropicLLMClient(api_key=anthropic_key, model=model)
+
     raise RuntimeError(
         "No LLM provider available. Either:\n"
         "  1. Start Ollama locally: ollama serve && ollama pull llama3.2\n"
         "  2. Set GEMINI_API_KEY for Google Gemini\n"
         "  3. Set OPENROUTER_API_KEY for OpenRouter\n"
-        "  4. Set PORTF_LLM_PROVIDER=ollama|gemini|openrouter explicitly"
+        "  4. Set ANTHROPIC_API_KEY for Anthropic Claude\n"
+        "  5. Set PORTF_LLM_PROVIDER=ollama|gemini|openrouter|anthropic explicitly"
     )
 
 
