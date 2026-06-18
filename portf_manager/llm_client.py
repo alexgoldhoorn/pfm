@@ -40,6 +40,18 @@ class LLMClient(Protocol):
         ...
 
 
+@runtime_checkable
+class SearchCapableLLMClient(LLMClient, Protocol):
+    """LLM client that supports live web search during generation.
+
+    Returns a JSON envelope: {"text": "<llm output>", "sources": [{"title": ..., "url": ...}]}
+    """
+
+    def generate_with_search(self, prompt: str, symbol: str) -> str:
+        """Generate with live web search grounding."""
+        ...
+
+
 class GeminiLLMClient:
     """Google Gemini LLM client."""
 
