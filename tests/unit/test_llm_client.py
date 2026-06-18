@@ -9,13 +9,23 @@ def test_search_capable_protocol_importable():
     assert SearchCapableLLMClient is not None
 
 
-def test_existing_clients_not_search_capable_before_implementation():
-    """OllamaLLMClient and OpenRouterLLMClient never implement generate_with_search."""
+def test_mock_with_only_generate_is_not_search_capable():
+    """A MagicMock with only generate() does not satisfy SearchCapableLLMClient."""
+    from portf_manager.llm_client import SearchCapableLLMClient
+
+    plain_mock = MagicMock(spec=["generate"])
+    assert not isinstance(plain_mock, SearchCapableLLMClient)
+
+
+def test_real_clients_without_search_are_not_search_capable():
+    """Real OllamaLLMClient and OpenRouterLLMClient do not implement generate_with_search."""
     from portf_manager.llm_client import (
+        OllamaLLMClient,
+        OpenRouterLLMClient,
         SearchCapableLLMClient,
     )
 
-    ollama = MagicMock(spec=["generate"])
-    openrouter = MagicMock(spec=["generate"])
+    ollama = OllamaLLMClient(model="llama3.2")
+    openrouter = OpenRouterLLMClient(api_key="test_key")
     assert not isinstance(ollama, SearchCapableLLMClient)
     assert not isinstance(openrouter, SearchCapableLLMClient)
