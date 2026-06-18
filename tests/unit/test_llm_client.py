@@ -1,6 +1,8 @@
 """Tests for SearchCapableLLMClient protocol and new LLM clients."""
 
 import json
+import os
+import pytest
 from unittest.mock import MagicMock, patch
 
 
@@ -131,3 +133,102 @@ class TestGeminiSearchCapable:
 
         assert text == '{"recommendation": "HOLD"}'
         assert sources == []
+
+
+class TestAnthropicClient:
+    def test_anthropic_client_requires_api_key(self):
+        from portf_manager.llm_client import AnthropicLLMClient
+
+        with patch.dict(os.environ, {}, clear=True):
+            with pytest.raises(ValueError, match="ANTHROPIC_API_KEY"):
+                AnthropicLLMClient()
+
+    def test_anthropic_client_satisfies_search_capable_protocol(self):
+        from portf_manager.llm_client import AnthropicLLMClient, SearchCapableLLMClient
+
+        client = AnthropicLLMClient(api_key="test_key")
+        assert isinstance(client, SearchCapableLLMClient)
+
+    def test_anthropic_generate_delegates_to_internal(self):
+        from portf_manager.llm_client import AnthropicLLMClient
+
+        client = AnthropicLLMClient(api_key="test_key")
+        with patch.object(client, "_anthropic_generate", return_value="result") as m:
+            assert client.generate("prompt") == "result"
+            m.assert_called_once_with("prompt")
+
+    def test_anthropic_generate_with_search_returns_envelope(self):
+        from portf_manager.llm_client import AnthropicLLMClient
+
+        client = AnthropicLLMClient(api_key="test_key")
+        with patch.object(
+            client, "_anthropic_search", return_value='{"recommendation":"BUY"}'
+        ):
+            raw = client.generate_with_search("prompt", "AAPL")
+
+        envelope = json.loads(raw)
+        assert envelope["text"] == '{"recommendation":"BUY"}'
+        assert envelope["sources"] == []
+
+    def test_anthropic_search_picks_last_text_block(self):
+        import sys
+
+        from portf_manager.llm_client import AnthropicLLMClient
+
+        client = AnthropicLLMClient(api_key="test_key")
+
+        tool_block = MagicMock()
+        tool_block.type = "tool_result"
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = '{"recommendation":"HOLD"}'
+
+        mock_msg = MagicMock()
+        mock_msg.content = [tool_block, text_block]
+
+        mock_anthropic = MagicMock()
+        mock_anthropic.Anthropic.return_value.messages.create.return_value = mock_msg
+
+        with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
+            result = client._anthropic_search("prompt")
+
+        assert result == '{"recommendation":"HOLD"}'
+
+
+class TestFactoryWiring:
+    def setup_method(self):
+        from portf_manager.llm_client import reset_llm_client
+
+        reset_llm_client()
+
+    def teardown_method(self):
+        from portf_manager.llm_client import reset_llm_client
+
+        reset_llm_client()
+
+    def test_get_llm_client_anthropic_provider(self):
+        from portf_manager.llm_client import AnthropicLLMClient, get_llm_client
+
+        with patch.dict(os.environ, {"ANTHROPIC_API_KEY": "test_key"}):
+            client = get_llm_client(provider="anthropic", force_new=True)
+        assert isinstance(client, AnthropicLLMClient)
+
+    def test_auto_detect_uses_anthropic_as_fourth_option(self):
+        from portf_manager.llm_client import AnthropicLLMClient, _auto_detect_provider
+
+        no_keys = {
+            k: ""
+            for k in (
+                "GEMINI_API_KEY",
+                "PORTF_GEMINI_API_KEY",
+                "GOOGLE_API_KEY",
+                "OPENROUTER_API_KEY",
+                "PORTF_OPENROUTER_API_KEY",
+            )
+        }
+        with patch(
+            "portf_manager.llm_client.OllamaLLMClient.is_available", return_value=False
+        ):
+            with patch.dict(os.environ, {**no_keys, "ANTHROPIC_API_KEY": "test_key"}):
+                client = _auto_detect_provider()
+        assert isinstance(client, AnthropicLLMClient)
