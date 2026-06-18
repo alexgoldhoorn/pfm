@@ -11,6 +11,8 @@ dependencies = [
     "scipy",
     "numpy",
     "google-generativeai",
+    "google-genai>=1.0",
+    "anthropic>=0.40",
     "sqlalchemy>=2.0.0",
     "psycopg2-binary",
     "fastapi",
