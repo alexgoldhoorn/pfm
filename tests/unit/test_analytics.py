@@ -105,7 +105,7 @@ class TestAnalyticsRouter:
         assert "total_value_eur" in resp.json()
 
     @pytest.mark.asyncio
-    async def test_performance_has_cagr_fields(
+    async def test_cagr_fields_in_perf_response(
         self, async_test_client: AsyncClient, auth_headers
     ):
         resp = await async_test_client.get(
