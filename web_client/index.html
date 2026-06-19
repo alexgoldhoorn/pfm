@@ -1036,8 +1036,9 @@
                     <div class="tab-pane fade" id="anPaneStress">
                     <!-- h) Stress Test -->
                     <div class="card mb-4">
-                        <div class="card-header fw-semibold">
-                            <i class="bi bi-lightning-charge me-2 text-danger"></i>Stress Testing
+                        <div class="card-header fw-semibold d-flex align-items-center justify-content-between">
+                            <span><i class="bi bi-lightning-charge me-2 text-danger"></i>Stress Testing</span>
+                            <button class="btn btn-sm btn-link p-0 ms-2" onclick="showPageHelp('stressTest')" title="How does this work?"><i class="bi bi-question-circle"></i></button>
                         </div>
                         <div class="card-body" id="anStressBody">
                             <div class="text-center text-muted py-4">
@@ -1278,6 +1279,65 @@
                                 <button type="button" class="btn btn-outline-primary" data-rtab="compare"><i class="bi bi-bar-chart-line me-1"></i>Compare</button>
                             </div>
                             <button class="btn btn-sm btn-outline-secondary" onclick="showPageHelp('research')" title="Help"><i class="bi bi-question-circle"></i></button>
+                        </div>
+                    </div>
+
+                    <!-- Portfolio Health panel -->
+                    <div id="portfolioHealthPanel" class="card mb-3">
+                        <div class="card-header d-flex align-items-center justify-content-between" role="button" data-bs-toggle="collapse" data-bs-target="#portfolioHealthBody" aria-expanded="true">
+                            <span><i class="bi bi-heart-pulse me-2 text-primary"></i><strong>Portfolio Health</strong> <span class="text-muted small ms-1">LLM-powered scored report across all your metrics</span></span>
+                            <i class="bi bi-chevron-down"></i>
+                        </div>
+                        <div id="portfolioHealthBody" class="collapse show">
+                            <div class="card-body">
+                                <!-- Idle state -->
+                                <div id="phIdle">
+                                    <div class="d-flex flex-wrap gap-2 align-items-center">
+                                        <label class="form-label mb-0">Portfolio</label>
+                                        <select class="form-select form-select-sm w-auto" id="phPortfolioSelect">
+                                            <option value="">All portfolios</option>
+                                        </select>
+                                        <button class="btn btn-primary btn-sm" id="phRunBtn"><i class="bi bi-play-fill me-1"></i>Run Analysis</button>
+                                    </div>
+                                </div>
+                                <!-- Loading state -->
+                                <div id="phLoading" style="display:none;">
+                                    <div class="d-flex align-items-center gap-2">
+                                        <div class="spinner-border spinner-border-sm text-primary"></div>
+                                        <span id="phStatusText" class="text-muted small">Gathering metrics…</span>
+                                    </div>
+                                </div>
+                                <!-- Result state -->
+                                <div id="phResult" style="display:none;">
+                                    <!-- Summary bar -->
+                                    <div id="phSummaryBar" class="d-flex flex-wrap align-items-center gap-3 mb-3">
+                                        <span id="phOverallScore" class="fw-bold fs-5"></span>
+                                        <span id="phLastAnalysed" class="text-muted small"></span>
+                                        <div class="ms-auto d-flex gap-2 align-items-center">
+                                            <select class="form-select form-select-sm w-auto" id="phRefreshPortfolioSelect">
+                                                <option value="">All portfolios</option>
+                                            </select>
+                                            <button class="btn btn-sm btn-outline-secondary" id="phRefreshBtn"><i class="bi bi-arrow-clockwise me-1"></i>Refresh</button>
+                                        </div>
+                                    </div>
+                                    <!-- Warnings -->
+                                    <div id="phWarnings" class="alert alert-info py-1 small mb-2" style="display:none;"></div>
+                                    <!-- Score cards -->
+                                    <div id="phScores" class="row g-2 mb-3"></div>
+                                    <!-- Summary -->
+                                    <div class="mb-3">
+                                        <h6 class="text-muted text-uppercase small mb-1">Summary</h6>
+                                        <p id="phSummaryText" class="mb-0"></p>
+                                    </div>
+                                    <!-- Recommendations -->
+                                    <div>
+                                        <h6 class="text-muted text-uppercase small mb-1">Top Recommendations</h6>
+                                        <ol id="phRecommendations" class="ps-3 mb-0"></ol>
+                                    </div>
+                                </div>
+                                <!-- Error state -->
+                                <div id="phError" class="alert alert-warning mb-0" style="display:none;"></div>
+                            </div>
                         </div>
                     </div>
 
@@ -3122,6 +3182,18 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                             <input type="number" class="form-control" id="setHideBelowEur" min="0" step="1">
                         </div>
 
+                        <div class="col-12 mt-3"><h6 class="text-muted text-uppercase small mb-1">Portfolio Advisor</h6></div>
+                        <div class="col-sm-4">
+                            <label class="form-label" for="setAdvisorTtl">Health analysis cache
+                                <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="How long to cache the Portfolio Health analysis before the next run fetches fresh data."></i>
+                            </label>
+                            <select class="form-select" id="setAdvisorTtl">
+                                <option value="6">6 hours</option>
+                                <option value="24" selected>24 hours (default)</option>
+                                <option value="168">7 days</option>
+                            </select>
+                        </div>
+
                         <div class="col-12 mt-3"><h6 class="text-muted text-uppercase small mb-1">Account</h6></div>
                         <div class="col-12">
                             <p class="text-muted small mb-2">Change the password for your login (username/password account).</p>
@@ -3343,15 +3415,15 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
 
     <!-- Centralized help text (must load before the app scripts) -->
-    <script src="js/help_text.js?v=1780000007"></script>
+    <script src="js/help_text.js?v=1781886806"></script>
 
     <!-- App scripts: portfolio_debug.js was split into these four classic
          scripts. They share one global scope and MUST load in this order:
          core → pages → analytics → features (features carries the
          DOMContentLoaded bootstrap, so it loads last). -->
-    <script src="js/pfm_core.js?v=1780000060"></script>
+    <script src="js/pfm_core.js?v=1781886806"></script>
     <script src="js/pfm_pages.js?v=1780000051"></script>
     <script src="js/pfm_analytics.js?v=1780000055"></script>
-    <script src="js/pfm_features.js?v=1780000059"></script>
+    <script src="js/pfm_features.js?v=1781886806"></script>
 </body>
 </html>

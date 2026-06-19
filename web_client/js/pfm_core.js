@@ -1690,6 +1690,32 @@ function createAPIClient() {
             return r.json();
         },
 
+        async getPortfolioAnalysis(portfolioId = null, refresh = false) {
+            const params = new URLSearchParams();
+            if (portfolioId) params.set('portfolio_id', portfolioId);
+            if (refresh) params.set('refresh', 'true');
+            const qs = params.toString() ? '?' + params.toString() : '';
+            const r = await fetch(this.baseURL + '/api/v1/research/portfolio-analysis' + qs, { headers: { 'X-API-Key': this.apiKey } });
+            if (!r.ok) throw new Error(await r.text());
+            return r.json();
+        },
+
+        async getAdvisorSettings() {
+            const r = await fetch(this.baseURL + '/api/v1/research/portfolio-analysis/settings', { headers: { 'X-API-Key': this.apiKey } });
+            if (!r.ok) throw new Error(await r.text());
+            return r.json();
+        },
+
+        async putAdvisorSettings(cacheTtlHours) {
+            const r = await fetch(this.baseURL + '/api/v1/research/portfolio-analysis/settings', {
+                method: 'PUT',
+                headers: { 'X-API-Key': this.apiKey, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cache_ttl_hours: cacheTtlHours }),
+            });
+            if (!r.ok) throw new Error(await r.text());
+            return r.json();
+        },
+
         async getPriceTargets(symbol) {
             const resp = await fetch(this.baseURL + `/api/v1/research/${encodeURIComponent(symbol)}/targets`, {
                 headers: { 'X-API-Key': this.apiKey }

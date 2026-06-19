@@ -189,16 +189,64 @@ window.PAGE_HELP = {
       </ul>
       <p class="text-muted small mb-0">All amounts converted to EUR at live FX rates.</p>`
   },
+  stressTest: {
+    title: "Stress Testing — Methodology",
+    body: `
+      <p>Stress testing answers: <em>"If a historical crash happened today, how much would my current portfolio lose at the worst point?"</em></p>
+      <p>For each open position the tool fetches the asset's <strong>actual historical return</strong> over the scenario window from Yahoo Finance, then applies that percentage to the current EUR value. Assets without a matching Yahoo symbol use an asset-class average (marked <sup>*</sup>).</p>
+
+      <h6 class="fw-semibold mt-3 mb-1">Preset scenarios</h6>
+      <table class="table table-sm small mb-3">
+        <thead class="table-light"><tr><th>Scenario</th><th>Window</th><th>Duration</th><th>What happened</th></tr></thead>
+        <tbody>
+          <tr><td>2008 Crisis</td><td>Oct 2007 → Mar 2009</td><td>~17 months</td><td>Global banking collapse; S&amp;P 500 −57%</td></tr>
+          <tr><td>2020 COVID</td><td>19 Feb → 23 Mar 2020</td><td>33 days</td><td>Pandemic panic selling; S&amp;P 500 −34%</td></tr>
+          <tr><td>2022 Rates</td><td>31 Dec 2021 → 12 Oct 2022</td><td>~9.5 months</td><td>Aggressive rate hikes; S&amp;P 500 −25%, bonds −15%</td></tr>
+          <tr><td>Dot-com</td><td>24 Mar 2000 → 9 Oct 2002</td><td>~2.5 years</td><td>Tech bubble burst; Nasdaq −78%</td></tr>
+        </tbody>
+      </table>
+
+      <h6 class="fw-semibold mt-3 mb-1">Asset-class fallback rates (used when no Yahoo data is available)</h6>
+      <table class="table table-sm small mb-3">
+        <thead class="table-light"><tr><th>Asset type</th><th>2008</th><th>2020</th><th>2022</th><th>Dot-com</th></tr></thead>
+        <tbody>
+          <tr><td>Stock / ETF / Index</td><td class="text-danger">−50%</td><td class="text-danger">−32%</td><td class="text-danger">−22%</td><td class="text-danger">−60%</td></tr>
+          <tr><td>Mutual fund</td><td class="text-danger">−40%</td><td class="text-danger">−25%</td><td class="text-danger">−18%</td><td class="text-danger">−45%</td></tr>
+          <tr><td>Bond</td><td class="text-danger">−5%</td><td class="text-success">+5%</td><td class="text-danger">−15%</td><td class="text-success">+5%</td></tr>
+          <tr><td>Crypto</td><td>0%</td><td class="text-danger">−50%</td><td class="text-danger">−65%</td><td>0%</td></tr>
+          <tr><td>Commodity</td><td class="text-danger">−30%</td><td class="text-danger">−20%</td><td class="text-success">+20%</td><td class="text-danger">−15%</td></tr>
+          <tr><td>Cash</td><td>0%</td><td>0%</td><td>0%</td><td>0%</td></tr>
+        </tbody>
+      </table>
+      <p class="small text-muted">Crypto fallback is 0% for 2008 and dot-com because Bitcoin did not exist (no data, not because it was unaffected).</p>
+
+      <h6 class="fw-semibold mt-3 mb-1">Custom date range</h6>
+      <p class="small">Enter any start and end date to replay that window against your current holdings. Custom runs are <strong>not cached</strong> — each click fetches live data from Yahoo Finance. The S&amp;P 500 return over that window is used as the equity fallback for assets without historical data.</p>
+
+      <h6 class="fw-semibold mt-3 mb-1">Limitations</h6>
+      <ul class="small mb-2">
+        <li><strong>Snapshot, not simulation.</strong> The result is the loss at the crash bottom. It does not model the recovery, nor any action you might have taken (rebalancing, stop-losses, new contributions).</li>
+        <li><strong>Dividends ignored.</strong> Income received during the crash window is not counted.</li>
+        <li><strong>Today's holdings, not historical ones.</strong> The tool applies past returns to your <em>current</em> positions — it does not reconstruct what you actually held during that period.</li>
+        <li><strong>Preset results cached 7 days.</strong> The four named scenarios are cached in the database; custom ranges always run live.</li>
+        <li><strong>FX effects not modelled.</strong> All EUR conversions use current FX rates, not crisis-era rates.</li>
+      </ul>
+      <p class="text-muted small mb-0">Informational only, not financial advice.</p>`
+  },
   research: {
     title: "Research",
     body: `
       <p>Deep-dive on any ticker: fundamentals, your position, a thesis, and an LLM valuation backed by live news.</p>
+      <h6 class="fw-semibold mt-3 mb-1">Portfolio Health</h6>
+      <p>Click <strong>Run Analysis</strong> to get a scored health report across five dimensions (Diversification, Risk/Return, Income, Fees, Tax Efficiency), each rated 1–10 with an explanation and a prioritised action list. Results are cached — adjust the cache duration in Settings → Portfolio Advisor.</p>
+      <h6 class="fw-semibold mt-3 mb-1">Workbench</h6>
       <ul class="mb-2">
-        <li><strong>Workbench</strong>: search any symbol → see Yahoo Finance fundamentals (P/E, yield, sector), your cost basis and P/L, set fair/buy/sell prices, write a thesis and get an AI analysis with news citations.</li>
+        <li>Search any symbol → see Yahoo Finance fundamentals (P/E, yield, sector), your cost basis and P/L, set fair/buy/sell prices, write a thesis and get an AI analysis with news citations.</li>
         <li><strong>Save</strong> a research note to version your thinking over time. Saved price targets are pushed to your alerts so you get notified when a price is crossed.</li>
-        <li><strong>Compare</strong> tab shows the latest saved note per symbol with current price vs fair value and upside.</li>
       </ul>
-      <p class="text-muted small mb-0">LLM analysis is informational, not financial advice. Fundamentals from Yahoo Finance.</p>`
+      <h6 class="fw-semibold mt-3 mb-1">Compare</h6>
+      <p class="mb-0">Shows the latest saved note per symbol with current price vs fair value and upside %.</p>
+      <p class="text-muted small mt-2 mb-0">LLM analysis is informational, not financial advice. Fundamentals from Yahoo Finance.</p>`
   },
   diagnostics: {
     title: "Diagnostics",
