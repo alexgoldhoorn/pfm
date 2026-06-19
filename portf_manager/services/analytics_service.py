@@ -224,15 +224,24 @@ def compute_cagr(
     current_value: float,
     realised: float,
     inception_date: Optional[date],
+    today: Optional[date] = None,
 ) -> Optional[float]:
     """Compound Annual Growth Rate since inception.
 
     Returns None when invested is zero, inception is unknown, or history
     is shorter than one year (CAGR is misleading over shorter spans).
+
+    Args:
+        invested: Total cost basis.
+        current_value: Current market value.
+        realised: Realised gain/loss to date.
+        inception_date: Date of first investment.
+        today: Reference date (defaults to today).
     """
     if invested <= 0 or inception_date is None:
         return None
-    years = (date.today() - inception_date).days / 365.25
+    today = today or date.today()
+    years = (today - inception_date).days / 365.25
     if years < 1:
         return None
     ratio = (current_value + realised) / invested
@@ -265,6 +274,8 @@ def calmar_ratio(
 
     Both arguments are in % (not fractions). Returns None when no drawdown
     has been recorded (max_drawdown_pct >= 0) or either input is None.
+    A negative CAGR paired with any drawdown yields a negative ratio — calmar is
+    signed and negative values indicate the portfolio is losing money.
     """
     if cagr_pct is None or max_drawdown_pct is None or max_drawdown_pct >= 0:
         return None
