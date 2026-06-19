@@ -157,14 +157,14 @@ The **Research workbench** (web page `researchPage`, `setupResearchPage()`): pic
 
 ### Analytics API (`portf_server/routers/analytics.py` + `services/analytics_service.py`)
 - `GET /api/v1/analytics/dividends` — income by year/month/symbol, TTM, projected annual, yield-on-cost
-- `GET /api/v1/analytics/performance?benchmark=^GSPC` — invested, current value, total return, money-weighted IRR, benchmark comparison
+- `GET /api/v1/analytics/performance?benchmark=^GSPC` — invested, current value, total return, money-weighted IRR, benchmark comparison; also returns `inception_date` (ISO date of first transaction), `cagr_pct` (CAGR since inception, null if <1 yr), `annualized_gain_eur` (absolute EUR gain annualized). `analytics_service.compute_cagr(invested, current_value, realised, inception_date)` computes this; `period_start_date` handles `"3y"` and `"5y"` windows.
 - `GET /api/v1/analytics/networth-history` — daily value/cost snapshots for the chart
 - `POST /api/v1/analytics/snapshot` — record today's value/cost (called by the price cron)
 - `POST /api/v1/analytics/backfill-snapshots[?force=]` + `GET /analytics/backfill-status` — reconstruct daily snapshots from transactions + historical yfinance prices (background thread; only fills missing dates unless `force`). Unpriced assets (ISIN/P2P) are valued at cost for history. `period_return` is a **time-weighted return** (chains daily returns, removes contributions via the cost-basis delta) — a naive (end−start)/start reads absurdly high when contributions dominate.
 - `GET /api/v1/analytics/tax-estimate?year=` — Spanish IRPF savings-base estimate (realised gains + dividends), unrealised gain, tax-loss harvesting candidates
 - `irpf_savings_tax()` uses the progressive base-del-ahorro brackets (19/21/23/27/28%)
 - `GET /api/v1/analytics/diversification` — sector/country/currency/type concentration + Herfindahl HHI (fetches yfinance, slow)
-- `GET /api/v1/analytics/risk` — max drawdown, volatility, Sharpe from snapshots (needs ≥3)
+- `GET /api/v1/analytics/risk?benchmark=^GSPC` — max drawdown, volatility, Sharpe from snapshots (needs ≥3); also returns `sortino_ratio` (downside-deviation Sharpe), `calmar_ratio` (CAGR / |max drawdown|), `beta` and `alpha_pct` vs the benchmark. Endpoint is plain `def` (threadpool). `analytics_service.sortino_ratio(returns)` and `calmar_ratio(cagr_pct, max_drawdown_pct)` implement these.
 - `GET /api/v1/analytics/fees` — total fees/tax per broker, fee drag % of invested
 - `GET /api/v1/analytics/tax-report?year=` — per-lot FIFO realised gains + dividend withholding summary
 - `GET /api/v1/analytics/data-freshness?stale_days=4` — price-data freshness behind value/gain-loss: `last_refresh` (max `prices.created_at`), `prices_as_of` (max `price_date`), `refresh_age_hours`, and held **auto-priced** assets whose latest price is older than `stale_days` or missing. Powers the dashboard freshness chip (`loadDataFreshness`) + a "DATA" item in the alerts banner.
