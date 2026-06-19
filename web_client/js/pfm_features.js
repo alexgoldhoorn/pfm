@@ -2442,10 +2442,131 @@ function setupAddTransaction() {
 }
 
 // Research workbench page
+function setupPortfolioHealth() {
+    const panel = document.getElementById('portfolioHealthPanel');
+    if (!panel || panel.dataset.wired) return;
+    panel.dataset.wired = '1';
+    const $ = id => document.getElementById(id);
+
+    let currentPortfolioId = null;
+
+    function showState(state) {
+        $('phIdle').style.display = state === 'idle' ? '' : 'none';
+        $('phLoading').style.display = state === 'loading' ? '' : 'none';
+        $('phResult').style.display = state === 'result' ? '' : 'none';
+        $('phError').style.display = state === 'error' ? '' : 'none';
+    }
+    showState('idle');
+
+    (async () => {
+        try {
+            const portfolios = await window.apiClient.getPortfolios();
+            const opts = (portfolios || []).map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+            ['phPortfolioSelect', 'phRefreshPortfolioSelect'].forEach(id => {
+                const sel = $(id);
+                if (sel) sel.innerHTML = '<option value="">All portfolios</option>' + opts;
+            });
+        } catch (e) { /* ignore */ }
+    })();
+
+    function syncSelects(sourceId, targetId, val) {
+        currentPortfolioId = val || null;
+        const target = $(targetId);
+        if (target) target.value = val;
+    }
+    $('phPortfolioSelect').addEventListener('change', e => syncSelects('phPortfolioSelect', 'phRefreshPortfolioSelect', e.target.value));
+    $('phRefreshPortfolioSelect').addEventListener('change', e => syncSelects('phRefreshPortfolioSelect', 'phPortfolioSelect', e.target.value));
+
+    const SCORE_LABELS = {
+        diversification: 'Diversification',
+        risk_adjusted_return: 'Risk / Return',
+        income: 'Income',
+        fees: 'Fees',
+        tax_efficiency: 'Tax Efficiency',
+    };
+
+    function scoreClass(s) {
+        if (s >= 8) return 'success';
+        if (s >= 5) return 'warning';
+        return 'danger';
+    }
+
+    function renderResult(data) {
+        const scores = data.scores || {};
+        const vals = Object.values(scores).map(s => s.score || 0);
+        const avg = vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0;
+        const overallEl = $('phOverallScore');
+        overallEl.textContent = `Overall health: ${avg} / 10`;
+        overallEl.className = `fw-bold fs-5 text-${scoreClass(avg)}`;
+
+        if (data.generated_at) {
+            const diffH = Math.round((Date.now() - new Date(data.generated_at)) / 3600000);
+            $('phLastAnalysed').textContent = diffH < 1 ? 'Last analysed just now' : `Last analysed ${diffH}h ago`;
+        }
+
+        const warnEl = $('phWarnings');
+        if (data.data_warnings && data.data_warnings.length) {
+            warnEl.textContent = 'Incomplete data: ' + data.data_warnings.join(', ');
+            warnEl.style.display = '';
+        } else {
+            warnEl.style.display = 'none';
+        }
+
+        $('phScores').innerHTML = Object.entries(scores).map(([key, s]) => {
+            const cls = scoreClass(s.score || 0);
+            return `<div class="col-sm-6 col-md-auto">
+                <div class="card text-center h-100 border-${cls}">
+                    <div class="card-body py-2 px-3">
+                        <div class="text-muted small mb-1">${esc(SCORE_LABELS[key] || key)}</div>
+                        <div class="fs-4 fw-bold text-${cls}">${s.score || 0} <span class="fs-6 fw-normal text-muted">/ 10</span></div>
+                        <div class="small text-muted mt-1">${esc(s.reason || '')}</div>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+
+        $('phSummaryText').textContent = data.summary || '';
+
+        $('phRecommendations').innerHTML = (data.recommendations || []).map(r =>
+            `<li class="mb-1"><span class="badge bg-secondary me-1">${esc(r.category || '')}</span><strong>${esc(r.action || '')}</strong> — <span class="text-muted small">${esc(r.rationale || '')}</span></li>`
+        ).join('');
+
+        showState('result');
+    }
+
+    async function runAnalysis(refresh) {
+        showState('loading');
+        const messages = ['Gathering metrics…', 'Fetching fundamentals…', 'Analysing…'];
+        let mi = 0;
+        const statusEl = $('phStatusText');
+        statusEl.textContent = messages[0];
+        const ticker = setInterval(() => { mi = (mi + 1) % messages.length; statusEl.textContent = messages[mi]; }, 2500);
+        try {
+            const portfolioId = currentPortfolioId ? parseInt(currentPortfolioId) : null;
+            const data = await window.apiClient.getPortfolioAnalysis(portfolioId, refresh);
+            clearInterval(ticker);
+            if (data.error) {
+                $('phError').textContent = data.error;
+                showState('error');
+                return;
+            }
+            renderResult(data);
+        } catch (e) {
+            clearInterval(ticker);
+            $('phError').textContent = e.message || 'Analysis failed. Try again.';
+            showState('error');
+        }
+    }
+
+    $('phRunBtn').addEventListener('click', () => runAnalysis(false));
+    $('phRefreshBtn').addEventListener('click', () => runAnalysis(true));
+}
+
 function setupResearchPage() {
     const page = document.getElementById('researchPage');
     if (!page || page.dataset.wired) return;
     page.dataset.wired = '1';
+    setupPortfolioHealth();
     const $ = id => document.getElementById(id);
     const money = (v, cur) => (v == null ? '—' : Fmt.num(v, 2, 2) + (cur ? ' ' + cur : ''));
     let R = { symbol: null, currency: '', price: 0, fundamentals: {}, llm: null };
@@ -2995,6 +3116,14 @@ function setupSettings() {
                 sel.value = PREFS.defaultBroker || '';
             } catch (e) { /* ignore */ }
         })();
+        // Load advisor cache TTL from server
+        (async () => {
+            try {
+                const cfg = await window.apiClient.getAdvisorSettings();
+                const ttlSel = $('setAdvisorTtl');
+                if (ttlSel) ttlSel.value = String(cfg.cache_ttl_hours);
+            } catch (e) { /* ignore */ }
+        })();
         // Pre-fill the username for the password form from the last login
         const u = localStorage.getItem('pfm_username');
         if (u && $('setPwUser')) $('setPwUser').value = u;
@@ -3019,6 +3148,9 @@ function setupSettings() {
         PREFS.defaultBroker = $('setDefaultBroker').value || '';
         PREFS.holdingsSort = $('setHoldingsSort').value || 'value';
         PREFS.hideBelowEur = Math.max(0, parseFloat($('setHideBelowEur').value) || 0);
+        // Persist advisor cache TTL to server
+        const ttlSel = $('setAdvisorTtl');
+        if (ttlSel) window.apiClient.putAdvisorSettings(parseInt(ttlSel.value) || 24).catch(() => {});
         savePrefs();
         applyTheme();
         applyPrivacy();
