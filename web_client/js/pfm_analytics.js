@@ -401,7 +401,7 @@ function anFmtPct(val) {
 // a) Performance section
 // Map a period code to a human-readable label for the period-return tile
 function anPeriodLabel(period) {
-    return ({ all: 'All-Time', ytd: 'YTD', '1y': '1Y', '1m': '1M' }[period] || 'All-Time');
+    return ({ all: 'All-Time', ytd: 'YTD', '1y': '1Y', '3y': '3Y', '5y': '5Y', '1m': '1M' }[period] || 'All-Time');
 }
 
 async function loadAnalyticsPerformance() {
@@ -471,6 +471,38 @@ async function loadAnalyticsPerformance() {
                 <i class="bi bi-flag me-1"></i>
                 vs <strong data-bs-toggle="tooltip" title="${METRIC_HELP.benchmark}">${d.benchmark || benchmark}</strong> (${anFmtPct(benchReturn)}, ${anPeriodLabel(period)}):
                 <span class="${beatCls} fw-semibold">${anFmtPct(beat)} ${beatWord} benchmark</span>
+            </div>
+            <div class="row g-3 mt-1">
+                <div class="col-6 col-md-4">
+                    <div class="border rounded p-3 h-100">
+                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.cagr}">CAGR</div>
+                        ${(() => {
+                            const v = d.cagr_pct;
+                            if (v == null) return '<div class="fs-5 fw-bold text-muted">—</div><div class="small text-muted">Need 1+ year of history</div>';
+                            const n = parseFloat(v);
+                            const cls = n >= 0 ? 'text-success' : 'text-danger';
+                            return '<div class="fs-5 fw-bold ' + cls + '">' + (n >= 0 ? '+' : '') + n.toFixed(2) + '%/yr</div>';
+                        })()}
+                    </div>
+                </div>
+                <div class="col-6 col-md-4">
+                    <div class="border rounded p-3 h-100">
+                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.inception}">Inception Date</div>
+                        <div class="fs-5 fw-bold">${d.inception_date ? Fmt.date(d.inception_date) : '—'}</div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-4">
+                    <div class="border rounded p-3 h-100">
+                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.annualizedGain}">Ann. Gain (€/yr)</div>
+                        ${(() => {
+                            const v = d.annualized_gain_eur;
+                            if (v == null) return '<div class="fs-5 fw-bold text-muted">—</div>';
+                            const n = parseFloat(v);
+                            const cls = n >= 0 ? 'text-success' : 'text-danger';
+                            return '<div class="fs-5 fw-bold ' + cls + '">' + anFmtEur(n) + '</div>';
+                        })()}
+                    </div>
+                </div>
             </div>`;
     } catch (err) {
         body.innerHTML = `<div class="text-danger small">Error loading performance: ${err.message}</div>`;
