@@ -104,6 +104,23 @@ class TestAnalyticsRouter:
         assert resp.status_code == status.HTTP_200_OK
         assert "total_value_eur" in resp.json()
 
+    @pytest.mark.asyncio
+    async def test_performance_has_cagr_fields(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        resp = await async_test_client.get(
+            "/api/v1/analytics/performance", headers=auth_headers
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        d = resp.json()
+        assert "inception_date" in d
+        assert "cagr_pct" in d
+        assert "annualized_gain_eur" in d
+        # Empty DB → no cash flows → None values are expected
+        assert d["inception_date"] is None
+        assert d["cagr_pct"] is None
+        assert d["annualized_gain_eur"] is None
+
 
 class TestPeriodReturn:
     def test_period_start_date(self):
