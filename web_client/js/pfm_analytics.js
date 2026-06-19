@@ -373,6 +373,17 @@ async function loadDashboardReturn(period) {
         el.title = (period && period !== 'all')
             ? 'Change over the selected period (from daily snapshots)'
             : 'Lifetime return vs cost basis';
+        const cagrEl = document.getElementById('dashCagrLine');
+        if (cagrEl) {
+            if (d.cagr_pct != null) {
+                const cagrN = parseFloat(d.cagr_pct);
+                const cagrCls = cagrN >= 0 ? 'text-success' : 'text-danger';
+                const cagrSign = cagrN >= 0 ? '+' : '';
+                cagrEl.innerHTML = 'CAGR: <span class="fw-semibold ' + cagrCls + '">' + cagrSign + cagrN.toFixed(1) + '%/yr</span>';
+            } else {
+                cagrEl.textContent = '';
+            }
+        }
     } catch (err) {
         el.textContent = '—';
         el.title = err.message;
