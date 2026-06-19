@@ -8,6 +8,13 @@ window.METRIC_HELP = {
   periodReturn: "Period Return: change in portfolio value over the selected window, measured from daily snapshots.",
   hhi: "Herfindahl Index (HHI): concentration score 0–10000. Above 2500 = concentrated, below 1500 = well diversified.",
   sharpe: "Sharpe Ratio: return per unit of risk (volatility). Higher is better; >1 is good.",
+  cagr:          "CAGR: Compound Annual Growth Rate — average annual growth since inception assuming constant compounding. Formula: (end/start)^(1/years) − 1. Unlike IRR it ignores contribution timing.",
+  annualizedGain:"Annualized Gain: average annual profit in euros — CAGR × invested capital. A rough sense of how much the portfolio earns per year.",
+  inception:     "Inception Date: date of your first transaction — the start point for CAGR.",
+  sortino:       "Sortino Ratio: like Sharpe but only penalises downside volatility (negative-return days). Ignores upside swings that inflate Sharpe's denominator. >1 is good.",
+  calmar:        "Calmar Ratio: annualised return ÷ max drawdown. >1 means your annual gain exceeds your worst peak-to-trough drop.",
+  beta:          "Beta: sensitivity to the benchmark. 1.0 = moves with the market; >1 amplifies swings; <1 is more stable. Computed from daily snapshot returns.",
+  alpha:         "Alpha: annualised excess return above what Beta predicts (CAPM, rf=0). Positive = outperformance beyond market exposure.",
   volatility: "Volatility: annualised standard deviation of daily returns — how much the portfolio value swings.",
   maxDrawdown: "Max Drawdown: largest peak-to-trough drop in portfolio value over the recorded history.",
   fairValue: "Fair Value: an estimate of intrinsic worth from fundamentals + an LLM analyst. Compare to current price.",
@@ -52,7 +59,26 @@ window.PAGE_HELP = {
         <li><strong>Fees</strong>: total fees and withholding tax paid per broker, plus fee drag % of amount invested.</li>
         <li><strong>Diversification</strong>: sector, country, currency and asset-type breakdown with Herfindahl concentration index (HHI). Fetches fundamentals from Yahoo Finance — can be slow.</li>
       </ul>
-      <p class="text-muted small mb-0">Hover any metric label for its definition. Net Worth Over Time chart uses daily snapshots; history starts from the first recorded snapshot.</p>`
+      <p class="text-muted small mb-0">Hover any metric label for its definition. Net Worth Over Time chart uses daily snapshots; history starts from the first recorded snapshot.</p>
+      <hr class="my-3">
+      <h6 class="fw-semibold">Metrics Explained</h6>
+      <p class="fw-semibold mb-1">Return metrics</p>
+      <ul class="mb-2">
+        <li><strong>Total Return</strong> — lifetime (current + realised − invested) / invested. Simple, no time-weighting.</li>
+        <li><strong>CAGR</strong> — annualised version of Total Return. Best for headline comparisons between portfolios.</li>
+        <li><strong>IRR (MWRR)</strong> — accounts for contribution timing. Use when you invest irregularly.</li>
+        <li><strong>TWR (Period Return)</strong> — strips out deposits/withdrawals. Best for comparing to a benchmark.</li>
+        <li><strong>Alpha</strong> — excess return above what market exposure (Beta) predicts.</li>
+      </ul>
+      <p class="fw-semibold mb-1">Risk metrics</p>
+      <ul class="mb-2">
+        <li><strong>Volatility</strong> — annualised std dev of daily returns. Higher = bumpier ride.</li>
+        <li><strong>Sharpe</strong> — return per unit of total volatility. Penalises all swings equally.</li>
+        <li><strong>Sortino</strong> — like Sharpe but only penalises losses. Better for portfolios with positive skew.</li>
+        <li><strong>Max Drawdown</strong> — worst peak-to-trough drop in portfolio history.</li>
+        <li><strong>Calmar</strong> — CAGR ÷ drawdown. Combines return and worst-case loss in one number.</li>
+        <li><strong>Beta</strong> — market sensitivity. Not good or bad by itself; depends on your goals.</li>
+      </ul>`
   },
   holdings: {
     title: "Holdings",
