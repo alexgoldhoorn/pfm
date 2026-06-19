@@ -121,6 +121,35 @@ class TestAnalyticsRouter:
         assert d["cagr_pct"] is None
         assert d["annualized_gain_eur"] is None
 
+    @pytest.mark.asyncio
+    async def test_risk_has_sortino_calmar_fields(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        resp = await async_test_client.get(
+            "/api/v1/analytics/risk", headers=auth_headers
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        d = resp.json()
+        assert "sortino_ratio" in d
+        assert "calmar_ratio" in d
+        # Empty DB → insufficient snapshots → null
+        assert d["sortino_ratio"] is None
+        assert d["calmar_ratio"] is None
+
+    @pytest.mark.asyncio
+    async def test_risk_has_beta_alpha_fields(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        resp = await async_test_client.get(
+            "/api/v1/analytics/risk?benchmark=%5EGSPC", headers=auth_headers
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        d = resp.json()
+        assert "beta" in d
+        assert "alpha_pct" in d
+        assert d["beta"] is None
+        assert d["alpha_pct"] is None
+
 
 class TestPeriodReturn:
     def test_period_start_date(self):
