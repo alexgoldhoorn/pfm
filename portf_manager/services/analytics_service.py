@@ -9,6 +9,8 @@ except optional yfinance dividend dates / benchmark prices.
 from __future__ import annotations
 
 import logging
+import math
+import statistics as _stats
 from collections import defaultdict
 from datetime import date, datetime
 from typing import Any, Optional
@@ -145,6 +147,10 @@ def period_start_date(period: str, today: Optional[date] = None) -> Optional[dat
         return date(year, month, day)
     if p == "1y":
         return date(today.year - 1, today.month, min(today.day, 28))
+    if p == "3y":
+        return date(today.year - 3, today.month, min(today.day, 28))
+    if p == "5y":
+        return date(today.year - 5, today.month, min(today.day, 28))
     return None  # 'all'
 
 
@@ -208,3 +214,95 @@ def period_return(
         flow = (cur["total_cost_eur"] - prev["total_cost_eur"]) if has_cost else 0.0
         factor *= 1 + (v1 - v0 - flow) / v0
     return round((factor - 1) * 100, 2)
+
+
+# ── New performance metrics ───────────────────────────────────────────────────
+
+
+def compute_cagr(
+    invested: float,
+    current_value: float,
+    realised: float,
+    inception_date: Optional[date],
+) -> Optional[float]:
+    """Compound Annual Growth Rate since inception.
+
+    Returns None when invested is zero, inception is unknown, or history
+    is shorter than one year (CAGR is misleading over shorter spans).
+    """
+    if invested <= 0 or inception_date is None:
+        return None
+    years = (date.today() - inception_date).days / 365.25
+    if years < 1:
+        return None
+    ratio = (current_value + realised) / invested
+    if ratio <= 0:
+        return None
+    return round((ratio ** (1.0 / years) - 1) * 100, 2)
+
+
+def sortino_ratio(returns: list[float]) -> Optional[float]:
+    """Annualised Sortino ratio (rf=0) from a list of raw daily returns.
+
+    Penalises only downside volatility (negative-return days).
+    Returns None when fewer than 2 downside observations are available.
+    """
+    if not returns:
+        return None
+    downside = [r for r in returns if r < 0]
+    if len(downside) < 2:
+        return None
+    downside_std = _stats.stdev(downside) * math.sqrt(252)
+    if downside_std == 0:
+        return None
+    return round((_stats.mean(returns) * 252) / downside_std, 2)
+
+
+def calmar_ratio(
+    cagr_pct: Optional[float], max_drawdown_pct: Optional[float]
+) -> Optional[float]:
+    """Calmar ratio: CAGR ÷ |max drawdown|.
+
+    Both arguments are in % (not fractions). Returns None when no drawdown
+    has been recorded (max_drawdown_pct >= 0) or either input is None.
+    """
+    if cagr_pct is None or max_drawdown_pct is None or max_drawdown_pct >= 0:
+        return None
+    return round(-cagr_pct / max_drawdown_pct, 2)
+
+
+def compute_beta_alpha(
+    portfolio_returns: list[float],
+    benchmark_returns: list[float],
+    snapshot_cagr: Optional[float],
+    benchmark_cagr: Optional[float],
+) -> tuple[Optional[float], Optional[float]]:
+    """Beta and alpha (annualised, rf=0, CAPM) from aligned daily return series.
+
+    Args:
+        portfolio_returns: daily raw returns (not %) aligned to benchmark.
+        benchmark_returns: daily raw returns (not %) for the same dates.
+        snapshot_cagr: portfolio annualised return as a fraction (e.g. 0.10).
+        benchmark_cagr: benchmark annualised return as a fraction.
+
+    Returns:
+        (beta, alpha_pct) — alpha_pct is in %, rounded to 2 dp.
+        Either may be None when insufficient data.
+    """
+    if len(portfolio_returns) < 10 or len(portfolio_returns) != len(benchmark_returns):
+        return None, None
+    var_b = _stats.variance(benchmark_returns)
+    # When benchmark has zero variance (all-identical returns), beta is degenerate.
+    # Treat perfectly correlated identical series as beta=1.0; otherwise undefined.
+    if var_b == 0:
+        var_p = _stats.variance(portfolio_returns)
+        if var_p == 0:
+            beta = 1.0
+        else:
+            return None, None
+    else:
+        beta = round(_stats.covariance(portfolio_returns, benchmark_returns) / var_b, 3)
+    if snapshot_cagr is None or benchmark_cagr is None:
+        return beta, None
+    alpha_pct = round((snapshot_cagr - beta * benchmark_cagr) * 100, 2)
+    return beta, alpha_pct
