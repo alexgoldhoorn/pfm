@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
 from portf_manager.services.analytics_service import (
+    compute_cagr,
     dividend_income,
     irpf_savings_tax,
     money_weighted_irr,
@@ -267,6 +268,17 @@ def get_performance(
     irr = money_weighted_irr(cash_flows, current_value)
     total_ret = simple_return(invested, current_value, realised)
 
+    inception_date = min((d for d, _ in cash_flows), default=None)
+    inception_date_str = inception_date.isoformat() if inception_date else None
+    cagr_pct = (
+        compute_cagr(invested, current_value, realised, inception_date)
+        if inception_date
+        else None
+    )
+    annualized_gain_eur = (
+        round(invested * cagr_pct / 100, 2) if cagr_pct is not None else None
+    )
+
     # Period return.
     # "All-time" is a lifetime figure, so it must equal the cost-basis total
     # return — deriving it from snapshots[0] instead understates it whenever
@@ -330,6 +342,9 @@ def get_performance(
         "period_return_pct": period_ret,
         "benchmark": benchmark,
         "benchmark_return_pct": benchmark_ret,
+        "inception_date": inception_date_str,
+        "cagr_pct": cagr_pct,
+        "annualized_gain_eur": annualized_gain_eur,
     }
 
 
