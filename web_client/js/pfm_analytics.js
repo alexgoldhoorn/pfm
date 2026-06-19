@@ -1326,7 +1326,8 @@ async function loadAnalyticsRisk() {
     if (!body) return;
     body.innerHTML = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading…</div>';
     try {
-        const d = await window.apiClient.getRisk();
+        const benchmark = document.getElementById('anBenchmark')?.value || '^GSPC';
+        const d = await window.apiClient.getRisk(benchmark);
         // Insufficient history: API returns null metrics plus a note
         if (d.max_drawdown_pct == null) {
             body.innerHTML = `<p class="text-muted small mb-0"><em>${d.note || 'Not enough snapshot history yet to compute risk metrics.'}</em></p>`;
@@ -1360,6 +1361,48 @@ async function loadAnalyticsRisk() {
                     <div class="border rounded p-3 h-100">
                         <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.snapshots}">Snapshots Used</div>
                         <div class="fs-5 fw-bold">${d.snapshots_used != null ? d.snapshots_used : '—'}</div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-3">
+                    <div class="border rounded p-3 h-100">
+                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.sortino}">Sortino Ratio</div>
+                        ${(() => {
+                            const v = d.sortino_ratio;
+                            if (v == null) return '<div class="fs-5 fw-bold text-muted">—</div>';
+                            const n = parseFloat(v);
+                            const cls = n >= 1 ? 'text-success' : (n >= 0 ? 'text-warning' : 'text-danger');
+                            return '<div class="fs-5 fw-bold ' + cls + '">' + n.toFixed(2) + '</div>';
+                        })()}
+                    </div>
+                </div>
+                <div class="col-6 col-md-3">
+                    <div class="border rounded p-3 h-100">
+                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.calmar}">Calmar Ratio</div>
+                        ${(() => {
+                            const v = d.calmar_ratio;
+                            if (v == null) return '<div class="fs-5 fw-bold text-muted">—</div>';
+                            const n = parseFloat(v);
+                            const cls = n >= 1 ? 'text-success' : (n >= 0.5 ? 'text-warning' : 'text-danger');
+                            return '<div class="fs-5 fw-bold ' + cls + '">' + n.toFixed(2) + '</div>';
+                        })()}
+                    </div>
+                </div>
+                <div class="col-6 col-md-3">
+                    <div class="border rounded p-3 h-100">
+                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.beta}">Beta</div>
+                        <div class="fs-5 fw-bold">${d.beta != null ? parseFloat(d.beta).toFixed(2) : '—'}</div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-3">
+                    <div class="border rounded p-3 h-100">
+                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.alpha}">Alpha</div>
+                        ${(() => {
+                            const v = d.alpha_pct;
+                            if (v == null) return '<div class="fs-5 fw-bold text-muted">—</div>';
+                            const n = parseFloat(v);
+                            const cls = n >= 0 ? 'text-success' : 'text-danger';
+                            return '<div class="fs-5 fw-bold ' + cls + '">' + (n >= 0 ? '+' : '') + n.toFixed(2) + '%/yr</div>';
+                        })()}
                     </div>
                 </div>
             </div>`;
