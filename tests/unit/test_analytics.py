@@ -156,11 +156,9 @@ class TestNewMetrics:
         from datetime import date
         from portf_manager.services.analytics_service import compute_cagr
 
-        # 1000 invested 2 years ago, now worth 1210, 0 realised → 10% CAGR
-        inception = date(
-            date.today().year - 2, date.today().month, min(date.today().day, 28)
-        )
-        result = compute_cagr(1000.0, 1210.0, 0.0, inception)
+        today = date(2026, 6, 19)
+        inception = date(2024, 6, 19)  # exactly 2 years
+        result = compute_cagr(1000.0, 1210.0, 0.0, inception, today=today)
         assert result is not None
         assert abs(result - 10.0) < 0.5
 
@@ -168,10 +166,11 @@ class TestNewMetrics:
         from datetime import date
         from portf_manager.services.analytics_service import compute_cagr
 
-        recent = date(date.today().year, 1, 1)  # less than 1 year
-        assert compute_cagr(1000.0, 1200.0, 0.0, recent) is None
-        assert compute_cagr(0.0, 1200.0, 0.0, date(2020, 1, 1)) is None
-        assert compute_cagr(1000.0, 1200.0, 0.0, None) is None
+        today = date(2026, 6, 19)
+        recent = date(2026, 1, 1)  # less than 1 year before today
+        assert compute_cagr(1000.0, 1200.0, 0.0, recent, today=today) is None
+        assert compute_cagr(0.0, 1200.0, 0.0, date(2020, 1, 1), today=today) is None
+        assert compute_cagr(1000.0, 1200.0, 0.0, None, today=today) is None
 
     def test_sortino_ratio_basic(self):
         from portf_manager.services.analytics_service import sortino_ratio
