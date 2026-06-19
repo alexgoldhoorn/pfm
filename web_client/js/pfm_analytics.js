@@ -366,6 +366,8 @@ async function loadDashboardReturn(period) {
             el.title = (period && period !== 'all')
                 ? 'Not enough daily snapshot history for this period yet'
                 : 'No data';
+            const cagrEl2 = document.getElementById('dashCagrLine');
+            if (cagrEl2) cagrEl2.textContent = '';
             return;
         }
         const n = parseFloat(pct);
