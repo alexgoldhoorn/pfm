@@ -278,7 +278,17 @@ def gather_tax(db, portfolio_id: Optional[int] = None) -> dict[str, Any]:
 
     txns = db.get_all_transactions(portfolio_id=portfolio_id)
     div = dividend_income(txns)
-    savings_base = realised_gain + div["by_year"].get(str(yr), 0.0)
+
+    # Interest income this year (P2P / savings — taxed in the savings base too)
+    interest_this_year = 0.0
+    for tx in txns:
+        if (tx.get("transaction_type") or "").lower() != "interest":
+            continue
+        d = str(tx.get("transaction_date", ""))[:10]
+        if d[:4] == str(yr):
+            interest_this_year += float(tx.get("total_amount") or 0)
+
+    savings_base = realised_gain + div["by_year"].get(str(yr), 0.0) + interest_this_year
 
     positions, _ = compute_positions(txns)
     harvest_candidates = []
@@ -302,6 +312,7 @@ def gather_tax(db, portfolio_id: Optional[int] = None) -> dict[str, Any]:
     return {
         "year": yr,
         "realised_gain_eur": round(realised_gain, 2),
+        "interest_income_eur": round(interest_this_year, 2),
         "savings_base_eur": round(savings_base, 2),
         "estimated_tax_eur": irpf_savings_tax(savings_base),
         "harvestable_loss_eur": round(harvestable_loss, 2),
