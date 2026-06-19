@@ -10,7 +10,6 @@ GET    /api/v1/research/alerts/check        — check all targets vs latest pric
 
 import json
 import logging
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 from typing import Any, Optional
@@ -214,20 +213,14 @@ def get_portfolio_analysis(
     # Force-refresh: delete cached entry
     if refresh:
         try:
-            db.conn.execute("DELETE FROM kv_cache WHERE key = ?", (cache_key,))
-            db.conn.commit()
+            db.cache_clear(prefix=cache_key)
         except Exception:
             pass
     else:
         # Return cached result if still valid
-        row = db.conn.execute(
-            "SELECT value, expires_at FROM kv_cache WHERE key = ?", (cache_key,)
-        ).fetchone()
-        if row and row[1] > time.time():
-            try:
-                return json.loads(row[0])
-            except Exception:
-                pass
+        cached = db.cache_get(cache_key)
+        if cached is not None:
+            return cached
 
     # Gather data in parallel (each thread returns (name, data_or_None))
     data_warnings: list[str] = []
@@ -263,7 +256,10 @@ def get_portfolio_analysis(
                 bundle[name] = result
 
     if not bundle:
-        return {"error": "No portfolio data available. Add some transactions first."}
+        return {
+            "error": "No portfolio data available. Add some transactions first.",
+            "data_warnings": data_warnings,
+        }
 
     prompt = build_analysis_prompt(bundle)
     try:
@@ -271,22 +267,20 @@ def get_portfolio_analysis(
         raw = llm.generate(prompt).strip()
     except Exception as e:
         logger.error(f"LLM call failed for portfolio analysis: {e}")
-        return {"error": "Analysis unavailable — LLM error. Try again."}
+        return {
+            "error": "Analysis unavailable — LLM error. Try again.",
+            "data_warnings": data_warnings,
+        }
 
     result = parse_analysis_response(raw)
     if "error" not in result:
-        from datetime import datetime as _dt
+        from datetime import datetime, timezone
 
-        result["generated_at"] = _dt.utcnow().isoformat()
+        result["generated_at"] = datetime.now(timezone.utc).isoformat()
         result["cache_ttl_hours"] = ttl_secs // 3600
         result["data_warnings"] = data_warnings
-        expires = time.time() + ttl_secs
         try:
-            db.conn.execute(
-                "INSERT OR REPLACE INTO kv_cache (key, value, expires_at) VALUES (?, ?, ?)",
-                (cache_key, json.dumps(result), expires),
-            )
-            db.conn.commit()
+            db.cache_set(cache_key, result, ttl_secs)
         except Exception as e:
             logger.warning(f"Failed to cache advisor result: {e}")
 
