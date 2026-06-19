@@ -144,6 +144,20 @@ Auth: `GOOGLE_SERVICE_ACCOUNT_FILE=service-account.json` (already configured).
 - `GET /api/v1/rebalance/analysis` — current vs target % drift + buy/sell actions to rebalance (EUR-converted)
 
 ### Research API (`portf_server/routers/research.py` + `services/research.py`)
+
+#### Portfolio Health Analysis
+New panel at the top of the Research page (`portfolioHealthPanel`, `setupPortfolioHealth()` called from `setupResearchPage()`):
+- `GET /api/v1/research/portfolio-analysis?portfolio_id=&refresh=false` — run (or return cached) LLM health analysis. Plain `def` (6 parallel threads via `ThreadPoolExecutor`). On cache hit returns the stored JSON immediately. On cache miss: gathers 6 data bundles concurrently → single structured LLM prompt → parses response → stores in `kv_cache`. Returns 200 in all cases; `{"error": "...", "data_warnings": [...]}` on failure.
+- `GET /api/v1/research/portfolio-analysis/settings` — returns `{"cache_ttl_hours": N}` from `app_settings`.
+- `PUT /api/v1/research/portfolio-analysis/settings` body `{"cache_ttl_hours": N}` — clamps to 1–168, persists to `app_settings.advisor_cache_ttl_hours`.
+- Routes registered **before** `/compare` (which itself is before `/{symbol}`) — critical for FastAPI's first-match routing.
+- `portf_manager/services/portfolio_advisor.py`: 6 `gather_*` helpers (performance, risk, diversification, fees_and_dividends, tax, holdings_fundamentals) + `build_analysis_prompt(bundle)` + `parse_analysis_response(raw)`. No search grounding — data is already rich.
+- LLM prompt requests 5 scored categories (`diversification`, `risk_adjusted_return`, `income`, `fees`, `tax_efficiency`, each 1–10 with reason) + `recommendations` list + `summary`.
+- Cache key: `portf:advisor:all` or `portf:advisor:{portfolio_id}`. Cache cleared with `db.cache_clear(prefix=cache_key)`.
+- `_fx(currency)` in `portfolio_advisor.py` lazy-imports `_get_fx_rate` from `portf_server.routers.portfolios` at call-time to avoid circular imports.
+- Settings modal: "Portfolio Advisor" row with `#setAdvisorTtl` select (6h/24h/7d). Loaded from server on modal open; saved via `putAdvisorSettings` on Save. `apiClient.getPortfolioAnalysis()`, `.getAdvisorSettings()`, `.putAdvisorSettings()` in `pfm_core.js`.
+
+#### Workbench & Compare
 The **Research workbench** (web page `researchPage`, `setupResearchPage()`): pick any ticker (held / watchlist / free-typed), see fundamentals, compute goal prices, write a thesis, get an LLM read, save it (versioned), compare.
 - `GET /api/v1/research/{symbol}/lookup` — snapshot (price, position, fundamentals, news, targets, latest note); **no LLM**. Works for any symbol (asset optional; live yfinance price when not held).
 - `POST /api/v1/research/{symbol}/generate` — **web-augmented** LLM (yfinance fundamentals + recent news as context, news URLs stored as `sources` citations) → fair value, BUY/HOLD/SELL, confidence, risks, catalysts. No longer 404s for non-held tickers.
