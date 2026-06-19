@@ -1754,8 +1754,9 @@ function createAPIClient() {
             return resp.json();
         },
 
-        async getRisk() {
-            const resp = await fetch(this.baseURL + '/api/v1/analytics/risk', {
+        async getRisk(benchmark) {
+            const params = benchmark ? `?benchmark=${encodeURIComponent(benchmark)}` : '';
+            const resp = await fetch(this.baseURL + '/api/v1/analytics/risk' + params, {
                 headers: { 'X-API-Key': this.apiKey }
             });
             if (!resp.ok) throw new Error(await resp.text());
