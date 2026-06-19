@@ -92,6 +92,48 @@ class TestGatherTax:
             assert key in result
 
 
+class TestGatherDiversification:
+    def test_empty_returns_zeros(self):
+        from portf_manager.services.portfolio_advisor import gather_diversification
+
+        db = _mock_db()
+        result = gather_diversification(db, portfolio_id=None)
+        assert result["total_value_eur"] == 0.0
+        assert result["concentration_hhi"] == 0.0
+
+    def test_returns_required_keys(self):
+        from portf_manager.services.portfolio_advisor import gather_diversification
+
+        result = gather_diversification(_mock_db(), portfolio_id=None)
+        for key in (
+            "total_value_eur",
+            "by_asset_type",
+            "by_currency",
+            "by_sector",
+            "by_country",
+            "concentration_hhi",
+        ):
+            assert key in result
+
+
+class TestGatherHoldingsFundamentals:
+    def test_empty_returns_empty_list(self):
+        from portf_manager.services.portfolio_advisor import (
+            gather_holdings_fundamentals,
+        )
+
+        result = gather_holdings_fundamentals(_mock_db(), portfolio_id=None)
+        assert result == []
+
+    def test_returns_list_type(self):
+        from portf_manager.services.portfolio_advisor import (
+            gather_holdings_fundamentals,
+        )
+
+        result = gather_holdings_fundamentals(_mock_db(), portfolio_id=None)
+        assert isinstance(result, list)
+
+
 class TestPromptAndParse:
     _bundle = {
         "performance": {
