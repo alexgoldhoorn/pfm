@@ -10,8 +10,10 @@ GET    /api/v1/research/alerts/check        — check all targets vs latest pric
 
 import json
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import PlainTextResponse
@@ -48,6 +50,10 @@ class ResearchSaveBody(BaseModel):
     # (the web client sets this after asking the user whether to overwrite a
     # differing target). None/True keeps the legacy "always push targets" behaviour.
     update_targets: Optional[bool] = None
+
+
+class AdvisorSettingsBody(BaseModel):
+    cache_ttl_hours: int = 24
 
 
 async def _auth(
@@ -157,6 +163,134 @@ def _current_price(db, asset: Optional[dict], symbol: str) -> tuple[float, str]:
     if q.get("price"):
         return float(q["price"]), q.get("currency") or "EUR"
     return 0.0, (asset.get("currency", "EUR") if asset else "EUR")
+
+
+# ── Portfolio Health Analysis ─────────────────────────────────────────────────
+
+
+@router.get("/portfolio-analysis/settings")
+async def get_advisor_settings(
+    db=Depends(get_database), api_key_info: dict = Depends(_auth)
+):
+    ttl = db.get_setting("advisor_cache_ttl_hours")
+    return {"cache_ttl_hours": int(ttl) if ttl else 24}
+
+
+@router.put("/portfolio-analysis/settings")
+async def put_advisor_settings(
+    body: AdvisorSettingsBody,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    ttl = max(1, min(168, body.cache_ttl_hours))
+    db.set_setting("advisor_cache_ttl_hours", str(ttl))
+    return {"cache_ttl_hours": ttl}
+
+
+@router.get("/portfolio-analysis")
+def get_portfolio_analysis(
+    portfolio_id: Optional[int] = None,
+    refresh: bool = False,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Run (or return cached) LLM portfolio health analysis."""
+    from portf_manager.llm_client import get_llm_client
+    from portf_manager.services.portfolio_advisor import (
+        build_analysis_prompt,
+        gather_diversification,
+        gather_fees_and_dividends,
+        gather_holdings_fundamentals,
+        gather_performance,
+        gather_risk,
+        gather_tax,
+        parse_analysis_response,
+    )
+
+    cache_key = f"portf:advisor:{portfolio_id or 'all'}"
+    ttl_raw = db.get_setting("advisor_cache_ttl_hours")
+    ttl_secs = int(ttl_raw) * 3600 if ttl_raw else 24 * 3600
+
+    # Force-refresh: delete cached entry
+    if refresh:
+        try:
+            db.conn.execute("DELETE FROM kv_cache WHERE key = ?", (cache_key,))
+            db.conn.commit()
+        except Exception:
+            pass
+    else:
+        # Return cached result if still valid
+        row = db.conn.execute(
+            "SELECT value, expires_at FROM kv_cache WHERE key = ?", (cache_key,)
+        ).fetchone()
+        if row and row[1] > time.time():
+            try:
+                return json.loads(row[0])
+            except Exception:
+                pass
+
+    # Gather data in parallel (each thread returns (name, data_or_None))
+    data_warnings: list[str] = []
+    bundle: dict[str, Any] = {}
+
+    def _run(name: str, fn, *args):
+        try:
+            return name, fn(*args)
+        except Exception as e:
+            logger.warning(f"Advisor '{name}' failed: {e}")
+            return name, None
+
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        futures = [
+            pool.submit(_run, "performance", gather_performance, db, portfolio_id),
+            pool.submit(_run, "risk", gather_risk, db),
+            pool.submit(
+                _run, "diversification", gather_diversification, db, portfolio_id
+            ),
+            pool.submit(
+                _run, "fees_and_dividends", gather_fees_and_dividends, db, portfolio_id
+            ),
+            pool.submit(_run, "tax", gather_tax, db, portfolio_id),
+            pool.submit(
+                _run, "holdings", gather_holdings_fundamentals, db, portfolio_id
+            ),
+        ]
+        for fut in as_completed(futures):
+            name, result = fut.result()
+            if result is None:
+                data_warnings.append(f"{name} data unavailable")
+            else:
+                bundle[name] = result
+
+    if not bundle:
+        return {"error": "No portfolio data available. Add some transactions first."}
+
+    prompt = build_analysis_prompt(bundle)
+    try:
+        llm = get_llm_client()
+        raw = llm.generate(prompt).strip()
+    except Exception as e:
+        logger.error(f"LLM call failed for portfolio analysis: {e}")
+        return {"error": "Analysis unavailable — LLM error. Try again."}
+
+    result = parse_analysis_response(raw)
+    if "error" not in result:
+        from datetime import datetime as _dt
+
+        result["generated_at"] = _dt.utcnow().isoformat()
+        result["cache_ttl_hours"] = ttl_secs // 3600
+        result["data_warnings"] = data_warnings
+        expires = time.time() + ttl_secs
+        try:
+            db.conn.execute(
+                "INSERT OR REPLACE INTO kv_cache (key, value, expires_at) VALUES (?, ?, ?)",
+                (cache_key, json.dumps(result), expires),
+            )
+            db.conn.commit()
+        except Exception as e:
+            logger.warning(f"Failed to cache advisor result: {e}")
+
+    return result
 
 
 @router.get("/compare")
