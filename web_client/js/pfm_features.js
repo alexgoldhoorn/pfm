@@ -600,14 +600,17 @@ function setupEditTransactionModal() {
         e.preventDefault();
         const id = parseInt(document.getElementById('editTxId').value);
         const portfolioRaw = document.getElementById('editTxPortfolio').value;
+        const currency = document.getElementById('editTxCurrency').value.trim().toUpperCase();
         const data = {
             transaction_date: document.getElementById('editTxDate').value,
             transaction_type: document.getElementById('editTxType').value,
             quantity: parseFloat(document.getElementById('editTxQty').value),
             price: parseFloat(document.getElementById('editTxPrice').value),
             fees: parseFloat(document.getElementById('editTxFees').value) || 0,
+            tax: parseFloat(document.getElementById('editTxTax').value) || 0,
             description: document.getElementById('editTxNotes').value || null,
         };
+        if (currency) data.currency = currency;
         if (portfolioRaw) data.portfolio_id = parseInt(portfolioRaw);
         try {
             await window.apiClient.updateTransaction(id, data);
@@ -619,14 +622,17 @@ function setupEditTransactionModal() {
     });
 }
 
-window.openEditTransaction = async function(id, date, type, qty, price, fees, portfolioId, notes) {
-    document.getElementById('editTxId').value    = id;
-    document.getElementById('editTxDate').value  = date;
-    document.getElementById('editTxType').value  = type;
-    document.getElementById('editTxQty').value   = qty;
-    document.getElementById('editTxPrice').value = price;
-    document.getElementById('editTxFees').value  = fees;
-    document.getElementById('editTxNotes').value = notes;
+window.openEditTransaction = async function(id) {
+    const tx = await window.apiClient.getTransaction(id);
+    document.getElementById('editTxId').value       = tx.id;
+    document.getElementById('editTxDate').value     = (tx.transaction_date || '').split('T')[0];
+    document.getElementById('editTxType').value     = tx.transaction_type || 'buy';
+    document.getElementById('editTxQty').value      = tx.quantity;
+    document.getElementById('editTxPrice').value    = tx.price;
+    document.getElementById('editTxFees').value     = tx.fees || 0;
+    document.getElementById('editTxTax').value      = tx.tax || 0;
+    document.getElementById('editTxCurrency').value = tx.currency || '';
+    document.getElementById('editTxNotes').value    = tx.description || '';
 
     // Populate portfolio dropdown
     const sel = document.getElementById('editTxPortfolio');
@@ -636,7 +642,7 @@ window.openEditTransaction = async function(id, date, type, qty, price, fees, po
         const opt = document.createElement('option');
         opt.value = p.id;
         opt.textContent = p.name;
-        if (p.id === portfolioId) opt.selected = true;
+        if (p.id === tx.portfolio_id) opt.selected = true;
         sel.appendChild(opt);
     });
 
