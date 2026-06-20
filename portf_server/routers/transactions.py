@@ -25,6 +25,7 @@ class TransactionResponse(BaseModel):
     price: float
     total_amount: float
     fees: float = 0.0
+    tax: float = 0.0
     # str, not `date`: LLM imports keep the statement's time-of-day
     # ('...T18:14:15'), which Pydantic rejects for `date` fields (500).
     transaction_date: str
@@ -180,6 +181,8 @@ class TransactionUpdateRequest(BaseModel):
     quantity: Optional[float] = None
     price: Optional[float] = None
     fees: Optional[float] = None
+    tax: Optional[float] = None
+    currency: Optional[str] = None
     transaction_date: Optional[str] = None
     transaction_type: Optional[str] = None
     portfolio_id: Optional[int] = None
@@ -212,6 +215,10 @@ async def update_transaction(
             update_fields["transaction_type"] = request.transaction_type.lower()
         if request.fees is not None:
             update_fields["fees"] = request.fees
+        if request.tax is not None:
+            update_fields["tax"] = request.tax
+        if request.currency is not None:
+            update_fields["currency"] = request.currency
         if request.portfolio_id is not None:
             update_fields["portfolio_id"] = request.portfolio_id
         if request.description is not None:
