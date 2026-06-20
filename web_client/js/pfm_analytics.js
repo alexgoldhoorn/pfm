@@ -1023,6 +1023,7 @@ const _AN_TAB_MAP = {
     anTabRisk:        { key: 'risk',        loader: () => { loadAnalyticsRisk(); _wireDiversificationButtons(); } },
     anTabFees:        { key: 'fees',        loader: () => { loadAnalyticsFees(); } },
     anTabStress:      { key: 'stress',      loader: () => { loadAnalyticsStress('2008'); } },
+    anTabPortfolios:  { key: 'portfolios',  loader: () => { loadPortfolioComparison(); } },
 };
 let _analyticsLoaded = {};
 let _analyticsActiveTab = 'performance';
@@ -1423,6 +1424,111 @@ async function loadAnalyticsRisk() {
         body.innerHTML = `<div class="text-danger small">Error loading risk metrics: ${err.message}</div>`;
     }
     initTooltips();
+
+    // Append the correlation heatmap card below the risk metrics.
+    _loadCorrelationHeatmap(body);
+}
+
+// Module-level Chart.js instance for the correlation heatmap (destroyed on re-render).
+let _correlationChart = null;
+
+// Renders the asset correlation matrix heatmap into a card appended to parentEl.
+async function _loadCorrelationHeatmap(parentEl) {
+    const card = document.createElement('div');
+    card.className = 'card mt-4';
+    card.innerHTML = `
+        <div class="card-header fw-semibold"><i class="bi bi-grid-3x3-gap me-2 text-primary"></i>Asset Correlation</div>
+        <div class="card-body" id="anCorrelationBody">
+            <div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2"></div>Loading…</div>
+        </div>`;
+    parentEl.appendChild(card);
+    const corrBody = card.querySelector('#anCorrelationBody');
+    try {
+        const d = await window.apiClient.getCorrelation();
+        const symbols = d.symbols || [];
+        if (!symbols.length || symbols.length < 2) {
+            corrBody.innerHTML = '<p class="text-muted small mb-0">Need 2+ assets with shared price history (≥10 days).</p>';
+            if (d.assets_skipped && d.assets_skipped.length) {
+                corrBody.innerHTML += `<p class="text-muted small mb-0">Skipped (insufficient history): ${d.assets_skipped.join(', ')}</p>`;
+            }
+            return;
+        }
+        const matrix = d.matrix || [];
+        // Flatten matrix into chartjs-chart-matrix data points.
+        const data = [];
+        for (let i = 0; i < symbols.length; i++) {
+            for (let j = 0; j < symbols.length; j++) {
+                data.push({ x: j, y: i, v: matrix[i][j] });
+            }
+        }
+        corrBody.innerHTML = `
+            <p class="text-muted small mb-2">
+                ${d.days_used} trading days
+                ${d.date_range ? `(${d.date_range.from} – ${d.date_range.to})` : ''}
+                ${d.assets_skipped && d.assets_skipped.length ? ' · Skipped: ' + d.assets_skipped.join(', ') : ''}
+            </p>
+            <canvas id="correlationChart" style="max-height:420px"></canvas>`;
+        const canvas = document.getElementById('correlationChart');
+        if (!canvas) return;
+        if (_correlationChart) {
+            _correlationChart.destroy();
+            _correlationChart = null;
+        }
+        _correlationChart = new Chart(canvas, {
+            type: 'matrix',
+            data: {
+                datasets: [{
+                    label: 'Correlation',
+                    data: data,
+                    backgroundColor(ctx) {
+                        const v = ctx.dataset.data[ctx.dataIndex]?.v ?? 0;
+                        if (v >= 0) {
+                            const g = Math.round(255 * v);
+                            return `rgba(40,${g},40,${0.2 + 0.6 * v})`;
+                        } else {
+                            const r = Math.round(255 * Math.abs(v));
+                            return `rgba(${r},40,40,${0.2 + 0.6 * Math.abs(v)})`;
+                        }
+                    },
+                    borderColor: 'rgba(0,0,0,0.1)',
+                    borderWidth: 1,
+                    width(ctx) { return (ctx.chart.chartArea?.width ?? 300) / symbols.length - 2; },
+                    height(ctx) { return (ctx.chart.chartArea?.height ?? 300) / symbols.length - 2; },
+                }]
+            },
+            options: {
+                responsive: true,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            title() { return ''; },
+                            label(item) {
+                                const d2 = item.dataset.data[item.dataIndex];
+                                return `${symbols[d2.y]} × ${symbols[d2.x]}: ${d2.v.toFixed(2)}`;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        type: 'linear',
+                        min: -0.5,
+                        max: symbols.length - 0.5,
+                        ticks: { callback: (v) => symbols[Math.round(v)] ?? '' }
+                    },
+                    y: {
+                        type: 'linear',
+                        min: -0.5,
+                        max: symbols.length - 0.5,
+                        ticks: { callback: (v) => symbols[Math.round(v)] ?? '' }
+                    },
+                }
+            }
+        });
+    } catch (err) {
+        corrBody.innerHTML = `<div class="text-danger small">Error loading correlation: ${err.message}</div>`;
+    }
 }
 
 // g) Fees & costs section
@@ -1516,6 +1622,13 @@ async function loadAnalyticsStress(scenario, fromDate, toDate) {
             { key: 'dotcom', label: 'Dot-com' },
         ];
         body.innerHTML = `
+            <div class="alert alert-info py-2 px-3 small mb-3">
+                <i class="bi bi-info-circle me-1"></i>
+                <strong>What this measures:</strong> each asset's actual peak-to-trough return during the selected window, applied to your <em>current</em> holdings.
+                Assets marked <sup>*</sup> use asset-class averages (no historical data available).
+                This is the loss at the crash bottom — not the recovery, and not what you actually held at the time.
+                <a href="#" class="ms-1" onclick="event.preventDefault();showPageHelp('stressTest')">Full methodology →</a>
+            </div>
             <div class="mb-3">
                 <div class="d-flex flex-wrap gap-1" id="stressScenarioBtns">
                     ${scenarioDefs.map(s =>
@@ -1636,6 +1749,119 @@ function _renderStressResults(resultsDiv, d) {
                </div>
                ${hasFallback ? '<p class="text-muted small mb-0">* Estimated — no historical market data for this asset; asset-type average used.</p>' : ''}`
         }`;
+}
+
+// ---------------------------------------------------------------------------
+// Portfolio Comparison tab
+// ---------------------------------------------------------------------------
+
+// Module-level Chart.js instance for the portfolio comparison bar chart.
+let _portfolioCompChart = null;
+
+async function loadPortfolioComparison() {
+    const body = document.getElementById('anPortfoliosBody');
+    if (!body) return;
+    body.innerHTML = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2"></div>Loading…</div>';
+    try {
+        const data = await window.apiClient.getPortfolioComparison();
+        if (!data || !data.length) {
+            body.innerHTML = '<p class="text-muted small mb-0">No portfolios with transactions found.</p>';
+            return;
+        }
+
+        // Horizontal bar chart: total return % per portfolio.
+        const chartHtml = '<canvas id="portfolioComparisonChart" style="max-height:300px"></canvas>';
+        // Build card grid HTML for per-portfolio detail.
+        const fmtEur = v => '€' + Fmt.num(v, 0, 0);
+        const fmtPct = v => (v != null ? (v >= 0 ? '+' : '') + Fmt.num(v, 2, 2) + '%' : '—');
+        const cards = data.map(p => {
+            const retCls = p.total_return_pct >= 0 ? 'text-success' : 'text-danger';
+            const irrCls = (p.irr_pct != null && p.irr_pct >= 0) ? 'text-success' : 'text-danger';
+            return `
+            <div class="col">
+                <div class="card h-100 shadow-sm">
+                    <div class="card-header fw-semibold">${esc(p.name)}</div>
+                    <div class="card-body p-3">
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="text-muted small">Invested</span>
+                            <span class="fw-semibold small">${Fmt.amt(fmtEur(p.invested_eur))}</span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="text-muted small">Value</span>
+                            <span class="fw-semibold small">${Fmt.amt(fmtEur(p.current_value_eur))}</span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="text-muted small">Gain / Loss</span>
+                            <span class="fw-semibold small ${retCls}">${Fmt.amt(fmtEur(p.gain_loss_eur))}</span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="text-muted small">Return</span>
+                            <span class="fw-semibold small ${retCls}">${fmtPct(p.total_return_pct)}</span>
+                        </div>
+                        <div class="d-flex justify-content-between mb-1">
+                            <span class="text-muted small">IRR</span>
+                            <span class="fw-semibold small ${irrCls}">${p.irr_pct != null ? fmtPct(p.irr_pct) : '—'}</span>
+                        </div>
+                        <div class="d-flex justify-content-between">
+                            <span class="text-muted small">Assets / Transactions</span>
+                            <span class="fw-semibold small">${p.asset_count} / ${p.transaction_count}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+
+        body.innerHTML = `
+            <div class="mb-4">${chartHtml}</div>
+            <div class="row row-cols-1 row-cols-md-2 row-cols-lg-3 g-3">${cards}</div>`;
+
+        const canvas = document.getElementById('portfolioComparisonChart');
+        if (canvas) {
+            if (_portfolioCompChart) {
+                _portfolioCompChart.destroy();
+                _portfolioCompChart = null;
+            }
+            const labels = data.map(p => p.name);
+            const values = data.map(p => p.total_return_pct);
+            const colors = data.map(p => p.total_return_pct >= 0 ? 'rgba(25,135,84,0.7)' : 'rgba(220,53,69,0.7)');
+            _portfolioCompChart = new Chart(canvas, {
+                type: 'bar',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'Total Return %',
+                        data: values,
+                        backgroundColor: colors,
+                        borderColor: colors.map(c => c.replace('0.7', '1')),
+                        borderWidth: 1,
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label(item) {
+                                    const v = item.raw;
+                                    return ` ${v >= 0 ? '+' : ''}${Fmt.num(v, 2, 2)}%`;
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            title: { display: true, text: 'Total Return (%)' },
+                            ticks: { callback: v => v + '%' }
+                        }
+                    }
+                }
+            });
+        }
+    } catch (err) {
+        body.innerHTML = `<div class="text-danger small">Error loading portfolio comparison: ${err.message}</div>`;
+    }
 }
 
 // ---------------------------------------------------------------------------

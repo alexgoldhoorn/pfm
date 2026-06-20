@@ -1714,6 +1714,32 @@ function createAPIClient() {
             return r.json();
         },
 
+        async getVapidKey() {
+            const r = await fetch(this.baseURL + '/api/v1/notifications/vapid-key');
+            if (!r.ok) throw new Error(await r.text());
+            return r.json();
+        },
+
+        async subscribePush(sub) {
+            const r = await fetch(this.baseURL + '/api/v1/notifications/subscribe', {
+                method: 'POST',
+                headers: { 'X-API-Key': this.apiKey, 'Content-Type': 'application/json' },
+                body: JSON.stringify(sub),
+            });
+            if (!r.ok) throw new Error(await r.text());
+            return r.json();
+        },
+
+        async unsubscribePush(sub) {
+            const r = await fetch(this.baseURL + '/api/v1/notifications/subscribe', {
+                method: 'DELETE',
+                headers: { 'X-API-Key': this.apiKey, 'Content-Type': 'application/json' },
+                body: JSON.stringify(sub),
+            });
+            if (!r.ok) throw new Error(await r.text());
+            return r.json();
+        },
+
         async putAdvisorSettings(cacheTtlHours) {
             const r = await fetch(this.baseURL + '/api/v1/research/portfolio-analysis/settings', {
                 method: 'PUT',
@@ -1813,6 +1839,22 @@ function createAPIClient() {
                 url += '?from=' + encodeURIComponent(fromDate) + '&to=' + encodeURIComponent(toDate);
             }
             const resp = await fetch(url, { headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async getCorrelation(portfolioId = null, days = 90) {
+            let url = this.baseURL + '/api/v1/analytics/correlation?days=' + days;
+            if (portfolioId != null) url += '&portfolio_id=' + portfolioId;
+            const resp = await fetch(url, { headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async getPortfolioComparison() {
+            const resp = await fetch(this.baseURL + '/api/v1/analytics/portfolio-comparison', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
             if (!resp.ok) throw new Error(await resp.text());
             return resp.json();
         },
