@@ -1164,6 +1164,14 @@ function createAPIClient() {
             if (!response.ok) throw new Error(await response.text());
         },
 
+        async getTransaction(id) {
+            const response = await fetch(this.baseURL + `/api/v1/transactions/${id}`, {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) throw new Error(await response.text());
+            return response.json();
+        },
+
         async updateTransaction(id, data) {
             const response = await fetch(this.baseURL + `/api/v1/transactions/${id}`, {
                 method: 'PUT',

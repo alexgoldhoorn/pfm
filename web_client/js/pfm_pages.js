@@ -468,7 +468,7 @@ function createPageManager() {
                             <td class="text-end">${fmtPrice(tx.fees, tx.currency)}</td>
                             <td class="text-nowrap">
                                 <button class="btn btn-sm btn-outline-primary me-1"
-                                    onclick="openEditTransaction(${tx.id},'${tx.transaction_date}','${tx.transaction_type}',${tx.quantity},${tx.price},${tx.fees||0},${tx.portfolio_id||0},'${(tx.description||'').replace(/'/g,"\\'")}')">
+                                    onclick="openEditTransaction(${tx.id})">
                                     <i class="bi bi-pencil"></i>
                                 </button>
                                 <button class="btn btn-sm btn-outline-danger"
