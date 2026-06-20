@@ -1688,3 +1688,213 @@ def dq_suspicious(db=Depends(get_database), api_key_info: dict = Depends(_auth))
             running_qty[aid] = running_qty.get(aid, 0.0) * qty
 
     return {"issues": issues}
+
+
+# ── Asset Correlation Matrix ──────────────────────────────────────────────────
+
+
+@router.get("/correlation")
+def get_correlation(
+    portfolio_id: Optional[int] = Query(None),
+    days: int = Query(90, ge=30, le=365),
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Pearson correlation matrix of daily log-returns for held assets.
+
+    Only assets with at least 10 price points in the requested window are
+    included. The matrix is computed over the intersection of dates where
+    every included asset has a recorded price.
+    """
+    txs = db.get_all_transactions(portfolio_id=portfolio_id)
+    positions, _ = compute_positions(txs)
+
+    # Only assets with a meaningful open position.
+    held_ids = [aid for aid, pos in positions.items() if pos["quantity"] > 0.01]
+
+    start_date = date.today() - timedelta(days=days)
+    start_date_str = start_date.isoformat()
+
+    assets_by_id = {a["id"]: a for a in db.get_all_assets(active_only=False)}
+
+    # price_series maps asset_id → {date_str: price}
+    price_series: dict[int, dict[str, float]] = {}
+    assets_skipped: list[str] = []
+
+    for aid in held_ids:
+        history = db.get_price_history(aid, start_date=start_date_str)
+        if not history or len(history) < 10:
+            asset = assets_by_id.get(aid)
+            symbol = asset.get("symbol", str(aid)) if asset else str(aid)
+            assets_skipped.append(symbol)
+            continue
+        price_series[aid] = {
+            str(row["price_date"])[:10]: float(row["price"]) for row in history
+        }
+
+    if len(price_series) < 2:
+        return {
+            "symbols": [],
+            "names": [],
+            "matrix": [],
+            "days_used": 0,
+            "assets_skipped": assets_skipped,
+            "note": "Not enough overlapping price history.",
+        }
+
+    # Intersect dates across all included assets.
+    date_sets = [set(dates.keys()) for dates in price_series.values()]
+    common_dates = sorted(date_sets[0].intersection(*date_sets[1:]))
+
+    if len(common_dates) < 5:
+        return {
+            "symbols": [],
+            "names": [],
+            "matrix": [],
+            "days_used": 0,
+            "assets_skipped": assets_skipped,
+            "note": "Not enough overlapping price history.",
+        }
+
+    # Build ordered list of asset ids that passed the filters.
+    included_ids = list(price_series.keys())
+
+    def _log_returns(aid: int) -> list[float]:
+        """Compute daily log-returns from the common-date price series."""
+        prices = [price_series[aid][d] for d in common_dates]
+        return [
+            math.log(prices[i] / prices[i - 1])
+            for i in range(1, len(prices))
+            if prices[i - 1] > 0 and prices[i] > 0
+        ]
+
+    returns_map: dict[int, list[float]] = {
+        aid: _log_returns(aid) for aid in included_ids
+    }
+
+    n = len(included_ids)
+
+    def _pearson(a: list[float], b: list[float]) -> float:
+        """Compute Pearson correlation between two equal-length return series."""
+        if len(a) < 2 or len(a) != len(b):
+            return 0.0
+        mean_a = statistics.mean(a)
+        mean_b = statistics.mean(b)
+        cov = sum((x - mean_a) * (y - mean_b) for x, y in zip(a, b)) / len(a)
+        std_a = math.sqrt(sum((x - mean_a) ** 2 for x in a) / len(a))
+        std_b = math.sqrt(sum((y - mean_b) ** 2 for y in b) / len(b))
+        if std_a == 0 or std_b == 0:
+            return 0.0
+        return round(cov / (std_a * std_b), 3)
+
+    # Build NxN symmetric matrix; diagonal is always 1.0.
+    matrix: list[list[float]] = [[0.0] * n for _ in range(n)]
+    for i in range(n):
+        matrix[i][i] = 1.0
+        for j in range(i + 1, n):
+            r = _pearson(returns_map[included_ids[i]], returns_map[included_ids[j]])
+            matrix[i][j] = r
+            matrix[j][i] = r
+
+    symbols = []
+    names = []
+    for aid in included_ids:
+        asset = assets_by_id.get(aid)
+        symbols.append(asset.get("symbol", str(aid)) if asset else str(aid))
+        names.append(asset.get("name", "") if asset else "")
+
+    return {
+        "symbols": symbols,
+        "names": names,
+        "matrix": matrix,
+        "days_used": len(common_dates) - 1,
+        "assets_skipped": assets_skipped,
+        "date_range": {
+            "from": common_dates[0],
+            "to": common_dates[-1],
+        },
+    }
+
+
+# ── Portfolio Comparison ──────────────────────────────────────────────────────
+
+
+@router.get("/portfolio-comparison")
+def get_portfolio_comparison(
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Performance comparison across all portfolios.
+
+    Returns invested, current value, return %, IRR, and asset count per
+    portfolio, sorted by current value descending.
+    """
+    portfolios = db.get_all_portfolios()
+    assets_by_id = {a["id"]: a for a in db.get_all_assets(active_only=False)}
+
+    results = []
+    for portfolio in portfolios:
+        pid = portfolio["id"]
+        txs = db.get_all_transactions(portfolio_id=pid)
+        if not txs:
+            continue
+
+        positions, _ = compute_positions(txs)
+
+        invested_eur = 0.0
+        current_value_eur = 0.0
+        for aid, pos in positions.items():
+            if pos["quantity"] <= 0:
+                continue
+            asset = assets_by_id.get(aid)
+            if not asset:
+                continue
+            cur = asset.get("currency", "EUR")
+            invested_eur += pos["cost"] * _fx(cur)
+            price_data = db.get_latest_price(aid)
+            price = float(price_data["price"]) if price_data else 0.0
+            current_value_eur += pos["quantity"] * price * _fx(cur)
+
+        # Cash flows for IRR: buys negative, sells and dividends positive (EUR).
+        cash_flows: list[tuple[date, float]] = []
+        for tx in txs:
+            d = tx.get("transaction_date", "")
+            try:
+                dd = datetime.strptime(str(d)[:10], "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            asset = assets_by_id.get(tx["asset_id"])
+            cur = asset.get("currency", "EUR") if asset else "EUR"
+            amount_eur = float(tx["total_amount"] or 0) * _fx(cur)
+            t = tx["transaction_type"].lower()
+            if t == "buy":
+                cash_flows.append((dd, -amount_eur))
+            elif t == "sell":
+                cash_flows.append((dd, amount_eur))
+            elif t == "dividend":
+                cash_flows.append((dd, amount_eur))
+
+        irr = money_weighted_irr(cash_flows, current_value_eur)
+        total_return_pct = (
+            round((current_value_eur - invested_eur) / invested_eur * 100, 2)
+            if invested_eur > 0
+            else 0.0
+        )
+        asset_count = sum(1 for pos in positions.values() if pos["quantity"] > 0.001)
+
+        results.append(
+            {
+                "portfolio_id": pid,
+                "name": portfolio["name"],
+                "invested_eur": round(invested_eur, 2),
+                "current_value_eur": round(current_value_eur, 2),
+                "gain_loss_eur": round(current_value_eur - invested_eur, 2),
+                "total_return_pct": total_return_pct,
+                "irr_pct": round(irr * 100, 2) if irr is not None else None,
+                "asset_count": asset_count,
+                "transaction_count": len(txs),
+            }
+        )
+
+    results.sort(key=lambda x: -x["current_value_eur"])
+    return results

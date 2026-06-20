@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 
 # Database version for migration tracking
-DATABASE_VERSION = 21
+DATABASE_VERSION = 22
 
 
 # black
@@ -567,6 +567,19 @@ class Database:
             """
         )
 
+        # Web Push subscriptions (browser push notification endpoints). See _migrate_to_v22.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS push_subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                endpoint TEXT UNIQUE NOT NULL,
+                p256dh TEXT NOT NULL,
+                auth TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+            """
+        )
+
         # Create triggers for updated_at timestamps
         for table in [
             "entities",
@@ -629,6 +642,8 @@ class Database:
             self._migrate_to_v20(conn)
         if current_version < 21:
             self._migrate_to_v21(conn)
+        if current_version < 22:
+            self._migrate_to_v22(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -1294,6 +1309,21 @@ class Database:
         )
         conn.commit()
 
+    def _migrate_to_v22(self, conn: sqlite3.Connection) -> None:
+        """Add push_subscriptions table."""
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS push_subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                endpoint TEXT UNIQUE NOT NULL,
+                p256dh TEXT NOT NULL,
+                auth TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now'))
+            )
+            """
+        )
+        conn.commit()
+
     # ── App settings (persistent key/value) ────────────────────────────────
 
     def _ensure_app_settings(self, conn: sqlite3.Connection) -> None:
@@ -1347,6 +1377,37 @@ class Database:
                     (key, value),
                 )
                 conn.commit()
+
+    # ── Web Push subscriptions ─────────────────────────────────────────────
+
+    def add_push_subscription(self, endpoint: str, p256dh: str, auth: str) -> None:
+        """Upsert a push subscription by endpoint."""
+        with self.get_connection() as conn:
+            conn.execute(
+                """INSERT INTO push_subscriptions (endpoint, p256dh, auth)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(endpoint) DO UPDATE SET
+                       p256dh = excluded.p256dh,
+                       auth = excluded.auth""",
+                (endpoint, p256dh, auth),
+            )
+            conn.commit()
+
+    def delete_push_subscription(self, endpoint: str) -> None:
+        """Remove a push subscription by endpoint."""
+        with self.get_connection() as conn:
+            conn.execute(
+                "DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,)
+            )
+            conn.commit()
+
+    def get_push_subscriptions(self) -> List[Dict]:
+        """Return all stored push subscriptions."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT endpoint, p256dh, auth FROM push_subscriptions"
+            ).fetchall()
+            return [dict(r) for r in rows]
 
     # ── Price-update run history (Diagnostics) ─────────────────────────────
 

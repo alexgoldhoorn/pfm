@@ -20,6 +20,8 @@
 
     <!-- Chart.js (UMD build required for non-module scripts) -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <!-- chartjs-chart-matrix plugin for correlation heatmap -->
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-matrix@2.0.1/dist/chartjs-chart-matrix.min.js"></script>
 
     <!-- Custom CSS -->
     <link href="css/styles.css?v=1780000012" rel="stylesheet">
@@ -853,6 +855,9 @@
                         <li class="nav-item">
                             <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#anPaneStress" id="anTabStress"><i class="bi bi-lightning-charge me-1"></i>Stress Test</button>
                         </li>
+                        <li class="nav-item">
+                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#anPanePortfolios" id="anTabPortfolios"><i class="bi bi-briefcase me-1"></i>Portfolios</button>
+                        </li>
                     </ul>
                     <div class="tab-content">
                     <div class="tab-pane fade show active" id="anPanePerformance">
@@ -1053,6 +1058,14 @@
                         </div>
                     </div>
                     </div><!-- /#anPaneStress -->
+                    <div class="tab-pane fade" id="anPanePortfolios">
+                    <div class="card mb-4">
+                        <div class="card-header fw-semibold"><i class="bi bi-briefcase me-2 text-primary"></i>Portfolio Comparison</div>
+                        <div class="card-body" id="anPortfoliosBody">
+                            <div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2"></div>Loading…</div>
+                        </div>
+                    </div>
+                    </div><!-- /#anPanePortfolios -->
                     </div><!-- /.tab-content -->
                 </div>
 
@@ -3194,6 +3207,19 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                 <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="Hide tiny holdings worth less than this in the Holdings table. 0 = show all."></i>
                             </label>
                             <input type="number" class="form-control" id="setHideBelowEur" min="0" step="1">
+                        </div>
+
+                        <div class="col-12 mt-3"><h6 class="text-muted text-uppercase small mb-1">Notifications</h6></div>
+                        <div class="col-12">
+                            <div class="row mb-2 align-items-center">
+                                <div class="col-6 small text-muted">Push Notifications</div>
+                                <div class="col-6">
+                                    <div class="form-check form-switch mb-0">
+                                        <input class="form-check-input" type="checkbox" id="setPushNotif" role="switch">
+                                        <label class="form-check-label small" for="setPushNotif" id="setPushNotifLabel">Disabled</label>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
 
                         <div class="col-12 mt-3"><h6 class="text-muted text-uppercase small mb-1">Portfolio Advisor</h6></div>

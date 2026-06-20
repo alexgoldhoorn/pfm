@@ -27,6 +27,8 @@ PUBLIC_EXACT = {
     "/redoc",
     "/openapi.json",
     "/docs/oauth2-redirect",
+    # VAPID public key — browsers need this before they have an API key
+    "/api/v1/notifications/vapid-key",
 }
 
 
