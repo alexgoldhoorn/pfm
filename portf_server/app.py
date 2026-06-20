@@ -47,6 +47,7 @@ from .routers import (
     market,
     system,
     deposits,
+    notifications,
 )
 from .dependencies import (
     get_database,
@@ -140,6 +141,32 @@ async def lifespan(app: FastAPI):
                 logger.debug("SERVER_API_KEY already registered")
         except Exception as e:
             logger.warning(f"Could not seed SERVER_API_KEY: {e}")
+
+    # Auto-generate VAPID keys if not already stored
+    try:
+        from pywebpush import Vapid
+        from cryptography.hazmat.primitives.serialization import (
+            Encoding,
+            PublicFormat,
+        )
+        import base64 as _b64
+
+        if not database.get_setting("vapid_private_key"):
+            _vapid = Vapid()
+            _vapid.generate_keys()
+            # Encode the raw uncompressed public key point as URL-safe base64
+            _pub_bytes = _vapid.public_key.public_bytes(
+                encoding=Encoding.X962,
+                format=PublicFormat.UncompressedPoint,
+            )
+            _pub_str = _b64.urlsafe_b64encode(_pub_bytes).rstrip(b"=").decode("utf-8")
+            # Store PEM-encoded private key for webpush signing
+            _priv_str = _vapid.private_pem().decode("utf-8")
+            database.set_setting("vapid_private_key", _priv_str)
+            database.set_setting("vapid_public_key", _pub_str)
+            logger.info("VAPID keys generated and stored")
+    except Exception as e:
+        logger.warning(f"Could not generate VAPID keys: {e}")
 
     logger.info("Portfolio Management API server started successfully")
 
@@ -380,6 +407,14 @@ app.include_router(
 app.include_router(
     system.router,
     dependencies=_PROTECTED,
+)
+
+# vapid-key is public (browsers need it before they have an API key);
+# /subscribe and /unsubscribe carry per-endpoint _auth dependencies.
+app.include_router(
+    notifications.router,
+    prefix="/api/v1/notifications",
+    tags=["Notifications"],
 )
 
 

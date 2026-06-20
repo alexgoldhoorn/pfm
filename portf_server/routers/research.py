@@ -773,4 +773,12 @@ async def check_alerts(db=Depends(get_database), api_key_info: dict = Depends(_a
                     "triggers": triggered,
                 }
             )
+    # Dispatch push notifications for triggered alerts
+    if alerts:
+        try:
+            from portf_manager.push_notifications import send_alerts_push
+
+            send_alerts_push(db, alerts)
+        except Exception as e:
+            logger.warning(f"Push notification dispatch failed: {e}")
     return {"alerts": alerts, "total": len(alerts)}

@@ -3130,6 +3130,24 @@ function setupSettings() {
                 if (ttlSel) ttlSel.value = String(cfg.cache_ttl_hours);
             } catch (e) { /* ignore */ }
         })();
+        // Check current push subscription state
+        (async () => {
+            const el = $('setPushNotif');
+            const lbl = $('setPushNotifLabel');
+            if (!el || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+                if (el) { el.disabled = true; }
+                if (lbl) lbl.textContent = 'Not supported';
+                return;
+            }
+            try {
+                const reg = await navigator.serviceWorker.ready;
+                const sub = await reg.pushManager.getSubscription();
+                el.checked = !!sub;
+                if (lbl) lbl.textContent = sub ? 'Enabled' : 'Disabled';
+            } catch (e) {
+                if (lbl) lbl.textContent = 'Unavailable';
+            }
+        })();
         // Pre-fill the username for the password form from the last login
         const u = localStorage.getItem('pfm_username');
         if (u && $('setPwUser')) $('setPwUser').value = u;
@@ -3201,6 +3219,64 @@ function setupSettings() {
             status.textContent = e.message || 'Failed.';
         } finally { pwBtn.disabled = false; }
     });
+
+    // Push notification toggle — subscribe or unsubscribe on change.
+    (async () => {
+        const el = $('setPushNotif');
+        const lbl = $('setPushNotifLabel');
+        if (!el) return;
+        el.addEventListener('change', async () => {
+            if (el.checked) {
+                try {
+                    const perm = await Notification.requestPermission();
+                    if (perm !== 'granted') {
+                        el.checked = false;
+                        if (lbl) lbl.textContent = 'Permission denied';
+                        return;
+                    }
+                    const { public_key: rawKey } = await window.apiClient.getVapidKey();
+                    if (!rawKey) { el.checked = false; return; }
+                    // Convert VAPID public key (base64url unpadded) to Uint8Array
+                    const padding = '='.repeat((4 - rawKey.length % 4) % 4);
+                    const b64 = (rawKey + padding).replace(/-/g, '+').replace(/_/g, '/');
+                    const key = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+                    const reg = await navigator.serviceWorker.ready;
+                    const sub = await reg.pushManager.subscribe({
+                        userVisibleOnly: true,
+                        applicationServerKey: key,
+                    });
+                    const j = sub.toJSON();
+                    await window.apiClient.subscribePush({
+                        endpoint: j.endpoint,
+                        p256dh: j.keys.p256dh,
+                        auth: j.keys.auth,
+                    });
+                    if (lbl) lbl.textContent = 'Enabled';
+                } catch (e) {
+                    console.error('Push subscribe failed:', e);
+                    el.checked = false;
+                    if (lbl) lbl.textContent = 'Failed';
+                }
+            } else {
+                try {
+                    const reg = await navigator.serviceWorker.ready;
+                    const sub = await reg.pushManager.getSubscription();
+                    if (sub) {
+                        const j = sub.toJSON();
+                        await window.apiClient.unsubscribePush({
+                            endpoint: j.endpoint,
+                            p256dh: j.keys.p256dh,
+                            auth: j.keys.auth,
+                        });
+                        await sub.unsubscribe();
+                    }
+                    if (lbl) lbl.textContent = 'Disabled';
+                } catch (e) {
+                    console.error('Push unsubscribe failed:', e);
+                }
+            }
+        });
+    })();
 
     // Apply the saved default benchmark to the analytics selector on first load.
     const bm = document.getElementById('anBenchmark');
