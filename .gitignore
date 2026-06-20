@@ -53,6 +53,7 @@ test-results/
 # Data Files
 *.csv
 *.json
+!web_client/manifest.json
 *.xlsx
 *.xls
 
