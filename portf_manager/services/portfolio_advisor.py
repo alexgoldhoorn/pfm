@@ -140,6 +140,45 @@ def gather_risk(db) -> dict[str, Any]:
     }
 
 
+_CRYPTO_SECTOR = "Cryptocurrency"
+_CRYPTO_COUNTRY = "Global"
+_TYPE_SECTOR_DEFAULTS: dict[str, str] = {
+    "fund": "Diversified Fund",
+    "index": "Diversified Index",
+    "bond": "Fixed Income",
+}
+
+
+def _resolve_sector_country(db, asset: dict, _value: float = 0) -> tuple[str, str]:
+    """Return (sector, country) for an asset.
+
+    Resolution order:
+    1. Crypto / bond → hardcoded defaults (yfinance has no useful data).
+    2. yfinance via ``asset["ticker"]`` when set (ISIN assets need the real ticker).
+    3. yfinance via ``asset["symbol"]`` as fallback.
+    4. Asset-type default sector, country stays Unknown.
+    """
+    atype = asset.get("asset_type", "other")
+    if atype == "crypto":
+        return (_CRYPTO_SECTOR, _CRYPTO_COUNTRY)
+
+    sym = asset["symbol"]
+    yf_sym = asset.get("ticker") or sym
+
+    def _fetch(s=yf_sym):
+        info = yf.Ticker(s).info
+        return {"sector": info.get("sector"), "country": info.get("country")}
+
+    try:
+        meta = cached(db, f"yf:sectorcountry:{yf_sym}", 7 * 86400, _fetch) or {}
+    except Exception:
+        meta = {}
+
+    sector = meta.get("sector") or _TYPE_SECTOR_DEFAULTS.get(atype)
+    country = meta.get("country")
+    return (sector or "Unknown", country or "Unknown")
+
+
 def gather_diversification(db, portfolio_id: Optional[int] = None) -> dict[str, Any]:
     """Sector/country/currency/type breakdown and HHI. Fetches yfinance (cached 7d)."""
     txns = db.get_all_transactions(portfolio_id=portfolio_id)
@@ -171,16 +210,7 @@ def gather_diversification(db, portfolio_id: Optional[int] = None) -> dict[str, 
         by_type[atype] = by_type.get(atype, 0) + value
         by_currency[cur] = by_currency.get(cur, 0) + value
 
-        def _fetch_sc(s=sym):
-            info = yf.Ticker(s).info
-            return {"sector": info.get("sector"), "country": info.get("country")}
-
-        try:
-            meta = cached(db, f"yf:sectorcountry:{sym}", 7 * 86400, _fetch_sc) or {}
-        except Exception:
-            meta = {}
-        sector = meta.get("sector") or "Unknown"
-        country = meta.get("country") or "Unknown"
+        sector, country = _resolve_sector_country(db, asset, value)
         by_sector[sector] = by_sector.get(sector, 0) + value
         by_country[country] = by_country.get(country, 0) + value
 
