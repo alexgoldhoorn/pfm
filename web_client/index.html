@@ -530,9 +530,14 @@
                             <input type="text" class="form-control form-control-sm" id="assetSearchInput" autocomplete="off" placeholder="Search by name, ticker or alias…">
                             <div id="assetSuggest" class="list-group position-absolute w-100 shadow-sm" style="z-index:1050; display:none; max-height:260px; overflow-y:auto;"></div>
                         </div>
-                        <div class="col-12 col-sm-3">
+                        <div class="col-6 col-sm-2">
                             <button class="btn btn-sm btn-outline-secondary w-100" id="refreshAssets" title="Refresh assets list">
                                 <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                            </button>
+                        </div>
+                        <div class="col-6 col-sm-1">
+                            <button class="btn btn-sm btn-outline-info w-100" id="resolveTickersBtn" title="Auto-fill missing Yahoo Finance tickers for ISIN-keyed assets via OpenFIGI">
+                                <i class="bi bi-magic me-1"></i>Resolve
                             </button>
                         </div>
                     </div>

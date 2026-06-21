@@ -1287,6 +1287,15 @@ function createAPIClient() {
             }
         },
 
+        async resolveAssetTickers() {
+            const r = await fetch(this.baseURL + '/api/v1/assets/resolve-tickers', {
+                method: 'POST',
+                headers: { 'X-API-Key': this.apiKey },
+            });
+            if (!r.ok) throw new Error(await r.text());
+            return r.json();
+        },
+
         async getBookings() {
             const resp = await fetch(this.baseURL + '/api/v1/bookings/', {
                 headers: { 'X-API-Key': this.apiKey }
