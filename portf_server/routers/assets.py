@@ -443,3 +443,57 @@ async def get_asset_prices(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to retrieve price history",
         )
+
+
+@router.post("/resolve-tickers")
+def resolve_tickers(
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(get_api_key_auth_for_assets),
+):
+    """Auto-resolve Yahoo Finance tickers for ISIN-keyed assets via OpenFIGI.
+
+    Finds all assets whose symbol is an ISIN and ticker is unset, queries
+    OpenFIGI for the best matching exchange ticker, verifies it works in
+    yfinance, then writes it back to the asset. Returns a per-asset summary.
+    """
+    from portf_manager.ticker_resolver import resolve_tickers_bulk, is_isin
+
+    assets = db.get_all_assets(active_only=False)
+    candidates = [
+        a
+        for a in assets
+        if is_isin(a.get("symbol", "")) and not (a.get("ticker") or "").strip()
+    ]
+
+    resolved_map = resolve_tickers_bulk(candidates)
+
+    resolved, failed = [], []
+    for asset in candidates:
+        ticker = resolved_map.get(asset["id"])
+        if ticker:
+            db.update_asset(asset["id"], ticker=ticker)
+            # Clear stale sector/country cache so next diversification call
+            # re-fetches with the new ticker.
+            db.cache_clear(f"yf:sectorcountry:{asset['symbol']}")
+            resolved.append(
+                {
+                    "id": asset["id"],
+                    "symbol": asset["symbol"],
+                    "name": asset.get("name", ""),
+                    "ticker": ticker,
+                }
+            )
+        else:
+            failed.append(
+                {
+                    "id": asset["id"],
+                    "symbol": asset["symbol"],
+                    "name": asset.get("name", ""),
+                }
+            )
+
+    return {
+        "scanned": len(candidates),
+        "resolved": resolved,
+        "failed": failed,
+    }

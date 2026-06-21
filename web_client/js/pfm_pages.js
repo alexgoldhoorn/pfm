@@ -148,6 +148,8 @@ function createPageManager() {
                         ?.addEventListener('change', () => this._renderFilteredAssets());
                     document.getElementById('refreshAssets')
                         ?.addEventListener('click', () => this.loadAssetsPage());
+                    document.getElementById('resolveTickersBtn')
+                        ?.addEventListener('click', () => this._resolveTickersClick());
                     this._setupAssetAutocomplete();
                 }
 
@@ -211,6 +213,29 @@ function createPageManager() {
                 prefsKey: 'assets',
             });
             this._assetsST.refresh();
+        },
+
+        _resolveTickersClick: async function() {
+            const btn = document.getElementById('resolveTickersBtn');
+            if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Resolving…'; }
+            try {
+                const result = await window.apiClient.resolveAssetTickers();
+                const { scanned, resolved, failed } = result;
+                if (scanned === 0) {
+                    showToast('No ISIN assets without tickers found.', 'info');
+                } else {
+                    const msg = resolved.length
+                        ? `Resolved ${resolved.length}/${scanned}: ${resolved.map(r => `${r.symbol} → ${r.ticker}`).join(', ')}.`
+                          + (failed.length ? ` Could not resolve: ${failed.map(r => r.symbol).join(', ')}.` : '')
+                        : `Scanned ${scanned} assets — none could be resolved via OpenFIGI.`;
+                    showToast(msg, resolved.length ? 'success' : 'warning');
+                    if (resolved.length) await this.loadAssetsPage();
+                }
+            } catch (e) {
+                showToast('Ticker resolution failed: ' + e.message, 'danger');
+            } finally {
+                if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-magic me-1"></i>Resolve'; }
+            }
         },
 
         _setupAssetAutocomplete: function() {
