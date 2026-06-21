@@ -768,24 +768,13 @@ def get_diversification(db=Depends(get_database), api_key_info: dict = Depends(_
         )
         by_currency[cur] = by_currency.get(cur, 0) + value
 
-        # sector/country from yfinance — cached ~7 days (these rarely change),
-        # which turns the ~25s per-holding .info sweep into a one-off cost.
-        def _fetch_sector_country(s=sym):
-            info = yf.Ticker(s).info
-            return {"sector": info.get("sector"), "country": info.get("country")}
+        # sector/country: use ticker when available so ISIN-keyed assets resolve
+        # correctly; crypto/bond short-circuited to hardcoded defaults.
+        from portf_manager.services.portfolio_advisor import _resolve_sector_country
 
-        try:
-            meta = cached(
-                db, f"yf:sectorcountry:{sym}", 7 * 86400, _fetch_sector_country
-            )
-        except Exception:
-            meta = {}
-        sector = (meta or {}).get("sector")
-        country = (meta or {}).get("country")
-        by_sector[sector or "Unknown"] = by_sector.get(sector or "Unknown", 0) + value
-        by_country[country or "Unknown"] = (
-            by_country.get(country or "Unknown", 0) + value
-        )
+        sector, country = _resolve_sector_country(db, asset)
+        by_sector[sector] = by_sector.get(sector, 0) + value
+        by_country[country] = by_country.get(country, 0) + value
 
     def pct_map(d):
         return (
