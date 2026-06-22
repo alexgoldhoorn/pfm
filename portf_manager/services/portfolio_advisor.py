@@ -9,8 +9,6 @@ import statistics
 from datetime import date, datetime
 from typing import Any, Optional
 
-import yfinance as yf
-
 from portf_manager.cache import cached
 from portf_manager.market import get_fundamentals
 from portf_manager.positions import compute_positions
@@ -166,8 +164,8 @@ def _resolve_sector_country(db, asset: dict, _value: float = 0) -> tuple[str, st
     yf_sym = asset.get("ticker") or sym
 
     def _fetch(s=yf_sym):
-        info = yf.Ticker(s).info
-        return {"sector": info.get("sector"), "country": info.get("country")}
+        fund = get_fundamentals(db, s, max_age=0)  # force live when outer cache is cold
+        return {"sector": fund.get("sector"), "country": fund.get("country")}
 
     try:
         meta = cached(db, f"yf:sectorcountry:{yf_sym}", 7 * 86400, _fetch) or {}
