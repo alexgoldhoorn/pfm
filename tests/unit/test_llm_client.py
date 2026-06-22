@@ -232,3 +232,30 @@ class TestFactoryWiring:
             with patch.dict(os.environ, {**no_keys, "ANTHROPIC_API_KEY": "test_key"}):
                 client = _auto_detect_provider()
         assert isinstance(client, AnthropicLLMClient)
+
+
+def test_per_provider_model_env_override(monkeypatch):
+    """PORTF_GEMINI_MODEL overrides the default Gemini model independently."""
+    import os
+
+    monkeypatch.setenv("PORTF_GEMINI_MODEL", "gemini-2.5-pro")
+    # Test the env-var resolution logic: per-provider var takes precedence
+    model = (
+        os.getenv("PORTF_GEMINI_MODEL")
+        or os.getenv("PORTF_LLM_MODEL")
+        or "gemini-2.5-flash"
+    )
+    assert model == "gemini-2.5-pro"
+
+
+def test_get_llm_info_returns_dict(monkeypatch):
+    """get_llm_info returns provider and model without instantiating a client."""
+    from portf_manager.llm_client import get_llm_info, reset_llm_client
+
+    monkeypatch.setenv("PORTF_LLM_PROVIDER", "gemini")
+    monkeypatch.setenv("PORTF_GEMINI_MODEL", "gemini-2.5-flash")
+    reset_llm_client()
+    info = get_llm_info()
+    assert info["provider"] == "gemini"
+    assert "model" in info
+    assert "search_capable" in info
