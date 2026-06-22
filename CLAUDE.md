@@ -348,3 +348,7 @@ When writing tests, use ISINs from the `US0000000000` / `LU0000000000` / `ES0000
 
 ## Status
 See `PROJECT_STATUS.md` for full component status, pending work, and known issues.
+
+## Issue Tracker
+
+Tickets are managed in **Todoist** → project **#Dev Projects / #pfm**.
