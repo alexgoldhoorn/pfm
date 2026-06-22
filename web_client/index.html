@@ -24,7 +24,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-matrix@2.0.1/dist/chartjs-chart-matrix.min.js"></script>
 
     <!-- Custom CSS -->
-    <link href="css/styles.css?v=1780000012" rel="stylesheet">
+    <link href="css/styles.css?v=1780000013" rel="stylesheet">
     <style>
         /* Privacy mode: blur monetary amounts until hovered */
         body.pfm-privacy .pfm-amt { filter: blur(0.45em); transition: filter .12s ease; user-select: none; }
@@ -171,7 +171,7 @@
                 <button type="button" class="sidebar-section-toggle" data-sect="help"><span>Help</span><i class="bi bi-chevron-down sect-chevron"></i></button>
                 <div class="sidebar-section-items" data-sect-items="help">
                     <a class="sidebar-nav-link" href="#" data-page="help"><i class="bi bi-question-circle me-2"></i>Help &amp; Guide</a>
-                    <a class="sidebar-nav-link" href="#" data-page="version"><i class="bi bi-clock-history me-2"></i>What's New</a>
+                    <a class="sidebar-nav-link" href="#" data-page="version"><i class="bi bi-newspaper me-2"></i>What's New</a>
                     <a class="sidebar-nav-link" href="#" data-page="about"><i class="bi bi-info-circle me-2"></i>About</a>
                 </div>
                 <hr class="mx-3 my-2">
@@ -232,7 +232,7 @@
                 <button type="button" class="sidebar-section-toggle" data-sect="help"><span>Help</span><i class="bi bi-chevron-down sect-chevron"></i></button>
                 <div class="sidebar-section-items" data-sect-items="help">
                     <a class="sidebar-nav-link" href="#" data-page="help"><i class="bi bi-question-circle me-2"></i>Help &amp; Guide</a>
-                    <a class="sidebar-nav-link" href="#" data-page="version"><i class="bi bi-clock-history me-2"></i>What's New</a>
+                    <a class="sidebar-nav-link" href="#" data-page="version"><i class="bi bi-newspaper me-2"></i>What's New</a>
                     <a class="sidebar-nav-link" href="#" data-page="about"><i class="bi bi-info-circle me-2"></i>About</a>
                 </div>
             </nav>
@@ -256,8 +256,8 @@
                         aria-controls="sidebarOffcanvas" title="Open navigation">
                     <i class="bi bi-list fs-5"></i>
                 </button>
-                <span class="fw-semibold ms-2 text-primary">
-                    <i class="bi bi-graph-up me-1"></i>Portfolio Manager
+                <span class="fw-semibold ms-2 text-primary" id="mobilePageTitle">
+                    <i class="bi bi-graph-up me-1"></i>Dashboard
                 </span>
             </div>
 
@@ -290,7 +290,7 @@
                                 <div class="card-body py-3">
                                     <div class="d-flex justify-content-between align-items-start">
                                         <div>
-                                            <div class="small opacity-75 mb-1" data-bs-toggle="tooltip" title="Net Worth: total portfolio value in EUR (all currencies converted at current FX rates).">Portfolio Value</div>
+                                            <div class="small opacity-75 mb-1" data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="Net Worth: total portfolio value in EUR (all currencies converted at current FX rates).">Portfolio Value</div>
                                             <div class="fs-4 fw-bold" id="totalValue">—</div>
                                         </div>
                                         <i class="bi bi-cash-stack fs-2 opacity-40"></i>
@@ -303,7 +303,7 @@
                                 <div class="card-body py-3">
                                     <div class="d-flex justify-content-between align-items-start">
                                         <div>
-                                            <div class="small opacity-75 mb-1" data-bs-toggle="tooltip" title="Invested: cost basis of your currently-held positions (what you paid, in EUR).">Total Invested</div>
+                                            <div class="small opacity-75 mb-1" data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="Invested: cost basis of your currently-held positions (what you paid, in EUR).">Total Invested</div>
                                             <div class="fs-4 fw-bold" id="dashTotalCost">—</div>
                                         </div>
                                         <i class="bi bi-wallet2 fs-2 opacity-40"></i>
@@ -317,7 +317,7 @@
                                     <div class="d-flex justify-content-between align-items-start">
                                         <div>
                                             <div class="d-flex align-items-center gap-2 mb-1">
-                                                <div class="small opacity-75" data-bs-toggle="tooltip" title="Return: lifetime return vs cost basis for 'All'; YTD/1Y use daily snapshots.">Return</div>
+                                                <div class="small opacity-75" data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="Return: lifetime return vs cost basis for 'All'; YTD/1Y use daily snapshots.">Return</div>
                                                 <select class="form-select form-select-sm py-0 border-0 bg-transparent text-white" id="dashReturnPeriod" style="width:auto;font-size:.7rem;" title="Return timeframe">
                                                     <option value="all">All</option>
                                                     <option value="ytd">YTD</option>
@@ -537,7 +537,7 @@
                         </div>
                         <div class="col-6 col-sm-1">
                             <button class="btn btn-sm btn-outline-info w-100" id="resolveTickersBtn" title="Auto-fill missing Yahoo Finance tickers for ISIN-keyed assets via OpenFIGI">
-                                <i class="bi bi-magic me-1"></i>Resolve
+                                <i class="bi bi-magic me-1"></i>Fill tickers
                             </button>
                         </div>
                     </div>
@@ -626,10 +626,16 @@
                             </select>
                         </div>
                         <div class="col-6 col-md-2">
-                            <input type="date" class="form-control form-control-sm" id="fromDate">
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text">From</span>
+                                <input type="date" class="form-control" id="fromDate">
+                            </div>
                         </div>
                         <div class="col-6 col-md-2">
-                            <input type="date" class="form-control form-control-sm" id="toDate">
+                            <div class="input-group input-group-sm">
+                                <span class="input-group-text">To</span>
+                                <input type="date" class="form-control" id="toDate">
+                            </div>
                         </div>
                         <div class="col-6 col-md-auto">
                             <button class="btn btn-sm btn-outline-secondary" id="refreshTransactionsPage" title="Refresh transaction list">
@@ -861,7 +867,7 @@
                             <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#anPaneStress" id="anTabStress"><i class="bi bi-lightning-charge me-1"></i>Stress Test</button>
                         </li>
                         <li class="nav-item">
-                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#anPanePortfolios" id="anTabPortfolios"><i class="bi bi-briefcase me-1"></i>Portfolios</button>
+                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#anPanePortfolios" id="anTabPortfolios"><i class="bi bi-briefcase me-1"></i>Comparison</button>
                         </li>
                     </ul>
                     <div class="tab-content">
@@ -915,7 +921,7 @@
                                 <span><svg width="18" height="3"><line x1="0" y1="1.5" x2="18" y2="1.5" stroke="#2563eb" stroke-width="2.5"/></svg> Value</span>
                                 <span><svg width="18" height="3"><line x1="0" y1="1.5" x2="18" y2="1.5" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4 3"/></svg> Invested</span>
                                 <button class="btn btn-sm btn-outline-secondary" id="anBackfillBtn" title="Reconstruct daily history from your transactions + historical prices (back to your first transaction)">
-                                    <i class="bi bi-clock-history me-1"></i>Backfill history
+                                    <i class="bi bi-clock-history me-1"></i>Backfill history (since first trade)
                                 </button>
                             </div>
                         </div>
@@ -962,7 +968,7 @@
                     <div class="card mb-4">
                         <div class="card-header fw-semibold d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <span><i class="bi bi-receipt me-2 text-danger"></i>Tax Estimate (Spanish IRPF)
-                                <i class="bi bi-info-circle text-muted ms-1" style="cursor:help;" data-bs-toggle="tooltip" title="Sums FIFO realised gains + dividends + interest received this year (base del ahorro) and applies the progressive savings-base brackets: 19% up to €6k, 21% €6k–€50k, 23% €50k–€200k, 27% €200k–€300k, 28% above €300k. An estimate — consult a tax adviser."></i>
+                                <i class="bi bi-info-circle text-muted ms-1" style="cursor:help;" data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="Sums FIFO realised gains + dividends + interest received this year (base del ahorro) and applies the progressive savings-base brackets: 19% up to €6k, 21% €6k–€50k, 23% €50k–€200k, 27% €200k–€300k, 28% above €300k. An estimate — consult a tax adviser."></i>
                             </span>
                             <div class="d-flex align-items-center gap-2">
                                 <label class="small text-muted mb-0" for="anTaxYear">Year</label>
@@ -980,7 +986,7 @@
                     <div class="card mb-4">
                         <div class="card-header fw-semibold d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <span><i class="bi bi-file-earmark-spreadsheet me-2 text-secondary"></i>Detailed tax report
-                                <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="Per-lot realised gains (FIFO) for the selected year plus dividend gross income and withholding tax already paid at source — for your IRPF filing."></i>
+                                <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="Per-lot realised gains (FIFO) for the selected year plus dividend gross income and withholding tax already paid at source — for your IRPF filing."></i>
                             </span>
                             <button class="btn btn-sm btn-outline-secondary" id="anTaxReportCsvBtn"><i class="bi bi-download me-1"></i>Download CSV</button>
                         </div>
@@ -995,7 +1001,7 @@
                     <div class="card mb-4">
                         <div class="card-header fw-semibold">
                             <i class="bi bi-scissors me-2 text-success"></i>Year-end tax optimizer
-                            <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="Estimates the tax you could save by harvesting unrealised losses before year-end to offset realised gains and income. Flags positions you bought in the last 60 days (Spain's 2-month rule). Informational, not advice."></i>
+                            <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="Estimates the tax you could save by harvesting unrealised losses before year-end to offset realised gains and income. Flags positions you bought in the last 60 days (Spain's 2-month rule). Informational, not advice."></i>
                         </div>
                         <div class="card-body" id="anTaxOptimizerBody">
                             <div class="text-center text-muted py-4">
@@ -1217,7 +1223,7 @@
                 <div id="chatPage" class="page-content" style="display: none;">
                     <div class="d-flex align-items-center justify-content-between mb-3">
                         <div>
-                            <h4 class="mb-0"><i class="bi bi-chat-dots me-2 text-primary"></i>Chat<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('chat')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
+                            <h4 class="mb-0"><i class="bi bi-robot me-2 text-primary"></i>AI Chat<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('chat')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
                             <p class="text-muted small mb-0">Ask questions about your portfolio or extract transactions from broker statements.</p>
                         </div>
                     </div>
@@ -1225,7 +1231,7 @@
                     <div class="row justify-content-center">
                         <div class="col-12 col-xl-9">
                             <!-- Message thread -->
-                            <div id="chatMessages" class="border rounded bg-white p-3 mb-3" style="height:460px;overflow-y:auto;display:flex;flex-direction:column;gap:12px;">
+                            <div id="chatMessages" class="border rounded bg-white p-3 mb-3" style="height:clamp(260px,55vh,520px);overflow-y:auto;display:flex;flex-direction:column;gap:12px;">
                                 <div class="text-muted text-center small mt-auto" id="chatEmpty">
                                     <i class="bi bi-robot fs-3 d-block mb-2"></i>
                                     <strong>What can I help you with?</strong><br>
@@ -1256,11 +1262,11 @@
                 <div id="portfoliosPage" class="page-content" style="display: none;">
                     <div class="d-flex align-items-center justify-content-between mb-3">
                         <div>
-                            <h4 class="mb-0"><i class="bi bi-briefcase me-2 text-primary"></i>Portfolios <span class="text-muted fw-normal">/ Brokers</span><button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('portfolios')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
-                            <p class="text-muted small mb-0">Each portfolio is one broker / account. Imports create a portfolio automatically; the dates show what each already covers.</p>
+                            <h4 class="mb-0"><i class="bi bi-briefcase me-2 text-primary"></i>Brokers<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('portfolios')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
+                            <p class="text-muted small mb-0">One entry per broker or account. Imports create entries automatically; the dates show the range of transactions already imported.</p>
                         </div>
                         <button class="btn btn-primary btn-sm" id="addPortfolioBtn">
-                            <i class="bi bi-plus-lg me-1"></i>Add Portfolio
+                            <i class="bi bi-plus-lg me-1"></i>Add Broker
                         </button>
                     </div>
                     <div class="card">
@@ -1294,7 +1300,7 @@
                 <div id="researchPage" class="page-content" style="display: none;">
                     <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
                         <div>
-                            <h4 class="mb-0"><i class="bi bi-search-heart me-2 text-primary"></i>Research</h4>
+                            <h4 class="mb-0"><i class="bi bi-search-heart me-2 text-primary"></i>Research<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('research')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
                             <p class="text-muted small mb-0">Pick a ticker — from your holdings, watchlist, or any symbol — set goal buy/sell prices, capture your thesis, and let an LLM (with live news) assist.</p>
                         </div>
                         <div class="d-flex align-items-center gap-2">
@@ -1302,7 +1308,6 @@
                                 <button type="button" class="btn btn-outline-primary active" data-rtab="workbench"><i class="bi bi-clipboard-data me-1"></i>Workbench</button>
                                 <button type="button" class="btn btn-outline-primary" data-rtab="compare"><i class="bi bi-bar-chart-line me-1"></i>Compare</button>
                             </div>
-                            <button class="btn btn-sm btn-outline-secondary" onclick="showPageHelp('research')" title="Help"><i class="bi bi-question-circle"></i></button>
                         </div>
                     </div>
 
@@ -1393,7 +1398,7 @@
                                             <hr>
                                             <div class="small text-muted mb-1 d-flex justify-content-between align-items-center">
                                                 <span>Fundamentals
-                                                    <i class="bi bi-info-circle" style="cursor:help;" data-bs-toggle="tooltip" title="Source: Yahoo Finance (via yfinance). Valuation ratios are trailing-twelve-month. 'Analyst consensus' / targets are Yahoo's aggregate of sell-side analyst ratings — see '# analysts' for the sample size."></i>
+                                                    <i class="bi bi-info-circle" style="cursor:help;" data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="Source: Yahoo Finance (via yfinance). Valuation ratios are trailing-twelve-month. 'Analyst consensus' / targets are Yahoo's aggregate of sell-side analyst ratings — see '# analysts' for the sample size."></i>
                                                 </span>
                                                 <span class="badge bg-light text-secondary border"><i class="bi bi-database me-1"></i>Yahoo Finance</span>
                                             </div>
@@ -1464,7 +1469,7 @@
                                     <div class="card">
                                         <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
                                             <span><i class="bi bi-wallet2 me-2"></i>Your position</span>
-                                            <span class="badge bg-light text-secondary border" data-bs-toggle="tooltip" title="Computed from your own transactions: cost basis and average cost use FIFO; current value uses the latest stored price. Nothing here comes from an estimate."><i class="bi bi-calculator me-1"></i>From your transactions (FIFO)</span>
+                                            <span class="badge bg-light text-secondary border" data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="Computed from your own transactions: cost basis and average cost use FIFO; current value uses the latest stored price. Nothing here comes from an estimate."><i class="bi bi-calculator me-1"></i>From your transactions (FIFO)</span>
                                         </div>
                                         <div class="card-body">
                                             <div class="row g-2 text-center mb-3">
@@ -1514,7 +1519,7 @@
                                     <div class="card">
                                         <div class="card-header fw-semibold d-flex justify-content-between align-items-center">
                                             <span><i class="bi bi-magic me-2"></i>LLM analysis
-                                                <span class="badge bg-warning text-dark ms-1" data-bs-toggle="tooltip" title="AI-generated from the fundamentals above + recent Yahoo Finance news headlines (cited below). It is an opinion, not financial advice — always check the linked sources.">AI · not advice</span>
+                                                <span class="badge bg-warning text-dark ms-1" data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="AI-generated from the fundamentals above + recent Yahoo Finance news headlines (cited below). It is an opinion, not financial advice — always check the linked sources.">AI · not advice</span>
                                             </span>
                                             <button class="btn btn-sm btn-outline-primary" id="rvGenerateBtn"><i class="bi bi-stars me-1"></i>Research with web</button>
                                         </div>
@@ -1557,7 +1562,7 @@
                             <div class="card-header fw-semibold"><i class="bi bi-bar-chart me-2"></i>Saved research — compare</div>
                             <div class="table-responsive">
                                 <table class="table table-hover mb-0">
-                                    <thead><tr><th class="ps-3">Ticker</th><th class="text-end">Price</th><th class="text-end">Fair value</th><th class="text-end">Upside</th><th class="text-end">Buy&lt;</th><th class="text-end">Sell&gt;</th><th class="text-center">Conviction</th><th>Updated</th></tr></thead>
+                                    <thead><tr><th class="ps-3">Ticker</th><th class="text-end">Price</th><th class="text-end">Fair value</th><th class="text-end">Upside</th><th class="text-end">Buy below</th><th class="text-end">Sell above</th><th class="text-center">Conviction</th><th>Updated</th></tr></thead>
                                     <tbody id="researchCompareBody"><tr><td colspan="8" class="text-center text-muted py-4">No saved research yet.</td></tr></tbody>
                                 </table>
                             </div>
@@ -1874,10 +1879,10 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                             <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#ioTabExport" id="ioTabBtnExport"><i class="bi bi-file-earmark-arrow-down me-1"></i>Export</button>
                         </li>
                         <li class="nav-item">
-                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#ioTabData" id="ioTabBtnData"><i class="bi bi-bank me-1"></i>Data</button>
+                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#ioTabData" id="ioTabBtnData"><i class="bi bi-bank me-1"></i>Bookings</button>
                         </li>
                         <li class="nav-item">
-                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#ioTabSync" id="ioTabBtnSync"><i class="bi bi-file-earmark-spreadsheet me-1"></i>Google Sheets</button>
+                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#ioTabSync" id="ioTabBtnSync"><i class="bi bi-cloud-arrow-up me-1"></i>Google Sheets</button>
                         </li>
                     </ul>
                     <div class="tab-content">
@@ -1985,7 +1990,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                 </div>
                                 <div class="card-body">
                                     <p class="text-muted small mb-3">Download all transactions. CSV is compatible with spreadsheets; PDT (XLSX) is the Portfolio Dividend Tracker format (includes bookings).</p>
-                                    <div class="d-flex gap-3 flex-wrap">
+                                    <div class="d-flex gap-3 flex-wrap mb-3">
                                         <button class="btn btn-sm btn-outline-primary" id="ioExportCsvBtn">
                                             <i class="bi bi-filetype-csv me-2"></i>Export CSV
                                         </button>
@@ -1995,10 +2000,12 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                         <button class="btn btn-sm btn-outline-secondary" id="ioExportBackupBtn" title="Download a consistent snapshot of the whole database (.db)">
                                             <i class="bi bi-database-down me-2"></i>Download DB backup
                                         </button>
-                                        <button class="btn btn-sm btn-outline-danger" id="ioRestoreBackupBtn" title="Upload a .db or .db.gz backup to replace the current database">
-                                            <i class="bi bi-database-up me-2"></i>Restore DB backup
-                                        </button>
                                     </div>
+                                    <hr class="my-2">
+                                    <p class="text-muted small mb-2"><strong>Restore</strong> — replace the current database with a previously downloaded backup:</p>
+                                    <button class="btn btn-sm btn-outline-danger" id="ioRestoreBackupBtn" title="Upload a .db or .db.gz backup to replace the current database">
+                                        <i class="bi bi-database-up me-2"></i>Restore DB backup
+                                    </button>
                                 </div>
                             </div>
                         </div>
@@ -2288,24 +2295,48 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                 <div id="versionPage" class="page-content" style="display: none;">
                     <div class="d-flex align-items-center justify-content-between mb-3">
                         <div>
-                            <h4 class="mb-0"><i class="bi bi-clock-history me-2 text-primary"></i>What's New</h4>
+                            <h4 class="mb-0"><i class="bi bi-newspaper me-2 text-primary"></i>What's New</h4>
                             <p class="text-muted small mb-0">Recent improvements to Portfolio Manager.</p>
                         </div>
                     </div>
-                    <div class="card">
+                    <div class="card mb-3">
+                        <div class="card-header fw-semibold text-muted small">June 2026</div>
                         <div class="card-body">
-                            <ul class="list-unstyled mb-0" id="versionList">
+                            <ul class="list-unstyled mb-0">
+                                <li class="mb-3">
+                                    <span class="badge bg-info text-dark me-2">Assets</span>
+                                    <strong>Auto-fill tickers</strong> — one click resolves missing Yahoo Finance tickers for ISIN-keyed assets via the OpenFIGI API.
+                                </li>
+                                <li class="mb-3">
+                                    <span class="badge bg-primary me-2">Analytics</span>
+                                    <strong>Correlation heatmap</strong> added to Risk &amp; Diversification. <strong>Stress Test</strong> tab applies historical crash scenarios to your current holdings.
+                                </li>
+                                <li class="mb-3">
+                                    <span class="badge bg-primary me-2">Analytics</span>
+                                    <strong>Broker Comparison</strong> tab shows value, P&amp;L and holdings breakdown across all your brokers.
+                                </li>
+                                <li class="mb-0">
+                                    <span class="badge bg-secondary me-2">PWA</span>
+                                    Install Portfolio Manager on your home screen (Android / iOS). Push notifications for price alerts.
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="card mb-3">
+                        <div class="card-header fw-semibold text-muted small">Early 2026</div>
+                        <div class="card-body">
+                            <ul class="list-unstyled mb-0">
                                 <li class="mb-3">
                                     <span class="badge bg-success me-2">Net Worth</span>
-                                    New page tracking your whole picture — investments (auto) plus off-brokerage cash, property, pension, mortgage and loans → total net worth. FIRE goals now project from this total, not just the brokerage.
+                                    New page: investments (auto) + off-brokerage cash, property, pension, mortgage, loans and fixed deposits → total net worth. Monthly cash flow tracker included.
                                 </li>
                                 <li class="mb-3">
                                     <span class="badge bg-success me-2">Tax</span>
-                                    Per-lot FIFO tax report with CSV export, and a year-end tax optimizer (harvestable losses, estimated tax saved, Spain's 2-month wash-sale flag). P2P/savings interest is now a first-class transaction type counted in the IRPF savings base.
+                                    Per-lot FIFO tax report with CSV export, year-end tax optimizer (harvestable losses, Spain's 2-month wash-sale flag), and P2P/savings interest as a first-class transaction type.
                                 </li>
                                 <li class="mb-3">
                                     <span class="badge bg-primary me-2">Research</span>
-                                    Workbench with autocomplete, your position (cost basis, P/L, sell calculator, average-cost chart), Yahoo fundamentals with sources, LLM analysis, and a downloadable Markdown report per ticker.
+                                    Workbench with autocomplete, position panel (cost basis, P/L, sell calculator, avg-cost chart), Yahoo fundamentals, LLM web-search analysis, and downloadable Markdown reports.
                                 </li>
                                 <li class="mb-3">
                                     <span class="badge bg-primary me-2">AI Chat</span>
@@ -2313,19 +2344,11 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                 </li>
                                 <li class="mb-3">
                                     <span class="badge bg-primary me-2">Analytics</span>
-                                    Split into lazy-loaded tabs (Performance &amp; Net Worth · Dividends · Gain/Loss · Tax · Risk &amp; Diversification · Fees); a gain/loss leaderboard, dividend forward income &amp; calendar, per-holding concentration, European benchmarks, and clearer tooltips and source labels.
-                                </li>
-                                <li class="mb-3">
-                                    <span class="badge bg-primary me-2">Performance</span>
-                                    yfinance results cached (sector/country, fundamentals, benchmark, news), slow lookups moved off the event loop, and per-transaction DB lookups removed — pages load much faster. Plus a dashboard alerts banner (price targets &amp; watchlist buy zones).
-                                </li>
-                                <li class="mb-3">
-                                    <span class="badge bg-primary me-2">Data</span>
-                                    New "Index fund" asset type; cash deposits/withdrawals shown inline in Transactions; dashboard shows positions per type.
+                                    Lazy-loaded tabs (Performance &amp; Net Worth · Dividends · Gain/Loss · Tax · Risk · Fees); gain/loss leaderboard, dividend calendar, European benchmarks, Sharpe/Sortino/Calmar ratios.
                                 </li>
                                 <li class="mb-0">
                                     <span class="badge bg-secondary me-2">UI</span>
-                                    Real dark mode across the app, grouped sidebar navigation, and this Help / What's New section.
+                                    Dark mode, grouped collapsible sidebar, settings modal, privacy blur mode, and Help / Glossary / Resources pages.
                                 </li>
                             </ul>
                         </div>
@@ -2349,7 +2372,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                     <div class="d-flex flex-wrap gap-2 mt-3">
                                         <a class="btn btn-primary btn-sm" href="https://pfm.goldhoorn.net" target="_blank" rel="noopener"><i class="bi bi-globe me-1"></i>pfm.goldhoorn.net</a>
                                         <a class="btn btn-outline-secondary btn-sm" href="https://github.com/alexgoldhoorn/pfm" target="_blank" rel="noopener"><i class="bi bi-github me-1"></i>Source on GitHub</a>
-                                        <a class="btn btn-outline-secondary btn-sm" href="#" data-page="version"><i class="bi bi-clock-history me-1"></i>What's New</a>
+                                        <a class="btn btn-outline-secondary btn-sm" href="#" data-page="version"><i class="bi bi-newspaper me-1"></i>What's New</a>
                                     </div>
                                 </div>
                             </div>
@@ -2381,12 +2404,11 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                 <div id="diagnosticsPage" class="page-content" style="display: none;">
                     <div class="d-flex align-items-center justify-content-between mb-3">
                         <div>
-                            <h4 class="mb-0"><i class="bi bi-activity me-2 text-primary"></i>Diagnostics</h4>
+                            <h4 class="mb-0"><i class="bi bi-activity me-2 text-primary"></i>Diagnostics<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('diagnostics')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
                             <p class="text-muted small mb-0">Price-data health, update history, and data-quality checks.</p>
                         </div>
                         <div class="d-flex gap-2">
                             <button class="btn btn-sm btn-outline-secondary" id="refreshDiagnostics" title="Refresh current tab"><i class="bi bi-arrow-clockwise"></i></button>
-                            <button class="btn btn-sm btn-outline-secondary" onclick="showPageHelp('diagnostics')" title="Help"><i class="bi bi-question-circle"></i></button>
                         </div>
                     </div>
 
@@ -2515,22 +2537,21 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                 <div id="networthPage" class="page-content" style="display: none;">
                     <div class="d-flex align-items-center justify-content-between mb-3">
                         <div>
-                            <h4 class="mb-0"><i class="bi bi-piggy-bank me-2 text-primary"></i>Net Worth</h4>
+                            <h4 class="mb-0"><i class="bi bi-piggy-bank me-2 text-primary"></i>Net Worth<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('networth')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
                             <p class="text-muted small mb-0">Your whole picture: tracked investments plus off-brokerage assets and liabilities (cash, property, pension, mortgage, loans). All shown in EUR.</p>
                         </div>
                         <div class="d-flex gap-2">
                             <button class="btn btn-sm btn-outline-secondary" id="refreshNetworth" title="Refresh"><i class="bi bi-arrow-clockwise me-1"></i>Refresh</button>
-                            <button class="btn btn-sm btn-outline-secondary" onclick="showPageHelp('networth')" title="Help"><i class="bi bi-question-circle"></i></button>
                         </div>
                     </div>
 
                     <!-- Summary tiles -->
                     <div class="row g-3 mb-4">
-                        <div class="col-6 col-md-3"><div class="card h-100"><div class="card-body py-3"><div class="small text-muted mb-1">Investments</div><div class="fs-5 fw-bold" id="nwBrokerage">—</div></div></div></div>
-                        <div class="col-6 col-md-3"><div class="card h-100"><div class="card-body py-3"><div class="small text-muted mb-1">Other assets</div><div class="fs-5 fw-bold text-success" id="nwAssets">—</div></div></div></div>
-                        <div class="col-6 col-md-3"><div class="card h-100"><div class="card-body py-3"><div class="small text-muted mb-1">Fixed deposits</div><div class="fs-5 fw-bold text-info" id="nwDeposits">—</div></div></div></div>
-                        <div class="col-6 col-md-3"><div class="card h-100"><div class="card-body py-3"><div class="small text-muted mb-1">Liabilities</div><div class="fs-5 fw-bold text-danger" id="nwLiabilities">—</div></div></div></div>
-                        <div class="col-6 col-md-3"><div class="card h-100 text-white" id="nwTotalCard" style="background:#0d6efd;"><div class="card-body py-3"><div class="small opacity-75 mb-1">Net worth</div><div class="fs-5 fw-bold" id="nwTotal">—</div></div></div></div>
+                        <div class="col-6 col-md-2"><div class="card h-100"><div class="card-body py-3"><div class="small text-muted mb-1">Investments</div><div class="fs-5 fw-bold" id="nwBrokerage">—</div></div></div></div>
+                        <div class="col-6 col-md-2"><div class="card h-100"><div class="card-body py-3"><div class="small text-muted mb-1">Other assets</div><div class="fs-5 fw-bold text-success" id="nwAssets">—</div></div></div></div>
+                        <div class="col-6 col-md-2"><div class="card h-100"><div class="card-body py-3"><div class="small text-muted mb-1">Fixed deposits</div><div class="fs-5 fw-bold text-info" id="nwDeposits">—</div></div></div></div>
+                        <div class="col-6 col-md-2"><div class="card h-100"><div class="card-body py-3"><div class="small text-muted mb-1">Liabilities</div><div class="fs-5 fw-bold text-danger" id="nwLiabilities">—</div></div></div></div>
+                        <div class="col-12 col-md-4"><div class="card h-100 text-white" id="nwTotalCard" style="background:#0d6efd;"><div class="card-body py-3"><div class="small opacity-75 mb-1">Net worth</div><div class="fs-4 fw-bold" id="nwTotal">—</div></div></div></div>
                     </div>
 
                     <div class="row g-3">
@@ -2705,7 +2726,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                         <div class="col-6 col-md-2">
                                             <div class="card h-100">
                                                 <div class="card-body py-2">
-                                                    <div class="small text-muted mb-1">Rest</div>
+                                                    <div class="small text-muted mb-1">Other expenses</div>
                                                     <div class="fs-6 fw-bold text-danger" id="cfRest">—</div>
                                                 </div>
                                             </div>
@@ -2751,7 +2772,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                                 <optgroup label="Expenses">
                                                     <option value="mortgage">Mortgage</option>
                                                     <option value="loan">Loan</option>
-                                                    <option value="rest">Rest</option>
+                                                    <option value="rest">Other expenses</option>
                                                 </optgroup>
                                             </select>
                                         </div>
@@ -2990,7 +3011,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         <i class="bi bi-magic me-2"></i>Extract Transactions
                     </button>
                     <button type="button" class="btn btn-success" id="llmImportSaveBtn" style="display:none;">
-                        <i class="bi bi-check-lg me-2"></i>Save All
+                        <i class="bi bi-check-lg me-2"></i>Save Selected
                     </button>
                 </div>
             </div>
@@ -3176,7 +3197,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         </div>
                         <div class="col-sm-4">
                             <label class="form-label" for="setDefaultCurrency">Default currency
-                                <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="Pre-fills the currency for new assets, transactions and cash bookings. Portfolio totals are still reported in EUR."></i>
+                                <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="Pre-fills the currency for new assets, transactions and cash bookings. Portfolio totals are still reported in EUR."></i>
                             </label>
                             <select class="form-select" id="setDefaultCurrency">
                                 <option value="EUR">EUR — Euro (€)</option>
@@ -3194,7 +3215,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         </div>
                         <div class="col-sm-4">
                             <label class="form-label" for="setDefaultBroker">Default broker
-                                <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="Pre-selects this broker when adding a transaction or cash booking."></i>
+                                <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="Pre-selects this broker when adding a transaction or cash booking."></i>
                             </label>
                             <select class="form-select" id="setDefaultBroker"><option value="">— none —</option></select>
                         </div>
@@ -3209,7 +3230,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         </div>
                         <div class="col-sm-4">
                             <label class="form-label" for="setHideBelowEur">Hide positions below (EUR)
-                                <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="Hide tiny holdings worth less than this in the Holdings table. 0 = show all."></i>
+                                <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="Hide tiny holdings worth less than this in the Holdings table. 0 = show all."></i>
                             </label>
                             <input type="number" class="form-control" id="setHideBelowEur" min="0" step="1">
                         </div>
@@ -3230,7 +3251,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         <div class="col-12 mt-3"><h6 class="text-muted text-uppercase small mb-1">Portfolio Advisor</h6></div>
                         <div class="col-sm-4">
                             <label class="form-label" for="setAdvisorTtl">Health analysis cache
-                                <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="How long to cache the Portfolio Health analysis before the next run fetches fresh data."></i>
+                                <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="How long to cache the Portfolio Health analysis before the next run fetches fresh data."></i>
                             </label>
                             <select class="form-select" id="setAdvisorTtl">
                                 <option value="6">6 hours</option>
@@ -3277,7 +3298,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
         <div class="modal-dialog">
             <div class="modal-content">
                 <div class="modal-header">
-                    <h5 class="modal-title" id="portfolioModalTitle">Add Portfolio</h5>
+                    <h5 class="modal-title" id="portfolioModalTitle">Add Broker</h5>
                     <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                 </div>
                 <div class="modal-body">
@@ -3469,7 +3490,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <script src="js/pfm_core.js?v=1781886806"></script>
     <script src="js/pfm_pages.js?v=1780000051"></script>
     <script src="js/pfm_analytics.js?v=1780000055"></script>
-    <script src="js/pfm_features.js?v=1781886806"></script>
+    <script src="js/pfm_features.js?v=1781886807"></script>
     <script>
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('/sw.js');
