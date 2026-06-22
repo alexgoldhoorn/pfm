@@ -5,7 +5,11 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-06-21
+Last updated: 2026-06-22
+
+**Recent (v2.3.2):** **Goals edit** — `PUT /api/v1/goals/{id}` + `db.update_goal()`; pencil button on each goal card opens a Bootstrap modal pre-filled with the goal's current values. **Holdings & Assets broker filter** — both pages now have a Broker/Portfolio dropdown; Holdings re-fetches with `?portfolio_id=`; Assets cross-references holdings symbols for the selected portfolio. **Net-worth chart hover tooltip** — mousemove crosshair on the SVG chart shows a dark tooltip with date, portfolio value, and invested cost. 624 tests passing.
+
+**Recent (v2.3.1):** **Bug fix — LLM import portfolio resolution**: when `portfolio_id` is explicitly supplied in the save request, the LLM-extracted `broker` field on transactions/bookings/deposits no longer calls `get_or_create_portfolio`, preventing duplicate portfolios with slightly different names (e.g. "MY INVESTOR" vs "MyInvestor"). Regression test added. 623 tests passing.
 
 **Recent (v2.3):** **Asset Correlation Matrix** — `GET /api/v1/analytics/correlation?days=90` computes Pearson correlation from daily log-returns across held assets; `chartjs-chart-matrix` heatmap (red→white→green) added to the Risk & Diversification analytics tab. **Portfolio Comparison** — `GET /api/v1/analytics/portfolio-comparison` returns invested/value/return/IRR per broker; new Portfolios tab in Analytics with horizontal bar chart and per-broker detail cards. **PWA Push Notifications** — schema v22 (`push_subscriptions` table), VAPID keys auto-generated at startup in `app_settings`, new `/api/v1/notifications` router (`vapid-key` public; subscribe/unsubscribe authed), service worker push handler, Settings modal toggle; price-alerts cron (`alerts/check`) dispatches pushes to all registered browsers via `pywebpush`. **Diversification data quality** — `_resolve_sector_country()` helper in `portfolio_advisor.py` now uses `asset["ticker"]` (v18 column) for the yfinance lookup when `symbol` is an ISIN; crypto assets short-circuited to "Cryptocurrency"/"Global"; fund/index/bond asset-type defaults applied when yfinance returns nothing; cache key tied to the resolved yfinance symbol so ISIN-keyed and ticker-keyed lookups don't collide. 608 tests passing.
 

@@ -130,6 +130,26 @@ async def create_goal(
     return db.get_goal(gid)
 
 
+@router.put("/{goal_id}")
+def update_goal(
+    goal_id: int,
+    body: GoalCreate,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Update a savings goal."""
+    if not db.update_goal(
+        goal_id=goal_id,
+        name=body.name,
+        target_amount_eur=body.target_amount_eur,
+        target_date=body.target_date.isoformat(),
+        monthly_contribution_eur=body.monthly_contribution_eur,
+        expected_return_pct=body.expected_return_pct,
+    ):
+        raise HTTPException(status_code=404, detail="Goal not found")
+    return db.get_goal(goal_id)
+
+
 @router.delete("/{goal_id}")
 async def delete_goal(
     goal_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)

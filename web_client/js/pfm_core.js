@@ -1912,6 +1912,16 @@ function createAPIClient() {
             return resp.json();
         },
 
+        async updateGoal(id, body) {
+            const resp = await fetch(this.baseURL + `/api/v1/goals/${id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(body)
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
         async deleteGoal(id) {
             const resp = await fetch(this.baseURL + `/api/v1/goals/${id}`, {
                 method: 'DELETE',

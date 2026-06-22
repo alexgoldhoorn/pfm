@@ -3086,6 +3086,34 @@ class Database:
             conn.commit()
             return cursor.lastrowid
 
+    def update_goal(
+        self,
+        goal_id: int,
+        name: str,
+        target_amount_eur: float,
+        target_date: str,
+        monthly_contribution_eur: float,
+        expected_return_pct: float,
+    ) -> bool:
+        """Update an existing savings goal. Returns False if not found."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                """UPDATE goals
+                   SET name=?, target_amount_eur=?, target_date=?,
+                       monthly_contribution_eur=?, expected_return_pct=?
+                   WHERE id=?""",
+                (
+                    name,
+                    target_amount_eur,
+                    target_date,
+                    monthly_contribution_eur,
+                    expected_return_pct,
+                    goal_id,
+                ),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
     def delete_goal(self, goal_id: int) -> bool:
         """Delete a goal."""
         with self.get_connection() as conn:
