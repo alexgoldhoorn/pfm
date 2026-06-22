@@ -2469,4 +2469,12 @@ window.showToast = function(msg, type) {
     bootstrap.Toast.getOrCreateInstance(toastEl).show();
 };
 
+// Navigate to the chat page with a pre-loaded context (thread name + opening message).
+// Called from Research workbench and Portfolio Health panel.
+// pfm_features.js loads after pfm_core.js in the same global scope so no window. prefix needed.
+function openChatWithContext(threadName, openingMessage) {
+    window._chatPendingContext = { threadName, openingMessage };
+    window.navigationManager.showPage('chat');
+}
+
 // ---------------------------------------------------------------------------

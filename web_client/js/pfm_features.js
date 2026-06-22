@@ -2700,6 +2700,30 @@ function setupPortfolioHealth() {
             `<li class="mb-1"><span class="badge bg-secondary me-1">${esc(r.category || '')}</span><strong>${esc(r.action || '')}</strong> — <span class="text-muted small">${esc(r.rationale || '')}</span></li>`
         ).join('');
 
+        // Wire context chat button
+        const chatBtn = $('phChatBtn');
+        if (chatBtn) {
+            chatBtn.onclick = () => {
+                const scores = data.scores || {};
+                let msg = `I've just reviewed my portfolio health analysis.\n\n`;
+                msg += `**Scores:**\n`;
+                Object.entries(scores).forEach(([key, s]) => {
+                    msg += `- ${SCORE_LABELS[key] || key}: ${s.score || 0}/10 — ${s.reason || ''}\n`;
+                });
+                if (data.recommendations && data.recommendations.length) {
+                    msg += `\n**Recommendations:**\n`;
+                    data.recommendations.forEach(r => {
+                        msg += `- [${r.category || ''}] ${r.action || ''}: ${r.rationale || ''}\n`;
+                    });
+                }
+                if (data.summary) {
+                    msg += `\n**Summary:** ${data.summary}\n`;
+                }
+                msg += `\nLet's discuss these findings. Which area should I focus on improving first?`;
+                openChatWithContext('Portfolio Health Analysis', msg);
+            };
+        }
+
         showState('result');
     }
 
@@ -3030,6 +3054,44 @@ function setupResearchPage() {
             $('rvSaveMsg').textContent = '';
             loadHistory(sym);
             $('researchHint').textContent = '';
+            // Show "Chat about this" button and wire click handler
+            const chatBtn = $('researchChatBtn');
+            if (chatBtn) {
+                chatBtn.style.display = '';
+                chatBtn.onclick = () => {
+                    const f = R.fundamentals || {};
+                    const recKey = f.recommendationKey ? (f.recommendationKey.replace(/_/g, ' ')) : null;
+                    const upside = (R.price && R.llm && R.llm.fair_value)
+                        ? ((R.llm.fair_value - R.price) / R.price * 100).toFixed(1) + '%'
+                        : null;
+                    let msg = `I'm researching ${R.symbol}${d.name ? ' (' + d.name + ')' : ''}.\n`;
+                    msg += `Current price: ${money(R.price, R.currency)}.\n`;
+                    if (R.llm) {
+                        if (R.llm.fair_value) msg += `Fair value estimate: ${money(R.llm.fair_value, R.currency)}${upside ? ' (upside: ' + upside + ')' : ''}.\n`;
+                        if (R.llm.recommendation) msg += `LLM recommendation: ${R.llm.recommendation.toUpperCase()}.\n`;
+                        if (R.llm.confidence != null) msg += `Confidence: ${typeof R.llm.confidence === 'number' && R.llm.confidence <= 1 ? Math.round(R.llm.confidence * 100) + '%' : R.llm.confidence}.\n`;
+                        if (R.llm.risks && R.llm.risks.length) msg += `Key risks: ${R.llm.risks.slice(0, 3).join('; ')}.\n`;
+                        if (R.llm.catalysts && R.llm.catalysts.length) msg += `Key catalysts: ${R.llm.catalysts.slice(0, 3).join('; ')}.\n`;
+                        if (R.llm.summary) msg += `\nLLM analysis summary:\n${R.llm.summary}\n`;
+                        if (R.llm.rationale) msg += `\nRationale:\n${R.llm.rationale}\n`;
+                    }
+                    if (d.latest_note && d.latest_note.thesis) {
+                        msg += `\nMy research thesis:\n${d.latest_note.thesis}\n`;
+                        if (d.latest_note.conviction) msg += `Conviction: ${d.latest_note.conviction}\n`;
+                        if (d.latest_note.llm_summary) msg += `\nPrevious LLM analysis:\n${d.latest_note.llm_summary}\n`;
+                    }
+                    if (Object.keys(f).length) {
+                        const keyFunds = ['trailingPE', 'forwardPE', 'trailingEps', 'dividendYield', 'beta', 'profitMargins', 'debtToEquity', 'returnOnEquity'];
+                        const fundLines = keyFunds.filter(k => f[k] != null).map(k => `${humanizeFundKey(k)}: ${fmtFundVal(k, f[k])}`);
+                        if (fundLines.length) msg += `\nKey fundamentals:\n${fundLines.join('\n')}\n`;
+                    }
+                    if (d.targets && (d.targets.buy_below || d.targets.sell_above || d.targets.fair_value)) {
+                        msg += `\nPrice targets: buy below ${money(d.targets.buy_below, R.currency)}, fair value ${money(d.targets.fair_value, R.currency)}, sell above ${money(d.targets.sell_above, R.currency)}.\n`;
+                    }
+                    msg += `\nWhat are the key things I should consider before investing?`;
+                    openChatWithContext(`Research: ${R.symbol}`, msg);
+                };
+            }
             if (window.initTooltips) initTooltips();
         } catch (e) {
             $('researchHint').innerHTML = '<span class="text-danger">' + (e.message || 'lookup failed') + '</span>';
