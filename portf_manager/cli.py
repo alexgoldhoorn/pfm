@@ -1,10 +1,10 @@
-from tqdm import tqdm
-
 """
 Command Line Interface for Portfolio Manager
 
 Provides CLI commands for managing assets, sectors, and portfolio operations.
 """
+
+from tqdm import tqdm
 
 import argparse
 import sys
