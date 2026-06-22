@@ -310,6 +310,47 @@ class TestNewMetrics:
         assert period_start_date("5y", ref) == date(2021, 1, 28)
 
 
+def test_dividend_ttm_enrichment_basic():
+    """dividend_ttm_enrichment computes ttm_by_symbol and yield_on_cost."""
+    import pytest
+    from datetime import date
+    from portf_manager.services.analytics_service import dividend_ttm_enrichment
+
+    today = date.today()
+    txns = [
+        {
+            "transaction_type": "dividend",
+            "transaction_date": today.isoformat(),
+            "total_amount": 100.0,
+            "symbol": "AAPL",
+        }
+    ]
+    cost_by_symbol = {"AAPL": 1000.0}
+    result = dividend_ttm_enrichment(txns, cost_by_symbol)
+    assert result["ttm"] == pytest.approx(100.0)
+    assert result["ttm_by_symbol"]["AAPL"] == pytest.approx(100.0)
+    assert result["projected_annual"] == pytest.approx(100.0)
+    assert result["yield_on_cost"]["AAPL"] == pytest.approx(10.0)
+
+
+def test_dividend_ttm_enrichment_excludes_old():
+    """Dividends older than 12 months are excluded from TTM."""
+    import pytest
+    from portf_manager.services.analytics_service import dividend_ttm_enrichment
+
+    txns = [
+        {
+            "transaction_type": "dividend",
+            "transaction_date": "2020-01-01",
+            "total_amount": 999.0,
+            "symbol": "OLD",
+        }
+    ]
+    result = dividend_ttm_enrichment(txns, {})
+    assert result["ttm"] == pytest.approx(0.0)
+    assert result["ttm_by_symbol"] == {}
+
+
 class TestTaxRatesAndReport:
     def test_tax_rates_module(self):
         from portf_manager.services.tax_rates import progressive_tax
