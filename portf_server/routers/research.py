@@ -248,12 +248,25 @@ def get_portfolio_analysis(
                 _run, "holdings", gather_holdings_fundamentals, db, portfolio_id
             ),
         ]
-        for fut in as_completed(futures):
-            name, result = fut.result()
-            if result is None:
-                data_warnings.append(f"{name} data unavailable")
-            else:
-                bundle[name] = result
+        try:
+            for fut in as_completed(futures, timeout=55):
+                name, result = fut.result()
+                if result is None:
+                    data_warnings.append(f"{name} data unavailable")
+                else:
+                    bundle[name] = result
+        except TimeoutError:
+            data_warnings.append(
+                "Some data gathering timed out; results may be partial"
+            )
+            for fut in futures:
+                if fut.done() and not fut.cancelled():
+                    try:
+                        name, result = fut.result()
+                        if result is not None and name not in bundle:
+                            bundle[name] = result
+                    except Exception:
+                        pass
 
     if not bundle:
         return {

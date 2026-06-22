@@ -89,7 +89,7 @@ def build_yahoo_finance_csv(
                     skipped.append(sym)
                     seen_skipped.add(sym)
                 continue
-            writer.writerow([ticker, round(pos["quantity"], 8), "", "", ""])
+            writer.writerow([ticker, round(pos["quantity"], 8), "", "", "0"])
     else:
         for tx in txs:
             ticker = _resolve_ticker(tx["symbol"], tx["ticker"])
