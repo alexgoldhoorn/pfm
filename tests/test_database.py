@@ -50,7 +50,7 @@ class TestDatabase:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             result = cursor.fetchone()
-            assert result[0] == 23  # Current schema version
+            assert result[0] == 24  # Current schema version
 
     def test_v18_assets_have_ticker_column(self):
         """v18 adds the nullable ticker alias column to assets."""
@@ -998,7 +998,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 23
+            assert version == 24
 
             # Assert columns exist
             for table in ["entities", "portfolios", "transactions"]:
@@ -1028,7 +1028,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 23
+            assert version == 24
 
             # Check all tables exist
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -1097,7 +1097,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 23
+            assert version == 24
 
             # Check new tables exist
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -1132,3 +1132,58 @@ def test_add_column_if_missing_skips_missing_table():
     conn = MagicMock()
     conn.execute.side_effect = sqlite3.OperationalError("no such table: assets")
     _add_column_if_missing(conn, "assets", "ticker", "TEXT")  # must not raise
+
+
+class TestChatSessions:
+    def test_create_and_get_session(self, tmp_path):
+        from portf_manager.database import Database
+
+        db = Database(str(tmp_path / "t.db"))
+        db.create_chat_session("sess1", "My Thread")
+        s = db.get_chat_session("sess1")
+        assert s is not None
+        assert s["name"] == "My Thread"
+        assert s["message_count"] == 0
+        assert s["messages"] == []
+
+    def test_list_sessions_ordered_by_last_message(self, tmp_path):
+        from portf_manager.database import Database
+
+        db = Database(str(tmp_path / "t.db"))
+        db.create_chat_session("a", "Alpha")
+        import time
+
+        time.sleep(0.01)
+        db.create_chat_session("b", "Beta")
+        sessions = db.list_chat_sessions()
+        assert len(sessions) == 2
+        assert sessions[0]["id"] == "b"  # most recent first
+
+    def test_update_session_activity(self, tmp_path):
+        from portf_manager.database import Database
+
+        db = Database(str(tmp_path / "t.db"))
+        db.create_chat_session("s1", "Thread")
+        msgs = [
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi"},
+        ]
+        db.update_chat_session_activity("s1", msgs)
+        s = db.get_chat_session("s1")
+        assert s["messages"] == msgs
+        assert s["message_count"] == 2
+
+    def test_delete_session(self, tmp_path):
+        from portf_manager.database import Database
+
+        db = Database(str(tmp_path / "t.db"))
+        db.create_chat_session("s1", "Thread")
+        result = db.delete_chat_session("s1")
+        assert result is True
+        assert db.get_chat_session("s1") is None
+
+    def test_get_nonexistent_session_returns_none(self, tmp_path):
+        from portf_manager.database import Database
+
+        db = Database(str(tmp_path / "t.db"))
+        assert db.get_chat_session("missing") is None
