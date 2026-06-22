@@ -24,7 +24,7 @@ Portfolio Manager: a Python CLI + FastAPI server + web client for tracking stock
 ### Database
 SQLite by default (`portfolio.db`), PostgreSQL via `DATABASE_URL` env var. Use `portf_manager/database.py` for SQLite, `database_factory.py` for auto-detection.
 
-**Current schema version: 20.** Migrations run automatically on startup.
+**Current schema version: 23.** Migrations run automatically on startup.
 
 Key fields added in recent migrations:
 - v5: `tax REAL DEFAULT 0` on `transactions`; new `bookings` table (deposits/withdrawals)
@@ -44,6 +44,8 @@ Key fields added in recent migrations:
 - v19: `fixed_deposits` table — fixed-term deposit tracking (name, portfolio_id, principal, currency, interest_rate, start_date, maturity_date, status CHECK 'active'/'matured'/'closed', interest_paid, notes). CRUD via `db.create/get/get_all/update/delete_fixed_deposit`. Router at `/api/v1/deposits`; maturity posts an `interest` transaction against a synthetic `DEPOSITS` cash asset (`auto_price=0`). Active principals included in `GET /api/v1/networth` as `deposits_eur`. LLM extraction via `POST /api/v1/llm/extract-deposits` → `GeminiClient.extract_deposits`. Web UI on Net Worth page.
 - v20: `monthly_cashflow` table (`id, label, category CHECK('salary'|'other_income'|'mortgage'|'loan'|'rest'), amount, currency, notes, created_at`). Category implies income/expense (salary/other_income = income; mortgage/loan/rest = expense). CRUD: `db.get/create/delete_monthly_cashflow`. Router at `GET|POST|DELETE /api/v1/networth/cashflow`; GET returns `items`, `income_eur`, `expenses_eur`, `net_monthly_eur`, `by_category`. Web: Monthly Cash Flow section on Net Worth page (5 summary cards + entries table + add form). No update endpoint — delete and re-add.
 - v21: `app_settings` table (`key TEXT PRIMARY KEY, value TEXT, updated_at`). Persistent key/value store for app-wide settings (no TTL, unlike `kv_cache`). `db.get_setting(key)` / `db.set_setting(key, value)`. Currently stores `google_spreadsheet_id` (the PDT sync sheet ID, editable from the Google Sheets page and persisted across browsers).
+- v22: `push_subscriptions` table (PWA Web Push: `endpoint, p256dh, auth`). VAPID keys auto-generated at startup via `app_settings`.
+- v23: Recovery migration — ensures `monthly_cashflow` exists via `CREATE TABLE IF NOT EXISTS` (table was absent on some DBs that had the v20 version row).
 
 ### Performance / event loop
 - Endpoints doing blocking yfinance I/O are plain `def` (not `async`) so FastAPI runs them in a threadpool — an `async` handler calling `yf` blocks the event loop and stalls every other request. Applies to: diversification, performance, snapshot, rebalance analysis, research generate/lookup, watchlist list/alerts. Keep new blocking-IO endpoints sync.
