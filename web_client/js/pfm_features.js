@@ -105,12 +105,14 @@ async function loadGoals() {
                                 <h5 class="card-title mb-0"><i class="bi bi-bullseye me-2 text-primary"></i>${esc(g.name || 'Goal')}</h5>
                                 <div class="d-flex align-items-center gap-2">
                                     ${trackBadge}
-                                    <button class="btn btn-sm btn-outline-secondary" onclick="window.editGoalRow(${g.id})" title="Edit goal">
-                                        <i class="bi bi-pencil"></i>
-                                    </button>
-                                    <button class="btn btn-sm btn-outline-danger" onclick="window.deleteGoalRow(${g.id}, '${(g.name || '').replace(/'/g, "\\'")}')" title="Delete goal">
-                                        <i class="bi bi-trash"></i>
-                                    </button>
+                                    <div class="btn-group btn-group-sm">
+                                        <button class="btn btn-outline-secondary" onclick="window.editGoalRow(${g.id})" title="Edit goal">
+                                            <i class="bi bi-pencil"></i>
+                                        </button>
+                                        <button class="btn btn-outline-danger" onclick="window.deleteGoalRow(${g.id}, '${(g.name || '').replace(/'/g, "\\'")}')" title="Delete goal">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
                             <div class="d-flex justify-content-between small text-muted mb-1">
