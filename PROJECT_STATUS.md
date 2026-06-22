@@ -7,6 +7,8 @@
 
 Last updated: 2026-06-22
 
+**Recent (v2.3.3):** **Bug fix — Monthly Cash Flow 500 error**: `monthly_cashflow` table was missing on the production DB (WAL checkpoint interrupted at first migration); added schema v23 recovery migration (`CREATE TABLE IF NOT EXISTS monthly_cashflow`) that re-creates the table on any DB where it is absent. 624 tests passing.
+
 **Recent (v2.3.2):** **Goals edit** — `PUT /api/v1/goals/{id}` + `db.update_goal()`; pencil button on each goal card opens a Bootstrap modal pre-filled with the goal's current values. **Holdings & Assets broker filter** — both pages now have a Broker/Portfolio dropdown; Holdings re-fetches with `?portfolio_id=`; Assets cross-references holdings symbols for the selected portfolio. **Net-worth chart hover tooltip** — mousemove crosshair on the SVG chart shows a dark tooltip with date, portfolio value, and invested cost. 624 tests passing.
 
 **Recent (v2.3.1):** **Bug fix — LLM import portfolio resolution**: when `portfolio_id` is explicitly supplied in the save request, the LLM-extracted `broker` field on transactions/bookings/deposits no longer calls `get_or_create_portfolio`, preventing duplicate portfolios with slightly different names (e.g. "MY INVESTOR" vs "MyInvestor"). Regression test added. 623 tests passing.

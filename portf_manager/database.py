@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 
 # Database version for migration tracking
-DATABASE_VERSION = 22
+DATABASE_VERSION = 23
 
 
 # black
@@ -644,6 +644,8 @@ class Database:
             self._migrate_to_v21(conn)
         if current_version < 22:
             self._migrate_to_v22(conn)
+        if current_version < 23:
+            self._migrate_to_v23(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -1319,6 +1321,24 @@ class Database:
                 p256dh TEXT NOT NULL,
                 auth TEXT NOT NULL,
                 created_at TEXT DEFAULT (datetime('now'))
+            )
+            """
+        )
+        conn.commit()
+
+    def _migrate_to_v23(self, conn: sqlite3.Connection) -> None:
+        """Ensure monthly_cashflow table exists (recovery: was missing on some DBs)."""
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS monthly_cashflow (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                label       TEXT NOT NULL,
+                category    TEXT NOT NULL CHECK(category IN
+                                ('salary','other_income','mortgage','loan','rest')),
+                amount      REAL NOT NULL DEFAULT 0,
+                currency    TEXT NOT NULL DEFAULT 'EUR',
+                notes       TEXT,
+                created_at  TEXT DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
