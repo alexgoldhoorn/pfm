@@ -516,14 +516,16 @@ function createPageManager() {
                             <td class="text-end">${fmtPrice(tx.total_amount, tx.currency)}</td>
                             <td class="text-end">${fmtPrice(tx.fees, tx.currency)}</td>
                             <td class="text-nowrap">
-                                <button class="btn btn-sm btn-outline-primary me-1"
-                                    onclick="openEditTransaction(${tx.id})">
-                                    <i class="bi bi-pencil"></i>
-                                </button>
-                                <button class="btn btn-sm btn-outline-danger"
-                                    onclick="confirmDeleteTransaction(${tx.id},'${tx.symbol}')">
-                                    <i class="bi bi-trash"></i>
-                                </button>
+                                <div class="btn-group btn-group-sm">
+                                    <button class="btn btn-outline-secondary"
+                                        onclick="openEditTransaction(${tx.id})">
+                                        <i class="bi bi-pencil"></i>
+                                    </button>
+                                    <button class="btn btn-outline-danger"
+                                        onclick="confirmDeleteTransaction(${tx.id},'${tx.symbol}')">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </div>
                             </td>
                         </tr>`
                 }));
@@ -557,10 +559,12 @@ function createPageManager() {
                             <td class="text-end">${isDep ? '+' : '−'}${fmtPrice(Math.abs(parseFloat(b.amount || 0)), b.currency)}</td>
                             <td class="text-end">—</td>
                             <td class="text-nowrap">
-                                <button class="btn btn-sm btn-outline-danger"
-                                    onclick="confirmDeleteBooking(${b.id})" title="Delete cash booking">
-                                    <i class="bi bi-trash"></i>
-                                </button>
+                                <div class="btn-group btn-group-sm">
+                                    <button class="btn btn-outline-danger"
+                                        onclick="confirmDeleteBooking(${b.id})" title="Delete cash booking">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </div>
                             </td>
                         </tr>`
                     });
@@ -763,7 +767,11 @@ function createPageManager() {
                             <td class="text-end ${pnlClass}">${h.pnl_amount >= 0 ? '+' : ''}${fmt(h.pnl_amount)}</td>
                             <td class="text-end ${pnlClass}">${h.pnl_pct >= 0 ? '+' : ''}${fmt(h.pnl_pct)}%</td>
                             <td class="text-center text-nowrap">${assetLinks(h.symbol)}</td>
-                            <td class="text-end pe-3"><button class="btn btn-sm btn-outline-primary" title="Research / Valuation" onclick="openResearchModal('${symEsc}')"><i class="bi bi-graph-up"></i></button></td>
+                            <td class="text-end pe-3">
+                                <div class="btn-group btn-group-sm">
+                                    <button class="btn btn-outline-primary" title="Research / Valuation" onclick="openResearchModal('${symEsc}')"><i class="bi bi-graph-up"></i></button>
+                                </div>
+                            </td>
                         </tr>`;
                 };
                 this._holdingsST = this._holdingsST || makeSortableTable({
@@ -865,16 +873,18 @@ function createPageManager() {
                             ${pnlCell(v)}
                             <td>${activity}</td>
                             <td><small class="text-muted">${esc(p.description || '')}</small></td>
-                            <td class="pe-3">
-                                <button class="btn btn-sm btn-outline-primary me-1" title="Edit" onclick="editPortfolio(${p.id}, '${esc(p.name)}', '${p.base_currency || 'EUR'}', '${esc(p.description)}', '${esc(p.website)}')">
-                                    <i class="bi bi-pencil"></i>
-                                </button>
-                                <button class="btn btn-sm btn-outline-warning me-1" title="Clear all transactions" onclick="clearPortfolioTransactions(${p.id}, '${esc(p.name)}')">
-                                    <i class="bi bi-eraser"></i>
-                                </button>
-                                <button class="btn btn-sm btn-outline-danger" title="Delete portfolio" onclick="deletePortfolio(${p.id}, '${esc(p.name)}')">
-                                    <i class="bi bi-trash"></i>
-                                </button>
+                            <td class="pe-3 text-nowrap">
+                                <div class="btn-group btn-group-sm">
+                                    <button class="btn btn-outline-secondary" title="Edit" onclick="editPortfolio(${p.id}, '${esc(p.name)}', '${p.base_currency || 'EUR'}', '${esc(p.description)}', '${esc(p.website)}')">
+                                        <i class="bi bi-pencil"></i>
+                                    </button>
+                                    <button class="btn btn-outline-warning" title="Clear all transactions" onclick="clearPortfolioTransactions(${p.id}, '${esc(p.name)}')">
+                                        <i class="bi bi-eraser"></i>
+                                    </button>
+                                    <button class="btn btn-outline-danger" title="Delete portfolio" onclick="deletePortfolio(${p.id}, '${esc(p.name)}')">
+                                        <i class="bi bi-trash"></i>
+                                    </button>
+                                </div>
                             </td>
                         </tr>`;
                     };
