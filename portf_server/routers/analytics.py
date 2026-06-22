@@ -20,6 +20,7 @@ from portf_manager.services.analytics_service import (
     compute_beta_alpha,
     compute_cagr,
     dividend_income,
+    dividend_ttm_enrichment,
     irpf_savings_tax,
     money_weighted_irr,
     period_return,
@@ -161,54 +162,24 @@ async def get_dividends(db=Depends(get_database), api_key_info: dict = Depends(_
     txns = db.get_all_transactions()
     income = dividend_income(txns)
 
-    # Yield-on-cost: trailing-12m dividends per symbol / current cost basis
+    # Build cost_by_symbol from current open positions (for yield-on-cost)
     positions, _ = _compute_positions(db)
-    cost_by_symbol = {}
+    cost_by_symbol: dict = {}
     for aid, pos in positions.items():
         if pos["quantity"] <= 0:
             continue
         asset = db.get_asset(aid)
         if asset:
-            cost_by_symbol[asset["symbol"]] = (
-                cost_by_symbol.get(asset["symbol"], 0) + pos["cost"]
-            )
+            sym = asset["symbol"]
+            cost_by_symbol[sym] = cost_by_symbol.get(sym, 0) + pos["cost"]
 
-    # Trailing 12 months income per symbol
-    cutoff = date.today().replace(year=date.today().year - 1)
-    ttm_by_symbol = {}
-    for tx in txns:
-        if tx.get("transaction_type", "").lower() != "dividend":
-            continue
-        d = tx.get("transaction_date", "")
-        try:
-            dd = datetime.strptime(str(d)[:10], "%Y-%m-%d").date()
-        except ValueError:
-            continue
-        if dd >= cutoff:
-            sym = tx.get("symbol", "?")
-            ttm_by_symbol[sym] = ttm_by_symbol.get(sym, 0) + float(
-                tx.get("total_amount") or 0
-            )
+    ttm_data = dividend_ttm_enrichment(txns, cost_by_symbol)
 
-    yield_on_cost = {}
-    for sym, ttm in ttm_by_symbol.items():
-        cost = cost_by_symbol.get(sym, 0)
-        if cost > 0:
-            yield_on_cost[sym] = round(ttm / cost * 100, 2)
-
-    projected_annual = round(sum(ttm_by_symbol.values()), 2)
-
-    # Symbol → display name, so the UI can show names alongside tickers
-    names = {}
-    for a in db.get_all_assets():
-        names[a["symbol"]] = a.get("name", a["symbol"])
+    names = {a["symbol"]: a.get("name", a["symbol"]) for a in db.get_all_assets()}
 
     return {
         **income,
-        "ttm": round(sum(ttm_by_symbol.values()), 2),
-        "ttm_by_symbol": {s: round(v, 2) for s, v in ttm_by_symbol.items()},
-        "projected_annual": projected_annual,
-        "yield_on_cost": yield_on_cost,
+        **ttm_data,
         "names": names,
     }
 
