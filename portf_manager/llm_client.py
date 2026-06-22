@@ -1,20 +1,29 @@
 """
 Provider-agnostic LLM client abstraction.
 
-Supports multiple LLM backends (Gemini, Ollama, OpenRouter) through a unified interface.
-Configuration is driven by environment variables:
-  - PORTF_LLM_PROVIDER: "auto" (default), "ollama", "gemini", or "openrouter"
-  - PORTF_LLM_MODEL: model name (provider-specific defaults apply)
-  - GEMINI_API_KEY: required when provider=gemini
-  - OLLAMA_HOST: Ollama server host (default: localhost)
-  - OLLAMA_PORT: Ollama server port (default: 11434)
-  - OPENROUTER_API_KEY: required when provider=openrouter
+Supports Gemini, Ollama, OpenRouter and Anthropic Claude through a unified
+interface. Configuration is driven by environment variables:
 
-Default behavior (provider=auto):
-  1. Try Ollama on localhost:11434 — works without API keys
-  2. Fall back to Gemini if GEMINI_API_KEY is set
-  3. Fall back to OpenRouter if OPENROUTER_API_KEY is set
-  4. Raise error if none is available
+Global overrides (apply to all providers):
+  PORTF_LLM_PROVIDER  — "auto" (default), "ollama", "gemini", "openrouter", "anthropic"
+  PORTF_LLM_MODEL     — model name for the selected provider (provider defaults apply)
+
+Per-provider model overrides (take precedence over PORTF_LLM_MODEL):
+  PORTF_GEMINI_MODEL      — e.g. "gemini-2.5-pro"
+  PORTF_ANTHROPIC_MODEL   — e.g. "claude-opus-4-8"
+  PORTF_OPENROUTER_MODEL  — e.g. "openai/gpt-4o"
+  PORTF_OLLAMA_MODEL      — e.g. "llama3.2"
+
+Required API keys:
+  GEMINI_API_KEY / PORTF_GEMINI_API_KEY / GOOGLE_API_KEY  — for Gemini
+  OPENROUTER_API_KEY / PORTF_OPENROUTER_API_KEY           — for OpenRouter
+  ANTHROPIC_API_KEY                                        — for Anthropic
+
+Default auto-detection order (provider=auto):
+  1. Ollama on localhost:11434 — no API key needed
+  2. Gemini   — if GEMINI_API_KEY is set
+  3. OpenRouter — if OPENROUTER_API_KEY is set
+  4. Anthropic  — if ANTHROPIC_API_KEY is set
 """
 
 import os
@@ -71,7 +80,12 @@ class GeminiLLMClient:
                 "Gemini API key required. Set GEMINI_API_KEY environment variable."
             )
 
-        self.model_name = model or os.getenv("PORTF_LLM_MODEL", DEFAULT_GEMINI_MODEL)
+        self.model_name = (
+            model
+            or os.getenv("PORTF_GEMINI_MODEL")
+            or os.getenv("PORTF_LLM_MODEL")
+            or DEFAULT_GEMINI_MODEL
+        )
 
         # Import lazily to avoid hard dependency when using Ollama
         try:
@@ -146,7 +160,12 @@ class OllamaLLMClient:
         host: Optional[str] = None,
         port: Optional[int] = None,
     ):
-        self.model_name = model or os.getenv("PORTF_LLM_MODEL", DEFAULT_OLLAMA_MODEL)
+        self.model_name = (
+            model
+            or os.getenv("PORTF_OLLAMA_MODEL")
+            or os.getenv("PORTF_LLM_MODEL")
+            or DEFAULT_OLLAMA_MODEL
+        )
         self.host = host or os.getenv("OLLAMA_HOST", "localhost")
         self.port = int(port or os.getenv("OLLAMA_PORT", "11434"))
         self.base_url = f"http://{self.host}:{self.port}"
@@ -223,8 +242,11 @@ class OpenRouterLLMClient:
             raise ValueError(
                 "OpenRouter API key required. Set OPENROUTER_API_KEY environment variable."
             )
-        self.model_name = model or os.getenv(
-            "PORTF_LLM_MODEL", DEFAULT_OPENROUTER_MODEL
+        self.model_name = (
+            model
+            or os.getenv("PORTF_OPENROUTER_MODEL")
+            or os.getenv("PORTF_LLM_MODEL")
+            or DEFAULT_OPENROUTER_MODEL
         )
         self.base_url = "https://openrouter.ai/api/v1"
         logger.info(f"OpenRouter LLM client initialized (model={self.model_name})")
@@ -278,7 +300,12 @@ class AnthropicLLMClient:
             raise ValueError(
                 "Anthropic API key required. Set ANTHROPIC_API_KEY environment variable."
             )
-        self.model_name = model or os.getenv("PORTF_LLM_MODEL", DEFAULT_ANTHROPIC_MODEL)
+        self.model_name = (
+            model
+            or os.getenv("PORTF_ANTHROPIC_MODEL")
+            or os.getenv("PORTF_LLM_MODEL")
+            or DEFAULT_ANTHROPIC_MODEL
+        )
         logger.info(f"Anthropic LLM client initialized (model={self.model_name})")
 
     def generate(self, prompt: str) -> str:
@@ -430,3 +457,61 @@ def reset_llm_client() -> None:
     """Reset the cached LLM client. Useful for testing."""
     global _llm_client
     _llm_client = None
+
+
+def get_llm_info() -> dict:
+    """Return config info for the current (or would-be) LLM client.
+
+    Does NOT instantiate a new client — reads env vars to infer what
+    get_llm_client() would produce. Safe to call at startup for logging.
+
+    Returns:
+        dict with keys: provider, model, search_capable, singleton_active.
+    """
+    provider = os.getenv("PORTF_LLM_PROVIDER", "auto").lower()
+
+    if provider == "gemini":
+        model = (
+            os.getenv("PORTF_GEMINI_MODEL")
+            or os.getenv("PORTF_LLM_MODEL")
+            or DEFAULT_GEMINI_MODEL
+        )
+        search_capable = True
+    elif provider == "ollama":
+        model = (
+            os.getenv("PORTF_OLLAMA_MODEL")
+            or os.getenv("PORTF_LLM_MODEL")
+            or DEFAULT_OLLAMA_MODEL
+        )
+        search_capable = False
+    elif provider == "openrouter":
+        model = (
+            os.getenv("PORTF_OPENROUTER_MODEL")
+            or os.getenv("PORTF_LLM_MODEL")
+            or DEFAULT_OPENROUTER_MODEL
+        )
+        search_capable = False
+    elif provider == "anthropic":
+        model = (
+            os.getenv("PORTF_ANTHROPIC_MODEL")
+            or os.getenv("PORTF_LLM_MODEL")
+            or DEFAULT_ANTHROPIC_MODEL
+        )
+        search_capable = True
+    else:
+        # "auto" — can't resolve without a network check
+        model = os.getenv("PORTF_LLM_MODEL") or "auto-detected"
+        search_capable = None
+
+    # If the singleton is already live, read from it directly.
+    if _llm_client is not None:
+        provider = type(_llm_client).__name__.replace("LLMClient", "").lower()
+        model = getattr(_llm_client, "model_name", model)
+        search_capable = isinstance(_llm_client, SearchCapableLLMClient)
+
+    return {
+        "provider": provider,
+        "model": model,
+        "search_capable": search_capable,
+        "singleton_active": _llm_client is not None,
+    }
