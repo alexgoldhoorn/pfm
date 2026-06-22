@@ -5,6 +5,7 @@ This module provides SQLite database functionality for portfolio management,
 including asset tracking, transaction recording, price history, and configuration.
 """
 
+import json
 import sqlite3
 import logging
 from contextlib import contextmanager
@@ -13,7 +14,7 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 
 # Database version for migration tracking
-DATABASE_VERSION = 23
+DATABASE_VERSION = 24
 
 
 # black
@@ -580,6 +581,20 @@ class Database:
             """
         )
 
+        # Named chat threads with persistent message history. See _migrate_to_v24.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chat_sessions (
+                id               TEXT PRIMARY KEY,
+                name             TEXT NOT NULL,
+                created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+                last_message_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                message_count    INTEGER DEFAULT 0,
+                messages         TEXT DEFAULT '[]'
+            )
+            """
+        )
+
         # Create triggers for updated_at timestamps
         for table in [
             "entities",
@@ -646,6 +661,8 @@ class Database:
             self._migrate_to_v22(conn)
         if current_version < 23:
             self._migrate_to_v23(conn)
+        if current_version < 24:
+            self._migrate_to_v24(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -1339,6 +1356,22 @@ class Database:
                 currency    TEXT NOT NULL DEFAULT 'EUR',
                 notes       TEXT,
                 created_at  TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.commit()
+
+    def _migrate_to_v24(self, conn: sqlite3.Connection) -> None:
+        """Add chat_sessions table for persistent named chat threads."""
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chat_sessions (
+                id               TEXT PRIMARY KEY,
+                name             TEXT NOT NULL,
+                created_at       TEXT NOT NULL DEFAULT (datetime('now')),
+                last_message_at  TEXT NOT NULL DEFAULT (datetime('now')),
+                message_count    INTEGER DEFAULT 0,
+                messages         TEXT DEFAULT '[]'
             )
             """
         )
@@ -3140,6 +3173,64 @@ class Database:
             cursor = conn.execute("DELETE FROM goals WHERE id = ?", (goal_id,))
             conn.commit()
             return cursor.rowcount > 0
+
+    # ── Chat sessions ──────────────────────────────────────────────────────────
+
+    def create_chat_session(self, id: str, name: str) -> None:
+        """Create a new named chat session."""
+        with self.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO chat_sessions (id, name, created_at, last_message_at)
+                VALUES (?, ?, strftime('%Y-%m-%d %H:%M:%f', 'now'),
+                            strftime('%Y-%m-%d %H:%M:%f', 'now'))
+                """,
+                (id, name),
+            )
+            conn.commit()
+
+    def get_chat_session(self, id: str) -> Optional[Dict]:
+        """Return a chat session by id, or None if not found."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT id, name, created_at, last_message_at, message_count, messages "
+                "FROM chat_sessions WHERE id = ?",
+                (id,),
+            ).fetchone()
+        if row is None:
+            return None
+        result = dict(row)
+        result["messages"] = json.loads(result.get("messages") or "[]")
+        return result
+
+    def list_chat_sessions(self) -> List[Dict]:
+        """Return all chat sessions ordered by last_message_at DESC, then created_at DESC."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT id, name, created_at, last_message_at, message_count "
+                "FROM chat_sessions ORDER BY last_message_at DESC, created_at DESC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_chat_session_activity(self, id: str, messages: list) -> None:
+        """Persist messages list and update last_message_at + message_count."""
+        with self.get_connection() as conn:
+            conn.execute(
+                """
+                UPDATE chat_sessions
+                SET messages = ?, last_message_at = datetime('now'), message_count = ?
+                WHERE id = ?
+                """,
+                (json.dumps(messages), len(messages), id),
+            )
+            conn.commit()
+
+    def delete_chat_session(self, id: str) -> bool:
+        """Delete a chat session. Returns True if a row was deleted."""
+        with self.get_connection() as conn:
+            cursor = conn.execute("DELETE FROM chat_sessions WHERE id = ?", (id,))
+            conn.commit()
+        return cursor.rowcount > 0
 
     def backup_database(self, backup_path: str) -> bool:
         """Create database backup."""
