@@ -61,11 +61,12 @@ def _append_history(db, session_id: str, role: str, content: str) -> None:
     Auto-creates the session row if it does not already exist so that callers
     (including the chat engine) do not need a separate create step.
     """
-    history = _get_history(db, session_id)
-    history.append({"role": role, "content": content})
-    history = history[-_CHAT_HISTORY_MAX:]
     try:
-        if not db.get_chat_session(session_id):
+        session = db.get_chat_session(session_id)
+        history = session["messages"] if session else []
+        history.append({"role": role, "content": content})
+        history = history[-_CHAT_HISTORY_MAX:]
+        if not session:
             db.create_chat_session(session_id, "New Chat")
         db.update_chat_session_activity(session_id, history)
     except Exception as e:
