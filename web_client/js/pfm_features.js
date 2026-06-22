@@ -478,14 +478,16 @@ function setupChatPage() {
     const inputEl    = document.getElementById('chatInput');
     const sendBtn    = document.getElementById('chatSendBtn');
     const extractBtn = document.getElementById('chatExtractBtn');
+    const newBtn     = document.getElementById('chatNewBtn');
+    const newBtnMob  = document.getElementById('chatNewBtnMobile');
+    const sessionsList = document.getElementById('chatSessionsList');
+    const threadNameEl = document.getElementById('chatActiveThreadName');
     if (!messagesEl || !inputEl) return;
 
-    // Stable session ID for this page load
-    const sessionId = 'web-' + Math.random().toString(36).slice(2, 10);
+    let sessionId = null;
+    let sessions = [];
 
-    function scrollBottom() {
-        messagesEl.scrollTop = messagesEl.scrollHeight;
-    }
+    function scrollBottom() { messagesEl.scrollTop = messagesEl.scrollHeight; }
 
     function removeEmpty() {
         const empty = document.getElementById('chatEmpty');
@@ -501,7 +503,6 @@ function setupChatPage() {
     function appendMessage(role, text) {
         removeEmpty();
         const isUser = role === 'user';
-        // Assistant replies are markdown → render to HTML; user input is escaped.
         let body, extraStyle;
         if (isUser) {
             body = escapeHtml(text);
@@ -572,7 +573,6 @@ function setupChatPage() {
             const checkedIdxs = Array.from(card.querySelectorAll('.chat-tx-select:checked'))
                 .map(cb => parseInt(cb.dataset.idx));
             if (checkedIdxs.length === 0) { alert('Nothing selected.'); return; }
-
             btn.disabled = true;
             btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
             const f = (cls, i) => card.querySelector(`.${cls}[data-idx="${i}"]`);
@@ -603,17 +603,77 @@ function setupChatPage() {
         scrollBottom();
     }
 
+    function renderSessionsList() {
+        if (!sessions.length) {
+            sessionsList.innerHTML = '<div class="list-group-item text-muted small py-2">No threads yet.</div>';
+            return;
+        }
+        sessionsList.innerHTML = sessions.map(s => `
+            <button class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-2 px-3 ${s.id === sessionId ? 'active' : ''}"
+                    data-session-id="${esc(s.id)}" style="font-size:0.85rem;">
+                <span class="text-truncate flex-grow-1">${esc(s.name)}</span>
+                <span class="badge bg-secondary rounded-pill ms-auto" style="font-size:0.7rem;">${s.message_count || 0}</span>
+                <i class="bi bi-x chat-delete-session flex-shrink-0" title="Delete thread" style="cursor:pointer;opacity:0.6;"></i>
+            </button>`).join('');
+
+        sessionsList.querySelectorAll('[data-session-id]').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                if (e.target.classList.contains('chat-delete-session')) {
+                    e.stopPropagation();
+                    const id = btn.dataset.sessionId;
+                    if (!confirm('Delete this thread?')) return;
+                    await window.apiClient.deleteChatSession(id);
+                    sessions = sessions.filter(s => s.id !== id);
+                    if (id === sessionId) {
+                        if (sessions.length) {
+                            await activateSession(sessions[0].id);
+                        } else {
+                            await createAndActivateSession('New Chat 1');
+                        }
+                    } else {
+                        renderSessionsList();
+                    }
+                    return;
+                }
+                await activateSession(btn.dataset.sessionId);
+            });
+        });
+    }
+
+    async function activateSession(id) {
+        sessionId = id;
+        const s = sessions.find(x => x.id === id);
+        if (threadNameEl) threadNameEl.textContent = s ? s.name : '';
+        messagesEl.innerHTML = '<div class="text-muted text-center small mt-auto" id="chatEmpty"><i class="bi bi-robot fs-3 d-block mb-2"></i><strong>What can I help you with?</strong><br><span class="text-muted">Try: "What is my total P&L?" or paste a broker statement.</span></div>';
+        renderSessionsList();
+        try {
+            const { messages } = await window.apiClient.getChatSessionMessages(id);
+            if (messages && messages.length) {
+                messagesEl.innerHTML = '';
+                messages.forEach(m => appendMessage(m.role, m.content));
+            }
+        } catch (e) { /* leave empty state */ }
+    }
+
+    async function createAndActivateSession(name) {
+        const s = await window.apiClient.createChatSession(name);
+        sessions.unshift({ id: s.id, name: s.name, message_count: 0 });
+        await activateSession(s.id);
+    }
+
     async function doSend() {
         const text = inputEl.value.trim();
         if (!text) return;
         inputEl.value = '';
         appendMessage('user', text);
-
         sendBtn.disabled = true;
         sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
         try {
             const data = await window.apiClient.sendChat(text, sessionId);
             appendMessage('assistant', data.answer || '(no response)');
+            // update message_count in sidebar
+            const s = sessions.find(x => x.id === sessionId);
+            if (s) { s.message_count = (s.message_count || 0) + 2; renderSessionsList(); }
         } catch (err) {
             appendMessage('assistant', 'Error: ' + err.message);
         } finally {
@@ -627,7 +687,6 @@ function setupChatPage() {
         if (!text) { alert('Paste a broker statement first.'); return; }
         inputEl.value = '';
         appendMessage('user', '[Broker statement — extracting transactions…]');
-
         extractBtn.disabled = true;
         extractBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
         try {
@@ -645,11 +704,51 @@ function setupChatPage() {
         }
     }
 
+    async function doNewChat() {
+        const n = sessions.filter(s => s.name.startsWith('New Chat')).length + 1;
+        await createAndActivateSession(`New Chat ${n}`);
+    }
+
     sendBtn.addEventListener('click', doSend);
     extractBtn.addEventListener('click', doExtract);
-    inputEl.addEventListener('keydown', e => {
-        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) doSend();
-    });
+    inputEl.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) doSend(); });
+    if (newBtn) newBtn.addEventListener('click', doNewChat);
+    if (newBtnMob) newBtnMob.addEventListener('click', doNewChat);
+
+    // Initialise: load sessions, handle pending context
+    (async () => {
+        try {
+            sessions = await window.apiClient.listChatSessions();
+        } catch (e) {
+            sessionsList.innerHTML = '<div class="list-group-item text-muted small py-2">Could not load threads.</div>';
+            sessions = [];
+        }
+
+        const pending = window._chatPendingContext;
+        window._chatPendingContext = null;
+
+        if (pending) {
+            await createAndActivateSession(pending.threadName);
+            appendMessage('user', pending.openingMessage);
+            sendBtn.disabled = true;
+            sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+            try {
+                const data = await window.apiClient.sendChat(pending.openingMessage, sessionId);
+                appendMessage('assistant', data.answer || '(no response)');
+                const s = sessions.find(x => x.id === sessionId);
+                if (s) { s.message_count = (s.message_count || 0) + 2; renderSessionsList(); }
+            } catch (err) {
+                appendMessage('assistant', 'Error: ' + err.message);
+            } finally {
+                sendBtn.disabled = false;
+                sendBtn.innerHTML = '<i class="bi bi-send me-1"></i>Send';
+            }
+        } else if (sessions.length) {
+            await activateSession(sessions[0].id);
+        } else {
+            await createAndActivateSession('New Chat 1');
+        }
+    })();
 }
 
 // ---------------------------------------------------------------------------
