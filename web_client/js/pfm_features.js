@@ -219,6 +219,19 @@ function createNavigationManager() {
             // Make sure the active item's section is expanded so it's visible.
             if (typeof expandNavSectionFor === 'function') expandNavSectionFor(pageName);
 
+            // Update mobile topbar to show the current page name.
+            const PAGE_TITLES = {
+                dashboard: 'Dashboard', assets: 'Assets', transactions: 'Transactions',
+                holdings: 'Holdings', analytics: 'Analytics', watchlist: 'Watchlist',
+                goals: 'Goals', research: 'Research', chat: 'AI Chat',
+                importexport: 'Import / Export', portfolios: 'Brokers',
+                forecast: 'Wealth Simulator', help: 'Help & Guide',
+                version: "What's New", about: 'About', resources: 'Resources',
+                networth: 'Net Worth', diagnostics: 'Diagnostics',
+            };
+            const titleEl = document.getElementById('mobilePageTitle');
+            if (titleEl) titleEl.textContent = PAGE_TITLES[pageName] || pageName;
+
             this.currentPage = pageName;
         },
 
@@ -712,7 +725,7 @@ function setupPortfoliosPage() {
     });
 
     addBtn.addEventListener('click', () => {
-        document.getElementById('portfolioModalTitle').textContent = 'Add Portfolio';
+        document.getElementById('portfolioModalTitle').textContent = 'Add Broker';
         document.getElementById('portfolioEditId').value = '';
         document.getElementById('portfolioName').value = '';
         document.getElementById('portfolioCurrency').value = 'EUR';
@@ -761,7 +774,7 @@ window.setAssetPrice = async function(id, symbol, currency) {
 };
 
 window.editPortfolio = function(id, name, currency, description, website) {
-    document.getElementById('portfolioModalTitle').textContent = 'Edit Portfolio';
+    document.getElementById('portfolioModalTitle').textContent = 'Edit Broker';
     document.getElementById('portfolioEditId').value           = id;
     document.getElementById('portfolioName').value             = name;
     document.getElementById('portfolioCurrency').value         = currency;

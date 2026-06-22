@@ -513,3 +513,16 @@ body {
 .pfm-sortable-th:hover { text-decoration: underline; }
 .pfm-sort-arrow { font-size: 0.75em; }
 .pfm-filter-row select { min-width: 6rem; }
+
+/* Scrollable tab bars on mobile — prevents nav-tabs from wrapping to multiple
+   rows on narrow viewports (Analytics has 8 tabs, Diagnostics has 2). */
+@media (max-width: 767.98px) {
+    .nav-tabs {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+    .nav-tabs::-webkit-scrollbar { display: none; }
+    .nav-tabs .nav-link { white-space: nowrap; }
+}
