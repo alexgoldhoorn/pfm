@@ -376,7 +376,8 @@ def gather_holdings_fundamentals(db, portfolio_id: Optional[int] = None) -> list
         position_values[sym] = {"value": value, "name": asset.get("name", sym)}
 
     holdings = []
-    for sym, data in sorted(position_values.items(), key=lambda x: -x[1]["value"]):
+    sorted_positions = sorted(position_values.items(), key=lambda x: -x[1]["value"])
+    for sym, data in sorted_positions[:20]:
         weight = round(data["value"] / total * 100, 1) if total else 0
         fund: dict = {}
         try:

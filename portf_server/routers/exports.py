@@ -179,7 +179,7 @@ async def export_yahoo_finance(
 ):
     """Download portfolio in Yahoo Finance CSV import format."""
     csv_content, skipped = build_yahoo_finance_csv(db, portfolio_id, mode)
-    csv_bytes = b"\xef\xbb\xbf" + csv_content.encode("utf-8")
+    csv_bytes = csv_content.encode("utf-8")
     return StreamingResponse(
         io.BytesIO(csv_bytes),
         media_type="text/csv",
