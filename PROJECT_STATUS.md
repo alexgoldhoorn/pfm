@@ -7,6 +7,8 @@
 
 Last updated: 2026-06-22
 
+**Recent (v2.4):** **AI Chat: persistent named threads** — schema v24 (`chat_sessions` table with messages JSON column), DB-backed sessions replacing kv_cache. Four new endpoints: `GET|POST /api/v1/llm/chat/sessions`, `DELETE /api/v1/llm/chat/sessions/{id}`, `GET /api/v1/llm/chat/sessions/{id}/messages`. Two-column chat layout (sessions sidebar + message area); `openChatWithContext()` in `pfm_core.js` allows Research workbench and Portfolio Health panel to pre-load threads with on-screen data. 635 tests passing.
+
 **Recent (v2.3.3):** **Bug fix — Monthly Cash Flow 500 error**: `monthly_cashflow` table was missing on the production DB (WAL checkpoint interrupted at first migration); added schema v23 recovery migration (`CREATE TABLE IF NOT EXISTS monthly_cashflow`) that re-creates the table on any DB where it is absent. 624 tests passing.
 
 **Recent (v2.3.2):** **Goals edit** — `PUT /api/v1/goals/{id}` + `db.update_goal()`; pencil button on each goal card opens a Bootstrap modal pre-filled with the goal's current values. **Holdings & Assets broker filter** — both pages now have a Broker/Portfolio dropdown; Holdings re-fetches with `?portfolio_id=`; Assets cross-references holdings symbols for the selected portfolio. **Net-worth chart hover tooltip** — mousemove crosshair on the SVG chart shows a dark tooltip with date, portfolio value, and invested cost. 624 tests passing.
