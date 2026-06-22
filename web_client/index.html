@@ -1238,10 +1238,33 @@
                         </div>
                     </div>
 
-                    <div class="row justify-content-center">
-                        <div class="col-12 col-xl-9">
+                    <div class="row g-3">
+                        <!-- Sessions sidebar -->
+                        <div class="col-md-3 d-none d-md-block">
+                            <div class="card h-100">
+                                <div class="card-header py-2 d-flex align-items-center justify-content-between">
+                                    <span class="fw-semibold small">Threads</span>
+                                    <button class="btn btn-sm btn-outline-primary py-0 px-2" id="chatNewBtn" title="New chat">
+                                        <i class="bi bi-plus-lg"></i>
+                                    </button>
+                                </div>
+                                <div id="chatSessionsList" class="list-group list-group-flush overflow-auto" style="max-height:60vh;">
+                                    <div class="list-group-item text-muted small py-2">Loading…</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Message area -->
+                        <div class="col-12 col-md-9">
+                            <!-- Active thread name + mobile new-chat -->
+                            <div class="d-flex align-items-center gap-2 mb-2">
+                                <span id="chatActiveThreadName" class="fw-semibold text-truncate"></span>
+                                <button class="btn btn-sm btn-outline-primary d-md-none ms-auto" id="chatNewBtnMobile">
+                                    <i class="bi bi-plus-lg me-1"></i>New
+                                </button>
+                            </div>
                             <!-- Message thread -->
-                            <div id="chatMessages" class="border rounded bg-white p-3 mb-3" style="height:clamp(260px,55vh,520px);overflow-y:auto;display:flex;flex-direction:column;gap:12px;">
+                            <div id="chatMessages" class="border rounded bg-white p-3 mb-3" style="height:clamp(260px,50vh,520px);overflow-y:auto;display:flex;flex-direction:column;gap:12px;">
                                 <div class="text-muted text-center small mt-auto" id="chatEmpty">
                                     <i class="bi bi-robot fs-3 d-block mb-2"></i>
                                     <strong>What can I help you with?</strong><br>
