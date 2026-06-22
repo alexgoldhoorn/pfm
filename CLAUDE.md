@@ -24,7 +24,7 @@ Portfolio Manager: a Python CLI + FastAPI server + web client for tracking stock
 ### Database
 SQLite by default (`portfolio.db`), PostgreSQL via `DATABASE_URL` env var. Use `portf_manager/database.py` for SQLite, `database_factory.py` for auto-detection.
 
-**Current schema version: 23.** Migrations run automatically on startup.
+**Current schema version: 24.** Migrations run automatically on startup.
 
 Key fields added in recent migrations:
 - v5: `tax REAL DEFAULT 0` on `transactions`; new `bookings` table (deposits/withdrawals)
@@ -46,6 +46,7 @@ Key fields added in recent migrations:
 - v21: `app_settings` table (`key TEXT PRIMARY KEY, value TEXT, updated_at`). Persistent key/value store for app-wide settings (no TTL, unlike `kv_cache`). `db.get_setting(key)` / `db.set_setting(key, value)`. Currently stores `google_spreadsheet_id` (the PDT sync sheet ID, editable from the Google Sheets page and persisted across browsers).
 - v22: `push_subscriptions` table (PWA Web Push: `endpoint, p256dh, auth`). VAPID keys auto-generated at startup via `app_settings`.
 - v23: Recovery migration — ensures `monthly_cashflow` exists via `CREATE TABLE IF NOT EXISTS` (table was absent on some DBs that had the v20 version row).
+- v24: `chat_sessions` table (id TEXT PK, name TEXT, created_at TEXT, last_message_at TEXT, message_count INTEGER DEFAULT 0, messages TEXT DEFAULT '[]'). Persistent named chat threads stored in the DB; replaces the old kv_cache-based history. DB methods: `db.create/get/list/update/delete_chat_session`. Web: two-column layout (sessions sidebar col-md-3 + message area col-md-9). `openChatWithContext(threadName, openingMessage)` in `pfm_core.js` sets `window._chatPendingContext` and navigates to chat; used by Research and Portfolio Health.
 
 ### Performance / event loop
 - Endpoints doing blocking yfinance I/O are plain `def` (not `async`) so FastAPI runs them in a threadpool — an `async` handler calling `yf` blocks the event loop and stalls every other request. Applies to: diversification, performance, snapshot, rebalance analysis, research generate/lookup, watchlist list/alerts. Keep new blocking-IO endpoints sync.
@@ -213,6 +214,15 @@ The **Research workbench** (web page `researchPage`, `setupResearchPage()`): pic
 - `POST /api/v1/llm/chat` — conversational endpoint with session history
 - `EnhancedChatEngine` uses **lazy initialization** — do NOT instantiate at module level (crashes without API key)
 
+#### Chat sessions
+- `GET /api/v1/llm/chat/sessions` — list sessions, ordered by `last_message_at` DESC
+- `POST /api/v1/llm/chat/sessions` body `{name}` → `{id, name}`
+- `DELETE /api/v1/llm/chat/sessions/{id}` — 204 or 404
+- `GET /api/v1/llm/chat/sessions/{id}/messages` → `{messages: [{role, content}]}`
+- `POST /api/v1/llm/chat` — unchanged; auto-creates a `"New Chat"` session when `session_id` is absent/unknown
+- `_get_history` / `_append_history` in `llm.py` now read/write `chat_sessions.messages` column directly (kv_cache no longer used for chat)
+- v24 migration adds `chat_sessions` table (id TEXT PK, name, created_at, last_message_at, message_count, messages JSON)
+
 ### Auth
 API key auth for all server endpoints (`X-API-Key` header). User auth with password hashing in local CLI mode.
 `SERVER_API_KEY` env var is **auto-seeded** into the `api_keys` table at startup (`app.py` lifespan). No manual DB insert needed after a container restart — just set the var in `.env.local`.
@@ -279,16 +289,17 @@ Inline (no modals). Sections:
 - **Export CSV** / **Export PDT** → fetch + blob download via `setupExportButtons()`
 
 ### Chat page
-`setupChatPage()` in `pfm_features.js`:
+`setupChatPage()` in `pfm_features.js`: two-column layout (sessions sidebar col-md-3 + message area col-md-9).
 - **Send** (or Ctrl+Enter) → `POST /api/v1/llm/chat` → conversation thread
 - **Extract & Import** → `POST /api/v1/llm/extract-transactions` → inline transaction card with import button
+- `openChatWithContext(threadName, openingMessage)` in `pfm_core.js` sets `window._chatPendingContext` and navigates to the chat page; used by Research workbench ("Chat about this" button) and Portfolio Health panel ("Discuss with AI" button), both pre-loading the chat with on-screen data in a named thread
 
 ### API client (`saveImportedTransactions`)
 Signature: `saveImportedTransactions(transactions, bookings = [], portfolioId = null)` — always pass bookings array (even if empty) so PDT bookings are saved alongside transactions.
 
 ## Testing
 - Run tests: `uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e`
-- **580 passing**, 0 failures, 6 skipped (as of last session).
+- **635 passing**, 0 failures, 6 skipped (as of last session).
 - **Web client JS tests**: `make test-js` (or `node --test web_client/js/tests/`) — Node's built-in runner, no npm deps. Loads the 4 split scripts (`pfm_core`/`pfm_pages`/`pfm_analytics`/`pfm_features`) into one vm scope with DOM stubs: a load/smoke test (catches a broken split) plus `esc()` XSS-escaping and `Fmt` number/date formatting. CI runs it as the `test-js` job.
 - Pre-push hook runs the full unit test suite automatically (`git push` will fail if tests fail).
 - Safe F541 fixer: `uv run python scripts/fix_f541.py` — strips `f` from f-strings without `{}` using a regex that correctly excludes triple-quoted strings.
@@ -296,7 +307,7 @@ Signature: `saveImportedTransactions(transactions, bookings = [], portfolioId = 
 - PDT parser tests: `tests/test_pdt_xlsx_parser.py` (42 tests)
 - PDT Sheets sync tests: `tests/test_pdt_sheets_sync.py` (40 tests — all mocked, no real API calls)
 - Import/export + sync API tests: `tests/unit/test_imports_exports.py` (30 tests)
-- DB tests: `tests/test_database.py` — version assertion is `== 17` (bump it with `DATABASE_VERSION`)
+- DB tests: `tests/test_database.py` — version assertion is `== 24` (bump it with `DATABASE_VERSION`)
 
 ## Documentation (Default Behaviour)
 When adding or changing any feature, always update **both**:
