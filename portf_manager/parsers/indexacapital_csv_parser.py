@@ -12,6 +12,7 @@ from typing import List, Tuple
 from dataclasses import dataclass
 
 from ..llm_types import LLMTransaction
+from .utils import parse_european_number
 
 
 @dataclass
@@ -27,26 +28,6 @@ class IndexaCapitalCSVParser:
 
     # Transaction types that should be imported as trades
     IMPORTABLE_TYPES = {"SUSCRIPCIÓN", "REEMBOLSO"}
-
-    def _parse_european_amount(self, amount_str: str) -> float:
-        """
-        Parse European format monetary amount like "1.583,25 €" or "695,33 €"
-        Handles dots as thousands separators and comma as decimal separator.
-        """
-        # Remove € symbol and spaces
-        cleaned = amount_str.replace("€", "").replace(" ", "").strip()
-
-        # Check if it contains both dot and comma
-        if "." in cleaned and "," in cleaned:
-            # European format: 1.583,25 (dot = thousands separator, comma = decimal)
-            # Remove dots (thousands separator) and replace comma with dot
-            cleaned = cleaned.replace(".", "").replace(",", ".")
-        elif "," in cleaned:
-            # Simple comma format: 695,33 (comma = decimal separator)
-            cleaned = cleaned.replace(",", ".")
-        # else: already in correct format or simple number
-
-        return float(cleaned)
 
     def parse_csv_content(self, csv_content: str) -> IndexaCapitalParseResult:
         """
@@ -96,7 +77,7 @@ class IndexaCapitalCSVParser:
                 quantity = float(quantity_str.replace(",", "."))
 
                 # Parse total amount (remove € symbol and convert comma to dot)
-                total_amount = float(self._parse_european_amount(total_amount_str))
+                total_amount = parse_european_number(total_amount_str)
 
                 # Calculate unit price
                 price = total_amount / quantity if quantity > 0 else 0.0
@@ -115,11 +96,7 @@ class IndexaCapitalCSVParser:
 
                 # Parse fees (European number format, may be empty)
                 try:
-                    fees = (
-                        float(self._parse_european_amount(fees_str))
-                        if fees_str
-                        else 0.0
-                    )
+                    fees = parse_european_number(fees_str) if fees_str else 0.0
                 except (ValueError, AttributeError):
                     fees = 0.0
 

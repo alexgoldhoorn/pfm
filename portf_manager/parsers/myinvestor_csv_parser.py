@@ -25,6 +25,7 @@ from io import StringIO
 from typing import List, Tuple
 
 from portf_manager.llm_types import LLMTransaction
+from portf_manager.parsers.utils import parse_european_number as _num
 
 # "NAME @ 12" or "NAME @ 12,5" → (name, quantity)
 _TRADE_RE = re.compile(r"^(.*?)\s*@\s*([0-9]+(?:[.,][0-9]+)?)\s*$")
@@ -41,21 +42,6 @@ class MyInvestorParseResult:
     transactions: List[LLMTransaction] = field(default_factory=list)
     bookings: List[dict] = field(default_factory=list)
     skipped: List[Tuple[str, str]] = field(default_factory=list)
-
-
-def _num(raw: str) -> float:
-    """Parse a European-formatted number ('-1.488,58' or '-1488,58' or '1200')."""
-    s = (raw or "").strip().replace("€", "")
-    s = re.sub(r"[^0-9,.\-]", "", s)
-    if "," in s and "." in s:
-        # last separator is the decimal one
-        if s.rfind(",") > s.rfind("."):
-            s = s.replace(".", "").replace(",", ".")
-        else:
-            s = s.replace(",", "")
-    elif "," in s:
-        s = s.replace(",", ".")
-    return float(s) if s not in ("", "-") else 0.0
 
 
 def _date(raw: str) -> str:
