@@ -19,6 +19,7 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from portf_manager import market
+from portf_manager.positions import _sort_key, compute_positions
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
@@ -69,30 +70,18 @@ def _resolve_asset(db, symbol: str) -> dict:
 
 
 def _position_stats(db, asset: Optional[dict]) -> dict:
-    """Current quantity, average cost and remaining cost basis for a held asset.
+    """Current quantity, average cost, remaining cost basis, and realised P&L.
 
-    Walks transactions chronologically (the DB returns them DESC, so reverse).
-    ``cost_basis`` is the cost of the shares still held; ``realised`` is the
-    realised P&L from sells (FIFO-ish proportional cost reduction).
+    Uses compute_positions (chronological, handles splits) so this stays
+    consistent with the holdings and analytics endpoints.
     """
     if not asset:
         return {"quantity": 0.0, "avg_cost": 0.0, "cost_basis": 0.0, "realised": 0.0}
-    qty = cost = realised = 0.0
-    for tx in reversed(db.get_transactions_by_asset(asset["id"])):
-        t = tx["transaction_type"].lower()
-        q = float(tx["quantity"])
-        total = float(tx["total_amount"])
-        if t == "buy":
-            qty += q
-            cost += total
-        elif t == "sell":
-            if qty > 0:
-                avg = cost / qty
-                realised += total - avg * q
-                cost *= (qty - q) / qty
-            qty -= q
-        elif t == "split" and q > 0:
-            qty *= q
+    txns = db.get_transactions_by_asset(asset["id"])
+    positions, realised = compute_positions(txns)
+    pos = positions.get(asset["id"], {"quantity": 0.0, "cost": 0.0})
+    qty = pos["quantity"]
+    cost = pos["cost"]
     return {
         "quantity": qty,
         "avg_cost": cost / qty if qty > 0 else 0.0,
@@ -122,18 +111,18 @@ def _cost_evolution(db, asset: Optional[dict]) -> tuple[list, list]:
         }
         for tx in rows
     ]
+    # Replay transactions in chronological order to build the series.
     qty = cost = 0.0
     series = []
-    for tx in reversed(rows):
+    for tx in sorted(rows, key=_sort_key):
         t = tx["transaction_type"].lower()
         q = float(tx["quantity"])
         total = float(tx["total_amount"] or 0)
         if t == "buy":
             qty += q
             cost += total
-        elif t == "sell":
-            if qty > 0:
-                cost *= (qty - q) / qty
+        elif t == "sell" and qty > 0:
+            cost *= max(qty - q, 0.0) / qty
             qty -= q
         elif t == "split" and q > 0:
             qty *= q
@@ -736,8 +725,6 @@ async def check_alerts(db=Depends(get_database), api_key_info: dict = Depends(_a
     Compare all price targets against latest stored prices.
     Returns triggered alerts (does NOT send Telegram — use the cron for that).
     """
-    from portf_manager.positions import compute_positions
-
     # Current positions (quantity + cost basis) keyed by asset_id, so each alert
     # can report how much is held and the unrealised P&L if acted on.
     positions, _ = compute_positions(db.get_all_transactions())
