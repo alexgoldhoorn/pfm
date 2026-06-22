@@ -515,7 +515,7 @@
 
                     <!-- Assets Filter -->
                     <div class="row g-2 mb-3">
-                        <div class="col-12 col-sm-4">
+                        <div class="col-12 col-sm-3">
                             <select class="form-select form-select-sm" id="assetTypeFilter">
                                 <option value="">All Asset Types</option>
                                 <option value="stock">Stock</option>
@@ -526,7 +526,12 @@
                                 <option value="commodity">Commodity</option>
                             </select>
                         </div>
-                        <div class="col-12 col-sm-5 position-relative">
+                        <div class="col-12 col-sm-3">
+                            <select class="form-select form-select-sm" id="assetPortfolioFilter">
+                                <option value="">All Brokers</option>
+                            </select>
+                        </div>
+                        <div class="col-12 col-sm-3 position-relative">
                             <input type="text" class="form-control form-control-sm" id="assetSearchInput" autocomplete="off" placeholder="Search by name, ticker or alias…">
                             <div id="assetSuggest" class="list-group position-absolute w-100 shadow-sm" style="z-index:1050; display:none; max-height:260px; overflow-y:auto;"></div>
                         </div>
@@ -734,9 +739,14 @@
 
                     <!-- Holdings Filter -->
                     <div class="row g-2 mb-3">
-                        <div class="col-12 col-sm-4">
+                        <div class="col-12 col-sm-3">
                             <select class="form-select form-select-sm" id="holdingsTypeFilter">
                                 <option value="all">All Asset Types</option>
+                            </select>
+                        </div>
+                        <div class="col-12 col-sm-3">
+                            <select class="form-select form-select-sm" id="holdingsPortfolioFilter">
+                                <option value="">All Brokers</option>
                             </select>
                         </div>
                         <div class="col-12 col-sm-5">
@@ -3487,6 +3497,52 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
          scripts. They share one global scope and MUST load in this order:
          core → pages → analytics → features (features carries the
          DOMContentLoaded bootstrap, so it loads last). -->
+    <!-- Edit Goal Modal -->
+    <div class="modal fade" id="editGoalModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-bullseye me-2"></i>Edit Goal</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="editGoalForm">
+                        <input type="hidden" id="editGoalId">
+                        <div class="row g-3">
+                            <div class="col-12">
+                                <label class="form-label" for="editGoalName">Name *</label>
+                                <input type="text" class="form-control" id="editGoalName" required>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label" for="editGoalTarget">Target (€) *</label>
+                                <input type="number" step="any" min="0" class="form-control" id="editGoalTarget" required>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label" for="editGoalDate">Target date *</label>
+                                <input type="date" class="form-control" id="editGoalDate" required>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label" for="editGoalMonthly">Monthly (€) *</label>
+                                <input type="number" step="any" min="0" class="form-control" id="editGoalMonthly" required>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label" for="editGoalReturn">Return % *</label>
+                                <input type="number" step="any" class="form-control" id="editGoalReturn" required>
+                            </div>
+                        </div>
+                        <div id="editGoalStatus" class="mt-2"></div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" form="editGoalForm" class="btn btn-primary" id="editGoalSaveBtn">
+                        <i class="bi bi-check-lg me-1"></i>Save
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script src="js/pfm_core.js?v=1781886806"></script>
     <script src="js/pfm_pages.js?v=1780000051"></script>
     <script src="js/pfm_analytics.js?v=1780000055"></script>

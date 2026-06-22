@@ -642,9 +642,12 @@ async def save_imported_transactions(
                     description="Auto-created from broker file import",
                 )
 
-            # Resolve portfolio: per-transaction broker overrides the request-level portfolio_id
+            # Resolve portfolio: per-transaction broker is only a fallback when the
+            # user has not explicitly selected a portfolio from the UI. If portfolio_id
+            # is set, always honour it — LLM-extracted broker names are often slightly
+            # different from the stored portfolio name and would create duplicates.
             tx_portfolio_id = body.portfolio_id
-            if tx.broker:
+            if tx.broker and not body.portfolio_id:
                 tx_portfolio_id = db.get_or_create_portfolio(
                     tx.broker, base_currency=currency or "EUR"
                 )
@@ -707,7 +710,7 @@ async def save_imported_transactions(
     for bk in body.bookings:
         try:
             bk_portfolio_id = body.portfolio_id
-            if bk.broker:
+            if bk.broker and not body.portfolio_id:
                 bk_portfolio_id = db.get_or_create_portfolio(
                     bk.broker, base_currency=bk.currency or "EUR"
                 )
@@ -745,7 +748,7 @@ async def save_imported_transactions(
     for dep in body.deposits:
         try:
             dep_portfolio_id = body.portfolio_id
-            if dep.broker:
+            if dep.broker and not body.portfolio_id:
                 dep_portfolio_id = db.get_or_create_portfolio(
                     dep.broker, base_currency=dep.currency or "EUR"
                 )

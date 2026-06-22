@@ -105,6 +105,9 @@ async function loadGoals() {
                                 <h5 class="card-title mb-0"><i class="bi bi-bullseye me-2 text-primary"></i>${esc(g.name || 'Goal')}</h5>
                                 <div class="d-flex align-items-center gap-2">
                                     ${trackBadge}
+                                    <button class="btn btn-sm btn-outline-secondary" onclick="window.editGoalRow(${g.id})" title="Edit goal">
+                                        <i class="bi bi-pencil"></i>
+                                    </button>
                                     <button class="btn btn-sm btn-outline-danger" onclick="window.deleteGoalRow(${g.id}, '${(g.name || '').replace(/'/g, "\\'")}')" title="Delete goal">
                                         <i class="bi bi-trash"></i>
                                     </button>
@@ -154,6 +157,52 @@ window.deleteGoalRow = async function(id, name) {
         alert('Error deleting goal: ' + err.message);
     }
 };
+
+window.editGoalRow = async function(id) {
+    const goals = await window.apiClient.getGoals().catch(() => []);
+    const g = goals.find(x => x.id === id);
+    if (!g) { alert('Goal not found'); return; }
+
+    document.getElementById('editGoalId').value = g.id;
+    document.getElementById('editGoalName').value = g.name || '';
+    document.getElementById('editGoalTarget').value = g.target_amount_eur || 0;
+    document.getElementById('editGoalDate').value = (g.target_date || '').slice(0, 10);
+    document.getElementById('editGoalMonthly').value = g.monthly_contribution_eur || 0;
+    document.getElementById('editGoalReturn').value = g.expected_return_pct ?? 6;
+    document.getElementById('editGoalStatus').innerHTML = '';
+
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('editGoalModal')).show();
+};
+
+function setupEditGoalModal() {
+    const form = document.getElementById('editGoalForm');
+    if (!form) return;
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const id = parseInt(document.getElementById('editGoalId').value);
+        const body = {
+            name: document.getElementById('editGoalName').value.trim(),
+            target_amount_eur: parseFloat(document.getElementById('editGoalTarget').value),
+            target_date: document.getElementById('editGoalDate').value,
+            monthly_contribution_eur: parseFloat(document.getElementById('editGoalMonthly').value),
+            expected_return_pct: parseFloat(document.getElementById('editGoalReturn').value)
+        };
+        const btn = document.getElementById('editGoalSaveBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
+        document.getElementById('editGoalStatus').innerHTML = '';
+        try {
+            await window.apiClient.updateGoal(id, body);
+            bootstrap.Modal.getInstance(document.getElementById('editGoalModal')).hide();
+            loadGoals();
+        } catch (err) {
+            document.getElementById('editGoalStatus').innerHTML = `<span class="text-danger small">Error: ${err.message}</span>`;
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save';
+        }
+    });
+}
 
 function setupGoalsPage() {
     const form = document.getElementById('addGoalForm');
@@ -3327,6 +3376,7 @@ document.addEventListener('DOMContentLoaded', function() {
     setupResearchModal();
     setupWatchlistPage();
     setupGoalsPage();
+    setupEditGoalModal();
 
     const refreshHoldings = document.getElementById('refreshHoldings');
     if (refreshHoldings) {

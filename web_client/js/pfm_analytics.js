@@ -696,7 +696,77 @@ function renderNetworthChart(snaps) {
         <!-- Endpoint dot on value line -->
         <circle cx="${xScale(n - 1).toFixed(1)}" cy="${yScale(parseFloat(snaps[n - 1].total_value_eur || 0)).toFixed(1)}" r="5"
                 fill="#2563eb" stroke="white" stroke-width="2"/>
+
+        <!-- Hover crosshair (hidden by default) -->
+        <g id="anNetworthCrosshair" display="none">
+            <line id="anCrosshairLine" x1="0" y1="${PAD.top}" x2="0" y2="${(PAD.top + innerH).toFixed(1)}"
+                  stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 2"/>
+            <circle id="anCrosshairDotV" r="4" fill="#2563eb" stroke="white" stroke-width="2"/>
+            <circle id="anCrosshairDotC" r="4" fill="#94a3b8" stroke="white" stroke-width="2"/>
+            <rect id="anTooltipBg" rx="4" ry="4" fill="#1e293b" fill-opacity="0.88"/>
+            <text id="anTooltipDate"  font-size="11" fill="#94a3b8"/>
+            <text id="anTooltipVal"   font-size="12" fill="#93c5fd" font-weight="bold"/>
+            <text id="anTooltipCost"  font-size="11" fill="#94a3b8"/>
+        </g>
+
+        <!-- Invisible mouse-capture overlay -->
+        <rect id="anNetworthOverlay"
+              x="${PAD.left}" y="${PAD.top}"
+              width="${innerW}" height="${innerH}"
+              fill="transparent" style="cursor:crosshair"/>
     `;
+
+    // Wire hover behaviour
+    const overlay  = svg.getElementById('anNetworthOverlay');
+    const crosshair = svg.getElementById('anNetworthCrosshair');
+    const chLine   = svg.getElementById('anCrosshairLine');
+    const dotV     = svg.getElementById('anCrosshairDotV');
+    const dotC     = svg.getElementById('anCrosshairDotC');
+    const ttBg     = svg.getElementById('anTooltipBg');
+    const ttDate   = svg.getElementById('anTooltipDate');
+    const ttVal    = svg.getElementById('anTooltipVal');
+    const ttCost   = svg.getElementById('anTooltipCost');
+
+    overlay.addEventListener('mousemove', (e) => {
+        const rect = svg.getBoundingClientRect();
+        const svgX = (e.clientX - rect.left) * (W / rect.width);
+        // Nearest snap index
+        const frac = Math.max(0, Math.min(1, (svgX - PAD.left) / innerW));
+        const idx  = Math.round(frac * (n - 1));
+        const snap = snaps[idx];
+        const val  = parseFloat(snap.total_value_eur || 0);
+        const cost = parseFloat(snap.total_cost_eur  || 0);
+        const cx   = xScale(idx);
+        const cyV  = yScale(val);
+        const cyC  = yScale(cost);
+
+        chLine.setAttribute('x1', cx.toFixed(1));
+        chLine.setAttribute('x2', cx.toFixed(1));
+        dotV.setAttribute('cx', cx.toFixed(1));
+        dotV.setAttribute('cy', cyV.toFixed(1));
+        dotC.setAttribute('cx', cx.toFixed(1));
+        dotC.setAttribute('cy', cyC.toFixed(1));
+
+        const dateStr = new Date(snap.snapshot_date).toLocaleDateString(Fmt.loc(), { day: 'numeric', month: 'short', year: 'numeric' });
+        ttDate.textContent = dateStr;
+        ttVal.textContent  = '● ' + yTickFmt(val);
+        ttCost.textContent = '● ' + yTickFmt(cost) + ' invested';
+
+        // Position tooltip: prefer right of cursor, flip left near edge
+        const TT_W = 148, TT_H = 52, TT_PAD = 8;
+        let ttX = cx + 8;
+        let ttY = PAD.top + 8;
+        if (ttX + TT_W > W - PAD.right) ttX = cx - TT_W - 8;
+        ttBg.setAttribute('x', ttX);  ttBg.setAttribute('y', ttY);
+        ttBg.setAttribute('width', TT_W); ttBg.setAttribute('height', TT_H);
+        ttDate.setAttribute('x', ttX + TT_PAD); ttDate.setAttribute('y', ttY + 14);
+        ttVal.setAttribute('x',  ttX + TT_PAD); ttVal.setAttribute('y',  ttY + 29);
+        ttCost.setAttribute('x', ttX + TT_PAD); ttCost.setAttribute('y', ttY + 44);
+
+        crosshair.setAttribute('display', '');
+    });
+
+    overlay.addEventListener('mouseleave', () => crosshair.setAttribute('display', 'none'));
 
     placeholder.style.display = 'none';
 }

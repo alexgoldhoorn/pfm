@@ -133,6 +133,21 @@ function createPageManager() {
             const tableBody = document.querySelector('#assetsPage tbody');
             if (tableBody) tableBody.innerHTML = '<tr><td colspan="7" class="text-center"><div class="spinner-border spinner-border-sm me-2"></div>Loading…</td></tr>';
             try {
+                // Populate broker dropdown once
+                const aPortFilter = document.getElementById('assetPortfolioFilter');
+                if (aPortFilter && aPortFilter.options.length <= 1) {
+                    try {
+                        const portfolios = await window.apiClient.getPortfolios();
+                        portfolios.forEach(p => {
+                            const opt = document.createElement('option');
+                            opt.value = p.id;
+                            opt.textContent = p.name;
+                            aPortFilter.appendChild(opt);
+                        });
+                        aPortFilter.onchange = () => this._renderFilteredAssets();
+                    } catch (e) { /* non-fatal */ }
+                }
+
                 const assets = await window.apiClient.getAssets();
 
                 this._assetsData = assets;
@@ -153,7 +168,7 @@ function createPageManager() {
                     this._setupAssetAutocomplete();
                 }
 
-                this._renderFilteredAssets();
+                await this._renderFilteredAssets();
                 this.hideLoadingSpinners();
             } catch (error) {
                 console.error('Error loading assets page:', error);
@@ -162,15 +177,24 @@ function createPageManager() {
             }
         },
 
-        _renderFilteredAssets: function() {
+        _renderFilteredAssets: async function() {
             const tableBody = document.querySelector('#assetsPage tbody');
             if (!tableBody || !this._assetsData) return;
 
-            const typeVal   = document.getElementById('assetTypeFilter')?.value || '';
-            const searchVal = (document.getElementById('assetSearchInput')?.value || '').trim();
+            const typeVal      = document.getElementById('assetTypeFilter')?.value || '';
+            const portfolioVal = document.getElementById('assetPortfolioFilter')?.value || '';
+            const searchVal    = (document.getElementById('assetSearchInput')?.value || '').trim();
 
             let filtered = this._assetsData;
             if (typeVal) filtered = filtered.filter(a => a.asset_type === typeVal);
+            if (portfolioVal) {
+                // Filter to assets that have holdings in the selected portfolio
+                try {
+                    const { holdings = [] } = await window.apiClient.getHoldings(portfolioVal);
+                    const symbols = new Set(holdings.map(h => h.symbol));
+                    filtered = filtered.filter(a => symbols.has(a.symbol));
+                } catch (e) { /* show all on error */ }
+            }
             if (searchVal) {
                 // Smart match using AssetSearch (no result limit — this is a table filter)
                 const matched = new Set(
@@ -650,10 +674,29 @@ function createPageManager() {
             const tableBody = document.querySelector('#holdingsTable tbody');
             if (!tableBody) return;
 
+            // Populate broker dropdown once
+            const hPortFilter = document.getElementById('holdingsPortfolioFilter');
+            if (hPortFilter && hPortFilter.options.length <= 1) {
+                try {
+                    const portfolios = await window.apiClient.getPortfolios();
+                    portfolios.forEach(p => {
+                        const opt = document.createElement('option');
+                        opt.value = p.id;
+                        opt.textContent = p.name;
+                        hPortFilter.appendChild(opt);
+                    });
+                    hPortFilter.onchange = () => {
+                        if (this._holdingsST) { this._holdingsST = null; }
+                        this.loadHoldingsPage();
+                    };
+                } catch (e) { /* non-fatal */ }
+            }
+            const selectedPortfolioId = hPortFilter?.value || null;
+
             tableBody.innerHTML = '<tr><td colspan="12" class="text-center"><div class="spinner-border spinner-border-sm me-2"></div>Loading...</td></tr>';
 
             try {
-                const data = await window.apiClient.getHoldings();
+                const data = await window.apiClient.getHoldings(selectedPortfolioId);
                 const { holdings = [], summary = {} } = data;
 
                 // Update summary cards

@@ -380,6 +380,63 @@ class TestImportSave:
         assert data["errors"] == []
 
     @pytest.mark.asyncio
+    async def test_explicit_portfolio_id_not_overridden_by_llm_broker_name(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        """Regression: when portfolio_id is supplied, LLM-extracted broker names on
+        bookings/transactions must NOT call get_or_create_portfolio and create a
+        duplicate portfolio with a slightly different name (e.g. "MY INVESTOR" vs
+        "MyInvestor")."""
+        # Create a portfolio with the canonical name.
+        pf_resp = await async_test_client.post(
+            "/api/v1/portfolios",
+            json={"name": "MyInvestorReg", "base_currency": "EUR"},
+            headers=auth_headers,
+        )
+        assert pf_resp.status_code == 201
+        portfolio_id = pf_resp.json()["id"]
+
+        # Count portfolios before the import.
+        before = await async_test_client.get(
+            "/api/v1/portfolios/", headers=auth_headers
+        )
+        count_before = len(before.json())
+
+        # Save a booking whose broker field has a different casing/spacing than
+        # the existing portfolio, but portfolio_id is explicitly set.
+        payload = {
+            "portfolio_id": portfolio_id,
+            "transactions": [],
+            "bookings": [
+                {
+                    "broker": "MY INVESTOR REG",  # LLM-extracted, different from stored name
+                    "date": "2025-06-22",
+                    "action": "Deposit",
+                    "amount": 200.0,
+                    "currency": "EUR",
+                }
+            ],
+        }
+        resp = await async_test_client.post(
+            "/api/v1/import/save", json=payload, headers=auth_headers
+        )
+        assert resp.status_code == 200
+        assert resp.json()["saved_bookings"] == 1
+
+        # No new portfolio should have been created.
+        after = await async_test_client.get("/api/v1/portfolios/", headers=auth_headers)
+        assert (
+            len(after.json()) == count_before
+        ), "A new portfolio was created despite portfolio_id being explicitly set"
+
+        # The booking must be linked to the correct portfolio.
+        bookings = await async_test_client.get(
+            "/api/v1/bookings/", headers=auth_headers
+        )
+        saved = [b for b in bookings.json() if b["portfolio_id"] == portfolio_id]
+        assert len(saved) == 1
+
+    @pytest.mark.asyncio
     async def test_save_bookings_roundtrip_via_api(
         self, async_test_client: AsyncClient, auth_headers
     ):
