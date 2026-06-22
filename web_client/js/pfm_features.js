@@ -295,7 +295,7 @@ function createNavigationManager() {
                 case 'analytics':    window.pageManager.loadAnalyticsPage(); break;
                 case 'watchlist':    window.pageManager.loadWatchlistPage(); break;
                 case 'goals':        window.pageManager.loadGoalsPage(); break;
-                case 'chat':         break;
+                case 'chat':         if (window.chatPageHandlePendingContext) window.chatPageHandlePendingContext(); break;
                 case 'importexport': if (window.loadImportExportPage) window.loadImportExportPage(); break;
                 case 'portfolios':   window.pageManager.loadPortfoliosPage(); break;
                 case 'research':     if (window.loadResearchPage) window.loadResearchPage(); break;
@@ -749,6 +749,27 @@ function setupChatPage() {
             await createAndActivateSession('New Chat 1');
         }
     })();
+
+    window.chatPageHandlePendingContext = async function() {
+        const pending = window._chatPendingContext;
+        if (!pending) return;
+        window._chatPendingContext = null;
+        await createAndActivateSession(pending.threadName);
+        appendMessage('user', pending.openingMessage);
+        sendBtn.disabled = true;
+        sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+        try {
+            const data = await window.apiClient.sendChat(pending.openingMessage, sessionId);
+            appendMessage('assistant', data.answer || '(no response)');
+            const s = sessions.find(x => x.id === sessionId);
+            if (s) { s.message_count = (s.message_count || 0) + 2; renderSessionsList(); }
+        } catch (err) {
+            appendMessage('assistant', 'Error: ' + err.message);
+        } finally {
+            sendBtn.disabled = false;
+            sendBtn.innerHTML = '<i class="bi bi-send me-1"></i>Send';
+        }
+    };
 }
 
 // ---------------------------------------------------------------------------
@@ -3060,7 +3081,6 @@ function setupResearchPage() {
                 chatBtn.style.display = '';
                 chatBtn.onclick = () => {
                     const f = R.fundamentals || {};
-                    const recKey = f.recommendationKey ? (f.recommendationKey.replace(/_/g, ' ')) : null;
                     const upside = (R.price && R.llm && R.llm.fair_value)
                         ? ((R.llm.fair_value - R.price) / R.price * 100).toFixed(1) + '%'
                         : null;
