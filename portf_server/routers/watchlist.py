@@ -6,7 +6,6 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional, Tuple
 
-import yfinance as yf
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
@@ -78,9 +77,9 @@ def add_watchlist(
     name, asset_type = body.name, body.asset_type
     if not name:
         try:
-            info = yf.Ticker(body.symbol.upper()).info
-            name = info.get("shortName") or info.get("longName")
-            qt = info.get("quoteType", "").lower()
+            fund = market.get_fundamentals(db, body.symbol.upper())
+            name = fund.get("shortName") or fund.get("longName")
+            qt = (fund.get("quoteType") or "").lower()
             asset_type = asset_type or {
                 "equity": "stock",
                 "etf": "etf",
