@@ -26,13 +26,15 @@ class TestChatHistoryPersistence:
         db, path = _fresh_db()
         try:
             sid = "sess-1"
-            for i in range(12):
+            # Insert more messages than _CHAT_HISTORY_MAX to trigger trimming.
+            n = llm_router._CHAT_HISTORY_MAX + 2
+            for i in range(n):
                 llm_router._append_history(db, sid, "user", f"msg {i}")
             history = llm_router._get_history(db, sid)
             # Trimmed to the configured maximum.
             assert len(history) == llm_router._CHAT_HISTORY_MAX
             # Keeps the most recent messages.
-            assert history[-1] == {"role": "user", "content": "msg 11"}
+            assert history[-1] == {"role": "user", "content": f"msg {n - 1}"}
         finally:
             os.unlink(path)
 

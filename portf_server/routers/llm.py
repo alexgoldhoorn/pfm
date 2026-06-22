@@ -39,33 +39,35 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
-# Chat session history is stored in the DB-backed kv_cache (not a module dict),
-# so it is shared across gunicorn workers and survives a restart — a module dict
-# meant a follow-up message routed to another worker lost all context.
-_CHAT_HISTORY_TTL = 24 * 3600  # forget idle sessions after a day
-_CHAT_HISTORY_MAX = 10  # keep only the last N messages
-
-
-def _history_key(session_id: str) -> str:
-    return f"chat:session:{session_id}"
+# Chat session history is stored in the DB chat_sessions table (not kv_cache),
+# so it is shared across gunicorn workers and survives a restart — kv_cache had
+# a TTL-based expiry that silently dropped session history after 24 h of inactivity.
+_CHAT_HISTORY_MAX = 20  # keep only the last N messages per session
 
 
 def _get_history(db, session_id: str) -> List[Dict[str, str]]:
-    """Return the stored message history for *session_id* (empty if none)."""
+    """Return stored message history for session_id from the DB (empty if none)."""
     try:
-        return db.cache_get(_history_key(session_id)) or []
+        session = db.get_chat_session(session_id)
+        return session["messages"] if session else []
     except Exception as e:
         logger.warning(f"chat history read failed for {session_id}: {e}")
         return []
 
 
 def _append_history(db, session_id: str, role: str, content: str) -> None:
-    """Append a message to the session history, trimmed to the last N."""
+    """Append a message to the session history and persist to DB.
+
+    Auto-creates the session row if it does not already exist so that callers
+    (including the chat engine) do not need a separate create step.
+    """
     history = _get_history(db, session_id)
     history.append({"role": role, "content": content})
     history = history[-_CHAT_HISTORY_MAX:]
     try:
-        db.cache_set(_history_key(session_id), history, _CHAT_HISTORY_TTL)
+        if not db.get_chat_session(session_id):
+            db.create_chat_session(session_id, "New Chat")
+        db.update_chat_session_activity(session_id, history)
     except Exception as e:
         logger.warning(f"chat history write failed for {session_id}: {e}")
 
@@ -123,6 +125,12 @@ class ChatResponse(BaseModel):
     context_summary: Optional[Dict[str, Any]] = None
     recommendations: Optional[List[Dict[str, Any]]] = None
     warnings: Optional[List[str]] = None
+
+
+class CreateSessionRequest(BaseModel):
+    """Request body for creating a new chat session."""
+
+    name: str
 
 
 # Intent classification (from enhanced version)
@@ -191,7 +199,10 @@ class EnhancedChatEngine:
     ) -> ChatResponse:
         """Process enhanced chat request with stock advice integration."""
         try:
-            session_id = request.session_id or "default"
+            session_id = request.session_id or uuid.uuid4().hex[:12]
+            # ensure session row exists (auto-create for API callers without a session)
+            if not db.get_chat_session(session_id):
+                db.create_chat_session(session_id, "New Chat")
 
             # Classify intent to determine if we need advanced stock analysis
             intent = IntentClassifier.classify_intent(request.message)
@@ -631,6 +642,58 @@ def get_enhanced_chat_engine() -> EnhancedChatEngine:
                 detail=f"Chat engine unavailable: {str(e)}",
             )
     return _enhanced_chat_engine
+
+
+# ---------------------------------------------------------------------------
+# Chat session management endpoints
+# These must appear before @router.post("/chat") to avoid routing shadowing.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/chat/sessions")
+def list_chat_sessions(
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(get_api_key_auth_for_llm),
+):
+    """List all chat sessions ordered by most recent first."""
+    return db.list_chat_sessions()
+
+
+@router.post("/chat/sessions")
+def create_chat_session(
+    request: CreateSessionRequest,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(get_api_key_auth_for_llm),
+):
+    """Create a new named chat session."""
+    session_id = uuid.uuid4().hex[:12]
+    db.create_chat_session(session_id, request.name)
+    return {"id": session_id, "name": request.name}
+
+
+@router.delete("/chat/sessions/{session_id}", status_code=204)
+def delete_chat_session(
+    session_id: str,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(get_api_key_auth_for_llm),
+):
+    """Delete a chat session and its message history."""
+    deleted = db.delete_chat_session(session_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+
+@router.get("/chat/sessions/{session_id}/messages")
+def get_chat_session_messages(
+    session_id: str,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(get_api_key_auth_for_llm),
+):
+    """Return the full message history for a chat session."""
+    session = db.get_chat_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"messages": session["messages"]}
 
 
 # Transaction extraction endpoint (unchanged)
