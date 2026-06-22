@@ -1260,6 +1260,40 @@ function createAPIClient() {
             return response.json();
         },
 
+        async listChatSessions() {
+            const response = await fetch(this.baseURL + '/api/v1/llm/chat/sessions', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) throw new Error('Failed to load sessions');
+            return response.json();
+        },
+
+        async createChatSession(name) {
+            const response = await fetch(this.baseURL + '/api/v1/llm/chat/sessions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify({ name })
+            });
+            if (!response.ok) throw new Error('Failed to create session');
+            return response.json();
+        },
+
+        async deleteChatSession(id) {
+            const response = await fetch(this.baseURL + '/api/v1/llm/chat/sessions/' + id, {
+                method: 'DELETE',
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok && response.status !== 404) throw new Error('Failed to delete session');
+        },
+
+        async getChatSessionMessages(id) {
+            const response = await fetch(this.baseURL + '/api/v1/llm/chat/sessions/' + id + '/messages', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) throw new Error('Failed to load messages');
+            return response.json();
+        },
+
         exportUrl(format) {
             return `${this.baseURL}/api/v1/export/${format}`;
         },
