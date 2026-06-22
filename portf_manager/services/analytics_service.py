@@ -72,6 +72,48 @@ def dividend_income(transactions: list[dict]) -> dict[str, Any]:
     }
 
 
+def dividend_ttm_enrichment(
+    transactions: list[dict],
+    cost_by_symbol: dict[str, float],
+) -> dict:
+    """Trailing-12-month dividend income per symbol, projected annual, and yield-on-cost.
+
+    Args:
+        transactions: All transactions (non-dividend rows are ignored).
+        cost_by_symbol: Current cost basis per symbol (for yield-on-cost calc).
+
+    Returns:
+        dict with keys: ttm, ttm_by_symbol, projected_annual, yield_on_cost.
+        All amounts are rounded to 2 decimal places.
+    """
+    cutoff = date.today().replace(year=date.today().year - 1)
+    ttm_by_symbol: dict[str, float] = {}
+    for tx in transactions:
+        if tx.get("transaction_type", "").lower() != "dividend":
+            continue
+        d = _parse_date(tx.get("transaction_date"))
+        if d is None or d < cutoff:
+            continue
+        sym = tx.get("symbol", "?")
+        ttm_by_symbol[sym] = ttm_by_symbol.get(sym, 0) + float(
+            tx.get("total_amount") or 0
+        )
+
+    yield_on_cost = {}
+    for sym, ttm in ttm_by_symbol.items():
+        cost = cost_by_symbol.get(sym, 0)
+        if cost > 0:
+            yield_on_cost[sym] = round(ttm / cost * 100, 2)
+
+    total_ttm = sum(ttm_by_symbol.values())
+    return {
+        "ttm": round(total_ttm, 2),
+        "ttm_by_symbol": {s: round(v, 2) for s, v in ttm_by_symbol.items()},
+        "projected_annual": round(total_ttm, 2),
+        "yield_on_cost": yield_on_cost,
+    }
+
+
 # ── Performance: cash flows, TWR, IRR ──────────────────────────────────────────
 
 
