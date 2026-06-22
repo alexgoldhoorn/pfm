@@ -285,3 +285,29 @@ test("historyToForecast: missing fields → not ok", () => {
     const h = historyToForecast({}, { snapshots_used: 100 });
     assert.equal(h.ok, false);
 });
+
+test("openChatWithContext is a function in global scope", () => {
+    const w = loadAppIntoContext();
+    assert.equal(typeof w.openChatWithContext, "function", "openChatWithContext");
+});
+
+test("openChatWithContext sets pending context and calls navigationManager.showPage", () => {
+    const w = loadAppIntoContext();
+    // Stub navigationManager since it's only created on DOMContentLoaded in the real app
+    let showPageCalled = false;
+    let showPageArg = null;
+    w.navigationManager = {
+        showPage: (page) => {
+            showPageCalled = true;
+            showPageArg = page;
+        },
+    };
+
+    w.openChatWithContext("Research: AAPL", "Hello");
+
+    // Values cross vm realms, so check fields individually
+    assert.equal(w._chatPendingContext.threadName, "Research: AAPL");
+    assert.equal(w._chatPendingContext.openingMessage, "Hello");
+    assert.equal(showPageCalled, true, "navigationManager.showPage was called");
+    assert.equal(showPageArg, "chat", "navigationManager.showPage called with 'chat'");
+});
