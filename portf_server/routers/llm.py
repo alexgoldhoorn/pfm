@@ -12,7 +12,7 @@ import logging
 import time
 import uuid
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, status, Depends, Request
 from pydantic import BaseModel, Field
@@ -66,7 +66,11 @@ def _append_history(db, session_id: str, role: str, content: str) -> None:
         session = db.get_chat_session(session_id)
         history = session["messages"] if session else []
         history.append(
-            {"role": role, "content": content, "ts": datetime.utcnow().isoformat()}
+            {
+                "role": role,
+                "content": content,
+                "ts": datetime.now(timezone.utc).isoformat(),
+            }
         )
         history = history[-_CHAT_HISTORY_MAX:]
         if not session:
