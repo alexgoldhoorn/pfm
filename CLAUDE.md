@@ -26,358 +26,242 @@ SQLite by default (`portfolio.db`), PostgreSQL via `DATABASE_URL` env var. Use `
 
 **Current schema version: 24.** Migrations run automatically on startup.
 
-Key fields added in recent migrations:
-- v5: `tax REAL DEFAULT 0` on `transactions`; new `bookings` table (deposits/withdrawals)
-- v6: `currency TEXT` on `transactions` — per-transaction currency overrides asset currency
-- v7: `allocation_targets` (rebalancing), `price_targets` (buy/sell thresholds + fair value), `research_reports` (LLM valuation cache)
-- v8: `portfolio_snapshots` (daily value/cost for the net-worth chart, recorded by the price cron)
-- v9: `watchlist` (tracked tickers + buy_below), `goals` (FIRE targets + projection)
-- v10: `website TEXT` on `portfolios` (broker website; `description` already existed)
-- v11: `auto_price INTEGER DEFAULT 1` on `assets` (0 = price cron skips it, preserving manual prices)
-- v12: `research_notes` table (versioned research: thesis, conviction, method, assumptions, fair/buy/sell, llm_summary, sources)
-- v13: `'index'` added to the `assets.asset_type` CHECK; funds whose name carries the `Idx` marker reclassified `stock`/`etf` → `index`. Rebuilding a table with a CHECK requires `PRAGMA legacy_alter_table=ON` around the `RENAME` so child FK references aren't rewritten to the temp table — see `_migrate_to_v13`. `asset_type` is also a Pydantic enum (`portf_server/schemas/assets.py`) and a `models.py` enum — add new types to BOTH or the assets list 500s.
-- v14: `kv_cache` table (`key, value JSON, expires_at` epoch). DB-backed TTL cache via `portf_manager/cache.py` `cached(db, key, ttl, producer)`. Used to memoise slow/stable yfinance lookups: sector/country (~7d) in diversification, fundamentals (~6h) and news (~30m) in research, benchmark history (~12h) in performance. Degrades to a live call on miss/error.
-- v15: `manual_assets` table (off-brokerage net worth: cash/property/pension/mortgage/loans). CRUD on `Database`; `/api/v1/networth` returns brokerage value (from positions) + manual assets/liabilities + total net worth (EUR). Web: "Net Worth" page under Planning.
-- v16: `'interest'` added to the `transactions.transaction_type` CHECK (table rebuild via `legacy_alter_table=ON`, common-column copy, `update_transactions_timestamp` trigger re-created). First-class P2P/savings interest; the tax-estimate sums interest into the IRPF savings base (`interest_income_eur`). `transaction_type` is also `models.py` `TransactionType` + the SQLAlchemy CHECK — update all three. Tax tools: `/analytics/tax-report` (per-lot FIFO + withholding, CSV in UI), `/analytics/tax-optimizer` (harvestable losses + 2-month wash-sale flag + est. tax saved).
-- v17: `price_update_runs` table (each price-refresh run: timing, updated/skipped/error counts, JSON symbol lists). **New schema tables must be added in BOTH `_create_all_tables` (fresh DBs) AND a `_migrate_to_vN` (existing DBs)** — a migration-only add breaks fresh installs/tests with "no such table". Recorded by `cli.update_prices` (via `db.record_price_update_run`, mirrored on `http_client.PortfolioHTTPClient` → `POST /analytics/update-runs` in server mode); read by `GET /analytics/update-runs`. Powers the **Diagnostics** web page (sidebar Tools → `diagnosticsPage`, `loadDiagnosticsPage()`): freshness summary + stale/unpriced table + update history.
-- v18: `assets.ticker` nullable column (yfinance-style market symbol for ISIN-keyed assets).
-- v19: `fixed_deposits` table — fixed-term deposit tracking (name, portfolio_id, principal, currency, interest_rate, start_date, maturity_date, status CHECK 'active'/'matured'/'closed', interest_paid, notes). CRUD via `db.create/get/get_all/update/delete_fixed_deposit`. Router at `/api/v1/deposits`; maturity posts an `interest` transaction against a synthetic `DEPOSITS` cash asset (`auto_price=0`). Active principals included in `GET /api/v1/networth` as `deposits_eur`. LLM extraction via `POST /api/v1/llm/extract-deposits` → `GeminiClient.extract_deposits`. Web UI on Net Worth page.
-- v20: `monthly_cashflow` table (`id, label, category CHECK('salary'|'other_income'|'mortgage'|'loan'|'rest'), amount, currency, notes, created_at`). Category implies income/expense (salary/other_income = income; mortgage/loan/rest = expense). CRUD: `db.get/create/delete_monthly_cashflow`. Router at `GET|POST|DELETE /api/v1/networth/cashflow`; GET returns `items`, `income_eur`, `expenses_eur`, `net_monthly_eur`, `by_category`. Web: Monthly Cash Flow section on Net Worth page (5 summary cards + entries table + add form). No update endpoint — delete and re-add.
-- v21: `app_settings` table (`key TEXT PRIMARY KEY, value TEXT, updated_at`). Persistent key/value store for app-wide settings (no TTL, unlike `kv_cache`). `db.get_setting(key)` / `db.set_setting(key, value)`. Currently stores `google_spreadsheet_id` (the PDT sync sheet ID, editable from the Google Sheets page and persisted across browsers).
-- v22: `push_subscriptions` table (PWA Web Push: `endpoint, p256dh, auth`). VAPID keys auto-generated at startup via `app_settings`.
-- v23: Recovery migration — ensures `monthly_cashflow` exists via `CREATE TABLE IF NOT EXISTS` (table was absent on some DBs that had the v20 version row).
-- v24: `chat_sessions` table (id TEXT PK, name TEXT, created_at TEXT, last_message_at TEXT, message_count INTEGER DEFAULT 0, messages TEXT DEFAULT '[]'). Persistent named chat threads stored in the DB; replaces the old kv_cache-based history. DB methods: `db.create/get/list/update/delete_chat_session`. Web: two-column layout (sessions sidebar col-md-3 + message area col-md-9). `openChatWithContext(threadName, openingMessage)` in `pfm_core.js` sets `window._chatPendingContext` and navigates to chat; used by Research and Portfolio Health.
+Migration history (condensed — see `_migrate_to_vN` for full schema detail):
+- v5: `bookings` table (deposits/withdrawals); `tax` on `transactions`
+- v6: per-tx `currency` | v7: `allocation_targets`, `price_targets`, `research_reports`
+- v8: `portfolio_snapshots` | v9: `watchlist`, `goals` | v10: `portfolios.website` | v11: `assets.auto_price`
+- v12: `research_notes` | v13: `'index'` asset_type — **add new `asset_type` values to BOTH Pydantic (`portf_server/schemas/assets.py`) AND `models.py` enum or `/assets` 500s**
+- v14: `kv_cache` (TTL cache via `portf_manager/cache.py` `cached(db, key, ttl, producer)`)
+- v15: `manual_assets` | v16: `'interest'` tx_type — update `models.py TransactionType` + SQLAlchemy CHECK + rebuild `transactions` table (all three)
+- v17: `price_update_runs` | v18: `assets.ticker` | v19: `fixed_deposits` | v20: `monthly_cashflow`
+- v21: `app_settings` (`key TEXT PK, value TEXT`; `db.get/set_setting`) | v22: `push_subscriptions` (PWA push) | v23: recovery migration
+- v24: `chat_sessions` (id TEXT PK, name, created_at, last_message_at, message_count, messages JSON) — persistent named chat threads; `db.create/get/list/update/delete_chat_session`; web: col-md-3 sidebar + col-md-9 message area
 
-### Performance / event loop
-- Endpoints doing blocking yfinance I/O are plain `def` (not `async`) so FastAPI runs them in a threadpool — an `async` handler calling `yf` blocks the event loop and stalls every other request. Applies to: diversification, performance, snapshot, rebalance analysis, research generate/lookup, watchlist list/alerts. Keep new blocking-IO endpoints sync.
-- The `.venv` is root-owned (Docker-created); run tooling with `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run …`.
+⚠️ **New tables must appear in BOTH `_create_all_tables` (fresh DBs) AND `_migrate_to_vN` (existing DBs)** — migration-only adds break fresh installs/tests with "no such table".
+⚠️ **CHECK constraint rebuilds** require `PRAGMA legacy_alter_table=ON` around the `RENAME` — see `_migrate_to_v13`.
 
-### Recent feature surface (web)
-- **AI Chat** reads the real portfolio: `_build_portfolio_context` in `routers/llm.py` builds positions/totals/recent-tx from the DB (was a stub). Web renders Markdown via marked.js; themed for dark mode.
-- **Research** workbench: autocomplete, position panel (cost basis, P/L, sell calculator, avg-cost chart), fundamentals with source labels, LLM analysis, and `GET /research/{symbol}/report?format=md&download=true` (archivable Markdown dossier).
-- **Analytics** is tabbed + lazy-loaded (Performance/Dividends/Gain-Loss/Tax/Risk/Fees); diversification loads on demand. Adds: gain/loss leaderboard, dividend forward income + calendar (`ttm_by_symbol`), tax report UI + CSV (`/analytics/tax-report`).
-- **Dashboard** alerts banner (price targets + watchlist buy zones); cash bookings shown inline in Transactions.
-- **Settings** (browser-local PREFS): theme, number/date format, default currency (prefills new entries), default broker, holdings sort, hide-tiny-positions, benchmark, landing page; plus **change password** via `POST /auth/change-password-key` (key-auth model — current password is the gate).
-- **Pages**: Help (PAGE_HELP + glossary), What's New, About (links pfm.goldhoorn.net), Resources (curated external links). Sidebar is grouped + collapsible (state in localStorage).
-- Static assets are cache-busted with `?v=` query strings in `index.html` (bump on every web change); nginx serves JS/CSS `no-cache`, images/fonts immutable.
-
-All transaction SELECT queries use `COALESCE(t.currency, a.currency) AS currency` with an explicit column list (NOT `t.*`) because `sqlite3.Row` dict uses the first column when names collide.
+All transaction SELECT queries use `COALESCE(t.currency, a.currency) AS currency` with an explicit column list (NOT `t.*`) — `sqlite3.Row` uses the first column when names collide.
 
 `bookings` table: `id, portfolio_id, date, action (Deposit|Withdrawal), amount, currency`
 
+### Performance / event loop
+- Endpoints doing blocking yfinance I/O are plain `def` (not `async`) so FastAPI runs them in a threadpool. Keep new blocking-IO endpoints sync.
+- The `.venv` is root-owned (Docker-created); run tooling with `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run …`.
+
 ### LLM
 Provider-agnostic via `portf_manager/llm_client.py`. Factory `get_llm_client()` auto-detects in priority order:
-1. Ollama (`OLLAMA_HOST:OLLAMA_PORT`) — local, no API key
-2. Gemini (`GEMINI_API_KEY`) — default model `gemini-2.5-flash`
-3. OpenRouter (`OPENROUTER_API_KEY`) — default model `openai/gpt-4o-mini`
-4. Anthropic (`ANTHROPIC_API_KEY`) — default model `claude-sonnet-4-6`
+1. Ollama (`OLLAMA_HOST:OLLAMA_PORT`) | 2. Gemini (`GEMINI_API_KEY`, default `gemini-2.5-flash`) | 3. OpenRouter (`OPENROUTER_API_KEY`) | 4. Anthropic (`ANTHROPIC_API_KEY`, default `claude-sonnet-4-6`)
 
-Override with env vars:
-- `PORTF_LLM_PROVIDER=auto|ollama|gemini|openrouter|anthropic`
-- `PORTF_LLM_MODEL=<model-name>`
-- `ANTHROPIC_API_KEY` — required when provider=anthropic
+Override: `PORTF_LLM_PROVIDER=auto|ollama|gemini|openrouter|anthropic`, `PORTF_LLM_MODEL=<model>`.
 
-**Search grounding**: `GeminiLLMClient` and `AnthropicLLMClient` implement `generate_with_search(prompt, symbol) -> str`. The research `generate_valuation_report()` detects this via `hasattr(llm, "generate_with_search")` and calls it instead of pre-fetching yfinance news. Gemini uses the `google-genai` SDK with the `google_search` tool; Anthropic uses the `web_search_20250305` built-in tool (up to 5 searches). Both return a JSON envelope `{"text": "<llm json>", "sources": [...]}`. The SDKs are lazy-imported; a missing package falls back gracefully to the non-search path. Ollama and OpenRouter do NOT implement search grounding.
+**Search grounding**: `GeminiLLMClient` and `AnthropicLLMClient` implement `generate_with_search(prompt, symbol) -> str`. Research `generate_valuation_report()` detects via `hasattr(llm, "generate_with_search")`. Returns `{"text": "<llm json>", "sources": [...]}`. Ollama/OpenRouter do NOT support search grounding.
 
-`docker-compose.yml` sets `PORTF_LLM_PROVIDER=gemini` for the backend (the container has `GEMINI_API_KEY`). These `environment:` entries override `.env*`, so change the provider there, not only in `.env.local`. `GeminiClient.extract_transactions` keeps a statement's time (`...THH:MM:SS`) when present; `extract_bookings` pulls cash deposits/withdrawals.
+`docker-compose.yml` sets `PORTF_LLM_PROVIDER=gemini` — these `environment:` entries override `.env*`; change the provider there, not only in `.env.local`.
 
-All LLM calls go through `LLMClient.generate(prompt) -> str`. `GeminiClient` is a legacy wrapper kept for backward compatibility; it delegates to `get_llm_client()`.
+All LLM calls: `LLMClient.generate(prompt) -> str`. `GeminiClient` is a legacy wrapper that delegates to `get_llm_client()`.
 
 ### CSV / File Parsers
-Each broker has a standalone parser module returning `LLMTransaction` objects via a `ParseResult` dataclass. Valid `tx_type` values: `buy`, `sell`, `dividend`, `interest` (validated in `LLMTransaction.validate()`).
-- `indexacapital_csv_parser.py` — semicolon CSV, European number format, ISINs, EUR (ISIN trades export). `_parse_indexacapital` in `imports.py` also auto-detects the **"Movimientos"** cash statement (`Fecha;Movimiento;Importe;Saldo`) → SEPA transfers become deposit/withdrawal bookings; fund subscriptions are skipped (no unit detail).
-- `myinvestor_csv_parser.py` — MyInvestor "Movimientos Mi Cuenta" CSV → INVEST=deposit booking; `NAME @ QTY` with Importe < 0 = buy, with Importe > 0 = dividend (qty = shares, price = unit payout); positive no-`@` = dividend lump-sum; fees/unit-less fund buys skipped. No ISIN/fees, so buys are flagged "review" in the preview.
-- `myinvestor_paste_parser.py` — Parses MyInvestor statements pasted as text (alternative to the CSV upload).
-- `mintos_csv_parser.py` — Mintos P2P statement (often 20k+ rows). Keeps only interest/withholding, **aggregates per month** into `interest` transactions (price=interest, tax=withholding) vs a synthetic `MINTOS` asset; principal/investment/secondary/fee rows ignored (summarised in the preview's skipped list). Deposit keywords: `depósit`, `deposit`, `incoming client`; withdrawal keywords: `retirada`, `withdrawal`, `outgoing`, `saliente` → bookings, kept individual (not aggregated). Large file → nginx `client_max_body_size 25m`.
-- `coinbase_csv_parser.py` — Coinbase Advanced Trade CSV export. Fiat `Deposit`/`Withdrawal` rows (Asset in a fiat allowlist) → deposit/withdrawal bookings; crypto `Send`/`Receive` stay skipped. Staking income rows (`Staking Income`, `Learning Reward`, etc.) → **`interest` transactions** (qty=1, price=EUR total of the reward; not a buy). `_parse_coinbase` returns `(previews, bookings, skipped)`.
-- `pdt_xlsx_parser.py` — Portfolio Dividend Tracker XLSX (import + export, all 3 sheets)
-- `pdt_sheets_sync.py` — Portfolio Dividend Tracker Google Sheets sync (pull/push)
+Each broker has a standalone parser returning `LLMTransaction` objects via `ParseResult`. Valid `tx_type`: `buy`, `sell`, `dividend`, `interest`.
+- `indexacapital_csv_parser.py` — semicolon CSV, European numbers, ISINs. Also auto-detects "Movimientos" cash statement → SEPA → deposit/withdrawal bookings; fund subscriptions skipped.
+- `myinvestor_csv_parser.py` — "Movimientos Mi Cuenta": INVEST=deposit; `NAME @ QTY` with Importe<0=buy, >0=dividend; positive no-`@`=dividend lump-sum. No ISIN/fees → buys flagged "review".
+- `myinvestor_paste_parser.py` — MyInvestor statements pasted as text.
+- `mintos_csv_parser.py` — P2P statement. Aggregates interest/withholding **per month** into `interest` transactions vs synthetic `MINTOS` asset. Deposits/withdrawals kept individual → bookings. Large files → nginx `client_max_body_size 25m`.
+- `coinbase_csv_parser.py` — Fiat Deposit/Withdrawal rows → bookings; staking income → `interest` tx (qty=1, price=EUR total). Returns `(previews, bookings, skipped)`.
+- `pdt_xlsx_parser.py` / `pdt_sheets_sync.py` — PDT XLSX and Google Sheets import/export.
 
 ### PDT Format (`pdt_xlsx_parser.py` and `pdt_sheets_sync.py`)
-The PDT v2 format has **5 sheets** with a 3-row header block (machine keys / group labels / display labels), data from row 4:
-- **Transactions** — buy/sell with costs, tax, exchange rate
-- **Dividends** — cash/stock/staking payouts
-- **Bookings** — deposits and withdrawals (no asset)
-- **Expenses** — broker costs (we export empty sheet with correct headers)
-- **Settings** — version 2.0 + PDT API URL (required for Google Sheets integration)
+5 sheets with 3-row header block (machine keys / group labels / display labels), data from row 4: Transactions, Dividends, Bookings, Expenses, Settings.
 
-`PDTXLSXParser.parse(path) → PDTParseResult` — reads from file (Transactions/Dividends/Bookings only).
-`PDTXLSXExporter.export(db, path)` — writes all 5 sheets from DB.
-`PDTSheetsSync(sheet_id).pull() → PDTParseResult` — reads Transactions/Dividends/Bookings from Google Sheet.
-`PDTSheetsSync(sheet_id).push(db)` — writes all 5 sheets to Google Sheet.
+`PDTXLSXParser.parse(path) → PDTParseResult` | `PDTXLSXExporter.export(db, path)` — writes all 5 sheets.
+`PDTSheetsSync(sheet_id).pull() → PDTParseResult` | `PDTSheetsSync(sheet_id).push(db)` — reads/writes Google Sheet.
 
-Google Sheets API uses `UNFORMATTED_VALUE + SERIAL_NUMBER` for reading (dates come back as floats; convert via `_serial_to_date`). Writing uses `USER_ENTERED` so ISO date strings are interpreted as dates.
+Google Sheets API: `UNFORMATTED_VALUE + SERIAL_NUMBER` for reading (dates = floats → `_serial_to_date`); `USER_ENTERED` for writing. Auth: `GOOGLE_SERVICE_ACCOUNT_FILE=service-account.json`.
 
-Auth: `GOOGLE_SERVICE_ACCOUNT_FILE=service-account.json` (already configured).
-
-**PDT compatibility rules** (verified against live PDT API endpoints):
-- Effect types: exactly `"Stock market"`, `"Crypto"`, `"Commodity"` (case-sensitive, these are PDT's live values)
-- Crypto and commodity assets **must have empty exchange** — use `_pdt_exchange(exchange, asset_type)` helper which returns `""` for crypto/commodity
-- Bookings display label (row 2 col 0) is `" "` (single space), not `"Broker"`
-- `"XETRA Exchange"`, `"Nasdaq"`, `"MyInvestor"`, `"Indexa Capital"` all match PDT's canonical names exactly
-- Dividend action is always `"Cash"` (we don't yet store Cash/Stock/Staking subtype separately)
+**PDT compatibility rules** (verified against live PDT API):
+- Effect types: exactly `"Stock market"`, `"Crypto"`, `"Commodity"` (case-sensitive)
+- Crypto/commodity assets: **must have empty exchange** — use `_pdt_exchange(exchange, asset_type)` helper
+- Bookings display label (row 2 col 0): `" "` (single space, not `"Broker"`)
+- Canonical exchange names: `"XETRA Exchange"`, `"Nasdaq"`, `"MyInvestor"`, `"Indexa Capital"`
+- Dividend action always `"Cash"` (Cash/Stock/Staking subtype not stored separately)
+- Only parse 3 sheets on import (Transactions/Dividends/Bookings); write all 5 on export/push.
 
 ### Import API (`portf_server/routers/imports.py`)
 - `POST /api/v1/import/upload` — multipart file + `broker` field → parse preview (no DB write)
 - `POST /api/v1/import/save` — `SaveRequest(transactions, bookings, portfolio_id, duplicate_action)` → write to DB
-- `POST /api/v1/import/check-duplicates` — flag which supplied rows already exist (no write); powers the text/LLM preview
-- Supported broker values: `indexacapital`, `myinvestor`, `mintos`, `coinbase`, `pdt`, `bookings` (generic cash-CSV → `parsers/bookings_csv_parser.py`)
-- `PreviewTransaction` has: `symbol, name, asset_type, tx_type, date, quantity, price, currency, fees, tax, exchange, notes, broker, is_duplicate`
-- `PreviewBooking` has: `broker, date, action, amount, currency, is_duplicate`
-- `SaveResponse` has: `saved, saved_bookings, duplicates_skipped, overwritten, errors`
-- **Duplicate handling**: `duplicate_action` = `skip` (default) | `add` (insert copy) | `overwrite` (update existing). `force=True` is the legacy alias for `add`. `find_duplicate_transaction` matches asset+type+qty(±0.0001)+price(±0.001%)+portfolio and is **time-aware**: matches on the calendar date, plus the time-of-day only when both rows carry one. `find_duplicate_booking` matches date+action+amount+currency+portfolio. Upload/preview set `is_duplicate`; the dedup is pure SQL (no LLM).
+- `POST /api/v1/import/check-duplicates` — flag duplicates (no write); powers text/LLM preview
+- Brokers: `indexacapital`, `myinvestor`, `mintos`, `coinbase`, `pdt`, `bookings`
+- `duplicate_action`: `skip` (default) | `add` | `overwrite`. `force=True` is legacy alias for `add`.
+- `find_duplicate_transaction` is **time-aware**: matches date + time-of-day only when both rows carry one. `find_duplicate_booking` matches date+action+amount+currency+portfolio.
 
 ### Export API (`portf_server/routers/exports.py`)
-- `GET /api/v1/export/csv` — all transactions as UTF-8 CSV (Excel BOM)
-- `GET /api/v1/export/pdt` — full PDT XLSX (5 sheets: Transactions, Dividends, Bookings, Expenses, Settings)
-- Both accept optional `?portfolio_id=` query param
-- `GET /api/v1/export/yahoo-finance?portfolio_id=&mode=transactions|positions` — Yahoo Finance CSV (Symbol/Shares/Purchase Price/Purchase Date/Commission); sells = negative Shares; date MM/DD/YYYY; assets without `ticker` skipped (X-Skipped-Count / X-Skipped-Symbols response headers)
-- `GET /api/v1/export/simply-wall-st?portfolio_id=&mode=transactions|positions` — Simply Wall St CSV (Ticker Symbol/Shares/Price/Date/Currency); sells = negative shares; date YYYY-MM-DD; same skip behaviour
-- Platform export logic lives in `portf_manager/platform_export.py`: `_is_isin`, `_resolve_ticker`, `build_yahoo_finance_csv`, `build_simply_wall_st_csv`. Uses dedicated SQL query (not `_TX_COLS`) to include `a.ticker`.
+- `GET /api/v1/export/csv` — all transactions as UTF-8 CSV (Excel BOM); `?portfolio_id=`
+- `GET /api/v1/export/pdt` — PDT XLSX (5 sheets)
+- `GET /api/v1/export/yahoo-finance?portfolio_id=&mode=transactions|positions` — Yahoo CSV (MM/DD/YYYY); assets without `ticker` skipped (X-Skipped-Count / X-Skipped-Symbols headers)
+- `GET /api/v1/export/simply-wall-st?portfolio_id=&mode=transactions|positions` — SWS CSV (YYYY-MM-DD)
+- Platform logic in `portf_manager/platform_export.py`.
 
-### Bookings API (`portf_server/routers/bookings.py`)
-- `GET /api/v1/bookings/` — list bookings, optional `?portfolio_id=`
-- `POST /api/v1/bookings/` — create a manual deposit/withdrawal (the Import/Export page's add-booking form)
-- `DELETE /api/v1/bookings/{id}`
-- Bookings are importable 4 ways: PDT (sheet/XLSX), generic `bookings` CSV, LLM text extraction (`POST /api/v1/llm/extract-bookings`), and the manual form.
+### Bookings API
+`GET|POST /api/v1/bookings/`, `DELETE /api/v1/bookings/{id}`. Importable via PDT (sheet/XLSX), generic `bookings` CSV, LLM extraction (`POST /api/v1/llm/extract-bookings`), or manual form.
 
-### Rebalance API (`portf_server/routers/rebalance.py`)
-- `GET /api/v1/rebalance/targets` — list allocation targets per asset type
-- `PUT /api/v1/rebalance/targets` — bulk replace targets (`[{asset_type, target_pct}]`)
-- `GET /api/v1/rebalance/analysis` — current vs target % drift + buy/sell actions to rebalance (EUR-converted)
+### Rebalance API
+`GET /api/v1/rebalance/targets`, `PUT /api/v1/rebalance/targets` (`[{asset_type, target_pct}]`), `GET /api/v1/rebalance/analysis`.
 
 ### Research API (`portf_server/routers/research.py` + `services/research.py`)
 
-#### Portfolio Health Analysis
-New panel at the top of the Research page (`portfolioHealthPanel`, `setupPortfolioHealth()` called from `setupResearchPage()`):
-- `GET /api/v1/research/portfolio-analysis?portfolio_id=&refresh=false` — run (or return cached) LLM health analysis. Plain `def` (6 parallel threads via `ThreadPoolExecutor`). On cache hit returns the stored JSON immediately. On cache miss: gathers 6 data bundles concurrently → single structured LLM prompt → parses response → stores in `kv_cache`. Returns 200 in all cases; `{"error": "...", "data_warnings": [...]}` on failure.
-- `GET /api/v1/research/portfolio-analysis/settings` — returns `{"cache_ttl_hours": N}` from `app_settings`.
-- `PUT /api/v1/research/portfolio-analysis/settings` body `{"cache_ttl_hours": N}` — clamps to 1–168, persists to `app_settings.advisor_cache_ttl_hours`.
-- Routes registered **before** `/compare` (which itself is before `/{symbol}`) — critical for FastAPI's first-match routing.
-- `portf_manager/services/portfolio_advisor.py`: 6 `gather_*` helpers (performance, risk, diversification, fees_and_dividends, tax, holdings_fundamentals) + `build_analysis_prompt(bundle)` + `parse_analysis_response(raw)`. No search grounding — data is already rich.
-- LLM prompt requests 5 scored categories (`diversification`, `risk_adjusted_return`, `income`, `fees`, `tax_efficiency`, each 1–10 with reason) + `recommendations` list + `summary`.
-- Cache key: `portf:advisor:all` or `portf:advisor:{portfolio_id}`. Cache cleared with `db.cache_clear(prefix=cache_key)`.
-- `_fx(currency)` in `portfolio_advisor.py` lazy-imports `_get_fx_rate` from `portf_server.routers.portfolios` at call-time to avoid circular imports.
-- Settings modal: "Portfolio Advisor" row with `#setAdvisorTtl` select (6h/24h/7d). Loaded from server on modal open; saved via `putAdvisorSettings` on Save. `apiClient.getPortfolioAnalysis()`, `.getAdvisorSettings()`, `.putAdvisorSettings()` in `pfm_core.js`.
+**Route order is critical** (FastAPI first-match): `portfolio-analysis/*` routes → `compare` → `alerts/check` → `/{symbol}/*`.
+
+#### Portfolio Health (`GET /api/v1/research/portfolio-analysis`)
+Plain `def`; gathers 6 data bundles via `ThreadPoolExecutor` → LLM prompt → 5 scored categories (`diversification`, `risk_adjusted_return`, `income`, `fees`, `tax_efficiency`, each 1–10 with reason) + `recommendations` + `summary`. Cached in `kv_cache` (`portf:advisor:all` or `portf:advisor:{portfolio_id}`). `cache_ttl_hours` via `GET|PUT /api/v1/research/portfolio-analysis/settings`.
+
+`_fx(currency)` in `portfolio_advisor.py` lazy-imports `_get_fx_rate` from `portf_server.routers.portfolios` at call-time to avoid circular imports.
 
 #### Workbench & Compare
-The **Research workbench** (web page `researchPage`, `setupResearchPage()`): pick any ticker (held / watchlist / free-typed), see fundamentals, compute goal prices, write a thesis, get an LLM read, save it (versioned), compare.
-- `GET /api/v1/research/{symbol}/lookup` — snapshot (price, position, fundamentals, news, targets, latest note); **no LLM**. Works for any symbol (asset optional; live yfinance price when not held).
-- `POST /api/v1/research/{symbol}/generate` — **web-augmented** LLM (yfinance fundamentals + recent news as context, news URLs stored as `sources` citations) → fair value, BUY/HOLD/SELL, confidence, risks, catalysts. No longer 404s for non-held tickers.
-- `compute_targets(fundamentals, method, assumptions)` — deterministic valuation calculator (`pe` / `dividend_yield` + margin-of-safety/premium → fair_value, buy_below, sell_above). Also mirrored client-side for live recompute.
-- `POST /api/v1/research/{symbol}/save` — append a versioned `research_notes` row (thesis, conviction, method, assumptions, targets, price_at_save, llm_summary, sources) and push targets to `price_targets` (held assets) so alerts fire.
-- `GET /api/v1/research/{symbol}/history` — past research records. `GET /api/v1/research/compare` — latest note per symbol with price/fair/upside/conviction (registered **before** `/{symbol}` to win routing).
-- `GET /api/v1/research/{symbol}` — cached valuation report (404 if none)
-- `GET|PUT /api/v1/research/{symbol}/targets` — per-asset buy_below / sell_above / fair_value
-- `GET /api/v1/research/alerts/check` — price targets crossed vs latest prices (no Telegram send)
-- Telegram alerts: `~/scripts/portf-price-alerts.sh` runs at 20:05 daily (after price update) via cron, calls the check endpoint and pings Telegram on crossed thresholds.
+- `GET /api/v1/research/{symbol}/lookup` — snapshot (no LLM); works for unheld tickers
+- `POST /api/v1/research/{symbol}/generate` — web-augmented LLM → fair value, BUY/HOLD/SELL, confidence, risks, catalysts
+- `compute_targets(fundamentals, method, assumptions)` — deterministic valuation (`pe`/`dividend_yield`); mirrored client-side for live recompute
+- `POST /api/v1/research/{symbol}/save` — versioned `research_notes` row + pushes to `price_targets`
+- `GET /api/v1/research/compare` — registered before `/{symbol}`
+- `GET /api/v1/research/alerts/check` — price targets crossed vs latest prices (no Telegram send); Telegram sent by `~/scripts/portf-price-alerts.sh` at 20:05 via cron
 
 ### Analytics API (`portf_server/routers/analytics.py` + `services/analytics_service.py`)
-- `GET /api/v1/analytics/dividends` — income by year/month/symbol, TTM, projected annual, yield-on-cost
-- `GET /api/v1/analytics/performance?benchmark=^GSPC` — invested, current value, total return, money-weighted IRR, benchmark comparison; also returns `inception_date` (ISO date of first transaction), `cagr_pct` (CAGR since inception, null if <1 yr), `annualized_gain_eur` (absolute EUR gain annualized). `analytics_service.compute_cagr(invested, current_value, realised, inception_date)` computes this; `period_start_date` handles `"3y"` and `"5y"` windows.
-- `GET /api/v1/analytics/networth-history` — daily value/cost snapshots for the chart
-- `POST /api/v1/analytics/snapshot` — record today's value/cost (called by the price cron)
-- `POST /api/v1/analytics/backfill-snapshots[?force=]` + `GET /analytics/backfill-status` — reconstruct daily snapshots from transactions + historical yfinance prices (background thread; only fills missing dates unless `force`). Unpriced assets (ISIN/P2P) are valued at cost for history. `period_return` is a **time-weighted return** (chains daily returns, removes contributions via the cost-basis delta) — a naive (end−start)/start reads absurdly high when contributions dominate.
-- `GET /api/v1/analytics/tax-estimate?year=` — Spanish IRPF savings-base estimate (realised gains + dividends), unrealised gain, tax-loss harvesting candidates
-- `irpf_savings_tax()` uses the progressive base-del-ahorro brackets (19/21/23/27/28%)
-- `GET /api/v1/analytics/diversification` — sector/country/currency/type concentration + Herfindahl HHI (fetches yfinance, slow)
-- `GET /api/v1/analytics/risk?benchmark=^GSPC` — max drawdown, volatility, Sharpe from snapshots (needs ≥3); also returns `sortino_ratio` (downside-deviation Sharpe), `calmar_ratio` (CAGR / |max drawdown|), `beta` and `alpha_pct` vs the benchmark. Endpoint is plain `def` (threadpool). `analytics_service.sortino_ratio(returns)` and `calmar_ratio(cagr_pct, max_drawdown_pct)` implement these.
-- `GET /api/v1/analytics/fees` — total fees/tax per broker, fee drag % of invested
-- `GET /api/v1/analytics/tax-report?year=` — per-lot FIFO realised gains + dividend withholding summary
-- `GET /api/v1/analytics/data-freshness?stale_days=4` — price-data freshness behind value/gain-loss: `last_refresh` (max `prices.created_at`), `prices_as_of` (max `price_date`), `refresh_age_hours`, and held **auto-priced** assets whose latest price is older than `stale_days` or missing. Powers the dashboard freshness chip (`loadDataFreshness`) + a "DATA" item in the alerts banner.
-- **Data Quality** (`GET /api/v1/analytics/dq/reconciliation`, `/dq/duplicates`, `/dq/suspicious`) — three pure-DB checks with no yfinance calls (all plain `def`). Powers the **Data Quality tab** on the Diagnostics page (`loadDataQualityTab()` in `pfm_core.js`): (1) per-portfolio cash reconciliation (net_bookings − buy_costs + sell_proceeds + dividends + interest = implied_cash, plus invested_value from latest stored prices); (2) fuzzy duplicate scan (±3 days, ±5% qty/price, labelled `likely`/`possible`); (3) suspicious pattern detection (zero_price, zero_qty on buy/sell, negative_position, dividend_before_buy, price_outlier). Dismissals persist in `localStorage["pfmDismissedIssues"]`; inline delete uses `DELETE /api/v1/transactions/{id}`.
-- `services/tax_rates.py` — progressive savings-base brackets per jurisdiction (Spain default); `irpf_savings_tax` delegates here
-- `GET /api/v1/public/summary` (router `public.py`) — %-only allocation + return, NO amounts; off unless `PORTF_PUBLIC_VIEW=true`. Standalone page: `web_client/public.html`
-- Web client is **same-origin**: calls `/api/...` proxied by the web container's nginx to `portf_backend_dev:8000` (see `web_client/nginx.conf`). External access via nginx-proxy-manager → `docs/EXTERNAL_ACCESS.md`
-- Auth: `POST /api/v1/auth/login-key` (username/password → returns SERVER_API_KEY for the browser); web login modal has Password / Create account / API key tabs
-- Cron jobs: `portf-price-alerts.sh` (20:05, also checks watchlist buy zones), `portf-monthly-report.sh` (1st of month 09:00); daily price script also POSTs a snapshot
+- `GET /api/v1/analytics/performance?benchmark=^GSPC` — IRR, benchmark, `inception_date`, `cagr_pct`, `annualized_gain_eur`
+- `GET /api/v1/analytics/networth-history` | `POST /api/v1/analytics/snapshot` | `POST /api/v1/analytics/backfill-snapshots[?force=]`
+- `period_return` is a **time-weighted return** (chains daily returns, removes contributions via cost-basis delta)
+- `GET /api/v1/analytics/tax-estimate?year=` — IRPF savings base (realised gains + dividends + interest); `irpf_savings_tax()` progressive brackets (19/21/23/27/28%)
+- `GET /api/v1/analytics/diversification` — sector/country/currency/type + Herfindahl HHI (slow, fetches yfinance)
+- `GET /api/v1/analytics/risk?benchmark=^GSPC` — max drawdown, volatility, Sharpe, `sortino_ratio`, `calmar_ratio`, `beta`, `alpha_pct`. Plain `def` (threadpool).
+- `GET /api/v1/analytics/fees` | `GET /api/v1/analytics/tax-report?year=` (per-lot FIFO + withholding)
+- `GET /api/v1/analytics/data-freshness?stale_days=4` — price freshness + stale asset list; powers dashboard chip + alerts banner
+- **Data Quality**: `GET /api/v1/analytics/dq/reconciliation|duplicates|suspicious` — pure DB checks (plain `def`). Powers Diagnostics page Data Quality tab. Dismissals in `localStorage["pfmDismissedIssues"]`.
+- `services/tax_rates.py` — IRPF brackets; `GET /api/v1/public/summary` off unless `PORTF_PUBLIC_VIEW=true`
+- Auth: `POST /api/v1/auth/login-key`
+- Cron: `portf-price-alerts.sh` (20:05), `portf-monthly-report.sh` (1st of month 09:00)
 
-### Watchlist API (`portf_server/routers/watchlist.py`)
-- `GET/POST /api/v1/watchlist/`, `DELETE /api/v1/watchlist/{symbol}`, `GET /api/v1/watchlist/alerts/check`
-- Tracks not-yet-owned tickers with a `buy_below` target; the price-alerts cron pings Telegram when a watched ticker enters its buy zone
-
-### Goals API (`portf_server/routers/goals.py`)
-- `GET/POST /api/v1/goals/`, `DELETE /api/v1/goals/{id}`
-- FIRE/savings targets; GET computes progress %, projected value (monthly compounding from latest snapshot), on-track flag, and required monthly contribution
-
-### Sync API (`portf_server/routers/sync.py`)
-- `GET /api/v1/sync/pdt-config` — service account status + spreadsheet ID (DB first, then env var)
-- `PUT /api/v1/sync/pdt-config` body `{spreadsheet_id}` — persist sheet ID to `app_settings`
-- `POST /api/v1/sync/pdt-pull?spreadsheet_id=` — Google Sheet → DB (reads Transactions, Dividends, Bookings)
-- `POST /api/v1/sync/pdt-push?spreadsheet_id=` — DB → Google Sheet (writes all 5 PDT sheets)
-- `POST /api/v1/sync/pdt-backup?spreadsheet_id=&title=` — copies the sheet to a new "PFM Backup YYYY-MM-DD" using Sheets API `sheets.copyTo` (no Drive scope needed); returns `{backup_url, title}`
-- Resolution order for `spreadsheet_id`: query param → DB `app_settings` → `GOOGLE_SPREADSHEET_ID` env var
-- Web: dedicated **Google Sheets** sidebar page (Tools section) with config card, pull/push/backup buttons, pull confirmation modal, push confirmation modal with optional pre-push backup checkbox.
+### Watchlist / Goals / Sync APIs
+- Watchlist: `GET|POST /api/v1/watchlist/`, `DELETE /api/v1/watchlist/{symbol}`, `GET /api/v1/watchlist/alerts/check`
+- Goals: `GET|POST /api/v1/goals/`, `DELETE /api/v1/goals/{id}`; GET computes progress %, projected value, on-track flag, required monthly contribution
+- Sync: `GET|PUT /api/v1/sync/pdt-config`, `POST pdt-pull`, `POST pdt-push`, `POST pdt-backup`. Resolution order for `spreadsheet_id`: query param → DB `app_settings` → `GOOGLE_SPREADSHEET_ID` env var.
 
 ### LLM API (`portf_server/routers/llm.py`)
-- `POST /api/v1/llm/extract-transactions` — text body → LLM extracts buy/sell transactions
-- `POST /api/v1/llm/chat` — conversational endpoint with session history
+- `POST /api/v1/llm/extract-transactions` | `POST /api/v1/llm/chat`
 - `EnhancedChatEngine` uses **lazy initialization** — do NOT instantiate at module level (crashes without API key)
-
-#### Chat sessions
-- `GET /api/v1/llm/chat/sessions` — list sessions, ordered by `last_message_at` DESC
-- `POST /api/v1/llm/chat/sessions` body `{name}` → `{id, name}`
-- `DELETE /api/v1/llm/chat/sessions/{id}` — 204 or 404
-- `GET /api/v1/llm/chat/sessions/{id}/messages` → `{messages: [{role, content}]}`
-- `POST /api/v1/llm/chat` — unchanged; auto-creates a `"New Chat"` session when `session_id` is absent/unknown
-- `_get_history` / `_append_history` in `llm.py` now read/write `chat_sessions.messages` column directly (kv_cache no longer used for chat)
-- v24 migration adds `chat_sessions` table (id TEXT PK, name, created_at, last_message_at, message_count, messages JSON)
+- Chat sessions: `GET|POST /api/v1/llm/chat/sessions`, `DELETE /api/v1/llm/chat/sessions/{id}`, `GET sessions/{id}/messages`
+- `POST /api/v1/llm/chat` auto-creates `"New Chat"` session when `session_id` absent/unknown
+- History stored in `chat_sessions.messages` column (not kv_cache)
 
 ### Auth
-API key auth for all server endpoints (`X-API-Key` header). User auth with password hashing in local CLI mode.
-`SERVER_API_KEY` env var is **auto-seeded** into the `api_keys` table at startup (`app.py` lifespan). No manual DB insert needed after a container restart — just set the var in `.env.local`.
+API key auth (`X-API-Key` header). `SERVER_API_KEY` env var is **auto-seeded** at startup (`app.py` lifespan) — no manual DB insert needed after container restart.
 
 ### Portfolio Resolver
-`db.get_or_create_portfolio(name, base_currency="EUR")` — centralized helper in `database.py`. Use this instead of the inline get/create pattern in every router.
+`db.get_or_create_portfolio(name, base_currency="EUR")` — centralized helper; use instead of inline get/create pattern.
 
 ### Portfolios = Brokers (`portf_server/routers/portfolios.py`)
-A portfolio doubles as a broker/account (the web page is titled "Portfolios / Brokers"; no rename). `GET /api/v1/portfolios/` returns `website` + `description` (stored value, else a built-in default from `KNOWN_BROKERS` for names like MyInvestor/Indexa/Degiro/Coinbase/Mintos…) plus `first/last_transaction_date` and `first/last_booking_date` (from `db.get_portfolio_date_ranges()`). `website` is editable via `PUT /api/v1/portfolios/{id}` (v10 column). Portfolio queries alias `e.website AS entity_website` to avoid colliding with the new `p.website`. `DELETE /api/v1/portfolios/{id}/transactions?include_bookings=true` deletes all transactions for a portfolio and, when `include_bookings=true`, also its cash bookings.
+A portfolio doubles as a broker/account. `GET /api/v1/portfolios/` returns `website`, `description` (from `KNOWN_BROKERS` if not stored), `first/last_transaction_date`, `first/last_booking_date`. Portfolio queries alias `e.website AS entity_website` to avoid colliding with `p.website`. `DELETE /api/v1/portfolios/{id}/transactions?include_bookings=true`.
 
 ### Price Updates
-Daily cron at **20:00 UTC** via `~/scripts/portf-update-prices.sh` (reads API key from `.env.local`).
-Manual: `docker exec -e PORTF_API_KEY=... portf_backend_dev python3 -m portf_manager.cli update-prices`
+Daily cron at **20:00 UTC** via `~/scripts/portf-update-prices.sh`. Manual: `docker exec -e PORTF_API_KEY=... portf_backend_dev python3 -m portf_manager.cli update-prices`
 
-- yfinance returns UK-listed securities in **GBX (pence)**, not GBP. `fetch_latest_prices` auto-converts when `fast_info.currency == "GBp"` (÷100). Never store raw yfinance prices for UK ISINs without this check.
-- Crypto uses `{SYM}-EUR` format (e.g. `BTC-EUR`). A few tokens only resolve under a numeric-suffixed, **USD-quoted** Yahoo symbol (the bare `{SYM}-EUR` is missing or points at a delisted look-alike). `cli.update_prices._CRYPTO_YF_OVERRIDES` maps `symbol → (yf_ticker, quote_ccy)` (e.g. `SUI → ("SUI20947-USD", "USD")`, `UNI → ("UNI7083-USD", "USD")`); USD results are converted to EUR via `api_client.get_fx_rate` before storing (crypto assets are stored in EUR). A few assets (most EU fund ISINs, delisted tokens) have no Yahoo data at all and are skipped — visible on the Diagnostics page.
-- `GET /api/v1/portfolios/holdings` summary is EUR-converted via `XYZEUR=X` FX tickers. Per-holding `total_value_eur` is available; `total_value` is in the asset's native currency.
+- **GBX**: yfinance returns UK stocks in GBX (pence). `fetch_latest_prices` auto-converts when `fast_info.currency == "GBp"` (÷100). Never store raw yfinance prices for UK ISINs without this check.
+- **Crypto**: `{SYM}-EUR` format. Some tokens need `_CRYPTO_YF_OVERRIDES` (e.g. `SUI → ("SUI20947-USD", "USD")`); USD results converted to EUR before storing.
+- Holdings EUR conversion via `XYZEUR=X` FX tickers.
 
 ### Market Data API (`portf_server/routers/market.py` + `portf_manager/market.py`)
-Shared, key-auth Yahoo Finance cache — the single market-data source for web,
-MCP, and cron scripts (no consumer fetches Yahoo directly except the price
-cron, which *writes* the `prices` table):
+Single market-data source for web, MCP, cron:
 - `GET /api/v1/market/quotes?symbols=A,B,C&max_age=` (batch, ≤50), `/market/quote/{symbol}`, `/market/fx?currencies=`, `/market/fundamentals/{symbol}`
-- **Read-time freshness**: kv_cache values (`mkt:quote:*`, `mkt:fx:*`, `mkt:fund:*`) store a 7-day-expiry payload with `fetched_at` inside; callers pass `max_age` seconds (floor 60). Stale-on-failure: Yahoo down → last value with `stale: true`.
-- Quote resolution: fresh cache → held asset's stored daily price (prev close from prior row) → live fast_info (GBX÷100; **read `previous_close` via subscript, never `fast_info.get()` with snake_case — it silently returns None**) → stale fallback → error entry.
-- Consumers: routers (`portfolios._get_fx_rate`, `public._fx`, rebalance, research `_current_price`, watchlist) all delegate to `portf_manager.market`; `~/scripts/stock-monitor.py` and the MCP `quote` tool call the HTTP API.
-
-### Portfolio Value History
-`~/.hermes/data/portf_history.jsonl` — daily report appends `{"date": "...", "value": ...}` each run. The 1d/1w/1m/1y comparisons only appear once enough history has accumulated.
+- kv_cache keys: `mkt:quote:*`, `mkt:fx:*`, `mkt:fund:*`. Stale-on-failure: last value with `stale: true`.
+- **Read `previous_close` via subscript, never `fast_info.get()` with snake_case — it silently returns None.**
+- All routers delegate to `portf_manager.market`; external scripts call the HTTP API.
 
 ### Transactions
-All financial transactions go through `database.create_transaction()` with `portfolio_id` for per-broker tracking. `asset_id` is required; use `db.get_asset_by_symbol()` + `db.create_asset()` for auto-create pattern. Always pass `currency=` (the transaction's own currency, e.g. `tx.price_currency`) to preserve per-row currency correctly.
+`database.create_transaction()` requires `portfolio_id`. `asset_id` required — use `db.get_asset_by_symbol()` + `db.create_asset()`. Always pass `currency=` (the transaction's own currency) to preserve per-row currency.
 
 ### Positions & corporate actions (`portf_manager/positions.py`)
-`compute_positions(transactions, key=...)` is the **single source of truth** for turning transactions into `{key: {quantity, cost}}` + realised P&L. It processes **chronologically** and supports **stock splits**: a `split` transaction stores the ratio in its `quantity` (2-for-1 → 2.0; 1-for-10 reverse → 0.1), scaling held quantity and leaving cost unchanged. The holdings/values endpoints and `analytics._compute_positions` all delegate to it; `tax_calculator` applies splits to FIFO lots. **Note:** this fixed a latent cost-basis bug — the old per-loop accumulation ran on `get_all_transactions()` (date DESC), so a partial sell processed before its buys left sold shares in cost basis, *overstating invested / understating return* for any asset with sells.
+`compute_positions(transactions, key=...)` — single source of truth. Processes **chronologically**. Stock splits: `split` tx stores ratio in `quantity` (2-for-1=2.0; reverse=0.1), scales held quantity, cost unchanged. All holdings/analytics endpoints delegate to it.
 
 ## Web Client (`web_client/`)
-Single HTML file (`index.html`) + four classic JS files split from the former `portfolio_debug.js` (no build step): **`pfm_core.js`** (prefs, `Fmt`, `esc`, helpers, `AssetSearch`, API + modal managers), **`pfm_pages.js`** (page/nav/auth managers, dashboard, transactions, assets, holdings, help/resources), **`pfm_analytics.js`** (net-worth/dividend/analytics/diversification charts), **`pfm_features.js`** (watchlist, goals, chat, portfolios, import/export, forecast, rebalance, research, settings + the `DOMContentLoaded` bootstrap). They share one global scope and **must load in that order** (see `index.html`); `help_text.js` loads first. All pages are divs toggled by `navigationManager.showPage()`. Pages: `dashboard`, `assets`, `transactions`, `holdings`, `chat`, `importexport`, `portfolios`, **`forecast`**.
+Single `index.html` + four JS files (no build step), **must load in order**: `help_text.js` → `pfm_core.js` → `pfm_pages.js` → `pfm_analytics.js` → `pfm_features.js`. They share one global scope.
 
-**Help text system** (`web_client/js/help_text.js`): two globals loaded before all app scripts. `window.METRIC_HELP` — short metric definitions used as `data-bs-toggle="tooltip" title=...` on individual metric labels (IRR, Sharpe, volatility, etc.). `window.PAGE_HELP` — per-page objects `{title, body}` rendered in a Bootstrap modal by `showPageHelp(key)`; every main page has a `?` button in its header that calls this. Card-level `ⓘ` icons use plain `title=` attributes (no JS needed). When adding a new page or non-obvious card, add an entry to the appropriate map.
+- `pfm_core.js`: prefs, `Fmt`, `esc`, `AssetSearch`, API + modal managers, `openChatWithContext()`
+- `pfm_pages.js`: page/nav/auth, dashboard, transactions, assets, holdings, help/resources
+- `pfm_analytics.js`: net-worth/dividend/analytics/diversification charts
+- `pfm_features.js`: watchlist, goals, chat, portfolios, import/export, forecast, rebalance, research, settings + `DOMContentLoaded` bootstrap
 
-**User preferences (browser-local)**: `window.PREFS` (persisted to `localStorage` key `pfmPrefs`) holds number locale, decimals, date format, theme, privacy-blur, default benchmark, landing page, rows-per-page. The Settings modal (`setupSettings()`, gear in the sidebar) edits them. Format all numbers via `Fmt.num()` / money helpers (which wrap in `<span class="pfm-amt">` for privacy blur) and dates via `Fmt.date()`. Theme = `data-bs-theme` on `<html>` (Bootstrap 5.3). There is no server-side per-user settings store — the web logs in with the shared `SERVER_API_KEY`, so prefs are per-browser.
+`openChatWithContext(threadName, openingMessage)` — sets `window._chatPendingContext`, navigates to chat; used by Research ("Chat about this") and Portfolio Health ("Discuss with AI").
 
-**Sortable/filterable tables**: Holdings, Transactions, Assets and Brokers use the shared `makeSortableTable(config)` helper (pure `applyTableState(rows, columns, state)` core, both in `pfm_core.js`, unit-tested in `web_client/js/tests/`): clickable `<th data-key data-type [data-filter=select]>` headers toggle sort (▲/▼), an optional filter row provides categorical dropdowns, and per-table state persists in `PREFS.tableState[<page>]`. Holdings adds a Type filter; Transactions is sort-only (it keeps its own type/date/asset filter bar) and its broker filter stays a server refetch (`getTransactions(500, portfolioId)`); the dashboard Top Positions keeps its own specialised control bar.
+`window.METRIC_HELP` / `window.PAGE_HELP` in `help_text.js` — tooltip definitions and per-page help modal content. Add entries when adding new pages or non-obvious cards.
 
-**Deploy after editing web files**: `portf_web` is an nginx container with files **baked into the image** at build time — they are NOT live-mounted. After any change to `web_client/`:
+`makeSortableTable(config)` / `applyTableState(rows, columns, state)` in `pfm_core.js` — shared sortable/filterable tables; per-table state persists in `PREFS.tableState[<page>]`.
+
+`window.PREFS` → `localStorage['pfmPrefs']`. Format numbers via `Fmt.num()`, dates via `Fmt.date()`. Theme = `data-bs-theme` on `<html>` (Bootstrap 5.3).
+
+**Deploy after editing web files** (`portf_web` bakes files at build time — NOT live-mounted):
 ```bash
-docker compose build web && docker stop portf_web && docker compose up -d web
+docker compose build web && docker stop portf_web && WEB_PORT=8080 docker compose up -d web
 ```
 
-`forecast` page — wealth projection using live portfolio value + GBM simulation (`setupForecastPage()` in `pfm_features.js`).
-
-### Import / Export page (`importexport`)
-Inline (no modals). Sections:
-- **File import** — broker select + file upload → parse preview (shows bookings summary for PDT) → save
-- **Text import (LLM)** — paste broker statement → extract → save
-- **Export** — CSV and PDT XLSX download buttons
-- **Bookings table** — live table of all bookings with refresh button
-- **Google Sheets Sync** — enter spreadsheet ID, Pull / Push buttons with live status
-
-### Transaction import/export buttons (Transactions page)
-- **Import text** → `#llmImportModal` → `POST /api/v1/llm/extract-transactions` → `POST /api/v1/import/save`
-- **Import file** → `#fileImportModal` → `POST /api/v1/import/upload` → `POST /api/v1/import/save`
-- **Export CSV** / **Export PDT** → fetch + blob download via `setupExportButtons()`
-
-### Chat page
-`setupChatPage()` in `pfm_features.js`: two-column layout (sessions sidebar col-md-3 + message area col-md-9).
-- **Send** (or Ctrl+Enter) → `POST /api/v1/llm/chat` → conversation thread
-- **Extract & Import** → `POST /api/v1/llm/extract-transactions` → inline transaction card with import button
-- `openChatWithContext(threadName, openingMessage)` in `pfm_core.js` sets `window._chatPendingContext` and navigates to the chat page; used by Research workbench ("Chat about this" button) and Portfolio Health panel ("Discuss with AI" button), both pre-loading the chat with on-screen data in a named thread
-
-### API client (`saveImportedTransactions`)
-Signature: `saveImportedTransactions(transactions, bookings = [], portfolioId = null)` — always pass bookings array (even if empty) so PDT bookings are saved alongside transactions.
+`saveImportedTransactions(transactions, bookings = [], portfolioId = null)` — always pass bookings array (even if empty) so PDT bookings are saved alongside transactions.
 
 ## Testing
-- Run tests: `uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e`
-- **635 passing**, 0 failures, 6 skipped (as of last session).
-- **Web client JS tests**: `make test-js` (or `node --test web_client/js/tests/`) — Node's built-in runner, no npm deps. Loads the 4 split scripts (`pfm_core`/`pfm_pages`/`pfm_analytics`/`pfm_features`) into one vm scope with DOM stubs: a load/smoke test (catches a broken split) plus `esc()` XSS-escaping and `Fmt` number/date formatting. CI runs it as the `test-js` job.
-- Pre-push hook runs the full unit test suite automatically (`git push` will fail if tests fail).
-- Safe F541 fixer: `uv run python scripts/fix_f541.py` — strips `f` from f-strings without `{}` using a regex that correctly excludes triple-quoted strings.
-- Reset LLM singleton between tests: `from portf_manager.llm_client import reset_llm_client`.
-- PDT parser tests: `tests/test_pdt_xlsx_parser.py` (42 tests)
-- PDT Sheets sync tests: `tests/test_pdt_sheets_sync.py` (40 tests — all mocked, no real API calls)
-- Import/export + sync API tests: `tests/unit/test_imports_exports.py` (30 tests)
-- DB tests: `tests/test_database.py` — version assertion is `== 24` (bump it with `DATABASE_VERSION`)
+- Unit tests: `uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e` (635 passing, 6 skipped)
+- JS tests: `make test-js` or `node --test web_client/js/tests/`
+- Pre-push hook runs full unit suite automatically.
+- F541 fixer: `uv run python scripts/fix_f541.py`
+- Reset LLM singleton: `from portf_manager.llm_client import reset_llm_client`
+- DB tests: `tests/test_database.py` — version assertion is `== 24` (bump with `DATABASE_VERSION`)
 
 ## Documentation (Default Behaviour)
 When adding or changing any feature, always update **both**:
 1. `PROJECT_STATUS.md` — bump the "Last updated" date and add the feature to the Recent summary line.
-2. Relevant inline sections of `CLAUDE.md` — add endpoint signatures, schema notes, key patterns, or gotchas that would not be obvious from reading the code. Keep it concise; duplicate the code's public interface only when the behaviour is non-obvious.
+2. Relevant inline sections of `CLAUDE.md` — endpoint signatures, schema notes, key patterns, gotchas non-obvious from reading the code.
 
-This is mandatory, not optional. A feature is not done until the docs reflect it.
+This is mandatory. A feature is not done until the docs reflect it.
 
 ## Privacy and Demo Data
+Public repo — never commit real personal or financial data.
 
-This is a public repository. Never commit real personal or financial data.
+**Forbidden:** real API keys/tokens/passwords; real Spreadsheet IDs (use `YOUR_SPREADSHEET_ID`); real ISINs for held assets (use `US0000000001`/`LU0000000001`/`ES0000000001` family); real portfolio amounts/prices; home directory paths (`/home/agoldhoorn/` → use `~/`).
 
-**Forbidden in source, tests, docs, and plan files:**
-- Real API keys, tokens, passwords, or secret values — use env var references or placeholder strings like `YOUR_API_KEY`
-- Real Google Spreadsheet IDs — use `YOUR_SPREADSHEET_ID` in docs/examples and a generic-looking string for UI placeholders
-- Real ISIN codes that correspond to actual held assets — use fictional ISINs: `US0000000001`, `LU0000000001`, `ES0000000001`, etc.
-- Real portfolio amounts, prices, or quantities that reflect actual holdings
-- Home directory paths (`/home/agoldhoorn/`) — write `~/` or `$HOME/` in docs
+**OK:** well-known tickers (AAPL, BTC-EUR) as format examples; Apple's `US0378331005` in prompt templates; personal website/GitHub links in About page; fictional prices in test fixtures.
 
-**Acceptable in public files:**
-- Well-known tickers (`AAPL`, `TSLA`, `BTC-EUR`) used purely as API/CLI format examples
-- Apple's ISIN `US0378331005` in prompt-template examples (widely cited, not personal)
-- Personal website and GitHub links in the About page (intentionally public)
-- Generic fictional prices and amounts in test fixtures
-
-When writing tests, use ISINs from the `US0000000000` / `LU0000000000` / `ES0000000000` family and invent asset names (e.g. "Example Corp", "Global Bond Fund"). Same rule applies to plan documents committed under `docs/superpowers/`.
+When writing tests, invent asset names (e.g. "Example Corp", "Global Bond Fund"). Same rule for plan docs under `docs/superpowers/`.
 
 ## Git
-- Public repo `github.com:alexgoldhoorn/pfm` — develop and push on `main`. Push with `GIT_SSH_COMMAND="ssh -o IdentitiesOnly=no" git push origin main`.
-- Use `--no-pager` with all git commands (note: some git versions don't support `--no-pager` as a flag; use `git -P` or `GIT_PAGER=cat` instead).
-- Commit messages: conventional commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`).
-- Co-author line: `Co-Authored-By: Oz <oz-agent@warp.dev>`.
-- **Pre-commit**: black + flake8 + autoflake run on every `git commit` via `.pre-commit-config.yaml`.
-- **Pre-push**: full unit test suite runs before every `git push` (`.git/hooks/pre-push`).
+- Public repo `github.com:alexgoldhoorn/pfm` — develop on `main`. Push: `GIT_SSH_COMMAND="ssh -o IdentitiesOnly=no" git push origin main`.
+- Use `git -P` or `GIT_PAGER=cat` (some git versions don't support `--no-pager` as a flag).
+- Conventional commits: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`. Co-author: `Co-Authored-By: Oz <oz-agent@warp.dev>`.
+- **Pre-commit**: black + flake8 + autoflake via `.pre-commit-config.yaml`. **Pre-push**: full unit suite.
 
 ## Important Gotchas
-- **`_TX_COLS` uses f-strings**: queries in `database.py` are `f"""SELECT {self._TX_COLS}..."""`. The `f` prefix is load-bearing — SQLite rejects literal `{` with "unrecognized token". Never run regex F541-fixers that touch triple-quoted strings on this file. Autoflake is safe; custom regex strippers are not.
-- **Black + regex interaction**: a regex like `re.sub(r'\bf("...')` strips `f` from single-line strings, but `f""` matches the first two chars of `f"""..."""` opening a multiline string. Limit single-line patterns with `[^\n]` and never match across newlines when looking for `F541`.
-- **App always uses SQLite**: `app.py` falls back to `portfolio.db` (SQLite) for non-`sqlite://` URLs. Container data lives at `/app/portfolio.db` inside `portf_backend_dev`.
-- **Linting**: `uv add --dev flake8` then `uv run flake8 portf_manager/ portf_server/ --max-line-length=88 --extend-ignore=E203,W503,E501`. ~11 known structural warnings remain in `cli.py` / `portfolio_aware_agent.py`.
-- MyInvestor CSV is semicolon-delimited with European number formatting (comma = decimal, dot = thousands). No standalone parser module — handled inline in CLI or via LLM text import.
-- Spanish tax: stocks, ETFs, bonds and funds all = "rendimientos del capital mobiliario" (IRPF Box 27). FIFO method for cost basis.
-- PDT XLSX export uses tempfile (openpyxl writes to a file path, not BytesIO). Always clean up with `os.unlink()`.
-- `portf_server/settings.py` uses `PORTF_` prefix for all env vars. Google vars (`GOOGLE_SERVICE_ACCOUNT_FILE`, `GOOGLE_SPREADSHEET_ID`) are NOT prefixed — read directly via `os.getenv()` in the sync router and `pdt_sheets_sync.py`.
-- `sqlite3.Row` dict (from `dict(row)`) uses the **first** occurrence when column names collide. Never rely on `SELECT t.*, ..., COALESCE(t.col, other) AS col` — use an explicit column list instead.
-- PDT has 5 sheets; we only parse the 3 data sheets (Transactions/Dividends/Bookings) on import. Expenses and Settings are written on export/push.
-- PDT dividend action subtypes (Cash / Stock / Staking) are not stored as a separate field — all stored as `transaction_type='dividend'` and exported as `"Cash"`. Only Cash dividends are in the current dataset.
-- Crypto/commodity assets must have empty exchange in PDT format — use `_pdt_exchange(exchange, asset_type)` which enforces this.
-- **GBX (pence) normalization**: Yahoo quotes some UK-listed stocks (GB-prefixed ISINs) in GBX. `portf_manager/currency_utils.normalize_gbx_amounts()` divides imported price/amount/fees ÷100 and sets currency GBP — called in `imports.py` save + `sync.py` pull. The live price fetch normalizes separately in `api_client.py`. Without this, cost basis is 100× too high.
-- When bumping `DATABASE_VERSION`, update the `assert version == N` assertions in `tests/test_database.py`.
+- **`_TX_COLS` uses f-strings**: queries in `database.py` are `f"""SELECT {self._TX_COLS}..."""`. The `f` prefix is load-bearing. Never run F541-fixers that touch triple-quoted strings on this file. Autoflake is safe; custom regex strippers are not.
+- **Black + regex**: `f""` matches the first two chars of `f"""..."""`. Limit F541-fixers to `[^\n]` single-line patterns.
+- **App always uses SQLite**: `app.py` falls back to `portfolio.db`. Container data at `/app/portfolio.db` inside `portf_backend_dev`.
+- **Linting**: `uv run flake8 portf_manager/ portf_server/ --max-line-length=88 --extend-ignore=E203,W503,E501`. ~11 known warnings in `cli.py`/`portfolio_aware_agent.py`.
+- **`sqlite3.Row` name collision**: never rely on `SELECT t.*, ..., COALESCE(t.col, other) AS col` — use explicit column list. First occurrence wins in dict.
+- **Spanish tax**: FIFO cost basis; stocks/ETFs/bonds/funds = IRPF Box 27 ("rendimientos del capital mobiliario").
+- **PDT XLSX**: openpyxl writes to a file path, not BytesIO. Always clean up with `os.unlink()`.
+- **Env var prefixes**: `portf_server/settings.py` uses `PORTF_` prefix. Google vars (`GOOGLE_SERVICE_ACCOUNT_FILE`, `GOOGLE_SPREADSHEET_ID`) are NOT prefixed — read via `os.getenv()` in sync router and `pdt_sheets_sync.py`.
+- **GBX normalization**: `portf_manager/currency_utils.normalize_gbx_amounts()` ÷100 on import (`imports.py` save + `sync.py` pull). Live price fetch normalizes separately in `api_client.py`. Missing this → cost basis 100× too high.
+- **DB version bump**: update `assert version == N` in `tests/test_database.py`.
+- **`asset_type` enum**: Pydantic (`portf_server/schemas/assets.py`) AND `models.py` — add new types to both or `/assets` 500s.
+- **`transaction_type`**: `models.py TransactionType` + SQLAlchemy CHECK + `transactions` table rebuild — update all three when adding new types.
+- **MyInvestor CSV**: semicolon-delimited, European numbers (comma=decimal, dot=thousands). No standalone parser — CLI or LLM text import.
 
 ## After Every Task — What Needs Restarting
-
-Always tell the user explicitly at the end of a task what (if anything) needs restarting or manual action. Use this checklist:
 
 | Change type | Action required |
 |---|---|
 | `web_client/` JS/HTML/CSS edited | `docker compose build web && docker stop portf_web && WEB_PORT=8080 docker compose up -d web` |
 | `web_client/nginx.conf` edited | Same as above (nginx config is baked into the image) |
-| `portf_server/` or `portf_manager/` Python edited | Backend has a live bind-mount — HUP gunicorn to reload: `docker exec portf_backend_dev kill -HUP 1` |
-| `DATABASE_VERSION` bumped / new migration added | Restart backend so migration runs: `docker compose restart portf_backend_dev` (or HUP) |
-| DB schema patched manually (e.g. via `docker exec python3 -c "..."`) | No restart needed for the manual patch, but note it in the conversation so the user knows what was done |
+| `portf_server/` or `portf_manager/` Python edited | `docker exec portf_backend_dev kill -HUP 1` |
+| `DATABASE_VERSION` bumped / new migration added | `docker compose restart portf_backend_dev` (or HUP) |
+| DB schema patched manually | No restart — note what was done |
 | `docker-compose.yml` or `Dockerfile` edited | Full rebuild of affected service |
 | No code changes (docs/tests only) | Nothing — say so explicitly |
 
-Never leave the user guessing. If a change is already live (e.g. live-mounted Python code that only needs a HUP, or a table already manually created), say that too.
+Never leave the user guessing. If a change is already live, say that too.
 
 ## Status
 See `PROJECT_STATUS.md` for full component status, pending work, and known issues.
 
 ## Issue Tracker
-
-Tickets are managed in **Todoist** → project **#Dev Projects / #pfm**.
+Tickets managed in **Todoist** → project **#Dev Projects / #pfm**.
