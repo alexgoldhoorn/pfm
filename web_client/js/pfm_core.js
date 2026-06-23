@@ -285,7 +285,7 @@ async function loadDashboardAlerts() {
             } else {
                 posInfo = ` <span class="text-muted">— not held</span>`;
             }
-            const priceDateTxt = a.price_date ? ` <small class="text-muted">[${a.price_date}]</small>` : '';
+            const priceDateTxt = a.price_date ? ` <small class="text-muted">[${Fmt.date(a.price_date)}]</small>` : '';
             (a.triggers || []).forEach(t => {
                 const buy = t.type === 'BUY';
                 const nameTxt = a.name ? ` <span class="text-muted">· ${esc(a.name)}</span>` : '';
@@ -612,8 +612,8 @@ async function loadDataQualityTab(force = false) {
                                 <button type="button" class="btn btn-outline-danger btn-sm dq-del-older" data-id="${olderId}" data-key="${esc(d.key)}"><i class="bi bi-trash me-1"></i>Delete older</button>
                                 <button type="button" class="btn btn-outline-danger btn-sm dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-label="More delete options"><span class="visually-hidden">Toggle dropdown</span></button>
                                 <ul class="dropdown-menu dropdown-menu-end">
-                                    <li><button type="button" class="dropdown-item dq-del-tx" data-id="${d.tx_a.id}" data-key="${esc(d.key)}">Delete #${esc(d.tx_a.id)} (${esc(d.tx_a.date)})</button></li>
-                                    <li><button type="button" class="dropdown-item dq-del-tx" data-id="${d.tx_b.id}" data-key="${esc(d.key)}">Delete #${esc(d.tx_b.id)} (${esc(d.tx_b.date)})</button></li>
+                                    <li><button type="button" class="dropdown-item dq-del-tx" data-id="${d.tx_a.id}" data-key="${esc(d.key)}">Delete #${esc(d.tx_a.id)} (${Fmt.date(d.tx_a.date)})</button></li>
+                                    <li><button type="button" class="dropdown-item dq-del-tx" data-id="${d.tx_b.id}" data-key="${esc(d.key)}">Delete #${esc(d.tx_b.id)} (${Fmt.date(d.tx_b.date)})</button></li>
                                 </ul>
                                 <button type="button" class="btn btn-outline-secondary btn-sm dq-dism-dup" data-key="${esc(d.key)}" title="${isDism ? 'Undismiss' : 'Dismiss'}">${isDism ? '<i class="bi bi-eye"></i>' : '<i class="bi bi-eye-slash"></i>'}</button>
                             </div>
@@ -622,12 +622,12 @@ async function loadDataQualityTab(force = false) {
                             <div class="col-6 bg-body-secondary rounded p-1">
                                 <div class="fw-semibold">${esc(d.tx_a.asset)}${d.tx_a.asset_name && d.tx_a.asset_name !== d.tx_a.asset ? `<div class="small text-muted fw-normal">${esc(d.tx_a.asset_name)}</div>` : ''}</div>
                                 <div>${esc(d.tx_a.type)} · ${Fmt.num(d.tx_a.quantity, 0, 4)} @ ${Fmt.num(d.tx_a.price, 0, 4)}</div>
-                                <div class="text-muted">${esc(d.tx_a.date)} · #${d.tx_a.id}</div>
+                                <div class="text-muted">${Fmt.date(d.tx_a.date)} · #${d.tx_a.id}</div>
                             </div>
                             <div class="col-6 bg-body-secondary rounded p-1">
                                 <div class="fw-semibold">${esc(d.tx_b.asset)}${d.tx_b.asset_name && d.tx_b.asset_name !== d.tx_b.asset ? `<div class="small text-muted fw-normal">${esc(d.tx_b.asset_name)}</div>` : ''}</div>
                                 <div>${esc(d.tx_b.type)} · ${Fmt.num(d.tx_b.quantity, 0, 4)} @ ${Fmt.num(d.tx_b.price, 0, 4)}</div>
-                                <div class="text-muted">${esc(d.tx_b.date)} · #${d.tx_b.id}</div>
+                                <div class="text-muted">${Fmt.date(d.tx_b.date)} · #${d.tx_b.id}</div>
                             </div>
                         </div>
                     </div>`;
@@ -709,7 +709,7 @@ async function loadDataQualityTab(force = false) {
                     return `<tr${op}>
                         <td>${badge}</td>
                         <td><code>${esc(i.asset)}</code><div class="small text-muted">${esc(i.asset_name)}</div></td>
-                        <td class="small">${esc(i.date)}</td>
+                        <td class="small">${Fmt.date(i.date)}</td>
                         <td class="small">${esc(i.type)}</td>
                         <td class="small">${esc(i.description)}</td>
                         <td class="text-nowrap">
@@ -2127,7 +2127,7 @@ function _buildPreviewTable(transactions, bookings, deposits) {
         <tr class="${tx.is_duplicate ? 'table-warning' : ''}" data-txtype="${esc(tx.tx_type || '')}">
             <td><input class="form-check-input file-tx-select" type="checkbox" ${(tx.is_duplicate || tx.skip) ? '' : 'checked'} data-idx="${i}" data-dup="${tx.is_duplicate ? '1' : '0'}"></td>
             ${hasBroker ? `<td><small>${esc(tx.broker || '')}</small></td>` : ''}
-            <td>${tx.date || ''}${tx.is_duplicate ? dupBadge : ''}</td>
+            <td>${Fmt.date(tx.date)}${tx.is_duplicate ? dupBadge : ''}</td>
             <td><strong>${esc(tx.symbol || '')}</strong><br><small class="text-muted">${esc(tx.name || '')}</small></td>
             <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : tx.tx_type === 'sell' ? 'danger' : 'secondary'}">${(tx.tx_type || '').toUpperCase()}</span></td>
             <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(Fmt.loc(), {maximumFractionDigits: 4})}</td>
@@ -2141,7 +2141,7 @@ function _buildPreviewTable(transactions, bookings, deposits) {
         <tr class="table-info${bk.is_duplicate ? ' table-warning' : ''}" data-txtype="deposit">
             <td><i class="bi bi-bank text-muted" title="Cash booking — saved automatically"></i></td>
             ${hasBroker ? `<td><small>${esc(bk.broker || '')}</small></td>` : ''}
-            <td>${bk.date || ''}${bk.is_duplicate ? dupBadge : ''}</td>
+            <td>${Fmt.date(bk.date)}${bk.is_duplicate ? dupBadge : ''}</td>
             <td><em class="text-muted">${esc(bk.action || '')} ${esc(bk.currency || '')}</em></td>
             <td><span class="badge bg-info">${esc(bk.action || '').toUpperCase()}</span></td>
             <td class="text-end">${parseFloat(bk.amount || 0).toFixed(2)}</td>
@@ -2158,8 +2158,8 @@ function _buildPreviewTable(transactions, bookings, deposits) {
             <td>${esc(dep.name || '')}${dep.is_duplicate ? dupBadge : ''}</td>
             <td class="text-end">${parseFloat(dep.principal || 0).toFixed(2)} ${dep.currency || ''}</td>
             <td class="text-end">${parseFloat(dep.interest_rate || 0).toFixed(3)}%</td>
-            <td>${dep.start_date || ''}</td>
-            <td>${dep.maturity_date || ''}</td>
+            <td>${Fmt.date(dep.start_date)}</td>
+            <td>${Fmt.date(dep.maturity_date)}</td>
             <td>${esc(dep.broker || '')}</td>
         </tr>
     `).join('');
@@ -2381,10 +2381,10 @@ function setupLlmImportModal() {
         const rows = transactions.map((tx, i) => `
             <tr>
                 <td><input class="form-check-input tx-select" type="checkbox" checked data-idx="${i}"></td>
-                <td>${tx.date || ''}</td>
+                <td>${Fmt.date(tx.date)}</td>
                 <td><strong>${esc(tx.symbol || '')}</strong><br><small class="text-muted">${esc(tx.asset_name || '')}</small></td>
                 <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : tx.tx_type === 'sell' ? 'danger' : 'info'}">${(tx.tx_type || '').toUpperCase()}</span></td>
-                <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString()}</td>
+                <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(Fmt.loc(), {maximumFractionDigits: 4})}</td>
                 <td class="text-end">${parseFloat(tx.price || 0).toFixed(4)}</td>
                 <td>${tx.currency || ''}</td>
                 <td class="text-end text-muted">${(parseFloat(tx.fees) || 0) > 0 ? parseFloat(tx.fees).toFixed(2) : '—'}</td>
