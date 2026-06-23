@@ -12,6 +12,7 @@ import logging
 import time
 import uuid
 import threading
+from datetime import datetime
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, HTTPException, status, Depends, Request
 from pydantic import BaseModel, Field
@@ -64,7 +65,9 @@ def _append_history(db, session_id: str, role: str, content: str) -> None:
     try:
         session = db.get_chat_session(session_id)
         history = session["messages"] if session else []
-        history.append({"role": role, "content": content})
+        history.append(
+            {"role": role, "content": content, "ts": datetime.utcnow().isoformat()}
+        )
         history = history[-_CHAT_HISTORY_MAX:]
         if not session:
             db.create_chat_session(session_id, "New Chat")
@@ -130,6 +133,12 @@ class ChatResponse(BaseModel):
 
 class CreateSessionRequest(BaseModel):
     """Request body for creating a new chat session."""
+
+    name: str
+
+
+class RenameSessionRequest(BaseModel):
+    """Request body for renaming an existing chat session."""
 
     name: str
 
@@ -682,6 +691,23 @@ def delete_chat_session(
     deleted = db.delete_chat_session(session_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Session not found")
+
+
+@router.patch("/chat/sessions/{session_id}")
+def rename_chat_session(
+    session_id: str,
+    request: RenameSessionRequest,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(get_api_key_auth_for_llm),
+):
+    """Rename a chat session."""
+    name = request.name.strip()
+    if not name:
+        raise HTTPException(status_code=422, detail="Name must not be empty")
+    updated = db.rename_chat_session(session_id, name)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"id": session_id, "name": name}
 
 
 @router.get("/chat/sessions/{session_id}/messages")
