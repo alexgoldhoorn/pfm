@@ -26,6 +26,11 @@ Add a new **Proxy Host**:
   `nginx-proxy-manager` network, or use the host IP + published port `8080`.)
 - Enable **Websockets**, **Block Common Exploits**.
 - SSL tab: request a Let's Encrypt cert, force HTTPS (same as your other hosts).
+- **Advanced** tab → Custom Nginx Configuration — add these to avoid 504 on slow LLM calls:
+  ```nginx
+  proxy_read_timeout 200s;
+  proxy_send_timeout 200s;
+  ```
 
 Because the web container proxies `/api` internally, NPM only needs to forward
 the single web host — no separate API route required.
