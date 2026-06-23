@@ -2491,7 +2491,7 @@ function renderResearchReport(report) {
     `;
 
     if (generatedEl) {
-        generatedEl.textContent = report.generated_at ? 'Generated: ' + new Date(report.generated_at).toLocaleString() : '';
+        generatedEl.textContent = report.generated_at ? 'Generated: ' + Fmt.date(report.generated_at) : '';
     }
 
     // Pre-fill suggested targets from the report if present
