@@ -3264,6 +3264,15 @@ class Database:
             conn.commit()
         return cursor.rowcount > 0
 
+    def rename_chat_session(self, id: str, name: str) -> bool:
+        """Rename a chat session. Returns True if a row was updated."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "UPDATE chat_sessions SET name = ? WHERE id = ?", (name, id)
+            )
+            conn.commit()
+        return cursor.rowcount > 0
+
     def backup_database(self, backup_path: str) -> bool:
         """Create database backup."""
         try:

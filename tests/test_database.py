@@ -1187,3 +1187,20 @@ class TestChatSessions:
 
         db = Database(str(tmp_path / "t.db"))
         assert db.get_chat_session("missing") is None
+
+    def test_rename_session(self, tmp_path):
+        from portf_manager.database import Database
+
+        db = Database(str(tmp_path / "t.db"))
+        db.create_chat_session("s1", "Original")
+        result = db.rename_chat_session("s1", "Renamed")
+        assert result is True
+        s = db.get_chat_session("s1")
+        assert s["name"] == "Renamed"
+
+    def test_rename_nonexistent_session_returns_false(self, tmp_path):
+        from portf_manager.database import Database
+
+        db = Database(str(tmp_path / "t.db"))
+        result = db.rename_chat_session("missing", "Whatever")
+        assert result is False
