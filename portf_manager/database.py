@@ -3176,18 +3176,46 @@ class Database:
 
     # ── Chat sessions ──────────────────────────────────────────────────────────
 
+    def _ensure_chat_sessions(self, conn: sqlite3.Connection) -> None:
+        """Create chat_sessions table if missing (defensive — migration may not have run)."""
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS chat_sessions (
+                id               TEXT PRIMARY KEY,
+                name             TEXT NOT NULL,
+                created_at       TEXT NOT NULL,
+                last_message_at  TEXT NOT NULL,
+                message_count    INTEGER DEFAULT 0,
+                messages         TEXT DEFAULT '[]'
+            )
+            """
+        )
+        conn.commit()
+
     def create_chat_session(self, id: str, name: str) -> None:
         """Create a new named chat session."""
         with self.get_connection() as conn:
-            conn.execute(
-                """
-                INSERT OR IGNORE INTO chat_sessions (id, name, created_at, last_message_at)
-                VALUES (?, ?, strftime('%Y-%m-%d %H:%M:%f', 'now'),
-                            strftime('%Y-%m-%d %H:%M:%f', 'now'))
-                """,
-                (id, name),
-            )
-            conn.commit()
+            try:
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO chat_sessions (id, name, created_at, last_message_at)
+                    VALUES (?, ?, strftime('%Y-%m-%d %H:%M:%f', 'now'),
+                                strftime('%Y-%m-%d %H:%M:%f', 'now'))
+                    """,
+                    (id, name),
+                )
+                conn.commit()
+            except Exception:
+                self._ensure_chat_sessions(conn)
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO chat_sessions (id, name, created_at, last_message_at)
+                    VALUES (?, ?, strftime('%Y-%m-%d %H:%M:%f', 'now'),
+                                strftime('%Y-%m-%d %H:%M:%f', 'now'))
+                    """,
+                    (id, name),
+                )
+                conn.commit()
 
     def get_chat_session(self, id: str) -> Optional[Dict]:
         """Return a chat session by id, or None if not found."""
@@ -3206,10 +3234,14 @@ class Database:
     def list_chat_sessions(self) -> List[Dict]:
         """Return all chat sessions ordered by last_message_at DESC, then created_at DESC."""
         with self.get_connection() as conn:
-            rows = conn.execute(
-                "SELECT id, name, created_at, last_message_at, message_count "
-                "FROM chat_sessions ORDER BY last_message_at DESC, created_at DESC"
-            ).fetchall()
+            try:
+                rows = conn.execute(
+                    "SELECT id, name, created_at, last_message_at, message_count "
+                    "FROM chat_sessions ORDER BY last_message_at DESC, created_at DESC"
+                ).fetchall()
+            except Exception:
+                self._ensure_chat_sessions(conn)
+                rows = []
         return [dict(r) for r in rows]
 
     def update_chat_session_activity(self, id: str, messages: list) -> None:
