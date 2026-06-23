@@ -359,6 +359,22 @@ When writing tests, use ISINs from the `US0000000000` / `LU0000000000` / `ES0000
 - **GBX (pence) normalization**: Yahoo quotes some UK-listed stocks (GB-prefixed ISINs) in GBX. `portf_manager/currency_utils.normalize_gbx_amounts()` divides imported price/amount/fees ÷100 and sets currency GBP — called in `imports.py` save + `sync.py` pull. The live price fetch normalizes separately in `api_client.py`. Without this, cost basis is 100× too high.
 - When bumping `DATABASE_VERSION`, update the `assert version == N` assertions in `tests/test_database.py`.
 
+## After Every Task — What Needs Restarting
+
+Always tell the user explicitly at the end of a task what (if anything) needs restarting or manual action. Use this checklist:
+
+| Change type | Action required |
+|---|---|
+| `web_client/` JS/HTML/CSS edited | `docker compose build web && docker stop portf_web && WEB_PORT=8080 docker compose up -d web` |
+| `web_client/nginx.conf` edited | Same as above (nginx config is baked into the image) |
+| `portf_server/` or `portf_manager/` Python edited | Backend has a live bind-mount — HUP gunicorn to reload: `docker exec portf_backend_dev kill -HUP 1` |
+| `DATABASE_VERSION` bumped / new migration added | Restart backend so migration runs: `docker compose restart portf_backend_dev` (or HUP) |
+| DB schema patched manually (e.g. via `docker exec python3 -c "..."`) | No restart needed for the manual patch, but note it in the conversation so the user knows what was done |
+| `docker-compose.yml` or `Dockerfile` edited | Full rebuild of affected service |
+| No code changes (docs/tests only) | Nothing — say so explicitly |
+
+Never leave the user guessing. If a change is already live (e.g. live-mounted Python code that only needs a HUP, or a table already manually created), say that too.
+
 ## Status
 See `PROJECT_STATUS.md` for full component status, pending work, and known issues.
 
