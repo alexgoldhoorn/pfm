@@ -500,7 +500,7 @@ function setupChatPage() {
         }[c]));
     }
 
-    function appendMessage(role, text) {
+    function appendMessage(role, text, ts = null) {
         removeEmpty();
         const isUser = role === 'user';
         let body, extraStyle;
@@ -514,11 +514,17 @@ function setupChatPage() {
             body = escapeHtml(text);
             extraStyle = 'white-space:pre-wrap;';
         }
+        const tsHtml = ts
+            ? `<div class="text-muted ${isUser ? 'text-end' : ''}" style="font-size:0.7rem;">${Fmt.date(ts)}</div>`
+            : '';
         const div = document.createElement('div');
         div.className = `d-flex ${isUser ? 'justify-content-end' : 'justify-content-start'}`;
         div.innerHTML = `
-            <div class="px-3 py-2 rounded-3 chat-bubble ${isUser ? 'bg-primary text-white' : 'chat-bubble-assistant border'}"
-                 style="max-width:80%;word-break:break-word;${extraStyle}">${body}</div>`;
+            <div>
+                <div class="px-3 py-2 rounded-3 chat-bubble ${isUser ? 'bg-primary text-white' : 'chat-bubble-assistant border'}"
+                     style="max-width:80%;word-break:break-word;${extraStyle}">${body}</div>
+                ${tsHtml}
+            </div>`;
         messagesEl.appendChild(div);
         scrollBottom();
     }
@@ -611,13 +617,58 @@ function setupChatPage() {
         sessionsList.innerHTML = sessions.map(s => `
             <button class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-2 px-3 ${s.id === sessionId ? 'active' : ''}"
                     data-session-id="${esc(s.id)}" style="font-size:0.85rem;">
-                <span class="text-truncate flex-grow-1">${esc(s.name)}</span>
-                <span class="badge bg-secondary rounded-pill ms-auto" style="font-size:0.7rem;">${s.message_count || 0}</span>
+                <span class="flex-grow-1 text-truncate" style="min-width:0;">
+                    <span class="d-block text-truncate">${esc(s.name)}</span>
+                    <span class="text-muted d-block" style="font-size:0.7rem;">${Fmt.date(s.last_message_at) || ''}</span>
+                </span>
+                <span class="badge bg-secondary rounded-pill" style="font-size:0.7rem;">${s.message_count || 0}</span>
+                <i class="bi bi-pencil chat-rename-session flex-shrink-0" title="Rename thread" style="cursor:pointer;opacity:0.6;font-size:0.8rem;"></i>
                 <i class="bi bi-x chat-delete-session flex-shrink-0" title="Delete thread" style="cursor:pointer;opacity:0.6;"></i>
             </button>`).join('');
 
         sessionsList.querySelectorAll('[data-session-id]').forEach(btn => {
             btn.addEventListener('click', async (e) => {
+                // Rename
+                if (e.target.classList.contains('chat-rename-session')) {
+                    e.stopPropagation();
+                    const id = btn.dataset.sessionId;
+                    const currentName = sessions.find(x => x.id === id)?.name || '';
+                    const nameWrap = btn.querySelector('.flex-grow-1');
+                    const input = document.createElement('input');
+                    input.type = 'text';
+                    input.className = 'form-control form-control-sm';
+                    input.value = currentName;
+                    input.style.fontSize = '0.85rem';
+                    nameWrap.replaceWith(input);
+                    input.focus();
+                    input.select();
+
+                    let committed = false;
+                    const commit = async () => {
+                        if (committed) return;
+                        committed = true;
+                        const newName = input.value.trim();
+                        if (newName && newName !== currentName) {
+                            try {
+                                await window.apiClient.renameChatSession(id, newName);
+                                const s = sessions.find(x => x.id === id);
+                                if (s) s.name = newName;
+                                if (sessionId === id && threadNameEl) threadNameEl.textContent = newName;
+                            } catch (_) { /* revert silently */ }
+                        }
+                        renderSessionsList();
+                    };
+                    input.addEventListener('blur', commit);
+                    input.addEventListener('keydown', ke => {
+                        if (ke.key === 'Enter') { ke.preventDefault(); input.blur(); }
+                        if (ke.key === 'Escape') {
+                            committed = true;
+                            renderSessionsList();
+                        }
+                    });
+                    return;
+                }
+                // Delete
                 if (e.target.classList.contains('chat-delete-session')) {
                     e.stopPropagation();
                     const id = btn.dataset.sessionId;
@@ -650,14 +701,14 @@ function setupChatPage() {
             const { messages } = await window.apiClient.getChatSessionMessages(id);
             if (messages && messages.length) {
                 messagesEl.innerHTML = '';
-                messages.forEach(m => appendMessage(m.role, m.content));
+                messages.forEach(m => appendMessage(m.role, m.content, m.ts || null));
             }
         } catch (e) { /* leave empty state */ }
     }
 
     async function createAndActivateSession(name) {
         const s = await window.apiClient.createChatSession(name);
-        sessions.unshift({ id: s.id, name: s.name, message_count: 0 });
+        sessions.unshift({ id: s.id, name: s.name, message_count: 0, last_message_at: new Date().toISOString() });
         await activateSession(s.id);
     }
 
@@ -665,17 +716,21 @@ function setupChatPage() {
         const text = inputEl.value.trim();
         if (!text) return;
         inputEl.value = '';
-        appendMessage('user', text);
+        const userTs = new Date().toISOString();
+        appendMessage('user', text, userTs);
         sendBtn.disabled = true;
         sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
         try {
             const data = await window.apiClient.sendChat(text, sessionId);
-            appendMessage('assistant', data.answer || '(no response)');
-            // update message_count in sidebar
+            appendMessage('assistant', data.answer || '(no response)', new Date().toISOString());
             const s = sessions.find(x => x.id === sessionId);
-            if (s) { s.message_count = (s.message_count || 0) + 2; renderSessionsList(); }
+            if (s) {
+                s.message_count = (s.message_count || 0) + 2;
+                s.last_message_at = new Date().toISOString();
+                renderSessionsList();
+            }
         } catch (err) {
-            appendMessage('assistant', 'Error: ' + err.message);
+            appendMessage('assistant', 'Error: ' + err.message, new Date().toISOString());
         } finally {
             sendBtn.disabled = false;
             sendBtn.innerHTML = '<i class="bi bi-send me-1"></i>Send';
@@ -686,18 +741,18 @@ function setupChatPage() {
         const text = inputEl.value.trim();
         if (!text) { alert('Paste a broker statement first.'); return; }
         inputEl.value = '';
-        appendMessage('user', '[Broker statement — extracting transactions…]');
+        appendMessage('user', '[Broker statement — extracting transactions…]', new Date().toISOString());
         extractBtn.disabled = true;
         extractBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
         try {
             const data = await window.apiClient.extractTransactions(text);
             if (!data.transactions || data.transactions.length === 0) {
-                appendMessage('assistant', 'No transactions could be extracted from that text.');
+                appendMessage('assistant', 'No transactions could be extracted from that text.', new Date().toISOString());
             } else {
                 appendTransactionCard(data.transactions);
             }
         } catch (err) {
-            appendMessage('assistant', 'Extraction error: ' + err.message);
+            appendMessage('assistant', 'Extraction error: ' + err.message, new Date().toISOString());
         } finally {
             extractBtn.disabled = false;
             extractBtn.innerHTML = '<i class="bi bi-magic me-1"></i>Extract &amp; Import';
@@ -729,16 +784,16 @@ function setupChatPage() {
 
         if (pending) {
             await createAndActivateSession(pending.threadName);
-            appendMessage('user', pending.openingMessage);
+            appendMessage('user', pending.openingMessage, new Date().toISOString());
             sendBtn.disabled = true;
             sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
             try {
                 const data = await window.apiClient.sendChat(pending.openingMessage, sessionId);
-                appendMessage('assistant', data.answer || '(no response)');
+                appendMessage('assistant', data.answer || '(no response)', new Date().toISOString());
                 const s = sessions.find(x => x.id === sessionId);
-                if (s) { s.message_count = (s.message_count || 0) + 2; renderSessionsList(); }
+                if (s) { s.message_count = (s.message_count || 0) + 2; s.last_message_at = new Date().toISOString(); renderSessionsList(); }
             } catch (err) {
-                appendMessage('assistant', 'Error: ' + err.message);
+                appendMessage('assistant', 'Error: ' + err.message, new Date().toISOString());
             } finally {
                 sendBtn.disabled = false;
                 sendBtn.innerHTML = '<i class="bi bi-send me-1"></i>Send';
@@ -755,16 +810,16 @@ function setupChatPage() {
         if (!pending) return;
         window._chatPendingContext = null;
         await createAndActivateSession(pending.threadName);
-        appendMessage('user', pending.openingMessage);
+        appendMessage('user', pending.openingMessage, new Date().toISOString());
         sendBtn.disabled = true;
         sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
         try {
             const data = await window.apiClient.sendChat(pending.openingMessage, sessionId);
-            appendMessage('assistant', data.answer || '(no response)');
+            appendMessage('assistant', data.answer || '(no response)', new Date().toISOString());
             const s = sessions.find(x => x.id === sessionId);
-            if (s) { s.message_count = (s.message_count || 0) + 2; renderSessionsList(); }
+            if (s) { s.message_count = (s.message_count || 0) + 2; s.last_message_at = new Date().toISOString(); renderSessionsList(); }
         } catch (err) {
-            appendMessage('assistant', 'Error: ' + err.message);
+            appendMessage('assistant', 'Error: ' + err.message, new Date().toISOString());
         } finally {
             sendBtn.disabled = false;
             sendBtn.innerHTML = '<i class="bi bi-send me-1"></i>Send';
