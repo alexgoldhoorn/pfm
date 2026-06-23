@@ -1,0 +1,125 @@
+<h2>Full design — 3-tab Import/Export page</h2>
+<p class="subtitle">Button-group tabs matching Analytics. Click each tab preview below to see its content.</p>
+
+<style>
+.tab-demo { background:#111827; border-radius:8px; padding:1.25rem; margin-bottom:1.5rem; }
+.tab-demo .tab-bar { display:flex; gap:0.4rem; margin-bottom:1.25rem; flex-wrap:wrap; }
+.tab-demo .tab-btn { background:transparent; color:#aaa; border:1px solid #374151; border-radius:4px; padding:5px 14px; font-size:0.8rem; cursor:default; }
+.tab-demo .tab-btn.active { background:#0d6efd; color:#fff; border-color:#0d6efd; }
+.tab-demo .section-label { font-size:0.7rem; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:#6b7280; margin-bottom:0.5rem; }
+.tab-demo .card-row { display:grid; gap:0.75rem; }
+.tab-demo .card-row.two-col { grid-template-columns:1fr 1fr; }
+.tab-demo .mock-card { background:#1f2937; border:1px solid #374151; border-radius:6px; padding:0.85rem; }
+.tab-demo .mock-card-hdr { font-size:0.75rem; font-weight:600; color:#9ca3af; margin-bottom:0.5rem; }
+.tab-demo .mock-line { background:#374151; border-radius:3px; height:22px; margin-bottom:0.4rem; }
+.tab-demo .mock-line.tall { height:64px; }
+.tab-demo .mock-line.short { width:60%; }
+.tab-demo .mock-btn { display:inline-block; background:#0d6efd22; border:1px solid #0d6efd55; border-radius:4px; padding:3px 10px; font-size:0.72rem; color:#6ea8fe; margin-right:0.35rem; margin-top:0.35rem; }
+.tab-demo .mock-btn.green { background:#19875422; border-color:#19875455; color:#75b798; }
+.tab-demo .mock-btn.red { background:#dc354522; border-color:#dc354555; color:#ea868f; }
+.tab-demo .divider { border:none; border-top:1px solid #374151; margin:1rem 0; }
+.tab-section { margin-bottom:1.75rem; }
+.tab-section h3 { font-size:0.95rem; font-weight:700; color:#e5e7eb; margin-bottom:0.25rem; }
+.tab-section p { font-size:0.82rem; color:#9ca3af; margin:0 0 0.75rem; }
+</style>
+
+<!-- TAB 1: IMPORT -->
+<div class="tab-section">
+  <h3>Tab 1 — Import</h3>
+  <p>File Import and AI Text Import side by side, exactly as today.</p>
+  <div class="tab-demo">
+    <div class="tab-bar">
+      <div class="tab-btn active">⬆ Import</div>
+      <div class="tab-btn">⬇ Export</div>
+      <div class="tab-btn">🗂 Data</div>
+    </div>
+    <div class="card-row two-col">
+      <div class="mock-card">
+        <div class="mock-card-hdr">📂 Import from File</div>
+        <div class="mock-line short"></div>
+        <div class="mock-line"></div>
+        <div class="mock-line tall"></div>
+        <span class="mock-btn">Parse File</span>
+      </div>
+      <div class="mock-card">
+        <div class="mock-card-hdr">🤖 Import from Text (AI)</div>
+        <div class="mock-line short"></div>
+        <div class="mock-line tall" style="height:88px;"></div>
+        <span class="mock-btn">Extract</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TAB 2: EXPORT -->
+<div class="tab-section">
+  <h3>Tab 2 — Export</h3>
+  <p>Standard exports (CSV / PDT / Backup) and Platform Export stacked, both full-width.</p>
+  <div class="tab-demo">
+    <div class="tab-bar">
+      <div class="tab-btn">⬆ Import</div>
+      <div class="tab-btn active">⬇ Export</div>
+      <div class="tab-btn">🗂 Data</div>
+    </div>
+    <div class="card-row">
+      <div class="mock-card">
+        <div class="mock-card-hdr">📥 Export</div>
+        <div style="font-size:0.75rem;color:#6b7280;margin-bottom:0.5rem;">Download all transactions as CSV or PDT XLSX, or backup/restore the database.</div>
+        <span class="mock-btn">Export CSV</span>
+        <span class="mock-btn">Export PDT (XLSX)</span>
+        <span class="mock-btn">Download DB Backup</span>
+        <span class="mock-btn red">Restore DB Backup</span>
+      </div>
+      <div class="mock-card">
+        <div class="mock-card-hdr">🌐 Platform Export</div>
+        <div style="font-size:0.75rem;color:#6b7280;margin-bottom:0.5rem;">Export for Yahoo Finance or Simply Wall St.</div>
+        <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+          <div class="mock-line" style="width:130px;height:28px;"></div>
+          <div style="display:flex;gap:0.75rem;font-size:0.72rem;color:#9ca3af;">
+            <span>● Full history</span><span>○ Positions only</span>
+          </div>
+          <div class="mock-line" style="width:130px;height:28px;"></div>
+          <span class="mock-btn">Download</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- TAB 3: DATA -->
+<div class="tab-section">
+  <h3>Tab 3 — Data</h3>
+  <p>Bookings (cash deposits &amp; withdrawals) and Google Sheets Sync stacked, both full-width.</p>
+  <div class="tab-demo">
+    <div class="tab-bar">
+      <div class="tab-btn">⬆ Import</div>
+      <div class="tab-btn">⬇ Export</div>
+      <div class="tab-btn active">🗂 Data</div>
+    </div>
+    <div class="card-row">
+      <div class="mock-card">
+        <div class="mock-card-hdr">🏦 Cash Transactions (Deposits &amp; Withdrawals)</div>
+        <div style="display:flex;gap:0.4rem;flex-wrap:wrap;margin-bottom:0.5rem;">
+          <div class="mock-line" style="width:100px;height:26px;"></div>
+          <div class="mock-line" style="width:80px;height:26px;"></div>
+          <div class="mock-line" style="width:80px;height:26px;"></div>
+          <div class="mock-line" style="width:60px;height:26px;"></div>
+          <span class="mock-btn green">+ Add</span>
+        </div>
+        <div class="mock-line" style="height:80px;"></div>
+      </div>
+      <div class="mock-card">
+        <div class="mock-card-hdr">☁️ Google Sheets — PDT Sync</div>
+        <div class="mock-line" style="width:70%;"></div>
+        <div class="mock-line" style="width:90%;margin-bottom:0.5rem;"></div>
+        <span class="mock-btn green">Pull from Sheet</span>
+        <span class="mock-btn">Push to Sheet</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr style="border-color:#374151;">
+<div style="font-size:0.82rem;color:#6b7280;margin-top:1rem;">
+  <strong style="color:#9ca3af;">JS approach:</strong> Mirrors Analytics exactly — <code>data-io-tab</code> on buttons, <code>data-io-section</code> on cards, a <code>showImportExportTab()</code> function. The Bookings table loads lazily when the Data tab is first clicked (same pattern as Analytics lazy-loaders).
+</div>

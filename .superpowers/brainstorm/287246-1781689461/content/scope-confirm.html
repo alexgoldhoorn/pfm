@@ -1,0 +1,46 @@
+<h2>Standardise on Bootstrap nav-tabs — scope check</h2>
+<p class="subtitle">Help and Diagnostics already use the right style. Which pages need migrating?</p>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1.5rem;">
+  <div style="background:#111827;border-radius:8px;padding:1rem;">
+    <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;margin-bottom:0.6rem;">Current btn-group style (to replace)</div>
+    <div style="display:flex;gap:0.35rem;flex-wrap:wrap;margin-bottom:0.5rem;">
+      <button style="background:#0d6efd;color:#fff;border:1px solid #0d6efd;border-radius:4px;padding:4px 10px;font-size:0.78rem;">⬆ Import</button>
+      <button style="background:transparent;color:#aaa;border:1px solid #374151;border-radius:4px;padding:4px 10px;font-size:0.78rem;">⬇ Export</button>
+      <button style="background:transparent;color:#aaa;border:1px solid #374151;border-radius:4px;padding:4px 10px;font-size:0.78rem;">🗂 Data</button>
+    </div>
+    <div style="font-size:0.72rem;color:#6b7280;">Used on: Analytics (7 tabs), Import/Export (3 tabs)</div>
+  </div>
+  <div style="background:#111827;border-radius:8px;padding:1rem;">
+    <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:#6b7280;margin-bottom:0.6rem;">Bootstrap nav-tabs style (target)</div>
+    <div style="display:flex;border-bottom:2px solid #374151;margin-bottom:0.5rem;">
+      <div style="padding:5px 14px;font-size:0.82rem;color:#0d6efd;border-bottom:2px solid #0d6efd;margin-bottom:-2px;">⬆ Import</div>
+      <div style="padding:5px 14px;font-size:0.82rem;color:#888;">⬇ Export</div>
+      <div style="padding:5px 14px;font-size:0.82rem;color:#888;">🗂 Data</div>
+    </div>
+    <div style="font-size:0.72rem;color:#6b7280;">Used on: Diagnostics ✅, Help ✅ — already correct</div>
+  </div>
+</div>
+
+<p style="font-size:0.85rem;color:#9ca3af;margin-bottom:1rem;">Select which pages to migrate (both need changing):</p>
+
+<div class="options" data-multiselect>
+  <div class="option" data-choice="importexport" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Import / Export — 3 tabs</h3>
+      <p>Just built with the btn-group style. Migrate HTML tab bar + JS from custom show/hide to Bootstrap <code>shown.bs.tab</code> event for lazy Bookings load. Medium effort.</p>
+    </div>
+  </div>
+  <div class="option" data-choice="analytics" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Analytics — 7 tabs</h3>
+      <p>Larger job: wrap each group of cards in a <code>tab-pane</code>, replace <code>_ANALYTICS_LOADERS</code> dict with <code>shown.bs.tab</code> events, remove custom <code>showAnalyticsTab</code>/<code>setupAnalyticsTabs</code> JS. Bigger effort but consistent result.</p>
+    </div>
+  </div>
+</div>
+
+<div style="margin-top:1.25rem;padding:0.75rem 1rem;background:rgba(255,255,255,0.05);border-radius:6px;font-size:0.82rem;color:#9ca3af;">
+  Also: a short <strong>web UI patterns doc</strong> documenting the standard tab markup + lazy-load hook pattern, so future pages are built correctly from the start.
+</div>

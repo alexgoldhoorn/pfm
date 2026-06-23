@@ -42,15 +42,9 @@ def rename_chat_session(self, id: str, name: str) -> bool:
 
 ### 1. `appendMessage(role, text, ts=null)`
 
-Add optional `ts` parameter. Render a small timestamp below the bubble:
+Add optional `ts` parameter. Render a small timestamp below the bubble using `Fmt.date(ts)` — respects `PREFS.dateFormat` and shows `HH:MM` automatically. Nothing rendered if `ts` is null/falsy.
 
-```
-HH:MM          — if ts is today
-DD MMM HH:MM   — if ts is an older date
-(nothing)      — if ts is null (defensive fallback)
-```
-
-Timestamp styled as `<div class="text-muted" style="font-size:0.7rem;">HH:MM</div>` aligned to the same side as the bubble (right for user, left for assistant).
+Timestamp styled as `<div class="text-muted" style="font-size:0.7rem;">${Fmt.date(ts)}</div>` aligned to the same side as the bubble (right for user, left for assistant).
 
 ### 2. Load history with timestamps
 
@@ -66,7 +60,7 @@ In `renderSessionsList`, add a small muted line below the thread name showing th
 
 ```html
 <span class="text-truncate flex-grow-1">${esc(s.name)}</span>
-<span class="text-muted d-block" style="font-size:0.7rem;">${fmtTs(s.last_message_at)}</span>
+<span class="text-muted d-block" style="font-size:0.7rem;">${Fmt.date(s.last_message_at)}</span>
 ```
 
 ### 5. Thread rename
@@ -93,7 +87,7 @@ async renameChatSession(id, name) {
 
 ## Shared Utility
 
-A module-scoped `fmtTs(isoString)` helper formats an ISO timestamp for display. Used by both the message bubbles and the thread sidebar. Returns empty string for null/undefined input.
+Use `Fmt.date(isoString)` for all timestamp display — it already respects `PREFS.dateFormat` (iso/dmy/mdy) and appends `HH:MM` automatically when the input is a datetime string. Returns `''` for null/falsy input. No custom helper needed. Replace the `fmtTs(...)` references in the sidebar template with `Fmt.date(s.last_message_at)`.
 
 ## Testing
 
