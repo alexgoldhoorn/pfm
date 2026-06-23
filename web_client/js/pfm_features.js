@@ -642,6 +642,7 @@ function setupChatPage() {
                     nameWrap.replaceWith(input);
                     input.focus();
                     input.select();
+                    input.addEventListener('click', e => e.stopPropagation());
 
                     let committed = false;
                     const commit = async () => {

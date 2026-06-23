@@ -1,0 +1,50 @@
+<h2>How should we group the Import/Export sections into tabs?</h2>
+<p class="subtitle">The page currently has 6 sections stacked vertically. Pick the grouping that feels most natural to you.</p>
+
+<div style="margin-bottom: 1.5rem; padding: 0.75rem 1rem; background: rgba(255,255,255,0.05); border-radius: 8px; font-size: 0.85rem; color: var(--text-muted, #888);">
+  <strong style="color: var(--text, #ccc);">Current sections:</strong>
+  &nbsp;📂 File Import &nbsp;·&nbsp; 🤖 AI Text Import &nbsp;·&nbsp; 📥 Export (CSV / PDT / Backup) &nbsp;·&nbsp; 🌐 Platform Export (Yahoo / SWS) &nbsp;·&nbsp; 🏦 Bookings (deposits &amp; withdrawals) &nbsp;·&nbsp; ☁️ Google Sheets Sync
+</div>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>3 tabs — Import / Export / Data</h3>
+      <div style="display:flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0;">
+        <span style="background:#0d6efd22;border:1px solid #0d6efd55;border-radius:4px;padding:2px 8px;font-size:0.78rem;">Import: File + AI Text</span>
+        <span style="background:#19875422;border:1px solid #19875455;border-radius:4px;padding:2px 8px;font-size:0.78rem;">Export: CSV/PDT/Backup + Platform</span>
+        <span style="background:#6f42c122;border:1px solid #6f42c155;border-radius:4px;padding:2px 8px;font-size:0.78rem;">Data: Bookings + Sheets Sync</span>
+      </div>
+      <p style="margin:0;font-size:0.85rem;color:var(--text-muted,#888);">Fewest tabs. Exports are co-located regardless of type. "Data" is a catch-all for the two management/sync sections.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>4 tabs — Import / Export / Bookings / Sync</h3>
+      <div style="display:flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0;">
+        <span style="background:#0d6efd22;border:1px solid #0d6efd55;border-radius:4px;padding:2px 8px;font-size:0.78rem;">Import: File + AI Text</span>
+        <span style="background:#19875422;border:1px solid #19875455;border-radius:4px;padding:2px 8px;font-size:0.78rem;">Export: CSV/PDT/Backup + Platform</span>
+        <span style="background:#fd7e1422;border:1px solid #fd7e1455;border-radius:4px;padding:2px 8px;font-size:0.78rem;">Bookings: deposits &amp; withdrawals</span>
+        <span style="background:#6f42c122;border:1px solid #6f42c155;border-radius:4px;padding:2px 8px;font-size:0.78rem;">Sync: Google Sheets PDT</span>
+      </div>
+      <p style="margin:0;font-size:0.85rem;color:var(--text-muted,#888);">Each major concept gets its own tab. Bookings becomes a first-class destination (useful since it has a live table). Sync is clearly separate from bulk export.</p>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>4 tabs — Import / Export / Bookings / Platform</h3>
+      <div style="display:flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.5rem 0;">
+        <span style="background:#0d6efd22;border:1px solid #0d6efd55;border-radius:4px;padding:2px 8px;font-size:0.78rem;">Import: File + AI Text + Sheets Pull</span>
+        <span style="background:#19875422;border:1px solid #19875455;border-radius:4px;padding:2px 8px;font-size:0.78rem;">Export: CSV/PDT/Backup + Sheets Push</span>
+        <span style="background:#fd7e1422;border:1px solid #fd7e1455;border-radius:4px;padding:2px 8px;font-size:0.78rem;">Bookings: deposits &amp; withdrawals</span>
+        <span style="background:#6f42c122;border:1px solid #6f42c155;border-radius:4px;padding:2px 8px;font-size:0.78rem;">Platform: Yahoo Finance + Simply Wall St</span>
+      </div>
+      <p style="margin:0;font-size:0.85rem;color:var(--text-muted,#888);">Splits Google Sheets Sync by direction: Pull lives in Import, Push lives in Export. Platform Export gets its own tab since it targets third-party apps rather than local files.</p>
+    </div>
+  </div>
+</div>
