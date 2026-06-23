@@ -80,3 +80,33 @@ class TestChatSessionEndpoints:
         )
         assert msg_resp.status_code == 200
         assert msg_resp.json() == {"messages": []}
+
+    async def test_rename_session(self, async_test_client: AsyncClient, auth_headers):
+        create_resp = await async_test_client.post(
+            "/api/v1/llm/chat/sessions",
+            json={"name": "Original"},
+            headers=auth_headers,
+        )
+        session_id = create_resp.json()["id"]
+        rename_resp = await async_test_client.patch(
+            f"/api/v1/llm/chat/sessions/{session_id}",
+            json={"name": "Renamed"},
+            headers=auth_headers,
+        )
+        assert rename_resp.status_code == 200
+        assert rename_resp.json()["name"] == "Renamed"
+
+        list_resp = await async_test_client.get(
+            "/api/v1/llm/chat/sessions", headers=auth_headers
+        )
+        assert any(s["name"] == "Renamed" for s in list_resp.json())
+
+    async def test_rename_nonexistent_session_returns_404(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        response = await async_test_client.patch(
+            "/api/v1/llm/chat/sessions/nonexistent-id",
+            json={"name": "Whatever"},
+            headers=auth_headers,
+        )
+        assert response.status_code == 404

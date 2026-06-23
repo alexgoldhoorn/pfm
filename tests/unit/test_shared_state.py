@@ -33,8 +33,11 @@ class TestChatHistoryPersistence:
             history = llm_router._get_history(db, sid)
             # Trimmed to the configured maximum.
             assert len(history) == llm_router._CHAT_HISTORY_MAX
-            # Keeps the most recent messages.
-            assert history[-1] == {"role": "user", "content": f"msg {n - 1}"}
+            # Keeps the most recent messages (ts field is also present but ignored here).
+            last = history[-1]
+            assert last["role"] == "user"
+            assert last["content"] == f"msg {n - 1}"
+            assert "ts" in last
         finally:
             os.unlink(path)
 
@@ -46,7 +49,10 @@ class TestChatHistoryPersistence:
             # Simulate a restart / a different worker: brand new handle, same file.
             db2 = Database(path)
             history = llm_router._get_history(db2, "sess-2")
-            assert history == [{"role": "assistant", "content": "remember me"}]
+            assert len(history) == 1
+            assert history[0]["role"] == "assistant"
+            assert history[0]["content"] == "remember me"
+            assert "ts" in history[0]
         finally:
             os.unlink(path)
 
