@@ -1286,6 +1286,16 @@ function createAPIClient() {
             if (!response.ok && response.status !== 404) throw new Error('Failed to delete session');
         },
 
+        async renameChatSession(id, name) {
+            const response = await fetch(this.baseURL + '/api/v1/llm/chat/sessions/' + id, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify({ name })
+            });
+            if (!response.ok) throw new Error('Failed to rename session');
+            return response.json();
+        },
+
         async getChatSessionMessages(id) {
             const response = await fetch(this.baseURL + '/api/v1/llm/chat/sessions/' + id + '/messages', {
                 headers: { 'X-API-Key': this.apiKey }
