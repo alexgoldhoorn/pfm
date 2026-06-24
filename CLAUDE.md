@@ -166,7 +166,12 @@ API key auth (`X-API-Key` header). `SERVER_API_KEY` env var is **auto-seeded** a
 A portfolio doubles as a broker/account. `GET /api/v1/portfolios/` returns `website`, `description` (from `KNOWN_BROKERS` if not stored), `first/last_transaction_date`, `first/last_booking_date`. Portfolio queries alias `e.website AS entity_website` to avoid colliding with `p.website`. `DELETE /api/v1/portfolios/{id}/transactions?include_bookings=true`.
 
 ### Price Updates
-Daily cron at **20:00 UTC** via `~/scripts/portf-update-prices.sh`. Manual: `docker exec -e PORTF_API_KEY=... portf_backend_dev python3 -m portf_manager.cli update-prices`
+Daily cron at **20:00 UTC** via `~/scripts/portf-update-prices.sh`. Manual CLI: `docker exec -e PORTF_API_KEY=... portf_backend_dev python3 -m portf_manager.cli update-prices`
+
+On-demand via API (powers the dashboard "Refresh prices" button):
+- `POST /api/v1/analytics/trigger-price-update` — starts a background thread; returns `{"status":"started"}` or 409 if already running
+- `GET /api/v1/analytics/price-update-status` — returns `{"running": bool, "started_at": "..."}`
+- Core logic in `portf_manager/services/price_updater.py::run_price_update(db)` — shared by CLI and API. Records each run in `price_update_runs`.
 
 - **GBX**: yfinance returns UK stocks in GBX (pence). `fetch_latest_prices` auto-converts when `fast_info.currency == "GBp"` (÷100). Never store raw yfinance prices for UK ISINs without this check.
 - **Crypto**: `{SYM}-EUR` format. Some tokens need `_CRYPTO_YF_OVERRIDES` (e.g. `SUI → ("SUI20947-USD", "USD")`); USD results converted to EUR before storing.

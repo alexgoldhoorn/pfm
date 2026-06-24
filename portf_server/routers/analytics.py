@@ -1201,6 +1201,55 @@ async def record_update_run(
     return {"id": run_id}
 
 
+# ── On-demand Price Update ───────────────────────────────────────────────────
+
+_price_update_lock = threading.Lock()
+_price_update_state: dict = {"running": False, "started_at": None}
+
+
+@router.post("/trigger-price-update")
+def trigger_price_update(
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Start a background price update for all auto-priced assets.
+
+    Returns 409 if an update is already in progress.
+    """
+    from portf_manager.services.price_updater import run_price_update
+
+    with _price_update_lock:
+        if _price_update_state["running"]:
+            raise HTTPException(
+                status_code=409, detail="Price update already in progress"
+            )
+        _price_update_state["running"] = True
+        _price_update_state["started_at"] = datetime.now().isoformat()
+
+    def _run() -> None:
+        try:
+            run_price_update(db)
+        finally:
+            with _price_update_lock:
+                _price_update_state["running"] = False
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    return {"status": "started", "started_at": _price_update_state["started_at"]}
+
+
+@router.get("/price-update-status")
+def price_update_status(
+    api_key_info: dict = Depends(_auth),
+):
+    """Check whether a background price update is currently running."""
+    with _price_update_lock:
+        return {
+            "running": _price_update_state["running"],
+            "started_at": _price_update_state["started_at"],
+        }
+
+
 # ── Stress Testing ───────────────────────────────────────────────────────────
 
 
