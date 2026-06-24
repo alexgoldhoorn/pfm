@@ -260,3 +260,109 @@ class TestGeminiToolCalling:
                 )
 
         assert result == "Your portfolio is worth €10,000."
+
+
+class TestOpenRouterToolCalling:
+    def _make_client(self):
+        from portf_manager.llm_client import OpenRouterLLMClient
+
+        return OpenRouterLLMClient(api_key="test_key")
+
+    def test_openrouter_satisfies_tool_capable_protocol(self):
+        from portf_manager.llm_client import ToolCapableLLMClient
+
+        client = self._make_client()
+        assert isinstance(client, ToolCapableLLMClient)
+
+    def test_generate_with_tools_returns_tool_call(self):
+        from unittest.mock import MagicMock, patch
+        from portf_manager.llm_client import ToolDefinition
+
+        client = self._make_client()
+        tools = [
+            ToolDefinition(
+                name="get_quote",
+                description="Get price.",
+                parameters=[
+                    {
+                        "name": "symbol",
+                        "type": "string",
+                        "description": "Ticker",
+                        "required": True,
+                    }
+                ],
+            )
+        ]
+        messages = [{"role": "user", "content": "Price of AAPL?"}]
+
+        fake_response = MagicMock()
+        fake_response.json.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_abc",
+                                "function": {
+                                    "name": "get_quote",
+                                    "arguments": '{"symbol": "AAPL"}',
+                                },
+                            }
+                        ],
+                    }
+                }
+            ]
+        }
+        fake_response.raise_for_status = MagicMock()
+
+        with patch("requests.post", return_value=fake_response):
+            response = client.generate_with_tools(messages, tools)
+
+        assert response.tool_call is not None
+        assert response.tool_call.name == "get_quote"
+        assert response.tool_call.arguments == {"symbol": "AAPL"}
+        assert response.tool_call.call_id == "call_abc"
+
+    def test_generate_with_tools_returns_text_when_no_tool(self):
+        from unittest.mock import MagicMock, patch
+        from portf_manager.llm_client import ToolDefinition
+
+        client = self._make_client()
+        tools = [ToolDefinition(name="get_quote", description=".", parameters=[])]
+        messages = [{"role": "user", "content": "Hello"}]
+
+        fake_response = MagicMock()
+        fake_response.json.return_value = {
+            "choices": [{"message": {"content": "Hi!", "tool_calls": None}}]
+        }
+        fake_response.raise_for_status = MagicMock()
+
+        with patch("requests.post", return_value=fake_response):
+            response = client.generate_with_tools(messages, tools)
+
+        assert response.text == "Hi!"
+        assert response.tool_call is None
+
+    def test_complete_with_tool_result_returns_string(self):
+        from unittest.mock import MagicMock, patch
+        from portf_manager.llm_client import ToolCallRequest
+
+        client = self._make_client()
+        messages = [{"role": "user", "content": "Price of AAPL?"}]
+        tool_call = ToolCallRequest(
+            name="get_quote", arguments={"symbol": "AAPL"}, call_id="call_abc"
+        )
+
+        fake_response = MagicMock()
+        fake_response.json.return_value = {
+            "choices": [{"message": {"content": "AAPL is $200."}}]
+        }
+        fake_response.raise_for_status = MagicMock()
+
+        with patch("requests.post", return_value=fake_response):
+            result = client.complete_with_tool_result(
+                messages, tool_call, '{"price": 200}'
+            )
+
+        assert result == "AAPL is $200."

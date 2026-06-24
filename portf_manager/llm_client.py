@@ -449,6 +449,108 @@ class OpenRouterLLMClient:
             raise RuntimeError("Empty response from OpenRouter API")
         return text
 
+    def generate_with_tools(
+        self,
+        messages: list[dict],
+        tools: list["ToolDefinition"],
+    ) -> "ToolResponse":
+        """First pass: OpenAI-compatible tool calling via OpenRouter."""
+        import json as _json
+
+        openai_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            p["name"]: {
+                                "type": p["type"],
+                                "description": p["description"],
+                            }
+                            for p in t.parameters
+                        },
+                        "required": [
+                            p["name"] for p in t.parameters if p.get("required", False)
+                        ],
+                    },
+                },
+            }
+            for t in tools
+        ]
+        resp = requests.post(
+            f"{self.base_url}/chat/completions",
+            json={
+                "model": self.model_name,
+                "messages": messages,
+                "tools": openai_tools,
+                "tool_choice": "auto",
+            },
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            timeout=120,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        msg = data["choices"][0]["message"]
+
+        if msg.get("tool_calls"):
+            tc = msg["tool_calls"][0]
+            return ToolResponse(
+                tool_call=ToolCallRequest(
+                    name=tc["function"]["name"],
+                    arguments=_json.loads(tc["function"]["arguments"]),
+                    call_id=tc["id"],
+                )
+            )
+        return ToolResponse(text=msg.get("content", ""))
+
+    def complete_with_tool_result(
+        self,
+        messages: list[dict],
+        tool_call: "ToolCallRequest",
+        tool_result: str,
+    ) -> str:
+        """Second pass: append tool result message and get final answer."""
+        import json as _json
+
+        extended = messages + [
+            {
+                "role": "assistant",
+                "content": None,
+                "tool_calls": [
+                    {
+                        "id": tool_call.call_id,
+                        "type": "function",
+                        "function": {
+                            "name": tool_call.name,
+                            "arguments": _json.dumps(tool_call.arguments),
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "tool",
+                "content": tool_result,
+                "tool_call_id": tool_call.call_id,
+            },
+        ]
+        resp = requests.post(
+            f"{self.base_url}/chat/completions",
+            json={"model": self.model_name, "messages": extended},
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+            timeout=120,
+        )
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"].get("content", "")
+
 
 DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6"
 
