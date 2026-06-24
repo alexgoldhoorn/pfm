@@ -138,7 +138,7 @@ Plain `def`; gathers 6 data bundles via `ThreadPoolExecutor` → LLM prompt → 
 - `GET /api/v1/analytics/tax-estimate?year=` — IRPF savings base (realised gains + dividends + interest); `irpf_savings_tax()` progressive brackets (19/21/23/27/28%)
 - `GET /api/v1/analytics/diversification` — sector/country/currency/type + Herfindahl HHI (slow, fetches yfinance)
 - `GET /api/v1/analytics/risk?benchmark=^GSPC` — max drawdown, volatility, Sharpe, `sortino_ratio`, `calmar_ratio`, `beta`, `alpha_pct`. Plain `def` (threadpool).
-- `GET /api/v1/analytics/fees` | `GET /api/v1/analytics/tax-report?year=` (per-lot FIFO + withholding)
+- `GET /api/v1/analytics/fees` | `GET /api/v1/analytics/tax-report?year=` (per-lot FIFO + withholding; all amounts converted to EUR via `_fx()`; each lot carries `currency`, `proceeds_eur`, `cost_basis_eur`, `gain_loss_eur`; **`TaxTransaction` uses `sell_quantity`/`sell_amount`/`purchase_amount` — not `quantity`/`proceeds`/`cost_basis`**)
 - `GET /api/v1/analytics/data-freshness?stale_days=4` — price freshness + stale asset list; powers dashboard chip + alerts banner
 - **Data Quality**: `GET /api/v1/analytics/dq/reconciliation|duplicates|suspicious` — pure DB checks (plain `def`). Powers Diagnostics page Data Quality tab. Dismissals in `localStorage["pfmDismissedIssues"]`.
 - `services/tax_rates.py` — IRPF brackets; `GET /api/v1/public/summary` off unless `PORTF_PUBLIC_VIEW=true`

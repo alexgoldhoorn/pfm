@@ -1215,28 +1215,43 @@ async function loadAnalyticsTaxReport() {
         const d = await window.apiClient.getTaxReport(year);
         _lastTaxReport = d;
         const lots = d.realised_lots || [];
-        const lotRows = lots.length ? lots.map(l => `
-            <tr>
+        // Whether any lot has a non-EUR currency — drives whether to show native columns.
+        const hasNonEur = lots.some(l => l.currency && l.currency !== 'EUR');
+        const colCount = hasNonEur ? 8 : 7;
+
+        const fmtNative = (val, ccy) => {
+            const n = parseFloat(val) || 0;
+            const s = n.toLocaleString(Fmt.loc(), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            return ccy && ccy !== 'EUR' ? `${s} ${ccy}` : s;
+        };
+
+        const lotRows = lots.length ? lots.map(l => {
+            const isEur = !l.currency || l.currency === 'EUR';
+            const gainEur = l.gain_loss_eur != null ? l.gain_loss_eur : l.gain_loss;
+            return `<tr>
                 <td><strong>${esc(l.symbol)}</strong>${l.name && l.name !== l.symbol ? `<div class="small text-muted">${esc(l.name)}</div>` : ''}</td>
                 <td>${Fmt.date(l.sell_date)}</td>
                 <td class="text-end">${Fmt.num(l.quantity, 0, 4)}</td>
-                <td class="text-end">${anFmtEur2(l.proceeds)}</td>
-                <td class="text-end">${anFmtEur2(l.cost_basis)}</td>
-                <td class="text-end ${l.gain_loss >= 0 ? 'text-success' : 'text-danger'}">${anFmtEur2(l.gain_loss)}</td>
+                ${hasNonEur ? `<td class="text-center"><span class="badge bg-secondary">${esc(l.currency || 'EUR')}</span></td>` : ''}
+                <td class="text-end">${isEur ? anFmtEur2(l.proceeds) : `<span class="small">${fmtNative(l.proceeds, l.currency)}</span><div class="small text-muted">${anFmtEur2(l.proceeds_eur)}</div>`}</td>
+                <td class="text-end">${isEur ? anFmtEur2(l.cost_basis) : `<span class="small">${fmtNative(l.cost_basis, l.currency)}</span><div class="small text-muted">${anFmtEur2(l.cost_basis_eur)}</div>`}</td>
+                <td class="text-end ${gainEur >= 0 ? 'text-success' : 'text-danger'}">${anFmtEur2(gainEur)}${!isEur ? `<div class="small">${fmtNative(l.gain_loss, l.currency)}</div>` : ''}</td>
                 <td class="text-end text-muted">${l.holding_days != null ? l.holding_days + 'd' : '—'}</td>
-            </tr>`).join('') : `<tr><td colspan="7" class="text-center text-muted small">No sales realised in ${year}.</td></tr>`;
+            </tr>`;
+        }).join('') : `<tr><td colspan="${colCount}" class="text-center text-muted small">No sales realised in ${year}.</td></tr>`;
+
         body.innerHTML = `
             <div class="row g-3 mb-3">
                 <div class="col-6 col-md-3"><div class="border rounded p-3 h-100"><div class="small text-muted mb-1">Realised gain ${year}</div><div class="fw-bold ${d.realised_gain_total >= 0 ? 'text-success' : 'text-danger'}">${anFmtEur2(d.realised_gain_total)}</div></div></div>
                 <div class="col-6 col-md-3"><div class="border rounded p-3 h-100"><div class="small text-muted mb-1">Lots sold</div><div class="fw-bold">${d.lot_count}</div></div></div>
-                <div class="col-6 col-md-3"><div class="border rounded p-3 h-100"><div class="small text-muted mb-1">Dividends (gross)</div><div class="fw-bold">${anFmtEur2(d.dividends_gross_eur)}</div></div></div>
-                <div class="col-6 col-md-3"><div class="border rounded p-3 h-100"><div class="small text-muted mb-1">Withholding paid</div><div class="fw-bold">${anFmtEur2(d.dividend_withholding_eur)}</div></div></div>
+                <div class="col-6 col-md-3"><div class="border rounded p-3 h-100"><div class="small text-muted mb-1">Dividends (gross, EUR)</div><div class="fw-bold">${anFmtEur2(d.dividends_gross_eur)}</div></div></div>
+                <div class="col-6 col-md-3"><div class="border rounded p-3 h-100"><div class="small text-muted mb-1">Withholding paid (EUR)</div><div class="fw-bold">${anFmtEur2(d.dividend_withholding_eur)}</div></div></div>
             </div>
             <div class="table-responsive"><table class="table table-sm table-hover mb-2">
-                <thead><tr><th>Symbol</th><th>Sold</th><th class="text-end">Qty</th><th class="text-end">Proceeds</th><th class="text-end">Cost basis</th><th class="text-end">Gain/Loss</th><th class="text-end">Held</th></tr></thead>
+                <thead><tr><th>Symbol</th><th>Sold</th><th class="text-end">Qty</th>${hasNonEur ? '<th>CCY</th>' : ''}<th class="text-end">Proceeds</th><th class="text-end">Cost basis</th><th class="text-end">Gain/Loss (EUR)</th><th class="text-end">Held</th></tr></thead>
                 <tbody>${lotRows}</tbody>
             </table></div>
-            ${d.note ? `<p class="text-muted small mb-0"><em>${d.note}</em></p>` : ''}`;
+            ${d.note ? `<p class="text-muted small mb-0"><em>${esc(d.note)}</em></p>` : ''}`;
     } catch (err) {
         body.innerHTML = `<div class="text-danger small">Error loading tax report: ${err.message}</div>`;
     }
@@ -1246,10 +1261,16 @@ async function loadAnalyticsTaxReport() {
 function downloadTaxReportCsv() {
     const d = _lastTaxReport;
     if (!d) { alert('Open the Tax tab first.'); return; }
-    const rows = [['symbol', 'sell_date', 'quantity', 'proceeds', 'cost_basis', 'gain_loss', 'holding_days']];
-    (d.realised_lots || []).forEach(l => rows.push([l.symbol, l.sell_date, l.quantity, l.proceeds, l.cost_basis, l.gain_loss, l.holding_days]));
+    const rows = [['symbol', 'sell_date', 'quantity', 'currency', 'proceeds', 'proceeds_eur', 'cost_basis', 'cost_basis_eur', 'gain_loss', 'gain_loss_eur', 'holding_days']];
+    (d.realised_lots || []).forEach(l => rows.push([
+        l.symbol, l.sell_date, l.quantity, l.currency || 'EUR',
+        l.proceeds, l.proceeds_eur ?? l.proceeds,
+        l.cost_basis, l.cost_basis_eur ?? l.cost_basis,
+        l.gain_loss, l.gain_loss_eur ?? l.gain_loss,
+        l.holding_days,
+    ]));
     rows.push([]);
-    rows.push(['Realised gain total', d.realised_gain_total]);
+    rows.push(['Realised gain total (EUR)', d.realised_gain_total]);
     rows.push(['Dividends gross (EUR)', d.dividends_gross_eur]);
     rows.push(['Dividend withholding (EUR)', d.dividend_withholding_eur]);
     const csv = '﻿' + rows.map(r => r.map(c => {
