@@ -994,28 +994,42 @@ async def get_tax_report(
 
     calc = TaxCalculator(db)
     lots = []
-    total_gain = 0.0
-    # Build symbol → name lookup once so lot rows can include a friendly name.
+    total_gain_eur = 0.0
+    # Build symbol → name and currency lookups once.
+    all_assets = db.get_all_assets()
     asset_names: dict[str, str] = {
-        a["symbol"]: a.get("name", "") or ""
-        for a in db.get_all_assets()
+        a["symbol"]: a.get("name", "") or "" for a in all_assets if a.get("symbol")
+    }
+    asset_currencies: dict[str, str] = {
+        a["symbol"]: (a.get("currency") or "EUR").upper()
+        for a in all_assets
         if a.get("symbol")
     }
     try:
         report = calc.calculate_tax_report(user_id=1, start_date=start, end_date=end)
         for symbol, txns in report.items():
+            currency = asset_currencies.get(symbol, "EUR")
+            fx = _fx(currency)
             for t in txns:
+                # TaxTransaction uses sell_quantity / sell_amount / purchase_amount
+                qty = float(getattr(t, "sell_quantity", 0) or 0)
+                proceeds = float(getattr(t, "sell_amount", 0) or 0)
+                cost_basis = float(getattr(t, "purchase_amount", 0) or 0)
                 gain = float(getattr(t, "gain_loss", 0) or 0)
-                total_gain += gain
+                total_gain_eur += gain * fx
                 lots.append(
                     {
                         "symbol": symbol,
                         "name": asset_names.get(symbol, ""),
                         "sell_date": str(getattr(t, "sell_date", "")),
-                        "quantity": float(getattr(t, "quantity", 0) or 0),
-                        "proceeds": round(float(getattr(t, "proceeds", 0) or 0), 2),
-                        "cost_basis": round(float(getattr(t, "cost_basis", 0) or 0), 2),
+                        "quantity": qty,
+                        "currency": currency,
+                        "proceeds": round(proceeds, 2),
+                        "cost_basis": round(cost_basis, 2),
                         "gain_loss": round(gain, 2),
+                        "proceeds_eur": round(proceeds * fx, 2),
+                        "cost_basis_eur": round(cost_basis * fx, 2),
+                        "gain_loss_eur": round(gain * fx, 2),
                         "holding_days": getattr(t, "holding_period_days", None),
                     }
                 )
@@ -1024,9 +1038,9 @@ async def get_tax_report(
 
     lots.sort(key=lambda x: x["sell_date"])
 
-    # Dividend withholding tax this year (per-transaction `tax` on dividends)
-    withholding = 0.0
-    dividends_gross = 0.0
+    # Dividend and withholding sums converted to EUR via per-transaction currency.
+    withholding_eur = 0.0
+    dividends_gross_eur = 0.0
     for tx in db.get_all_transactions():
         if tx.get("transaction_type", "").lower() != "dividend":
             continue
@@ -1036,17 +1050,22 @@ async def get_tax_report(
         except ValueError:
             continue
         if start <= dd <= end:
-            withholding += float(tx.get("tax") or 0)
-            dividends_gross += float(tx.get("total_amount") or 0)
+            cur = (tx.get("currency") or "EUR").upper()
+            fx = _fx(cur)
+            withholding_eur += float(tx.get("tax") or 0) * fx
+            dividends_gross_eur += float(tx.get("total_amount") or 0) * fx
 
     return {
         "year": yr,
         "realised_lots": lots,
-        "realised_gain_total": round(total_gain, 2),
+        "realised_gain_total": round(total_gain_eur, 2),
         "lot_count": len(lots),
-        "dividends_gross_eur": round(dividends_gross, 2),
-        "dividend_withholding_eur": round(withholding, 2),
-        "note": "FIFO realised gains. Withholding is the tax already paid at source on dividends.",
+        "dividends_gross_eur": round(dividends_gross_eur, 2),
+        "dividend_withholding_eur": round(withholding_eur, 2),
+        "note": (
+            "FIFO realised gains converted to EUR at current FX rates. "
+            "Withholding is the tax already paid at source on dividends."
+        ),
     }
 
 

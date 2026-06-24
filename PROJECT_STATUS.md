@@ -7,6 +7,8 @@
 
 Last updated: 2026-06-24
 
+**Recent (v2.5.4):** **Multi-currency tax report** — `GET /api/v1/analytics/tax-report` now converts all amounts to EUR via `_fx()` at current rates; fixes field-name mismatches in `TaxTransaction` (`sell_quantity`/`sell_amount`/`purchase_amount` — previously returned zeros for proceeds and cost basis); per-transaction currency applied to dividend withholding sums; each realised lot carries `currency`, `proceeds_eur`, `cost_basis_eur`, `gain_loss_eur`; frontend table shows native + EUR amounts for non-EUR assets with a CCY badge; CSV download updated with EUR columns.
+
 **Recent (v2.5.3):** **Generic CSV import** — `portf_manager/parsers/generic_csv_parser.py` accepts any broker's CSV with canonical columns (date, symbol, name, type, quantity, price, currency, fees, asset_type, notes); column headers are case-insensitive with multilingual synonyms; delimiter and decimal style auto-detected; type synonyms for buy/sell/dividend/interest in English and Spanish. `generic` broker added to import UI with format hint and downloadable template. 22 new unit tests.
 
 **Recent (v2.5.2):** **On-demand price update** — `portf_manager/services/price_updater.py` extracts the update-prices logic from the CLI into a shared service; two new endpoints `POST /api/v1/analytics/trigger-price-update` (starts a background thread, returns 409 if already running) and `GET /api/v1/analytics/price-update-status`; "Refresh prices" button added to the dashboard header (next to the freshness chip) with a spinner while the background update runs, auto-refreshes the chip and dashboard when done.
@@ -117,7 +119,7 @@ See `git log --oneline` for full history. Key v2.1 additions:
 - [ ] **Web client refresh** — Frontend not tested recently, may need updates for new endpoints
 - [x] **Generic CSV import template** — `portf_manager/parsers/generic_csv_parser.py`; `generic` broker in UI with template download
 - [ ] **Scheduled price updates** — Cron/background job for automatic price fetching
-- [ ] **Multi-currency support** — Tax reports assume single currency; need EUR/USD conversion
+- [x] **Multi-currency support** — Tax report converts proceeds/cost/gain to EUR via `_fx()`; CCY column + native amounts shown in UI
 
 ## Data Import Support
 
