@@ -531,10 +531,17 @@ class EnhancedChatEngine:
             logger.warning(f"Portfolio context building error: {e}")
             return {"portfolios": [], "positions": [], "_warnings": [str(e)]}
 
-    def _build_compact_context(self, db) -> str:
+    def _build_compact_context(self, db: Database) -> str:
         """Build a brief portfolio summary for the tool-path system message."""
         try:
             from portf_manager.positions import compute_positions
+
+            try:
+                from portf_server.routers.portfolios import _get_fx_rate as _fx
+            except Exception:
+
+                def _fx(_c: str) -> float:
+                    return 1.0
 
             txns = db.get_all_transactions()
             pos_map, realised = compute_positions(txns)
@@ -547,13 +554,6 @@ class EnhancedChatEngine:
                 if not asset:
                     continue
                 cur = asset.get("currency", "EUR")
-                try:
-                    from portf_server.routers.portfolios import _get_fx_rate as _fx
-                except Exception:
-
-                    def _fx(_c):
-                        return 1.0
-
                 pd_ = db.get_latest_price(aid)
                 price = float(pd_["price"]) if pd_ else 0.0
                 fx = _fx(cur)
@@ -578,7 +578,7 @@ class EnhancedChatEngine:
             return "{}"
 
     async def _generate_with_tool_loop(
-        self, message: str, context: Dict[str, Any], session_id: str, db
+        self, message: str, context: Dict[str, Any], session_id: str, db: Database
     ) -> str:
         """Tool-calling path: up to 2 LLM calls per user message.
 
@@ -614,8 +614,8 @@ class EnhancedChatEngine:
             return response.text
 
         if response.tool_call:
-            tool_result = execute_tool(
-                response.tool_call.name, response.tool_call.arguments, db
+            tool_result = await asyncio.to_thread(
+                execute_tool, response.tool_call.name, response.tool_call.arguments, db
             )
             try:
                 final = await asyncio.to_thread(
