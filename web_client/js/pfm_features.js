@@ -1125,7 +1125,7 @@ function setupImportExportPage() {
         if (fileInputWrap) fileInputWrap.style.display = isPaste ? 'none' : '';
         if (filePasteWrap) filePasteWrap.style.display = isPaste ? '' : 'none';
         const h = BROKER_HINTS[fileBroker.value];
-        if (h) { fileHint.textContent = h; fileHint.style.display = ''; }
+        if (h) { fileHint.innerHTML = h; fileHint.style.display = ''; }
         else fileHint.style.display = 'none';
         // Auto-select portfolio matching the chosen broker (user can override).
         if (ioFilePortfolio && _filePortfolios.length) {
