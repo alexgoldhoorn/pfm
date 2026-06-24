@@ -108,6 +108,7 @@ class ToolCapableLLMClient(LLMClient, Protocol):
         messages: list[dict],
         tool_call: ToolCallRequest,
         tool_result: str,
+        tools: Optional[list["ToolDefinition"]] = None,
     ) -> str:
         """Second pass: given tool result, return final answer string."""
         ...
@@ -271,6 +272,7 @@ class GeminiLLMClient:
         messages: list[dict],
         tool_call: "ToolCallRequest",
         tool_result: str,
+        tools: Optional[list["ToolDefinition"]] = None,
     ) -> str:
         """Second pass: inject function response and return final answer."""
         from google import genai as genai_new
@@ -525,6 +527,7 @@ class OllamaLLMClient:
         messages: list[dict],
         tool_call: "ToolCallRequest",
         tool_result: str,
+        tools: Optional[list["ToolDefinition"]] = None,
     ) -> str:
         """Second pass: append tool result and get final answer."""
         extended = list(messages) + [
@@ -686,6 +689,7 @@ class OpenRouterLLMClient:
         messages: list[dict],
         tool_call: "ToolCallRequest",
         tool_result: str,
+        tools: Optional[list["ToolDefinition"]] = None,
     ) -> str:
         """Second pass: append tool result message and get final answer."""
         import json as _json
@@ -864,6 +868,7 @@ class AnthropicLLMClient:
         messages: list[dict],
         tool_call: "ToolCallRequest",
         tool_result: str,
+        tools: Optional[list["ToolDefinition"]] = None,
     ) -> str:
         """Second pass: send tool result back to Anthropic and return final answer."""
         try:
@@ -905,6 +910,27 @@ class AnthropicLLMClient:
         }
         if system:
             kwargs["system"] = system
+        if tools is not None:
+            kwargs["tools"] = [
+                {
+                    "name": t.name,
+                    "description": t.description,
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            p["name"]: {
+                                "type": p["type"],
+                                "description": p["description"],
+                            }
+                            for p in t.parameters
+                        },
+                        "required": [
+                            p["name"] for p in t.parameters if p.get("required", False)
+                        ],
+                    },
+                }
+                for t in tools
+            ]
 
         msg = client.messages.create(**kwargs)
         text = ""
