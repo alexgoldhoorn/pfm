@@ -386,6 +386,73 @@ async function loadDataFreshness() {
 }
 window.loadDataFreshness = loadDataFreshness;
 
+// Manual price-update trigger wired to the dashboard "Refresh prices" button.
+// Calls POST /api/v1/analytics/trigger-price-update, then polls
+// GET /api/v1/analytics/price-update-status every 4 s until the run completes,
+// then reloads the freshness chip and the dashboard holdings data.
+async function triggerPriceUpdate() {
+    const btn = document.getElementById('refreshPricesBtn');
+    const icon = document.getElementById('refreshPricesIcon');
+    const label = document.getElementById('refreshPricesLabel');
+    if (!btn) return;
+
+    const setRunning = () => {
+        btn.disabled = true;
+        if (icon) { icon.className = 'spinner-border spinner-border-sm me-1'; }
+        if (label) label.textContent = 'Updating…';
+    };
+    const setDone = (text) => {
+        btn.disabled = false;
+        if (icon) { icon.className = 'bi bi-graph-up-arrow me-1'; }
+        if (label) label.textContent = text || 'Refresh prices';
+    };
+
+    setRunning();
+    try {
+        const resp = await fetch(window.apiClient.baseURL + '/api/v1/analytics/trigger-price-update', {
+            method: 'POST',
+            headers: { 'X-API-Key': window.apiClient.apiKey },
+        });
+        if (resp.status === 409) {
+            // Already running — just wait for it
+        } else if (!resp.ok) {
+            console.error('trigger-price-update failed', resp.status);
+            setDone('Refresh prices');
+            return;
+        }
+    } catch (e) {
+        console.error('trigger-price-update error', e);
+        setDone('Refresh prices');
+        return;
+    }
+
+    // Poll until the background thread finishes
+    const poll = async () => {
+        try {
+            const r = await fetch(window.apiClient.baseURL + '/api/v1/analytics/price-update-status', {
+                headers: { 'X-API-Key': window.apiClient.apiKey },
+            });
+            if (!r.ok) { setDone('Refresh prices'); return; }
+            const s = await r.json();
+            if (s.running) {
+                setTimeout(poll, 4000);
+            } else {
+                // Reload freshness chip and dashboard data
+                await loadDataFreshness();
+                setDone('Refresh prices');
+                // Trigger the dashboard data refresh if we're on the dashboard page
+                const refreshBtn = document.getElementById('refreshTransactions');
+                if (refreshBtn) refreshBtn.click();
+            }
+        } catch (e) {
+            console.error('price-update-status error', e);
+            setDone('Refresh prices');
+        }
+    };
+    setTimeout(poll, 2000);
+}
+window.triggerPriceUpdate = triggerPriceUpdate;
+
 // Diagnostics page: price-data freshness + the daily update-run history.
 // Surfaces *why* a price may be stale (no Yahoo data vs. just old) and what
 // the cron actually did, so it isn't lost to stdout.
