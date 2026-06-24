@@ -7,6 +7,8 @@
 
 Last updated: 2026-06-24
 
+**Recent (v2.5.3):** **Generic CSV import** — `portf_manager/parsers/generic_csv_parser.py` accepts any broker's CSV with canonical columns (date, symbol, name, type, quantity, price, currency, fees, asset_type, notes); column headers are case-insensitive with multilingual synonyms; delimiter and decimal style auto-detected; type synonyms for buy/sell/dividend/interest in English and Spanish. `generic` broker added to import UI with format hint and downloadable template. 22 new unit tests.
+
 **Recent (v2.5.2):** **On-demand price update** — `portf_manager/services/price_updater.py` extracts the update-prices logic from the CLI into a shared service; two new endpoints `POST /api/v1/analytics/trigger-price-update` (starts a background thread, returns 409 if already running) and `GET /api/v1/analytics/price-update-status`; "Refresh prices" button added to the dashboard header (next to the freshness chip) with a spinner while the background update runs, auto-refreshes the chip and dashboard when done.
 
 **Recent (v2.5.1):** **Housekeeping** — Portfolio column added to `list-transactions` CLI output (all three DB query paths now `LEFT JOIN portfolios`); `GeminiLLMClient` migrated from deprecated `google-generativeai` SDK to `google-genai` (`self._client = genai_sdk.Client(...)` at init, reused across all methods); test mocks updated to the new SDK pattern. 677 tests passing.
@@ -113,7 +115,7 @@ See `git log --oneline` for full history. Key v2.1 additions:
 
 ### Low Priority
 - [ ] **Web client refresh** — Frontend not tested recently, may need updates for new endpoints
-- [ ] **Generic CSV import template** — Support more broker formats without dedicated parsers
+- [x] **Generic CSV import template** — `portf_manager/parsers/generic_csv_parser.py`; `generic` broker in UI with template download
 - [ ] **Scheduled price updates** — Cron/background job for automatic price fetching
 - [ ] **Multi-currency support** — Tax reports assume single currency; need EUR/USD conversion
 
