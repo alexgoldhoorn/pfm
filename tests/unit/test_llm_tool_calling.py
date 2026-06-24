@@ -65,3 +65,97 @@ def test_mock_with_tool_methods_is_tool_capable():
     capable.generate_with_tools = MagicMock()
     capable.complete_with_tool_result = MagicMock()
     assert isinstance(capable, ToolCapableLLMClient)
+
+
+class TestAnthropicToolCalling:
+    def _make_client(self):
+        from portf_manager.llm_client import AnthropicLLMClient
+
+        return AnthropicLLMClient(api_key="test_key")
+
+    def test_anthropic_satisfies_tool_capable_protocol(self):
+        from portf_manager.llm_client import ToolCapableLLMClient
+
+        client = self._make_client()
+        assert isinstance(client, ToolCapableLLMClient)
+
+    def test_generate_with_tools_returns_tool_call(self):
+        from unittest.mock import MagicMock, patch
+        from portf_manager.llm_client import ToolDefinition
+
+        client = self._make_client()
+        tools = [
+            ToolDefinition(
+                name="get_holdings",
+                description="Get open positions.",
+                parameters=[],
+            )
+        ]
+        messages = [{"role": "user", "content": "What are my holdings?"}]
+
+        fake_block = MagicMock()
+        fake_block.type = "tool_use"
+        fake_block.name = "get_holdings"
+        fake_block.input = {}
+        fake_block.id = "toolu_123"
+
+        fake_msg = MagicMock()
+        fake_msg.content = [fake_block]
+
+        with patch("anthropic.Anthropic") as mock_sdk:
+            mock_sdk.return_value.messages.create.return_value = fake_msg
+            response = client.generate_with_tools(messages, tools)
+
+        assert response.tool_call is not None
+        assert response.tool_call.name == "get_holdings"
+        assert response.tool_call.call_id == "toolu_123"
+        assert response.text is None
+
+    def test_generate_with_tools_returns_text_when_no_tool(self):
+        from unittest.mock import MagicMock, patch
+        from portf_manager.llm_client import ToolDefinition
+
+        client = self._make_client()
+        tools = [ToolDefinition(name="get_holdings", description=".", parameters=[])]
+        messages = [{"role": "user", "content": "Hello"}]
+
+        fake_block = MagicMock()
+        fake_block.type = "text"
+        fake_block.text = "Hi there!"
+
+        fake_msg = MagicMock()
+        fake_msg.content = [fake_block]
+
+        with patch("anthropic.Anthropic") as mock_sdk:
+            mock_sdk.return_value.messages.create.return_value = fake_msg
+            response = client.generate_with_tools(messages, tools)
+
+        assert response.text == "Hi there!"
+        assert response.tool_call is None
+
+    def test_complete_with_tool_result_returns_string(self):
+        from unittest.mock import MagicMock, patch
+        from portf_manager.llm_client import ToolCallRequest
+
+        client = self._make_client()
+        messages = [{"role": "user", "content": "What are my holdings?"}]
+        tool_call = ToolCallRequest(
+            name="get_holdings", arguments={}, call_id="toolu_123"
+        )
+
+        fake_block = MagicMock()
+        fake_block.type = "text"
+        fake_block.text = "You hold 10 AAPL."
+
+        fake_msg = MagicMock()
+        fake_msg.content = [fake_block]
+
+        with patch("anthropic.Anthropic") as mock_sdk:
+            mock_sdk.return_value.messages.create.return_value = fake_msg
+            result = client.complete_with_tool_result(
+                messages,
+                tool_call,
+                '{"holdings": [{"symbol": "AAPL", "quantity": 10}]}',
+            )
+
+        assert result == "You hold 10 AAPL."
