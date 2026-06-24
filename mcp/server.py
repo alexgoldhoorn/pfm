@@ -827,5 +827,172 @@ def watchlist() -> str:
     return "\n".join(lines)
 
 
+@mcp.tool()
+def portfolio_health(portfolio_id: Optional[int] = None) -> str:
+    """
+    Return the AI-generated portfolio health analysis: five scored categories
+    (diversification, risk_adjusted_return, income, fees, tax_efficiency each
+    scored 1–10), prioritised recommendations, and a summary.
+
+    The analysis is cached — run it first from the Research → Portfolio Health
+    page in the web UI. Returns an error message if no cached result exists.
+
+    Args:
+        portfolio_id: Optional broker/account filter (uses cached key for that ID).
+    """
+    params = {"portfolio_id": portfolio_id} if portfolio_id else {}
+    try:
+        data = _get("/api/v1/research/portfolio-analysis", params or None)
+    except Exception as e:
+        return f"Error fetching portfolio health: {e}"
+
+    if "error" in data:
+        return data["error"]
+
+    lines = ["PORTFOLIO HEALTH ANALYSIS:"]
+    scores = data.get("scores", {})
+    for category, info in scores.items():
+        score = info.get("score", "?")
+        reason = info.get("reason", "")
+        lines.append(f"  {category.replace('_', ' ').title():30s} {score}/10  {reason}")
+
+    summary = data.get("summary", "")
+    if summary:
+        lines.append(f"\nSummary: {summary}")
+
+    recs = data.get("recommendations", [])
+    if recs:
+        lines.append("\nRecommendations:")
+        for r in recs:
+            lines.append(f"  • {r}")
+
+    cached_at = data.get("cached_at") or data.get("generated_at", "")
+    if cached_at:
+        lines.append(f"\n(Analysis from {str(cached_at)[:10]})")
+
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def tax_estimate(year: Optional[int] = None) -> str:
+    """
+    Quick IRPF tax estimate for a given year: realised capital gains, dividend
+    income, interest income, and the progressive tax on the savings base.
+
+    Args:
+        year: Tax year (defaults to the current calendar year).
+    """
+    params = {"year": year} if year else {}
+    try:
+        data = _get("/api/v1/analytics/tax-estimate", params or None)
+    except Exception as e:
+        return f"Error fetching tax estimate: {e}"
+
+    yr = data.get("year", year or "?")
+    lines = [f"IRPF TAX ESTIMATE — {yr}:"]
+    lines.append(
+        f"  Realised capital gains:  {_fmt_currency(data.get('realised_gain_eur', 0))}"
+    )
+    lines.append(
+        f"  Dividend income:         {_fmt_currency(data.get('dividend_income_eur', 0))}"
+    )
+    lines.append(
+        f"  Interest income:         {_fmt_currency(data.get('interest_income_eur', 0))}"
+    )
+    lines.append("  ─────────────────────────────────────────")
+    lines.append(
+        f"  Savings base total:      {_fmt_currency(data.get('savings_base_eur', 0))}"
+    )
+    tax = data.get("estimated_tax_eur", data.get("irpf_savings_tax_eur", 0))
+    lines.append(f"  Estimated IRPF tax:      {_fmt_currency(tax)}")
+    unrealised = data.get("unrealised_gain_eur")
+    if unrealised is not None:
+        lines.append(f"  Unrealised gain (info):  {_fmt_currency(unrealised)}")
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def goals() -> str:
+    """
+    List all financial goals with their current progress, projected final value,
+    whether they are on track, and the required monthly contribution.
+    """
+    try:
+        data = _get("/api/v1/goals/")
+    except Exception as e:
+        return f"Error fetching goals: {e}"
+
+    if not data:
+        return "No goals defined."
+
+    lines = ["FINANCIAL GOALS:"]
+    for g in data:
+        name = g.get("name", "?")
+        target = g.get("target_amount", 0)
+        current = g.get("current_value", 0)
+        progress = g.get("progress_pct", 0)
+        on_track = g.get("on_track")
+        horizon = g.get("target_date", "?")
+        monthly = g.get("required_monthly_contribution")
+        projected = g.get("projected_value")
+
+        track_str = (
+            "  ✅ ON TRACK" if on_track else ("  ⚠️ BEHIND" if on_track is False else "")
+        )
+        monthly_str = f"  (need {_fmt_currency(monthly)}/mo)" if monthly else ""
+        proj_str = f"  → projected {_fmt_currency(projected)}" if projected else ""
+        lines.append(
+            f"  {name}: {_fmt_currency(current)} / {_fmt_currency(target)}"
+            f"  ({progress:.1f}%)  by {str(horizon)[:10]}"
+            f"{proj_str}{monthly_str}{track_str}"
+        )
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def bookings(portfolio_id: Optional[int] = None, limit: int = 50) -> str:
+    """
+    List cash bookings (deposits and withdrawals) across all broker accounts,
+    most recent first.
+
+    Args:
+        portfolio_id: Optional filter to a single broker/account.
+        limit: Maximum number of bookings to return (default 50).
+    """
+    params: dict = {}
+    if portfolio_id:
+        params["portfolio_id"] = portfolio_id
+    try:
+        data = _get("/api/v1/bookings/", params or None)
+    except Exception as e:
+        return f"Error fetching bookings: {e}"
+
+    if not data:
+        return "No bookings found."
+
+    rows = sorted(data, key=lambda b: b.get("date", ""), reverse=True)[:limit]
+    total_dep = sum(
+        float(b.get("amount", 0)) for b in data if b.get("action") == "Deposit"
+    )
+    total_wit = sum(
+        float(b.get("amount", 0)) for b in data if b.get("action") == "Withdrawal"
+    )
+
+    lines = [f"CASH BOOKINGS ({len(data)} total):"]
+    for b in rows:
+        action = b.get("action", "?")
+        sign = "+" if action == "Deposit" else "-"
+        lines.append(
+            f"  {str(b.get('date', '?'))[:10]}  {action:12s}"
+            f"  {sign}{_fmt_currency(float(b.get('amount', 0)), b.get('currency', 'EUR'))}"
+            f"  {b.get('portfolio_name') or b.get('broker', '')}"
+        )
+
+    lines.append(f"\nTotal deposited:   {_fmt_currency(total_dep)}")
+    lines.append(f"Total withdrawn:   {_fmt_currency(total_wit)}")
+    lines.append(f"Net cash in:       {_fmt_currency(total_dep - total_wit)}")
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     mcp.run()

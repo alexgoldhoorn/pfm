@@ -1175,6 +1175,7 @@ function setupImportExportPage() {
             let html = _buildPreviewTable(parsedFile, parsedFileBookings, parsedFileDeposits);
             if (data.skipped_count > 0) html += `<p class="text-muted small mt-2">${data.skipped_count} row(s) skipped.</p>`;
             filePreview.innerHTML = html;
+            _wireImportSymbolSearch(filePreview);
         } catch (err) {
             alert('Error parsing file: ' + err.message);
         } finally {
@@ -1185,7 +1186,12 @@ function setupImportExportPage() {
 
     fileSaveBtn.addEventListener('click', async () => {
         const selected = Array.from(document.querySelectorAll('#ioFilePreview .file-tx-select:checked'))
-            .map(cb => parsedFile[parseInt(cb.dataset.idx)]);
+            .map(cb => {
+                const tx = Object.assign({}, parsedFile[parseInt(cb.dataset.idx)]);
+                const inp = cb.closest('tr')?.querySelector('.symbol-edit');
+                if (inp && inp.value.trim()) tx.symbol = inp.value.trim().toUpperCase();
+                return tx;
+            });
         const selectedDeps = Array.from(document.querySelectorAll('#ioFilePreview .file-dep-select:checked'))
             .map(cb => parsedFileDeposits[parseInt(cb.dataset.idx)]);
         if (selected.length === 0 && parsedFileBookings.length === 0 && selectedDeps.length === 0) { alert('No data selected.'); return; }
