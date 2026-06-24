@@ -366,3 +366,123 @@ class TestOpenRouterToolCalling:
             )
 
         assert result == "AAPL is $200."
+
+
+class TestOllamaToolCalling:
+    def _make_client(self):
+        from portf_manager.llm_client import OllamaLLMClient
+
+        return OllamaLLMClient(model="llama3.2")
+
+    def test_ollama_satisfies_tool_capable_protocol(self):
+        from portf_manager.llm_client import ToolCapableLLMClient
+
+        client = self._make_client()
+        assert isinstance(client, ToolCapableLLMClient)
+
+    def test_generate_with_tools_native_tool_call(self):
+        from unittest.mock import MagicMock, patch
+        from portf_manager.llm_client import ToolDefinition
+
+        client = self._make_client()
+        tools = [
+            ToolDefinition(
+                name="get_holdings", description="Get positions.", parameters=[]
+            )
+        ]
+        messages = [{"role": "user", "content": "My holdings?"}]
+
+        fake_resp = MagicMock()
+        fake_resp.raise_for_status = MagicMock()
+        fake_resp.json.return_value = {
+            "message": {
+                "content": "",
+                "tool_calls": [{"function": {"name": "get_holdings", "arguments": {}}}],
+            }
+        }
+
+        with patch("requests.post", return_value=fake_resp):
+            response = client.generate_with_tools(messages, tools)
+
+        assert response.tool_call is not None
+        assert response.tool_call.name == "get_holdings"
+
+    def test_generate_with_tools_fallback_returns_tool_call_from_json(self):
+        from unittest.mock import MagicMock, patch
+        from portf_manager.llm_client import ToolDefinition
+
+        client = self._make_client()
+        tools = [
+            ToolDefinition(
+                name="get_holdings", description="Get positions.", parameters=[]
+            )
+        ]
+        messages = [{"role": "user", "content": "My holdings?"}]
+
+        # Primary /api/chat fails → fallback /api/generate returns JSON tool call
+        chat_resp = MagicMock()
+        chat_resp.raise_for_status.side_effect = Exception("tools not supported")
+
+        gen_resp = MagicMock()
+        gen_resp.raise_for_status = MagicMock()
+        gen_resp.json.return_value = {
+            "response": '{"tool_call": {"name": "get_holdings", "arguments": {}}}'
+        }
+
+        def _side_effect(url, **kwargs):
+            if "/api/chat" in url:
+                return chat_resp
+            return gen_resp
+
+        with patch("requests.post", side_effect=_side_effect):
+            response = client.generate_with_tools(messages, tools)
+
+        assert response.tool_call is not None
+        assert response.tool_call.name == "get_holdings"
+
+    def test_generate_with_tools_fallback_unparseable_returns_text(self):
+        from unittest.mock import MagicMock, patch
+        from portf_manager.llm_client import ToolDefinition
+
+        client = self._make_client()
+        tools = [ToolDefinition(name="get_holdings", description=".", parameters=[])]
+        messages = [{"role": "user", "content": "Hello"}]
+
+        chat_resp = MagicMock()
+        chat_resp.raise_for_status.side_effect = Exception("tools not supported")
+
+        gen_resp = MagicMock()
+        gen_resp.raise_for_status = MagicMock()
+        gen_resp.json.return_value = {
+            "response": "I cannot call tools right now. Here is my answer."
+        }
+
+        def _side_effect(url, **kwargs):
+            if "/api/chat" in url:
+                return chat_resp
+            return gen_resp
+
+        with patch("requests.post", side_effect=_side_effect):
+            response = client.generate_with_tools(messages, tools)
+
+        assert response.tool_call is None
+        assert "answer" in response.text
+
+    def test_complete_with_tool_result_returns_string(self):
+        from unittest.mock import MagicMock, patch
+        from portf_manager.llm_client import ToolCallRequest
+
+        client = self._make_client()
+        messages = [{"role": "user", "content": "Holdings?"}]
+        tool_call = ToolCallRequest(name="get_holdings", arguments={})
+
+        fake_resp = MagicMock()
+        fake_resp.raise_for_status = MagicMock()
+        fake_resp.json.return_value = {"message": {"content": "You hold 10 AAPL."}}
+
+        with patch("requests.post", return_value=fake_resp):
+            result = client.complete_with_tool_result(
+                messages, tool_call, '{"holdings": []}'
+            )
+
+        assert result == "You hold 10 AAPL."
