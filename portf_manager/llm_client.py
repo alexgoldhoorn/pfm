@@ -202,6 +202,120 @@ class GeminiLLMClient:
             pass
         return text, sources
 
+    def generate_with_tools(
+        self,
+        messages: list[dict],
+        tools: list["ToolDefinition"],
+    ) -> "ToolResponse":
+        """First pass: returns tool call or final answer via Gemini function calling."""
+        from google import genai as genai_new
+        from google.genai import types as genai_types
+
+        client = genai_new.Client(api_key=self.api_key)
+
+        function_declarations = [
+            genai_types.FunctionDeclaration(
+                name=t.name,
+                description=t.description,
+                parameters=genai_types.Schema(
+                    type="OBJECT",
+                    properties={
+                        p["name"]: genai_types.Schema(
+                            type=p["type"].upper(),
+                            description=p["description"],
+                        )
+                        for p in t.parameters
+                    },
+                    required=[
+                        p["name"] for p in t.parameters if p.get("required", False)
+                    ],
+                ),
+            )
+            for t in tools
+        ]
+
+        system_text = next(
+            (m["content"] for m in messages if m["role"] == "system"), None
+        )
+        contents = [
+            genai_types.Content(
+                role="model" if m["role"] == "assistant" else "user",
+                parts=[genai_types.Part.from_text(text=m["content"])],
+            )
+            for m in messages
+            if m["role"] != "system"
+        ]
+
+        config = genai_types.GenerateContentConfig(
+            tools=[genai_types.Tool(function_declarations=function_declarations)],
+            system_instruction=system_text,
+        )
+        response = client.models.generate_content(
+            model=self.model_name, contents=contents, config=config
+        )
+
+        for part in response.candidates[0].content.parts:
+            fc = getattr(part, "function_call", None)
+            if fc and fc.name:
+                return ToolResponse(
+                    tool_call=ToolCallRequest(
+                        name=fc.name,
+                        arguments=dict(fc.args),
+                    )
+                )
+
+        return ToolResponse(text=response.text or "")
+
+    def complete_with_tool_result(
+        self,
+        messages: list[dict],
+        tool_call: "ToolCallRequest",
+        tool_result: str,
+    ) -> str:
+        """Second pass: inject function response and return final answer."""
+        from google import genai as genai_new
+        from google.genai import types as genai_types
+
+        client = genai_new.Client(api_key=self.api_key)
+
+        system_text = next(
+            (m["content"] for m in messages if m["role"] == "system"), None
+        )
+        contents = [
+            genai_types.Content(
+                role="model" if m["role"] == "assistant" else "user",
+                parts=[genai_types.Part.from_text(text=m["content"])],
+            )
+            for m in messages
+            if m["role"] != "system"
+        ]
+        contents.append(
+            genai_types.Content(
+                role="model",
+                parts=[
+                    genai_types.Part.from_function_call(
+                        name=tool_call.name, args=tool_call.arguments
+                    )
+                ],
+            )
+        )
+        contents.append(
+            genai_types.Content(
+                role="user",
+                parts=[
+                    genai_types.Part.from_function_response(
+                        name=tool_call.name, response={"result": tool_result}
+                    )
+                ],
+            )
+        )
+
+        config = genai_types.GenerateContentConfig(system_instruction=system_text)
+        response = client.models.generate_content(
+            model=self.model_name, contents=contents, config=config
+        )
+        return response.text or ""
+
 
 class OllamaLLMClient:
     """Ollama local LLM client. Requires a running Ollama instance."""
