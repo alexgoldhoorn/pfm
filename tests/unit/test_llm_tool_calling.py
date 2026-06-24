@@ -159,3 +159,104 @@ class TestAnthropicToolCalling:
             )
 
         assert result == "You hold 10 AAPL."
+
+
+class TestGeminiToolCalling:
+    def _make_client(self):
+        from unittest.mock import patch
+
+        with patch("google.generativeai.GenerativeModel"):
+            from portf_manager.llm_client import GeminiLLMClient
+
+            return GeminiLLMClient(api_key="test_key")
+
+    def test_gemini_satisfies_tool_capable_protocol(self):
+        from portf_manager.llm_client import ToolCapableLLMClient
+
+        client = self._make_client()
+        assert isinstance(client, ToolCapableLLMClient)
+
+    def test_generate_with_tools_returns_tool_call(self):
+        from unittest.mock import MagicMock, patch
+        from portf_manager.llm_client import ToolDefinition
+
+        client = self._make_client()
+        tools = [
+            ToolDefinition(name="get_kpis", description="Get KPIs.", parameters=[])
+        ]
+        messages = [{"role": "user", "content": "How is my portfolio?"}]
+
+        fake_fc = MagicMock()
+        fake_fc.name = "get_kpis"
+        fake_fc.args = {}
+
+        fake_part = MagicMock()
+        fake_part.function_call = fake_fc
+
+        fake_candidate = MagicMock()
+        fake_candidate.content.parts = [fake_part]
+
+        fake_response = MagicMock()
+        fake_response.candidates = [fake_candidate]
+        fake_response.text = None
+
+        with patch("google.genai.Client") as mock_client:
+            mock_client.return_value.models.generate_content.return_value = (
+                fake_response
+            )
+            with patch("google.genai.types"):
+                response = client.generate_with_tools(messages, tools)
+
+        assert response.tool_call is not None
+        assert response.tool_call.name == "get_kpis"
+        assert response.text is None
+
+    def test_generate_with_tools_returns_text_when_no_tool(self):
+        from unittest.mock import MagicMock, patch
+        from portf_manager.llm_client import ToolDefinition
+
+        client = self._make_client()
+        tools = [ToolDefinition(name="get_kpis", description=".", parameters=[])]
+        messages = [{"role": "user", "content": "Hello"}]
+
+        fake_part = MagicMock()
+        fake_part.function_call = None
+
+        fake_candidate = MagicMock()
+        fake_candidate.content.parts = [fake_part]
+
+        fake_response = MagicMock()
+        fake_response.candidates = [fake_candidate]
+        fake_response.text = "Hello back!"
+
+        with patch("google.genai.Client") as mock_client:
+            mock_client.return_value.models.generate_content.return_value = (
+                fake_response
+            )
+            with patch("google.genai.types"):
+                response = client.generate_with_tools(messages, tools)
+
+        assert response.text == "Hello back!"
+        assert response.tool_call is None
+
+    def test_complete_with_tool_result_returns_string(self):
+        from unittest.mock import MagicMock, patch
+        from portf_manager.llm_client import ToolCallRequest
+
+        client = self._make_client()
+        messages = [{"role": "user", "content": "KPIs?"}]
+        tool_call = ToolCallRequest(name="get_kpis", arguments={})
+
+        fake_response = MagicMock()
+        fake_response.text = "Your portfolio is worth €10,000."
+
+        with patch("google.genai.Client") as mock_client:
+            mock_client.return_value.models.generate_content.return_value = (
+                fake_response
+            )
+            with patch("google.genai.types"):
+                result = client.complete_with_tool_result(
+                    messages, tool_call, '{"total_eur": 10000}'
+                )
+
+        assert result == "Your portfolio is worth €10,000."
