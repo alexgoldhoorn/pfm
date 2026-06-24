@@ -5,7 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-06-22
+Last updated: 2026-06-24
+
+**Recent (v2.5):** **AI Chat: agentic tool calling** — `ToolCapableLLMClient` protocol + 15 in-process portfolio tools (`portf_server/chat_tools.py`: `get_holdings`, `get_performance`, `get_risk`, `get_diversification`, `get_kpis`, `get_health`, `get_brokers`, `get_quote`, `get_price`, `get_research`, `get_transactions`, `get_tax_estimate`, `asset_details`, `asset_news`, `financial_news`). All 4 LLM providers implement the protocol; `EnhancedChatEngine` branches on `isinstance(llm, ToolCapableLLMClient)` and runs a 2-pass agentic loop (compact context summary + live tool data) instead of the static snapshot path. Ollama gets native `/api/chat` tools + JSON-in-prompt fallback. 677 tests passing.
 
 **Recent (v2.4):** **AI Chat: persistent named threads** — schema v24 (`chat_sessions` table with messages JSON column), DB-backed sessions replacing kv_cache. Four new endpoints: `GET|POST /api/v1/llm/chat/sessions`, `DELETE /api/v1/llm/chat/sessions/{id}`, `GET /api/v1/llm/chat/sessions/{id}/messages`. Two-column chat layout (sessions sidebar + message area); `openChatWithContext()` in `pfm_core.js` allows Research workbench and Portfolio Health panel to pre-load threads with on-screen data. 635 tests passing.
 
