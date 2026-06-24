@@ -410,6 +410,121 @@ class AnthropicLLMClient:
                 text = block.text
         return text
 
+    def generate_with_tools(
+        self,
+        messages: list[dict],
+        tools: list["ToolDefinition"],
+    ) -> "ToolResponse":
+        """First pass: returns tool call or final answer using Anthropic tool use."""
+        try:
+            import anthropic as anthropic_sdk
+        except ImportError:
+            raise ImportError(
+                "anthropic package required. Install with: pip install anthropic"
+            )
+
+        client = anthropic_sdk.Anthropic(api_key=self.api_key)
+        anthropic_tools = [
+            {
+                "name": t.name,
+                "description": t.description,
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        p["name"]: {"type": p["type"], "description": p["description"]}
+                        for p in t.parameters
+                    },
+                    "required": [
+                        p["name"] for p in t.parameters if p.get("required", False)
+                    ],
+                },
+            }
+            for t in tools
+        ]
+        system = next((m["content"] for m in messages if m["role"] == "system"), None)
+        user_messages = [m for m in messages if m["role"] != "system"]
+
+        kwargs: dict = {
+            "model": self.model_name,
+            "max_tokens": 4096,
+            "tools": anthropic_tools,
+            "messages": user_messages,
+        }
+        if system:
+            kwargs["system"] = system
+
+        msg = client.messages.create(**kwargs)
+
+        for block in msg.content:
+            if getattr(block, "type", None) == "tool_use":
+                return ToolResponse(
+                    tool_call=ToolCallRequest(
+                        name=block.name,
+                        arguments=block.input,
+                        call_id=block.id,
+                    )
+                )
+
+        text = ""
+        for block in msg.content:
+            if getattr(block, "type", None) == "text":
+                text = block.text
+        return ToolResponse(text=text)
+
+    def complete_with_tool_result(
+        self,
+        messages: list[dict],
+        tool_call: "ToolCallRequest",
+        tool_result: str,
+    ) -> str:
+        """Second pass: send tool result back to Anthropic and return final answer."""
+        try:
+            import anthropic as anthropic_sdk
+        except ImportError:
+            raise ImportError("anthropic package required.")
+
+        client = anthropic_sdk.Anthropic(api_key=self.api_key)
+        system = next((m["content"] for m in messages if m["role"] == "system"), None)
+        user_messages = [m for m in messages if m["role"] != "system"]
+
+        extended = user_messages + [
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": tool_call.call_id,
+                        "name": tool_call.name,
+                        "input": tool_call.arguments,
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_call.call_id,
+                        "content": tool_result,
+                    }
+                ],
+            },
+        ]
+        kwargs: dict = {
+            "model": self.model_name,
+            "max_tokens": 4096,
+            "messages": extended,
+        }
+        if system:
+            kwargs["system"] = system
+
+        msg = client.messages.create(**kwargs)
+        text = ""
+        for block in msg.content:
+            if getattr(block, "type", None) == "text":
+                text = block.text
+        return text
+
 
 # Singleton cache
 _llm_client: Optional[LLMClient] = None
