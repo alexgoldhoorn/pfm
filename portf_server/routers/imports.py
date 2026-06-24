@@ -35,6 +35,7 @@ from portf_manager.parsers.indexacapital_csv_parser import parse_indexacapital_c
 from portf_manager.parsers.coinbase_csv_parser import parse_coinbase_csv
 from portf_manager.parsers.bookings_csv_parser import parse_bookings_csv
 from portf_manager.parsers.deposits_csv_parser import parse_deposits_csv
+from portf_manager.parsers.generic_csv_parser import parse_generic_csv
 from portf_manager.parsers.myinvestor_csv_parser import parse_myinvestor_csv
 from portf_manager.parsers.myinvestor_paste_parser import parse_myinvestor_paste
 from portf_manager.parsers.mintos_csv_parser import (
@@ -61,6 +62,7 @@ SUPPORTED_BROKERS = [
     "pdt",
     "bookings",
     "deposits",
+    "generic",
     "myinvestor",
     "myinvestor_paste",
     "mintos",
@@ -443,6 +445,29 @@ def _parse_pdt(
     return previews, bookings, skipped
 
 
+def _parse_generic(
+    content: str,
+) -> tuple[List[PreviewTransaction], List[PreviewBooking], List[dict]]:
+    result = parse_generic_csv(content)
+    previews = [
+        PreviewTransaction(
+            symbol=tx.symbol,
+            name=tx.asset_name,
+            asset_type="stock",
+            tx_type=tx.tx_type,
+            date=tx.date,
+            quantity=tx.quantity,
+            price=tx.price,
+            currency=tx.currency or "EUR",
+            fees=tx.fees,
+            notes=tx.raw_text or "",
+        )
+        for tx in result.importable
+    ]
+    skipped = [{"row": row, "reason": reason} for row, reason in result.skipped]
+    return previews, [], skipped
+
+
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
@@ -559,6 +584,9 @@ async def upload_broker_file(
             previews, bookings, skipped = _parse_mintos(content)
         elif broker == "pdt":
             previews, bookings, skipped = _parse_pdt(file_bytes)
+        elif broker == "generic":
+            content = file_bytes.decode("utf-8-sig")
+            previews, bookings, skipped = _parse_generic(content)
         elif broker == "bookings":
             content = file_bytes.decode("utf-8-sig")
             previews = []

@@ -74,6 +74,7 @@ Each broker has a standalone parser returning `LLMTransaction` objects via `Pars
 - `myinvestor_paste_parser.py` — MyInvestor statements pasted as text.
 - `mintos_csv_parser.py` — P2P statement. Aggregates interest/withholding **per month** into `interest` transactions vs synthetic `MINTOS` asset. Deposits/withdrawals kept individual → bookings. Large files → nginx `client_max_body_size 25m`.
 - `coinbase_csv_parser.py` — Fiat Deposit/Withdrawal rows → bookings; staking income → `interest` tx (qty=1, price=EUR total). Returns `(previews, bookings, skipped)`.
+- `generic_csv_parser.py` — Universal broker-agnostic CSV. Required cols: `date`, `symbol`, `type`, `quantity`, `price`, `currency`. Optional: `name`, `fees`, `asset_type`, `notes`. Case-insensitive multilingual headers (EN/ES/NL); type synonyms for buy/sell/dividend/interest; auto-detects delimiter and European/US decimal style. Template at `web_client/generic_import_template.csv`.
 - `pdt_xlsx_parser.py` / `pdt_sheets_sync.py` — PDT XLSX and Google Sheets import/export.
 
 ### PDT Format (`pdt_xlsx_parser.py` and `pdt_sheets_sync.py`)
@@ -96,7 +97,7 @@ Google Sheets API: `UNFORMATTED_VALUE + SERIAL_NUMBER` for reading (dates = floa
 - `POST /api/v1/import/upload` — multipart file + `broker` field → parse preview (no DB write)
 - `POST /api/v1/import/save` — `SaveRequest(transactions, bookings, portfolio_id, duplicate_action)` → write to DB
 - `POST /api/v1/import/check-duplicates` — flag duplicates (no write); powers text/LLM preview
-- Brokers: `indexacapital`, `myinvestor`, `mintos`, `coinbase`, `pdt`, `bookings`
+- Brokers: `indexacapital`, `myinvestor`, `mintos`, `coinbase`, `pdt`, `bookings`, `generic`
 - `duplicate_action`: `skip` (default) | `add` | `overwrite`. `force=True` is legacy alias for `add`.
 - `find_duplicate_transaction` is **time-aware**: matches date + time-of-day only when both rows carry one. `find_duplicate_booking` matches date+action+amount+currency+portfolio.
 

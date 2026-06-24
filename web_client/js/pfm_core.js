@@ -453,6 +453,24 @@ async function triggerPriceUpdate() {
 }
 window.triggerPriceUpdate = triggerPriceUpdate;
 
+// Generates and downloads the generic CSV import template as a file.
+function downloadGenericTemplate() {
+    const csv = [
+        'date,symbol,name,type,quantity,price,currency,fees,asset_type,notes',
+        '2024-01-15,AAPL,Apple Inc,buy,10,185.50,USD,1.00,stock,',
+        '2024-01-20,BTC-EUR,Bitcoin,buy,0.5,40000,EUR,0,crypto,',
+        '2024-02-01,AAPL,Apple Inc,dividend,10,0.24,USD,0,stock,Q1 2024 dividend',
+        '2024-03-10,MSFT,Microsoft Corp,sell,5,420.00,USD,1.50,stock,',
+    ].join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'generic_import_template.csv';
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+window.downloadGenericTemplate = downloadGenericTemplate;
+
 // Diagnostics page: price-data freshness + the daily update-run history.
 // Surfaces *why* a price may be stale (no Yahoo data vs. just old) and what
 // the cron actually did, so it isn't lost to stdout.
@@ -2124,6 +2142,7 @@ const BROKER_HINTS = {
     indexacapital: 'Export from IndexaCapital → "Mis fondos" → Download CSV.',
     coinbase: 'Export from Coinbase → Reports → Generate → Transaction History CSV.',
     pdt: 'Export from Portfolio Dividend Tracker (app.portfoliodividendtracker.com) → Download XLSX.',
+    generic: 'Universal CSV for any broker. Required columns: date, symbol, type (buy/sell/dividend/interest), quantity, price, currency. Optional: name, fees, asset_type, notes. <a href="#" onclick="downloadGenericTemplate();return false;">Download template</a>.',
     bookings: 'Generic cash CSV with columns: date, action (deposit/withdrawal), amount, currency, broker (optional). Delimiter and decimal style are auto-detected.',
     deposits: 'Generic fixed-deposit CSV with columns: name, principal, interest_rate, start_date, maturity_date, currency (default EUR), portfolio (optional). Delimiter and European/US numbers are auto-detected.',
 };
@@ -2302,7 +2321,7 @@ function setupFileImportModal() {
 
     brokerSelect.addEventListener('change', () => {
         const h = BROKER_HINTS[brokerSelect.value];
-        if (h) { hint.textContent = h; hint.style.display = ''; }
+        if (h) { hint.innerHTML = h; hint.style.display = ''; }
         else hint.style.display = 'none';
     });
 
