@@ -106,8 +106,8 @@ See `git log --oneline` for full history. Key v2.1 additions:
 
 ### High Priority
 - [ ] **Import real data** — DB is empty; need to import from actual broker accounts
-- [ ] **MyInvestor structured parser** — Extract inline parsing from `import_csv()` into standalone `myinvestor_csv_parser.py` module (like IndexaCapital has)
-- [ ] **Mintos parser** — CSV account statement parser for P2P loans, fractional bonds, and ETFs. Format: `Date`, `Details`, `Transaction ID`, `Turnover`. Mintos interest = same Spanish tax category as stock dividends (rendimientos del capital mobiliario, Box 27)
+- [x] **MyInvestor structured parser** — `portf_manager/parsers/myinvestor_csv_parser.py` (standalone, 144 lines)
+- [x] **Mintos parser** — `portf_manager/parsers/mintos_csv_parser.py` ✅ working
 
 ### Medium Priority
 - [x] **Price fetching** — `POST /api/v1/analytics/trigger-price-update` + "Refresh prices" button on dashboard; background thread + status polling; service in `portf_manager/services/price_updater.py`
@@ -118,7 +118,7 @@ See `git log --oneline` for full history. Key v2.1 additions:
 ### Low Priority
 - [ ] **Web client refresh** — Frontend not tested recently, may need updates for new endpoints
 - [x] **Generic CSV import template** — `portf_manager/parsers/generic_csv_parser.py`; `generic` broker in UI with template download
-- [ ] **Scheduled price updates** — Cron/background job for automatic price fetching
+- [x] **Scheduled price updates** — Cron at 20:00 UTC (`portf-update-prices.sh`) + on-demand API trigger (v2.5.2)
 - [x] **Multi-currency support** — Tax report converts proceeds/cost/gain to EUR via `_fx()`; CCY column + native amounts shown in UI
 
 ## Data Import Support
