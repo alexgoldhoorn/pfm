@@ -36,7 +36,7 @@ def test_real_clients_without_search_are_not_search_capable():
 
 class TestGeminiSearchCapable:
     def _make_client(self):
-        with patch("google.generativeai.GenerativeModel"):
+        with patch("google.genai.Client"):
             from portf_manager.llm_client import GeminiLLMClient
 
             return GeminiLLMClient(api_key="test_key")
@@ -75,8 +75,6 @@ class TestGeminiSearchCapable:
         assert envelope["sources"] == []
 
     def test_gemini_search_extracts_grounding_sources(self):
-        import sys
-
         client = self._make_client()
 
         mock_web = MagicMock()
@@ -91,17 +89,9 @@ class TestGeminiSearchCapable:
         mock_response.text = '{"recommendation": "BUY"}'
         mock_response.candidates = [MagicMock(grounding_metadata=mock_gm)]
 
-        mock_sdk_client = MagicMock()
-        mock_sdk_client.models.generate_content.return_value = mock_response
+        client._client.models.generate_content.return_value = mock_response
 
-        mock_genai = MagicMock()
-        mock_genai.Client.return_value = mock_sdk_client
-        mock_types = MagicMock()
-
-        with patch.dict(
-            sys.modules,
-            {"google.genai": mock_genai, "google.genai.types": mock_types},
-        ):
+        with patch("google.genai.types"):
             text, sources = client._gemini_search("test prompt")
 
         assert text == '{"recommendation": "BUY"}'
@@ -110,25 +100,15 @@ class TestGeminiSearchCapable:
         assert sources[0]["url"] == "http://apple.com/q1"
 
     def test_gemini_search_handles_missing_grounding_metadata(self):
-        import sys
-
         client = self._make_client()
 
         mock_response = MagicMock()
         mock_response.text = '{"recommendation": "HOLD"}'
-        mock_response.candidates = []  # no candidates → AttributeError caught
+        mock_response.candidates = []  # no candidates → IndexError caught
 
-        mock_sdk_client = MagicMock()
-        mock_sdk_client.models.generate_content.return_value = mock_response
+        client._client.models.generate_content.return_value = mock_response
 
-        mock_genai = MagicMock()
-        mock_genai.Client.return_value = mock_sdk_client
-        mock_types = MagicMock()
-
-        with patch.dict(
-            sys.modules,
-            {"google.genai": mock_genai, "google.genai.types": mock_types},
-        ):
+        with patch("google.genai.types"):
             text, sources = client._gemini_search("test prompt")
 
         assert text == '{"recommendation": "HOLD"}'

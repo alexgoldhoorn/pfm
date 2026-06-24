@@ -222,7 +222,7 @@ class TestGeminiToolCalling:
     def _make_client(self):
         from unittest.mock import patch
 
-        with patch("google.generativeai.GenerativeModel"):
+        with patch("google.genai.Client"):
             from portf_manager.llm_client import GeminiLLMClient
 
             return GeminiLLMClient(api_key="test_key")
@@ -257,12 +257,9 @@ class TestGeminiToolCalling:
         fake_response.candidates = [fake_candidate]
         fake_response.text = None
 
-        with patch("google.genai.Client") as mock_client:
-            mock_client.return_value.models.generate_content.return_value = (
-                fake_response
-            )
-            with patch("google.genai.types"):
-                response = client.generate_with_tools(messages, tools)
+        client._client.models.generate_content.return_value = fake_response
+        with patch("google.genai.types"):
+            response = client.generate_with_tools(messages, tools)
 
         assert response.tool_call is not None
         assert response.tool_call.name == "get_kpis"
@@ -286,12 +283,9 @@ class TestGeminiToolCalling:
         fake_response.candidates = [fake_candidate]
         fake_response.text = "Hello back!"
 
-        with patch("google.genai.Client") as mock_client:
-            mock_client.return_value.models.generate_content.return_value = (
-                fake_response
-            )
-            with patch("google.genai.types"):
-                response = client.generate_with_tools(messages, tools)
+        client._client.models.generate_content.return_value = fake_response
+        with patch("google.genai.types"):
+            response = client.generate_with_tools(messages, tools)
 
         assert response.text == "Hello back!"
         assert response.tool_call is None
@@ -307,14 +301,11 @@ class TestGeminiToolCalling:
         fake_response = MagicMock()
         fake_response.text = "Your portfolio is worth €10,000."
 
-        with patch("google.genai.Client") as mock_client:
-            mock_client.return_value.models.generate_content.return_value = (
-                fake_response
+        client._client.models.generate_content.return_value = fake_response
+        with patch("google.genai.types"):
+            result = client.complete_with_tool_result(
+                messages, tool_call, '{"total_eur": 10000}'
             )
-            with patch("google.genai.types"):
-                result = client.complete_with_tool_result(
-                    messages, tool_call, '{"total_eur": 10000}'
-                )
 
         assert result == "Your portfolio is worth €10,000."
 
