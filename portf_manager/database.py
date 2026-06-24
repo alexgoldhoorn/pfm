@@ -2074,9 +2074,10 @@ class Database:
         with self.get_connection() as conn:
             cursor = conn.execute(
                 f"""
-                SELECT {self._TX_COLS}
+                SELECT {self._TX_COLS}, p.name as portfolio_name
                 FROM transactions t
                 JOIN assets a ON t.asset_id = a.id
+                LEFT JOIN portfolios p ON t.portfolio_id = p.id
                 WHERE t.portfolio_id = ?
                 ORDER BY t.transaction_date DESC
             """,
@@ -2328,9 +2329,10 @@ class Database:
         with self.get_connection() as conn:
             cursor = conn.execute(
                 f"""
-                SELECT {self._TX_COLS}
+                SELECT {self._TX_COLS}, p.name as portfolio_name
                 FROM transactions t
                 JOIN assets a ON t.asset_id = a.id
+                LEFT JOIN portfolios p ON t.portfolio_id = p.id
                 WHERE t.asset_id = ?
                 ORDER BY t.transaction_date DESC
             """,
