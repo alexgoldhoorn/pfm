@@ -161,6 +161,63 @@ class TestAnthropicToolCalling:
         assert result == "You hold 10 AAPL."
 
 
+class TestEnhancedChatEngineToolLoop:
+    """Integration test: verifies the tool loop branches and executes tools."""
+
+    def test_tool_loop_called_when_provider_is_tool_capable(self, tmp_path):
+        from unittest.mock import MagicMock, patch
+        from portf_manager.llm_client import ToolCallRequest, ToolResponse
+        from portf_manager.database import Database
+
+        db = Database(str(tmp_path / "test.db"))
+
+        mock_llm = MagicMock()
+        mock_llm.generate_with_tools.return_value = ToolResponse(
+            tool_call=ToolCallRequest(name="get_brokers", arguments={})
+        )
+        mock_llm.complete_with_tool_result.return_value = "You have 1 broker."
+
+        with (
+            patch("portf_server.routers.llm.get_llm_client", return_value=mock_llm),
+            patch("portf_server.routers.llm.get_market_data_service"),
+            patch("portf_server.routers.llm.get_stock_screener"),
+            patch("portf_server.routers.llm.get_technical_analysis_engine"),
+            patch("portf_server.routers.llm.get_fundamental_analysis_engine"),
+        ):
+            from portf_server.routers.llm import EnhancedChatEngine, ChatRequest
+
+            engine = EnhancedChatEngine()
+            engine.llm = mock_llm
+
+        import asyncio
+
+        mock_llm.__class__ = type(
+            "ToolCapableMock",
+            (MagicMock,),
+            {
+                "generate": mock_llm.generate,
+                "generate_with_tools": mock_llm.generate_with_tools,
+                "complete_with_tool_result": mock_llm.complete_with_tool_result,
+            },
+        )
+
+        with patch(
+            "portf_manager.llm_client.ToolCapableLLMClient.__instancecheck__",
+            return_value=True,
+        ):
+            with patch(
+                "portf_server.routers.llm.execute_tool", return_value='{"brokers": []}'
+            ) as mock_execute:
+                request = ChatRequest(
+                    message="List my brokers.", session_id="test_sess"
+                )
+                result = asyncio.run(engine.process_chat_request(request, db))
+
+        assert result.answer == "You have 1 broker."
+        mock_execute.assert_called_once_with("get_brokers", {}, db)
+        mock_llm.complete_with_tool_result.assert_called_once()
+
+
 class TestGeminiToolCalling:
     def _make_client(self):
         from unittest.mock import patch
