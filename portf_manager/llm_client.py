@@ -28,6 +28,7 @@ Default auto-detection order (provider=auto):
 
 import os
 import logging
+from dataclasses import dataclass
 from typing import Optional, Protocol, runtime_checkable
 
 import requests
@@ -58,6 +59,57 @@ class SearchCapableLLMClient(LLMClient, Protocol):
 
     def generate_with_search(self, prompt: str, symbol: str) -> str:
         """Generate with live web search grounding."""
+        ...
+
+
+@dataclass
+class ToolDefinition:
+    """Schema for a tool the LLM can call."""
+
+    name: str
+    description: str
+    parameters: list[dict]
+
+
+@dataclass
+class ToolCallRequest:
+    """A tool invocation returned by the LLM."""
+
+    name: str
+    arguments: dict
+    call_id: Optional[str] = None
+
+
+@dataclass
+class ToolResponse:
+    """Result of generate_with_tools() — either a final answer or a tool call.
+
+    Exactly one of ``text`` or ``tool_call`` is non-None.
+    """
+
+    text: Optional[str] = None
+    tool_call: Optional[ToolCallRequest] = None
+
+
+@runtime_checkable
+class ToolCapableLLMClient(LLMClient, Protocol):
+    """LLM client that supports provider-native function/tool calling."""
+
+    def generate_with_tools(
+        self,
+        messages: list[dict],
+        tools: list[ToolDefinition],
+    ) -> ToolResponse:
+        """First pass: returns either a final answer or a tool call request."""
+        ...
+
+    def complete_with_tool_result(
+        self,
+        messages: list[dict],
+        tool_call: ToolCallRequest,
+        tool_result: str,
+    ) -> str:
+        """Second pass: given tool result, return final answer string."""
         ...
 
 
