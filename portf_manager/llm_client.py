@@ -390,6 +390,178 @@ class OllamaLLMClient:
             )
         return text
 
+    def generate_with_tools(
+        self,
+        messages: list[dict],
+        tools: list["ToolDefinition"],
+    ) -> "ToolResponse":
+        """First pass: try native Ollama tool calling, fall back to JSON-in-prompt."""
+
+        openai_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": t.name,
+                    "description": t.description,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            p["name"]: {
+                                "type": p["type"],
+                                "description": p["description"],
+                            }
+                            for p in t.parameters
+                        },
+                        "required": [
+                            p["name"] for p in t.parameters if p.get("required", False)
+                        ],
+                    },
+                },
+            }
+            for t in tools
+        ]
+
+        try:
+            resp = requests.post(
+                f"{self.base_url}/api/chat",
+                json={
+                    "model": self.model_name,
+                    "messages": messages,
+                    "tools": openai_tools,
+                    "stream": False,
+                },
+                timeout=120,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            msg = data.get("message", {})
+            if msg.get("tool_calls"):
+                tc = msg["tool_calls"][0]
+                return ToolResponse(
+                    tool_call=ToolCallRequest(
+                        name=tc["function"]["name"],
+                        arguments=tc["function"]["arguments"],
+                    )
+                )
+            content = msg.get("content", "")
+            if content:
+                return ToolResponse(text=content)
+        except Exception:
+            pass
+
+        return self._generate_with_tools_fallback(messages, tools)
+
+    def _generate_with_tools_fallback(
+        self,
+        messages: list[dict],
+        tools: list["ToolDefinition"],
+    ) -> "ToolResponse":
+        """JSON-in-prompt fallback for Ollama models that don't support tool calling."""
+        import json as _json
+
+        tool_desc = "\n".join(
+            f"- {t.name}: {t.description}"
+            + (
+                f" Args: {_json.dumps({p['name']: p['description'] for p in t.parameters})}"
+                if t.parameters
+                else ""
+            )
+            for t in tools
+        )
+        injection = (
+            "You have access to tools. If you need data, respond ONLY with valid JSON:\n"
+            '{"tool_call": {"name": "<tool_name>", "arguments": {<args>}}}\n'
+            "Otherwise answer normally.\n\nAvailable tools:\n" + tool_desc
+        )
+
+        augmented: list[dict] = []
+        injected = False
+        for m in messages:
+            if m["role"] == "system" and not injected:
+                augmented.append(
+                    {"role": "system", "content": m["content"] + "\n\n" + injection}
+                )
+                injected = True
+            else:
+                augmented.append(m)
+        if not injected:
+            augmented = [{"role": "system", "content": injection}] + list(messages)
+
+        sys_content = next(
+            (m["content"] for m in augmented if m["role"] == "system"), ""
+        )
+        body = "\n".join(
+            f"{m['role'].upper()}: {m['content']}"
+            for m in augmented
+            if m["role"] != "system"
+        )
+        prompt = f"{sys_content}\n\n{body}\nASSISTANT:"
+
+        resp = requests.post(
+            f"{self.base_url}/api/generate",
+            json={"model": self.model_name, "prompt": prompt, "stream": False},
+            timeout=120,
+        )
+        resp.raise_for_status()
+        raw = resp.json().get("response", "")
+
+        try:
+            data = _json.loads(raw.strip())
+            if "tool_call" in data:
+                tc = data["tool_call"]
+                return ToolResponse(
+                    tool_call=ToolCallRequest(
+                        name=tc["name"],
+                        arguments=tc.get("arguments", {}),
+                    )
+                )
+        except (_json.JSONDecodeError, KeyError):
+            pass
+
+        return ToolResponse(text=raw)
+
+    def complete_with_tool_result(
+        self,
+        messages: list[dict],
+        tool_call: "ToolCallRequest",
+        tool_result: str,
+    ) -> str:
+        """Second pass: append tool result and get final answer."""
+        extended = list(messages) + [
+            {"role": "assistant", "content": f"[Called {tool_call.name}]"},
+            {
+                "role": "user",
+                "content": f"Tool result: {tool_result}\n\nAnswer the original question using this data.",
+            },
+        ]
+        try:
+            resp = requests.post(
+                f"{self.base_url}/api/chat",
+                json={"model": self.model_name, "messages": extended, "stream": False},
+                timeout=120,
+            )
+            resp.raise_for_status()
+            return resp.json().get("message", {}).get("content", "")
+        except Exception:
+            pass
+
+        body = "\n".join(
+            f"{m['role'].upper()}: {m['content']}"
+            for m in extended
+            if m["role"] != "system"
+        )
+        resp = requests.post(
+            f"{self.base_url}/api/generate",
+            json={
+                "model": self.model_name,
+                "prompt": body + "\nASSISTANT:",
+                "stream": False,
+            },
+            timeout=120,
+        )
+        resp.raise_for_status()
+        return resp.json().get("response", "")
+
 
 class OpenRouterLLMClient:
     """OpenRouter LLM client. Supports any model available on openrouter.ai."""
