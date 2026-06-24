@@ -35,6 +35,7 @@ from ..dependencies import get_api_key_manager
 from portf_manager.api_client import APIClient, CacheStrategy
 from portf_manager.database import Database
 from portf_server.dependencies import get_database
+from portf_server.chat_tools import TOOLS, execute_tool
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -530,13 +531,117 @@ class EnhancedChatEngine:
             logger.warning(f"Portfolio context building error: {e}")
             return {"portfolios": [], "positions": [], "_warnings": [str(e)]}
 
+    def _build_compact_context(self, db) -> str:
+        """Build a brief portfolio summary for the tool-path system message."""
+        try:
+            from portf_manager.positions import compute_positions
+
+            txns = db.get_all_transactions()
+            pos_map, realised = compute_positions(txns)
+            total_value = total_cost = 0.0
+            top_holdings = []
+            for aid, p in pos_map.items():
+                if p["quantity"] <= 0:
+                    continue
+                asset = db.get_asset(aid)
+                if not asset:
+                    continue
+                cur = asset.get("currency", "EUR")
+                try:
+                    from portf_server.routers.portfolios import _get_fx_rate as _fx
+                except Exception:
+
+                    def _fx(_c):
+                        return 1.0
+
+                pd_ = db.get_latest_price(aid)
+                price = float(pd_["price"]) if pd_ else 0.0
+                fx = _fx(cur)
+                value_eur = p["quantity"] * price * fx
+                total_value += value_eur
+                total_cost += p["cost"] * fx
+                top_holdings.append(
+                    {"symbol": asset["symbol"], "value_eur": round(value_eur, 2)}
+                )
+
+            top_holdings.sort(key=lambda x: x["value_eur"], reverse=True)
+            return json.dumps(
+                {
+                    "total_value_eur": round(total_value, 2),
+                    "invested_eur": round(total_cost, 2),
+                    "unrealised_gain_eur": round(total_value - total_cost, 2),
+                    "top_5_holdings": top_holdings[:5],
+                }
+            )
+        except Exception as e:
+            logger.warning("compact context failed: %s", e)
+            return "{}"
+
+    async def _generate_with_tool_loop(
+        self, message: str, context: Dict[str, Any], session_id: str, db
+    ) -> str:
+        """Tool-calling path: up to 2 LLM calls per user message.
+
+        Pass 1: LLM may request a tool call.
+        Pass 2 (if tool call): execute tool, send result back, get final answer.
+        """
+
+        compact = self._build_compact_context(db)
+        system_content = (
+            "You are the portfolio assistant for THIS user's Portfolio Manager app.\n"
+            "You have access to tools that can fetch live portfolio data. "
+            "Use them when the user asks for specific data you don't already have.\n"
+            "All monetary values are in EUR unless stated otherwise.\n"
+            "This is informational — not regulated financial advice.\n\n"
+            f"Portfolio summary (top 5 holdings shown; call get_holdings for full list):\n{compact}"
+        )
+
+        history = _get_history(db, session_id)
+        messages: List[Dict[str, str]] = [{"role": "system", "content": system_content}]
+        for msg in history[-4:]:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+        messages.append({"role": "user", "content": message})
+
+        try:
+            response = await asyncio.to_thread(
+                self.llm.generate_with_tools, messages, TOOLS
+            )
+        except Exception as e:
+            logger.error("generate_with_tools failed: %s", e)
+            return "I'm having trouble accessing the AI service right now. Please try again."
+
+        if response.text:
+            return response.text
+
+        if response.tool_call:
+            tool_result = execute_tool(
+                response.tool_call.name, response.tool_call.arguments, db
+            )
+            try:
+                final = await asyncio.to_thread(
+                    self.llm.complete_with_tool_result,
+                    messages,
+                    response.tool_call,
+                    tool_result,
+                )
+                return final
+            except Exception as e:
+                logger.error("complete_with_tool_result failed: %s", e)
+                return f"I retrieved the data but couldn't generate a response: {tool_result}"
+
+        return "I wasn't able to generate a response. Please try again."
+
     async def _generate_enhanced_response(
         self, message: str, context: Dict[str, Any], session_id: str, db: Database
     ) -> str:
-        """Generate enhanced response with both portfolio and stock analysis."""
-        # Build enhanced prompt
-        prompt = self._build_enhanced_prompt(message, context, session_id, db)
+        """Route to tool loop when provider is tool-capable, else use static-context path."""
+        from portf_manager.llm_client import ToolCapableLLMClient
 
+        if isinstance(self.llm, ToolCapableLLMClient):
+            return await self._generate_with_tool_loop(message, context, session_id, db)
+
+        # Existing static-context path (unchanged)
+        prompt = self._build_enhanced_prompt(message, context, session_id, db)
         try:
             response = await asyncio.to_thread(self.llm.generate, prompt)
             return response
