@@ -56,6 +56,13 @@ Override: `PORTF_LLM_PROVIDER=auto|ollama|gemini|openrouter|anthropic`, `PORTF_L
 
 **Search grounding**: `GeminiLLMClient` and `AnthropicLLMClient` implement `generate_with_search(prompt, symbol) -> str`. Research `generate_valuation_report()` detects via `hasattr(llm, "generate_with_search")`. Returns `{"text": "<llm json>", "sources": [...]}`. Ollama/OpenRouter do NOT support search grounding.
 
+**Tool calling (chat agentic loop)**: All 4 providers implement `ToolCapableLLMClient` (protocol in `portf_manager/llm_client.py`):
+- `generate_with_tools(messages, tools) -> ToolResponse` — first pass; returns either `ToolResponse(text=...)` or `ToolResponse(tool_call=ToolCallRequest(name, arguments, call_id))`
+- `complete_with_tool_result(messages, tool_call, tool_result, tools=None) -> str` — second pass; `tools` required by Anthropic for the follow-up call, ignored by others
+- Ollama: primary path via `/api/chat` `tools` field (llama3.1+); falls back to JSON-in-prompt via `/api/generate` when the model rejects it
+- 15 in-process tools live in `portf_server/chat_tools.py`; `execute_tool(name, args, db) -> str` is the dispatcher. Tools never make HTTP round-trips — they call DB/service functions directly.
+- `EnhancedChatEngine._generate_with_tool_loop()` branches on `isinstance(self.llm, ToolCapableLLMClient)`; wraps all blocking calls (provider methods + `execute_tool`) in `asyncio.to_thread()`
+
 `docker-compose.yml` sets `PORTF_LLM_PROVIDER=gemini` — these `environment:` entries override `.env*`; change the provider there, not only in `.env.local`.
 
 All LLM calls: `LLMClient.generate(prompt) -> str`. `GeminiClient` is a legacy wrapper that delegates to `get_llm_client()`.
