@@ -7,6 +7,10 @@
 
 Last updated: 2026-06-24
 
+**Recent (v2.5.6):** **MCP server: 4 new tools** — `portfolio_health` (AI-scored 5-category health from cache), `tax_estimate` (IRPF savings-base estimate), `goals` (progress + on-track status), `bookings` (cash deposits/withdrawals with totals). MCP server now has 18 tools total.
+
+**Recent (v2.5.5):** **Import preview: editable symbol field with autocomplete** — symbol cell in the file/LLM import preview is now an editable input; typing triggers `AssetSearch` autocomplete against all known assets (fuzzy match on symbol/name/alias); corrected symbol is picked up on save. Works in both the Import/Export page and the Transactions file-import modal.
+
 **Recent (v2.5.4):** **Multi-currency tax report** — `GET /api/v1/analytics/tax-report` now converts all amounts to EUR via `_fx()` at current rates; fixes field-name mismatches in `TaxTransaction` (`sell_quantity`/`sell_amount`/`purchase_amount` — previously returned zeros for proceeds and cost basis); per-transaction currency applied to dividend withholding sums; each realised lot carries `currency`, `proceeds_eur`, `cost_basis_eur`, `gain_loss_eur`; frontend table shows native + EUR amounts for non-EUR assets with a CCY badge; CSV download updated with EUR columns.
 
 **Recent (v2.5.3):** **Generic CSV import** — `portf_manager/parsers/generic_csv_parser.py` accepts any broker's CSV with canonical columns (date, symbol, name, type, quantity, price, currency, fees, asset_type, notes); column headers are case-insensitive with multilingual synonyms; delimiter and decimal style auto-detected; type synonyms for buy/sell/dividend/interest in English and Spanish. `generic` broker added to import UI with format hint and downloadable template. 22 new unit tests.

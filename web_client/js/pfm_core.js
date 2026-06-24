@@ -2214,7 +2214,11 @@ function _buildPreviewTable(transactions, bookings, deposits) {
             <td><input class="form-check-input file-tx-select" type="checkbox" ${(tx.is_duplicate || tx.skip) ? '' : 'checked'} data-idx="${i}" data-dup="${tx.is_duplicate ? '1' : '0'}"></td>
             ${hasBroker ? `<td><small>${esc(tx.broker || '')}</small></td>` : ''}
             <td>${Fmt.date(tx.date)}${tx.is_duplicate ? dupBadge : ''}</td>
-            <td><strong>${esc(tx.symbol || '')}</strong><br><small class="text-muted">${esc(tx.name || '')}</small></td>
+            <td class="position-relative">
+              <input class="form-control form-control-sm symbol-edit border-0 fw-bold px-1" style="width:110px" data-idx="${i}" value="${esc(tx.symbol || '')}" autocomplete="off" spellcheck="false" placeholder="SYMBOL">
+              <div class="list-group position-absolute shadow symbol-suggest" style="min-width:210px;max-height:180px;overflow-y:auto;display:none;z-index:1050"></div>
+              <small class="text-muted d-block">${esc(tx.name || '')}</small>
+            </td>
             <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : tx.tx_type === 'sell' ? 'danger' : 'secondary'}">${(tx.tx_type || '').toUpperCase()}</span></td>
             <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(Fmt.loc(), {maximumFractionDigits: 4})}</td>
             <td class="text-end">${parseFloat(tx.price || 0).toFixed(4)}</td>
@@ -2297,6 +2301,26 @@ function _buildPreviewTable(transactions, bookings, deposits) {
     return html;
 }
 
+// Wire AssetSearch autocomplete on all .symbol-edit inputs inside containerEl.
+// Called after setting innerHTML on a preview container.
+async function _wireImportSymbolSearch(containerEl) {
+    let assets;
+    try {
+        assets = await window.apiClient.getAssets();
+    } catch (e) {
+        return;
+    }
+    const enriched = (assets || []).map(a => AssetSearch.enrich(a.symbol, a.name, { currency: a.currency }));
+    containerEl.querySelectorAll('.symbol-edit').forEach(input => {
+        const suggest = input.nextElementSibling;
+        if (!suggest || !suggest.classList.contains('symbol-suggest')) return;
+        AssetSearch.buildAutocomplete(input, suggest, {
+            getSuggestions: () => enriched,
+            onSelect: (a) => { input.value = a.symbol; },
+        });
+    });
+}
+
 // ---------------------------------------------------------------------------
 // File Import Modal (Transactions page)
 // ---------------------------------------------------------------------------
@@ -2345,6 +2369,7 @@ function setupFileImportModal() {
             html += `<p class="text-muted small mt-2"><i class="bi bi-info-circle me-1"></i>${skippedCount} row(s) skipped (non-trade entries, incomplete data, etc.)</p>`;
         }
         results.innerHTML = html;
+        _wireImportSymbolSearch(results);
     }
 
     modal.addEventListener('hidden.bs.modal', () => {
@@ -2383,7 +2408,12 @@ function setupFileImportModal() {
 
     saveBtn.addEventListener('click', async () => {
         const selected = Array.from(document.querySelectorAll('.file-tx-select:checked'))
-            .map(cb => parsedTransactions[parseInt(cb.dataset.idx)]);
+            .map(cb => {
+                const tx = Object.assign({}, parsedTransactions[parseInt(cb.dataset.idx)]);
+                const inp = cb.closest('tr')?.querySelector('.symbol-edit');
+                if (inp && inp.value.trim()) tx.symbol = inp.value.trim().toUpperCase();
+                return tx;
+            });
         const selectedDeps = Array.from(document.querySelectorAll('.file-dep-select:checked'))
             .map(cb => parsedDeposits[parseInt(cb.dataset.idx)]);
         if (selected.length === 0 && parsedBookings.length === 0 && selectedDeps.length === 0) { alert('No data selected.'); return; }
