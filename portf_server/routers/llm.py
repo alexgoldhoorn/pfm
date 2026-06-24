@@ -623,6 +623,7 @@ class EnhancedChatEngine:
                     messages,
                     response.tool_call,
                     tool_result,
+                    TOOLS,
                 )
                 return final
             except Exception as e:
