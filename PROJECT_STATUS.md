@@ -7,6 +7,8 @@
 
 Last updated: 2026-06-24
 
+**Recent (v2.5.2):** **On-demand price update** — `portf_manager/services/price_updater.py` extracts the update-prices logic from the CLI into a shared service; two new endpoints `POST /api/v1/analytics/trigger-price-update` (starts a background thread, returns 409 if already running) and `GET /api/v1/analytics/price-update-status`; "Refresh prices" button added to the dashboard header (next to the freshness chip) with a spinner while the background update runs, auto-refreshes the chip and dashboard when done.
+
 **Recent (v2.5.1):** **Housekeeping** — Portfolio column added to `list-transactions` CLI output (all three DB query paths now `LEFT JOIN portfolios`); `GeminiLLMClient` migrated from deprecated `google-generativeai` SDK to `google-genai` (`self._client = genai_sdk.Client(...)` at init, reused across all methods); test mocks updated to the new SDK pattern. 677 tests passing.
 
 **Recent (v2.5):** **AI Chat: agentic tool calling** — `ToolCapableLLMClient` protocol + 15 in-process portfolio tools (`portf_server/chat_tools.py`: `get_holdings`, `get_performance`, `get_risk`, `get_diversification`, `get_kpis`, `get_health`, `get_brokers`, `get_quote`, `get_price`, `get_research`, `get_transactions`, `get_tax_estimate`, `asset_details`, `asset_news`, `financial_news`). All 4 LLM providers implement the protocol; `EnhancedChatEngine` branches on `isinstance(llm, ToolCapableLLMClient)` and runs a 2-pass agentic loop (compact context summary + live tool data) instead of the static snapshot path. Ollama gets native `/api/chat` tools + JSON-in-prompt fallback. 677 tests passing.
@@ -104,7 +106,7 @@ See `git log --oneline` for full history. Key v2.1 additions:
 - [ ] **Mintos parser** — CSV account statement parser for P2P loans, fractional bonds, and ETFs. Format: `Date`, `Details`, `Transaction ID`, `Turnover`. Mintos interest = same Spanish tax category as stock dividends (rendimientos del capital mobiliario, Box 27)
 
 ### Medium Priority
-- [ ] **Price fetching** — `update-prices` command exists but prices table is empty; no scheduled updates
+- [x] **Price fetching** — `POST /api/v1/analytics/trigger-price-update` + "Refresh prices" button on dashboard; background thread + status polling; service in `portf_manager/services/price_updater.py`
 - [x] **Deprecated google.generativeai** — Migrated `GeminiLLMClient` to `google-genai` SDK; `self._client` created at init
 - [x] **Untracked file** — Removed broken duplicate `calculator.py` from project root
 - [x] **Portfolio column in list-transactions** — Portfolio column added to CLI table output

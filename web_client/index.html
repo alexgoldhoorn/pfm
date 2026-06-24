@@ -274,6 +274,9 @@
                         <div class="d-flex align-items-center gap-2">
                             <!-- Price-data freshness chip (populated by loadDataFreshness) -->
                             <span id="dataFreshness" class="badge rounded-pill bg-secondary" style="display:none; cursor:default;"></span>
+                            <button class="btn btn-sm btn-outline-primary" id="refreshPricesBtn" onclick="triggerPriceUpdate()" title="Fetch latest prices from Yahoo Finance">
+                                <i class="bi bi-graph-up-arrow me-1" id="refreshPricesIcon"></i><span id="refreshPricesLabel">Refresh prices</span>
+                            </button>
                             <button class="btn btn-sm btn-outline-secondary" id="refreshTransactions" title="Refresh dashboard data">
                                 <i class="bi bi-arrow-clockwise me-1"></i>Refresh
                             </button>
