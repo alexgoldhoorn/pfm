@@ -1002,11 +1002,11 @@ class PortfolioManagerCLI:
                     f"📋 Recent Transactions{filter_text} (showing {limit} of {total_count}):"
                 )
 
-            print("-" * 150)
+            print("-" * 172)
             print(
-                f"{'ID':<5} {'Symbol':<8} {'Name':<25} {'Type':<8} {'Quantity':<12} {'Price':<10} {'Total':<12} {'Currency':<8} {'Date':<12}"
+                f"{'ID':<5} {'Symbol':<8} {'Name':<25} {'Type':<8} {'Quantity':<12} {'Price':<10} {'Total':<12} {'Currency':<8} {'Date':<12} {'Portfolio':<20}"
             )
-            print("-" * 150)
+            print("-" * 172)
 
             displayed = 0
             for tx in transactions:
@@ -1018,16 +1018,20 @@ class PortfolioManagerCLI:
                 if len(name) > 24:
                     name = name[:21] + "..."
 
+                portfolio = tx.get("portfolio_name") or "—"
+                if len(portfolio) > 19:
+                    portfolio = portfolio[:16] + "..."
+
                 total_amount = tx.get("total_amount", tx["quantity"] * tx["price"])
                 date_display = tx.get("transaction_date", tx.get("date", "N/A"))
                 print(
                     f"{tx['id']:<5} {tx['symbol']:<8} {name:<25} {tx['transaction_type']:<8} "
                     f"{tx['quantity']:<12.4f} {tx['price']:<10.2f} "
-                    f"{total_amount:<12.2f} {tx['currency']:<8} {date_display:<12}"
+                    f"{total_amount:<12.2f} {tx['currency']:<8} {date_display:<12} {portfolio:<20}"
                 )
                 displayed += 1
 
-            print("-" * 150)
+            print("-" * 172)
 
             # Show pagination info
             if displayed < total_count:

@@ -142,21 +142,22 @@ class GeminiLLMClient:
 
         # Import lazily to avoid hard dependency when using Ollama
         try:
-            import google.generativeai as genai
+            from google import genai as genai_sdk
 
-            genai.configure(api_key=self.api_key)
-            self._model = genai.GenerativeModel(self.model_name)
+            self._client = genai_sdk.Client(api_key=self.api_key)
         except ImportError:
             raise ImportError(
-                "google-generativeai package required for Gemini provider. "
-                "Install with: pip install google-generativeai"
+                "google-genai package required for Gemini provider. "
+                "Install with: pip install google-genai"
             )
 
         logger.info(f"Gemini LLM client initialized (model={self.model_name})")
 
     def generate(self, prompt: str) -> str:
         """Generate text using Google Gemini."""
-        response = self._model.generate_content(prompt)
+        response = self._client.models.generate_content(
+            model=self.model_name, contents=prompt
+        )
         if not response.text:
             raise RuntimeError("Empty response from Gemini API")
         return response.text
@@ -176,14 +177,12 @@ class GeminiLLMClient:
 
     def _gemini_search(self, prompt: str) -> tuple[str, list[dict]]:
         """Call Gemini with Google Search grounding using the new google-genai SDK."""
-        from google import genai as genai_new
         from google.genai import types as genai_types
 
-        client = genai_new.Client(api_key=self.api_key)
         config = genai_types.GenerateContentConfig(
             tools=[genai_types.Tool(google_search=genai_types.GoogleSearch())]
         )
-        response = client.models.generate_content(
+        response = self._client.models.generate_content(
             model=self.model_name, contents=prompt, config=config
         )
         text = response.text or ""
@@ -209,10 +208,7 @@ class GeminiLLMClient:
         tools: list["ToolDefinition"],
     ) -> "ToolResponse":
         """First pass: returns tool call or final answer via Gemini function calling."""
-        from google import genai as genai_new
         from google.genai import types as genai_types
-
-        client = genai_new.Client(api_key=self.api_key)
 
         function_declarations = [
             genai_types.FunctionDeclaration(
@@ -251,7 +247,7 @@ class GeminiLLMClient:
             tools=[genai_types.Tool(function_declarations=function_declarations)],
             system_instruction=system_text,
         )
-        response = client.models.generate_content(
+        response = self._client.models.generate_content(
             model=self.model_name, contents=contents, config=config
         )
 
@@ -275,10 +271,7 @@ class GeminiLLMClient:
         tools: Optional[list["ToolDefinition"]] = None,
     ) -> str:
         """Second pass: inject function response and return final answer."""
-        from google import genai as genai_new
         from google.genai import types as genai_types
-
-        client = genai_new.Client(api_key=self.api_key)
 
         system_text = next(
             (m["content"] for m in messages if m["role"] == "system"), None
@@ -313,7 +306,7 @@ class GeminiLLMClient:
         )
 
         config = genai_types.GenerateContentConfig(system_instruction=system_text)
-        response = client.models.generate_content(
+        response = self._client.models.generate_content(
             model=self.model_name, contents=contents, config=config
         )
         return response.text or ""

@@ -205,11 +205,9 @@ class TestGeminiClient:
         assert len(transactions) == 1
         assert transactions[0].symbol == "AAPL"
 
-    @patch("google.generativeai.GenerativeModel")
-    def test_extract_transactions_success(self, mock_model_class):
+    @patch("google.genai.Client")
+    def test_extract_transactions_success(self, mock_client_class):
         """Test successful transaction extraction."""
-        # Mock the model and response
-        mock_model = MagicMock()
         mock_response = MagicMock()
         mock_response.text = json.dumps(
             [
@@ -225,9 +223,9 @@ class TestGeminiClient:
                 }
             ]
         )
-
-        mock_model.generate_content.return_value = mock_response
-        mock_model_class.return_value = mock_model
+        mock_client_class.return_value.models.generate_content.return_value = (
+            mock_response
+        )
 
         client = GeminiClient(api_key=self.api_key)
 
@@ -238,18 +236,19 @@ class TestGeminiClient:
         assert transactions[0].symbol == "AAPL"
         assert transactions[0].quantity == 100.0
 
-        # Verify the model was called with correct prompt
-        mock_model.generate_content.assert_called_once()
-        call_args = mock_model.generate_content.call_args[0][0]
-        assert "Test transaction text" in call_args
+        # Verify the client was called with correct prompt
+        mock_client_class.return_value.models.generate_content.assert_called_once()
+        call_kwargs = (
+            mock_client_class.return_value.models.generate_content.call_args.kwargs
+        )
+        assert "Test transaction text" in call_kwargs["contents"]
 
-    @patch("google.generativeai.GenerativeModel")
-    def test_extract_transactions_api_error(self, mock_model_class):
+    @patch("google.genai.Client")
+    def test_extract_transactions_api_error(self, mock_client_class):
         """Test handling API errors during extraction."""
-        # Mock the model to raise an exception
-        mock_model = MagicMock()
-        mock_model.generate_content.side_effect = Exception("API Error")
-        mock_model_class.return_value = mock_model
+        mock_client_class.return_value.models.generate_content.side_effect = Exception(
+            "API Error"
+        )
 
         client = GeminiClient(api_key=self.api_key)
 
@@ -258,11 +257,9 @@ class TestGeminiClient:
 
         assert len(transactions) == 0
 
-    @patch("google.generativeai.GenerativeModel")
-    def test_extract_transactions_spanish_text(self, mock_model_class):
+    @patch("google.genai.Client")
+    def test_extract_transactions_spanish_text(self, mock_client_class):
         """Test extraction with Spanish text."""
-        # Mock the model and response for Spanish transaction
-        mock_model = MagicMock()
         mock_response = MagicMock()
         mock_response.text = json.dumps(
             [
@@ -278,9 +275,9 @@ class TestGeminiClient:
                 }
             ]
         )
-
-        mock_model.generate_content.return_value = mock_response
-        mock_model_class.return_value = mock_model
+        mock_client_class.return_value.models.generate_content.return_value = (
+            mock_response
+        )
 
         client = GeminiClient(api_key=self.api_key)
 
@@ -494,11 +491,9 @@ class TestGeminiIntegration:
         """Setup test environment before each test."""
         self.api_key = "test_api_key_123"
 
-    @patch("google.generativeai.GenerativeModel")
-    def test_extract_multiple_transactions(self, mock_model_class):
+    @patch("google.genai.Client")
+    def test_extract_multiple_transactions(self, mock_client_class):
         """Test extracting multiple transactions from text."""
-        # Mock response with multiple transactions
-        mock_model = MagicMock()
         mock_response = MagicMock()
         mock_response.text = json.dumps(
             [
@@ -524,13 +519,11 @@ class TestGeminiIntegration:
                 },
             ]
         )
-
-        mock_model.generate_content.return_value = mock_response
-        mock_model_class.return_value = mock_model
+        mock_client_class.return_value.models.generate_content.return_value = (
+            mock_response
+        )
 
         client = GeminiClient(api_key=self.api_key)
-
-        # Extract transactions
         transactions = client.extract_transactions("Multiple transactions text")
 
         assert len(transactions) == 2
@@ -539,35 +532,29 @@ class TestGeminiIntegration:
         assert transactions[1].symbol == "GOOGL"
         assert transactions[1].tx_type == "sell"
 
-    @patch("google.generativeai.GenerativeModel")
-    def test_extract_no_transactions(self, mock_model_class):
+    @patch("google.genai.Client")
+    def test_extract_no_transactions(self, mock_client_class):
         """Test extracting from text with no transactions."""
-        # Mock response with empty array
-        mock_model = MagicMock()
         mock_response = MagicMock()
         mock_response.text = "[]"
-
-        mock_model.generate_content.return_value = mock_response
-        mock_model_class.return_value = mock_model
+        mock_client_class.return_value.models.generate_content.return_value = (
+            mock_response
+        )
 
         client = GeminiClient(api_key=self.api_key)
-
-        # Extract transactions
         transactions = client.extract_transactions("No transaction text")
 
         assert len(transactions) == 0
 
-    @patch("google.generativeai.GenerativeModel")
-    def test_extract_isin_transactions(self, mock_model_class):
+    @patch("google.genai.Client")
+    def test_extract_isin_transactions(self, mock_client_class):
         """Test extracting transactions with ISIN codes."""
-        # Mock response with ISIN-based transaction
-        mock_model = MagicMock()
         mock_response = MagicMock()
         mock_response.text = json.dumps(
             [
                 {
                     "tx_type": "buy",
-                    "symbol": "US0378331005",  # ISIN code
+                    "symbol": "US0378331005",
                     "asset_name": "Apple Inc.",
                     "quantity": 14.0,
                     "price": 9.87,
@@ -577,13 +564,11 @@ class TestGeminiIntegration:
                 }
             ]
         )
-
-        mock_model.generate_content.return_value = mock_response
-        mock_model_class.return_value = mock_model
+        mock_client_class.return_value.models.generate_content.return_value = (
+            mock_response
+        )
 
         client = GeminiClient(api_key=self.api_key)
-
-        # Extract transactions
         transactions = client.extract_transactions("ISIN transaction text")
 
         assert len(transactions) == 1

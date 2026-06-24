@@ -7,6 +7,8 @@
 
 Last updated: 2026-06-24
 
+**Recent (v2.5.1):** **Housekeeping** — Portfolio column added to `list-transactions` CLI output (all three DB query paths now `LEFT JOIN portfolios`); `GeminiLLMClient` migrated from deprecated `google-generativeai` SDK to `google-genai` (`self._client = genai_sdk.Client(...)` at init, reused across all methods); test mocks updated to the new SDK pattern. 677 tests passing.
+
 **Recent (v2.5):** **AI Chat: agentic tool calling** — `ToolCapableLLMClient` protocol + 15 in-process portfolio tools (`portf_server/chat_tools.py`: `get_holdings`, `get_performance`, `get_risk`, `get_diversification`, `get_kpis`, `get_health`, `get_brokers`, `get_quote`, `get_price`, `get_research`, `get_transactions`, `get_tax_estimate`, `asset_details`, `asset_news`, `financial_news`). All 4 LLM providers implement the protocol; `EnhancedChatEngine` branches on `isinstance(llm, ToolCapableLLMClient)` and runs a 2-pass agentic loop (compact context summary + live tool data) instead of the static snapshot path. Ollama gets native `/api/chat` tools + JSON-in-prompt fallback. 677 tests passing.
 
 **Recent (v2.4):** **AI Chat: persistent named threads** — schema v24 (`chat_sessions` table with messages JSON column), DB-backed sessions replacing kv_cache. Four new endpoints: `GET|POST /api/v1/llm/chat/sessions`, `DELETE /api/v1/llm/chat/sessions/{id}`, `GET /api/v1/llm/chat/sessions/{id}/messages`. Two-column chat layout (sessions sidebar + message area); `openChatWithContext()` in `pfm_core.js` allows Research workbench and Portfolio Health panel to pre-load threads with on-screen data. 635 tests passing.
@@ -103,9 +105,9 @@ See `git log --oneline` for full history. Key v2.1 additions:
 
 ### Medium Priority
 - [ ] **Price fetching** — `update-prices` command exists but prices table is empty; no scheduled updates
-- [ ] **Deprecated google.generativeai** — `stock_report.py` still imports old SDK directly (should use `llm_client.py`)
+- [x] **Deprecated google.generativeai** — Migrated `GeminiLLMClient` to `google-genai` SDK; `self._client` created at init
 - [x] **Untracked file** — Removed broken duplicate `calculator.py` from project root
-- [ ] **Portfolio column in list-transactions** — Show which portfolio each transaction belongs to in the output table
+- [x] **Portfolio column in list-transactions** — Portfolio column added to CLI table output
 
 ### Low Priority
 - [ ] **Web client refresh** — Frontend not tested recently, may need updates for new endpoints
