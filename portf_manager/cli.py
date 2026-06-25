@@ -4,8 +4,6 @@ Command Line Interface for Portfolio Manager
 Provides CLI commands for managing assets, sectors, and portfolio operations.
 """
 
-from tqdm import tqdm
-
 import argparse
 import sys
 import os
@@ -45,11 +43,6 @@ from .error_handling import (
     PortfolioManagerError,
     FileIOError,
     PermissionError as PortfolioPermissionError,
-)
-from .api_client import (
-    get_client,
-    APIError,
-    DataNotFoundError,
 )
 
 
@@ -2716,184 +2709,56 @@ class PortfolioManagerCLI:
     def update_prices(self, symbols: list = None, show_values: bool = False) -> None:
         """Update prices for portfolio assets using external API."""
         try:
-            # Ensure user is authenticated (only in local mode)
             if self.config.is_local_mode and not self.auth_manager.is_authenticated():
                 print("❌ Please login first.")
                 return
 
-            # Get API client
-            api_client = get_client()
+            from portf_manager.services.price_updater import run_price_update
 
-            # Track run timing for the Diagnostics history.
-            run_started = datetime.now()
+            print("📡 Fetching latest prices from API...")
+            result = run_price_update(
+                self.db_manager,
+                symbols=symbols,
+                source="manual" if symbols else "cron",
+            )
 
-            # Determine which assets to update
-            if symbols:
-                # Get specific assets by symbols
-                assets_to_update = []
-                for symbol in symbols:
-                    asset_data = self.db_manager.get_asset_by_symbol(symbol.upper())
-                    if asset_data:
-                        assets_to_update.append(asset_data)
-                    else:
-                        print(f"⚠️  Asset with symbol '{symbol.upper()}' not found")
+            successful_updates = result["updated_count"]
+            skipped_symbols = result["skipped_symbols"]
+            error_symbols = result["error_symbols"]
+            api_errors = result["api_errors"]
 
-                if not assets_to_update:
-                    print("❌ No valid assets found for the specified symbols")
-                    return
-            else:
-                # Get all active assets, excluding manual-price ones (auto_price=0)
-                # so a manually-entered price isn't overwritten by the cron.
-                assets_to_update = [
-                    a
-                    for a in self.db_manager.get_all_assets(active_only=True)
-                    if a.get("auto_price", 1)
-                ]
-
-                if not assets_to_update:
-                    print("📋 No active assets found in portfolio")
-            # Progress tracking
-            successful_updates = 0
-            skipped_symbols = []
-            error_symbols = []
-            api_errors = []
-
-            try:
-                # Fetch latest prices in batch.
-                # Crypto assets need an explicit yfinance ticker; the default is
-                # "{SYM}-EUR". A few tokens only resolve under a numeric-suffixed,
-                # USD-quoted Yahoo symbol (the bare "{SYM}-EUR" is missing or
-                # points at a delisted look-alike coin). For those we fetch the
-                # USD price and convert to EUR below, since crypto assets are
-                # stored in EUR. Map: db symbol -> (yf ticker, quote currency).
-                _CRYPTO_YF_OVERRIDES = {
-                    "UNI": ("UNI7083-USD", "USD"),
-                    "SUI": ("SUI20947-USD", "USD"),
-                }
-                yf_to_db: dict[str, str] = {}
-                # yf ticker -> currency it is quoted in (None = asset-native, no
-                # conversion); used to bring USD-quoted crypto back to EUR.
-                yf_quote_ccy: dict[str, str] = {}
-                for asset in assets_to_update:
-                    sym = asset["symbol"]
-                    if asset.get("asset_type") == "crypto":
-                        yf_ticker, quote_ccy = _CRYPTO_YF_OVERRIDES.get(
-                            sym, (f"{sym}-EUR", "EUR")
-                        )
-                        yf_to_db[yf_ticker] = sym
-                        yf_quote_ccy[yf_ticker] = quote_ccy
-                    else:
-                        # Use the asset's Yahoo ticker when set (v18 assets.ticker
-                        # — e.g. an exchange-listed symbol for a fund whose ISIN
-                        # Yahoo can't price); fall back to the ISIN symbol.
-                        yf_ticker = asset.get("ticker") or sym
-                        yf_to_db[yf_ticker] = sym
-                        yf_quote_ccy[yf_ticker] = None
-
-                print("📡 Fetching latest prices from API...")
-                prices_raw = api_client.fetch_latest_prices(list(yf_to_db.keys()))
-
-                # Convert any non-EUR crypto quotes to EUR (prices are stored in
-                # the asset currency, which is EUR for crypto). FX rate per
-                # currency is fetched once and reused.
-                _fx_cache: dict[str, float] = {}
-
-                def _to_eur(price: float, quote_ccy: str) -> float:
-                    if not quote_ccy or quote_ccy == "EUR":
-                        return price
-                    if quote_ccy not in _fx_cache:
-                        rate = api_client.get_fx_rate(quote_ccy, "EUR")
-                        _fx_cache[quote_ccy] = float(rate) if rate else None
-                    rate = _fx_cache[quote_ccy]
-                    return price * rate if rate else price
-
-                # Re-key results by original DB symbol, converting to EUR.
-                prices_data = {
-                    yf_to_db[yf_sym]: _to_eur(price, yf_quote_ccy.get(yf_sym))
-                    for yf_sym, price in prices_raw.items()
-                    if yf_sym in yf_to_db
-                }
-
-                # Process each asset with progress bar
-                with tqdm(
-                    total=len(assets_to_update), desc="Updating prices", unit="asset"
-                ) as pbar:
-                    for asset in assets_to_update:
-                        symbol = asset["symbol"]
-
-                        try:
-                            if symbol in prices_data:
-                                price = prices_data[symbol]
-
-                                # Store price in database
-                                self.db_manager.insert_price_record(
-                                    symbol=symbol,
-                                    price=price,
-                                    fetched_ts=datetime.now(),
-                                    source="yfinance",
-                                )
-
-                                successful_updates += 1
-
-                                if show_values:
-                                    pbar.set_postfix_str(f"✅ {symbol}: ${price:.2f}")
-                                else:
-                                    pbar.set_postfix_str(f"✅ {symbol}")
-
-                            else:
-                                skipped_symbols.append(symbol)
-                                pbar.set_postfix_str(f"⚠️  {symbol}: No data")
-
-                        except Exception as e:
-                            error_symbols.append(symbol)
-                            pbar.set_postfix_str(f"❌ {symbol}: Error")
-                            # Use tqdm.write to avoid interfering with progress bar
-                            tqdm.write(f"  ❌ Error storing price for {symbol}: {e}")
-
-                        pbar.update(1)
-
-            except Exception as e:
-
-                if isinstance(e, DataNotFoundError):
-                    tqdm.write(f"❌ Data not found: {e}")
-                    api_errors.append(f"Data not found: {e}")
-                elif isinstance(e, APIError):
-                    tqdm.write(f"❌ API Error: {e}")
-                    api_errors.append(f"API Error: {e}")
-                else:
-                    tqdm.write(f"❌ Unexpected error fetching prices: {e}")
-                    api_errors.append(f"Unexpected error: {e}")
-
-            # Enhanced summary report
             print("\n📊 Update Summary:")
             print(f"   ✅ Successfully updated: {successful_updates} assets")
 
             if skipped_symbols:
                 print(f"   ⚠️  Skipped (no data): {len(skipped_symbols)} assets")
-                if show_values or len(skipped_symbols) <= 10:
-                    print(f"      Symbols: {', '.join(skipped_symbols)}")
-                elif len(skipped_symbols) > 10:
-                    print(
-                        f"      First 10: {', '.join(skipped_symbols[:10])}, ... and {len(skipped_symbols) - 10} more"
-                    )
+                shown = (
+                    skipped_symbols
+                    if len(skipped_symbols) <= 10
+                    else skipped_symbols[:10]
+                )
+                print(f"      Symbols: {', '.join(shown)}", end="")
+                if len(skipped_symbols) > 10:
+                    print(f", ... and {len(skipped_symbols) - 10} more", end="")
+                print()
 
             if error_symbols:
                 print(f"   ❌ Failed (database errors): {len(error_symbols)} assets")
-                if show_values or len(error_symbols) <= 10:
-                    print(f"      Symbols: {', '.join(error_symbols)}")
-                elif len(error_symbols) > 10:
-                    print(
-                        f"      First 10: {', '.join(error_symbols[:10])}, ... and {len(error_symbols) - 10} more"
-                    )
+                shown = (
+                    error_symbols if len(error_symbols) <= 10 else error_symbols[:10]
+                )
+                print(f"      Symbols: {', '.join(shown)}", end="")
+                if len(error_symbols) > 10:
+                    print(f", ... and {len(error_symbols) - 10} more", end="")
+                print()
 
             if api_errors:
                 print(f"   🌐 API Issues: {len(api_errors)} error(s)")
-                for error in api_errors[:3]:  # Show first 3 API errors
+                for error in api_errors[:3]:
                     print(f"      - {error}")
                 if len(api_errors) > 3:
                     print(f"      ... and {len(api_errors) - 3} more API errors")
 
-            # Performance metrics
             total_processed = (
                 successful_updates + len(skipped_symbols) + len(error_symbols)
             )
@@ -2901,43 +2766,17 @@ class PortfolioManagerCLI:
                 success_rate = (successful_updates / total_processed) * 100
                 print(f"   📈 Success rate: {success_rate:.1f}%")
 
-            # Persist the run for the Diagnostics page (best-effort; never let a
-            # bookkeeping failure mask the actual update result).
-            try:
-                self.db_manager.record_price_update_run(
-                    started_at=run_started.strftime("%Y-%m-%d %H:%M:%S"),
-                    duration_seconds=round(
-                        (datetime.now() - run_started).total_seconds(), 1
-                    ),
-                    updated_count=successful_updates,
-                    skipped_count=len(skipped_symbols),
-                    error_count=len(error_symbols),
-                    skipped_symbols=skipped_symbols,
-                    error_symbols=error_symbols,
-                    api_errors=api_errors,
-                    source="manual" if symbols else "cron",
-                )
-            except Exception as e:
-                tqdm.write(f"⚠️  Could not record update run: {e}")
-
-            # Reclaim expired kv_cache rows (cache_get ignores them but never
-            # deletes them). Piggy-backing on the daily cron keeps the table
-            # from growing unbounded. Best-effort, and only in local mode — in
-            # server mode db_manager is the HTTP client, which has no DB access.
+            # Reclaim expired kv_cache rows (best-effort, local mode only).
             try:
                 if self.db_manager is not None and hasattr(
                     self.db_manager, "purge_expired_cache"
                 ):
                     removed = self.db_manager.purge_expired_cache()
                     if removed:
-                        tqdm.write(f"🧹 Purged {removed} expired cache entries")
+                        print(f"🧹 Purged {removed} expired cache entries")
             except Exception as e:
-                tqdm.write(f"⚠️  Could not purge expired cache: {e}")
+                print(f"⚠️  Could not purge expired cache: {e}")
 
-            # Exit non-zero on real failures so cron wrappers alert instead of
-            # silently reporting success. DB write errors or API errors are real
-            # problems; "skipped" assets (no Yahoo data) are expected and don't
-            # count. SystemExit bypasses the broad `except Exception` below.
             if error_symbols or api_errors:
                 print(
                     f"   ⛔ {len(error_symbols)} DB error(s), "
@@ -2946,12 +2785,10 @@ class PortfolioManagerCLI:
                 sys.exit(1)
 
         except Exception as e:
-            print(f"❌ Error updating prices: {e}")
-            # Log the full traceback for debugging
             import traceback
 
-            tqdm.write(f"Full error traceback: {traceback.format_exc()}")
-            # A crash mid-update is a failure too — signal it to the caller.
+            print(f"❌ Error updating prices: {e}")
+            print(f"Full error traceback: {traceback.format_exc()}")
             sys.exit(1)
 
 

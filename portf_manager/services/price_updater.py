@@ -10,13 +10,18 @@ _CRYPTO_YF_OVERRIDES: dict[str, tuple[str, str]] = {
 }
 
 
-def run_price_update(db, symbols: Optional[list[str]] = None) -> dict:
+def run_price_update(
+    db,
+    symbols: Optional[list[str]] = None,
+    source: str = "api",
+) -> dict:
     """Fetch and store the latest prices for all (or specified) active assets.
 
     Args:
         db: PortfolioDatabase instance.
         symbols: If given, only update these symbols.  None → all active assets
             with auto_price enabled.
+        source: Label stored in price_update_runs (e.g. 'api', 'cron', 'manual').
 
     Returns:
         Dict with keys: updated_count, skipped_count, error_count,
@@ -33,9 +38,7 @@ def run_price_update(db, symbols: Optional[list[str]] = None) -> dict:
 
     if symbols:
         assets_to_update = [
-            db.get_asset_by_symbol(s.upper())
-            for s in symbols
-            if db.get_asset_by_symbol(s.upper())
+            a for s in symbols if (a := db.get_asset_by_symbol(s.upper()))
         ]
     else:
         assets_to_update = [
@@ -58,7 +61,7 @@ def run_price_update(db, symbols: Optional[list[str]] = None) -> dict:
             skipped_symbols=[],
             error_symbols=[],
             api_errors=[],
-            source="api",
+            source=source,
         )
         return {
             "updated_count": 0,
@@ -88,20 +91,30 @@ def run_price_update(db, symbols: Optional[list[str]] = None) -> dict:
 
         _fx_cache: dict[str, float] = {}
 
-        def _to_eur(price: float, quote_ccy: Optional[str]) -> float:
+        def _to_eur(price: float, quote_ccy: Optional[str]) -> Optional[float]:
             if not quote_ccy or quote_ccy == "EUR":
                 return price
             if quote_ccy not in _fx_cache:
                 rate = api_client.get_fx_rate(quote_ccy, "EUR")
-                _fx_cache[quote_ccy] = float(rate) if rate else None
-            rate = _fx_cache[quote_ccy]
-            return price * rate if rate else price
+                if rate:
+                    _fx_cache[quote_ccy] = float(rate)
+                else:
+                    return None  # FX unavailable — caller skips the asset
+            rate = _fx_cache.get(quote_ccy)
+            return price * rate if rate else None
 
-        prices_data = {
-            yf_to_db[yf_sym]: _to_eur(price, yf_quote_ccy.get(yf_sym))
-            for yf_sym, price in prices_raw.items()
-            if yf_sym in yf_to_db
-        }
+        prices_data: dict[str, float] = {}
+        for yf_sym, price in prices_raw.items():
+            if yf_sym not in yf_to_db:
+                continue
+            db_sym = yf_to_db[yf_sym]
+            converted = _to_eur(price, yf_quote_ccy.get(yf_sym))
+            if converted is None:
+                ccy = yf_quote_ccy.get(yf_sym, "?")
+                skipped_symbols.append(db_sym)
+                api_errors.append(f"FX rate unavailable for {ccy}; skipped {db_sym}")
+            else:
+                prices_data[db_sym] = converted
 
         for asset in assets_to_update:
             sym = asset["symbol"]
@@ -137,7 +150,7 @@ def run_price_update(db, symbols: Optional[list[str]] = None) -> dict:
         skipped_symbols=skipped_symbols,
         error_symbols=error_symbols,
         api_errors=api_errors,
-        source="api",
+        source=source,
     )
     return {
         "updated_count": updated_count,

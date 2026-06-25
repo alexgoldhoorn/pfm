@@ -14,6 +14,7 @@ class LLMTransaction:
     currency: str
     raw_text: str  # original line for traceability
     fees: float = 0.0
+    asset_type: str = ""
 
     def validate(self) -> Optional[str]:
         """

@@ -453,7 +453,7 @@ def _parse_generic(
         PreviewTransaction(
             symbol=tx.symbol,
             name=tx.asset_name,
-            asset_type="stock",
+            asset_type=tx.asset_type or "stock",
             tx_type=tx.tx_type,
             date=tx.date,
             quantity=tx.quantity,

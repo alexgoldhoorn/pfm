@@ -31,6 +31,7 @@ from portf_manager.services.analytics_service import (
 from portf_manager.tax_calculator import TaxCalculator
 from portf_manager.positions import compute_positions
 from portf_manager.cache import cached
+from portf_manager.services.price_updater import _CRYPTO_YF_OVERRIDES
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
@@ -371,13 +372,13 @@ _BACKFILL: dict = {
     "message": "",
     "error": None,
 }
-_CRYPTO_YF_OVERRIDES = {"UNI": "UNI1"}
 
 
 def _yf_symbol(asset: dict) -> str:
     sym = asset.get("symbol", "")
     if asset.get("asset_type") == "crypto":
-        return f"{_CRYPTO_YF_OVERRIDES.get(sym, sym)}-EUR"
+        yf_ticker, _ = _CRYPTO_YF_OVERRIDES.get(sym, (f"{sym}-EUR", "EUR"))
+        return yf_ticker
     return sym
 
 
@@ -512,14 +513,18 @@ def get_tax_estimate(
     try:
         report = calc.calculate_tax_report(user_id=1, start_date=start, end_date=end)
         for sym, txns in report.items():
-            sym_total = sum(float(getattr(t, "gain_loss", 0) or 0) for t in txns)
-            realised_gain += sym_total
             a = db.get_asset_by_symbol(sym)
+            currency = ((a or {}).get("currency") or "EUR").upper()
+            fx = _fx(currency)
+            sym_total_eur = sum(
+                float(getattr(t, "gain_loss", 0) or 0) * fx for t in txns
+            )
+            realised_gain += sym_total_eur
             realised_by_symbol.append(
                 {
                     "symbol": sym,
                     "name": (a or {}).get("name", sym),
-                    "realised_eur": round(sym_total, 2),
+                    "realised_eur": round(sym_total_eur, 2),
                 }
             )
         realised_by_symbol.sort(key=lambda x: x["realised_eur"])
@@ -978,7 +983,7 @@ def get_fees(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
 
 
 @router.get("/tax-report")
-async def get_tax_report(
+def get_tax_report(
     year: Optional[int] = Query(None, description="Tax year (default current)"),
     db=Depends(get_database),
     api_key_info: dict = Depends(_auth),
@@ -1243,7 +1248,8 @@ def trigger_price_update(
                 status_code=409, detail="Price update already in progress"
             )
         _price_update_state["running"] = True
-        _price_update_state["started_at"] = datetime.now().isoformat()
+        started_at = datetime.now().isoformat()
+        _price_update_state["started_at"] = started_at
 
     def _run() -> None:
         try:
@@ -1254,7 +1260,7 @@ def trigger_price_update(
 
     t = threading.Thread(target=_run, daemon=True)
     t.start()
-    return {"status": "started", "started_at": _price_update_state["started_at"]}
+    return {"status": "started", "started_at": started_at}
 
 
 @router.get("/price-update-status")
