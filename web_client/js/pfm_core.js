@@ -2345,6 +2345,7 @@ function setupFileImportModal() {
 
     brokerSelect.addEventListener('change', () => {
         const h = BROKER_HINTS[brokerSelect.value];
+        // BROKER_HINTS is a static literal — safe for innerHTML. Never interpolate user/server data here.
         if (h) { hint.innerHTML = h; hint.style.display = ''; }
         else hint.style.display = 'none';
     });
