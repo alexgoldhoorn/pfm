@@ -6,6 +6,7 @@ from portf_manager.parsers.generic_csv_parser import (
     _parse_number,
     _parse_date,
     _detect_delimiter,
+    _detect_decimal_style,
 )
 
 
@@ -55,6 +56,28 @@ class TestNumberParsing:
 
     def test_empty(self):
         assert _parse_number("") == 0.0
+
+    def test_ambiguous_1500_us_style(self):
+        # "1,500" with US decimal style → thousands separator → 1500
+        assert _parse_number("1,500", decimal_style="us") == pytest.approx(1500.0)
+
+    def test_ambiguous_1500_eu_style(self):
+        # "1,500" in an EU file means 1.5 (comma is decimal, 3 fractional digits)
+        assert _parse_number("1,500", decimal_style="eu") == pytest.approx(1.5)
+
+
+class TestDetectDecimalStyle:
+    def test_eu_style_from_unambiguous_cell(self):
+        rows = [["price"], ["1.234,56"]]
+        assert _detect_decimal_style(rows, [0]) == "eu"
+
+    def test_us_style_from_unambiguous_cell(self):
+        rows = [["price"], ["1,234.56"]]
+        assert _detect_decimal_style(rows, [0]) == "us"
+
+    def test_defaults_to_us_when_no_clear_cell(self):
+        rows = [["price"], ["185.50"]]
+        assert _detect_decimal_style(rows, [0]) == "us"
 
 
 class TestDateParsing:

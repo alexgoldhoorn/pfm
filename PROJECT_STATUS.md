@@ -5,7 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-06-24
+Last updated: 2026-06-25
+
+**Recent (v2.5.7):** **Pre-public code review fixes** — 10 issues addressed: `_CRYPTO_YF_OVERRIDES` consolidated to single source in `price_updater.py`; `get_tax_report` changed to `def` (was illegally `async`); tax-estimate now applies `_fx()` per symbol for realised gains; `started_at` race in trigger-price-update fixed; CLI `update_prices` delegates to shared service; `LLMTransaction.asset_type` field added; generic CSV parser passes `asset_type` through to DB; `"amount"` removed from quantity synonyms; date-style detection added to generic CSV parser; `innerHTML` safety comments added. Integration test for tax-report FIFO shape added. `_parse_number` now accepts `decimal_style` param resolved file-wide via `_detect_decimal_style`.
 
 **Recent (v2.5.6):** **MCP server: 4 new tools** — `portfolio_health` (AI-scored 5-category health from cache), `tax_estimate` (IRPF savings-base estimate), `goals` (progress + on-track status), `bookings` (cash deposits/withdrawals with totals). MCP server now has 18 tools total.
 
@@ -77,8 +79,8 @@ Last updated: 2026-06-24
 
 ### Database — ✅ Working
 - SQLite (default) + PostgreSQL support via database factory
-- Schema v21 with automatic migrations on startup
-- Tables: assets, transactions, portfolios, prices, bookings, dividends, watchlist, goals, research_notes, price_targets, networth snapshots, fixed_deposits, monthly_cashflow, app_settings, kv_cache, and more
+- Schema v24 with automatic migrations on startup
+- Tables: assets, transactions, portfolios, prices, bookings, dividends, watchlist, goals, research_notes, price_targets, networth snapshots, fixed_deposits, monthly_cashflow, app_settings, kv_cache, push_subscriptions, chat_sessions, price_update_runs, and more
 
 ### LLM Integration — ✅ Working
 - Provider-agnostic abstraction (`llm_client.py`)
@@ -90,49 +92,29 @@ Last updated: 2026-06-24
 
 ## Test Status
 
-**580 passed, 0 failed, 6 skipped** (unit tests, excluding integration/e2e)
+**705 passed, 0 failed, 6 skipped** (unit tests, excluding integration/e2e)
 
-All tests passing as of 2026-06-18.
+All tests passing as of 2026-06-25.
 
 ## Recent Changes (main)
 
-See `git log --oneline` for full history. Key v2.1 additions:
-
-1. **Monthly cash flow tracker** (db v20) — salary/income/mortgage/loan entries; net monthly figure on Net Worth page
-2. **Platform export** — Yahoo Finance + Simply Wall St CSV (transactions or positions)
-3. **Data Quality tab** on Diagnostics page — cash reconciliation, fuzzy duplicate detection, suspicious pattern checks
-4. **Fixed deposits** (db v19) — fixed-term deposit tracking with maturity and interest-posting
-5. **Bootstrap tabs** — Analytics and Import/Export pages migrated to Bootstrap nav-tabs
-6. **Net Worth page** — manual assets (cash/property/pension/mortgage), fixed deposits, monthly cashflow combined with brokerage value
-7. **Parser improvements** — Coinbase staking → interest tx, MyInvestor paste parser, Mintos keyword fixes
+See `git log --oneline` for full history. Notable milestones: agentic chat (v2.5), MCP server (v2.5+), generic CSV import (v2.5.3), price-update service (v2.5.2), multi-currency tax report (v2.5.4), pre-public code-review fixes (v2.5.7).
 
 ## Pending Work
 
-### High Priority
-- [ ] **Import real data** — DB is empty; need to import from actual broker accounts
-- [x] **MyInvestor structured parser** — `portf_manager/parsers/myinvestor_csv_parser.py` (standalone, 144 lines)
-- [x] **Mintos parser** — `portf_manager/parsers/mintos_csv_parser.py` ✅ working
-
-### Medium Priority
-- [x] **Price fetching** — `POST /api/v1/analytics/trigger-price-update` + "Refresh prices" button on dashboard; background thread + status polling; service in `portf_manager/services/price_updater.py`
-- [x] **Deprecated google.generativeai** — Migrated `GeminiLLMClient` to `google-genai` SDK; `self._client` created at init
-- [x] **Untracked file** — Removed broken duplicate `calculator.py` from project root
-- [x] **Portfolio column in list-transactions** — Portfolio column added to CLI table output
-
 ### Low Priority
-- [ ] **Web client refresh** — Frontend not tested recently, may need updates for new endpoints
-- [x] **Generic CSV import template** — `portf_manager/parsers/generic_csv_parser.py`; `generic` broker in UI with template download
-- [x] **Scheduled price updates** — Cron at 20:00 UTC (`portf-update-prices.sh`) + on-demand API trigger (v2.5.2)
-- [x] **Multi-currency support** — Tax report converts proceeds/cost/gain to EUR via `_fx()`; CCY column + native amounts shown in UI
+- [ ] **Web client smoke test** — Frontend verified working via API smoke tests (generic CSV import, tax-report, price-update-status, assets); full browser test not done
+- [ ] **`dividend_income` FX** — `get_tax_estimate` sums `total_amount` for dividends without per-symbol FX; minor for EUR-only portfolios but could be wrong for multi-currency dividend holdings
 
 ## Data Import Support
 
 | Broker | Format | Parser | Status |
 |---|---|---|---|
 | IndexaCapital | CSV (semicolon, ISIN, EUR) | `indexacapital_csv_parser.py` | ✅ Working |
-| MyInvestor | XLS via Inversis (semicolon, Spanish) | Inline in `import_csv()` | 🟡 Works but not modular |
+| MyInvestor | CSV (semicolon, Spanish) | `myinvestor_csv_parser.py` | ✅ Working |
 | Coinbase | CSV | `coinbase_csv_parser.py` | ✅ Working |
 | Mintos | CSV account statement | `mintos_csv_parser.py` | ✅ Working |
+| Any broker | Generic CSV (canonical columns) | `generic_csv_parser.py` | ✅ Working |
 | Any broker | Free text (LLM) | `gemini_client.py` via `paste-transaction` | ✅ Working (needs API key or Ollama) |
 
 ## Tax Reporting

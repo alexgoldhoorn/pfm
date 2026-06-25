@@ -68,13 +68,13 @@ Override: `PORTF_LLM_PROVIDER=auto|ollama|gemini|openrouter|anthropic`, `PORTF_L
 All LLM calls: `LLMClient.generate(prompt) -> str`. `GeminiClient` is a legacy wrapper that delegates to `get_llm_client()`.
 
 ### CSV / File Parsers
-Each broker has a standalone parser returning `LLMTransaction` objects via `ParseResult`. Valid `tx_type`: `buy`, `sell`, `dividend`, `interest`.
+Each broker has a standalone parser returning `LLMTransaction` objects via `ParseResult`. Valid `tx_type`: `buy`, `sell`, `dividend`, `interest`. `LLMTransaction` (in `portf_manager/llm_types.py`) has an optional `asset_type: str = ""` field — when set, `imports.py` uses it instead of defaulting to `"stock"` on save.
 - `indexacapital_csv_parser.py` — semicolon CSV, European numbers, ISINs. Also auto-detects "Movimientos" cash statement → SEPA → deposit/withdrawal bookings; fund subscriptions skipped.
 - `myinvestor_csv_parser.py` — "Movimientos Mi Cuenta": INVEST=deposit; `NAME @ QTY` with Importe<0=buy, >0=dividend; positive no-`@`=dividend lump-sum. No ISIN/fees → buys flagged "review".
 - `myinvestor_paste_parser.py` — MyInvestor statements pasted as text.
 - `mintos_csv_parser.py` — P2P statement. Aggregates interest/withholding **per month** into `interest` transactions vs synthetic `MINTOS` asset. Deposits/withdrawals kept individual → bookings. Large files → nginx `client_max_body_size 25m`.
 - `coinbase_csv_parser.py` — Fiat Deposit/Withdrawal rows → bookings; staking income → `interest` tx (qty=1, price=EUR total). Returns `(previews, bookings, skipped)`.
-- `generic_csv_parser.py` — Universal broker-agnostic CSV. Required cols: `date`, `symbol`, `type`, `quantity`, `price`, `currency`. Optional: `name`, `fees`, `asset_type`, `notes`. Case-insensitive multilingual headers (EN/ES/NL); type synonyms for buy/sell/dividend/interest; auto-detects delimiter and European/US decimal style. Template at `web_client/generic_import_template.csv`.
+- `generic_csv_parser.py` — Universal broker-agnostic CSV. Required cols: `date`, `symbol`, `type`, `quantity`, `price`, `currency`. Optional: `name`, `fees`, `asset_type`, `notes`. Case-insensitive multilingual headers (EN/ES/NL); type synonyms for buy/sell/dividend/interest; auto-detects delimiter, date style (EU/US), and decimal style (EU/US — `_detect_decimal_style` scans first 10 rows for unambiguous cells with both `,` and `.`); `asset_type` column mapped via `_ASSET_TYPE_MAP` → propagated to `LLMTransaction.asset_type` → imports.py uses it instead of defaulting to `"stock"`. Template at `web_client/generic_import_template.csv`.
 - `pdt_xlsx_parser.py` / `pdt_sheets_sync.py` — PDT XLSX and Google Sheets import/export.
 
 ### PDT Format (`pdt_xlsx_parser.py` and `pdt_sheets_sync.py`)
@@ -138,7 +138,7 @@ Plain `def`; gathers 6 data bundles via `ThreadPoolExecutor` → LLM prompt → 
 - `GET /api/v1/analytics/tax-estimate?year=` — IRPF savings base (realised gains + dividends + interest); `irpf_savings_tax()` progressive brackets (19/21/23/27/28%)
 - `GET /api/v1/analytics/diversification` — sector/country/currency/type + Herfindahl HHI (slow, fetches yfinance)
 - `GET /api/v1/analytics/risk?benchmark=^GSPC` — max drawdown, volatility, Sharpe, `sortino_ratio`, `calmar_ratio`, `beta`, `alpha_pct`. Plain `def` (threadpool).
-- `GET /api/v1/analytics/fees` | `GET /api/v1/analytics/tax-report?year=` (per-lot FIFO + withholding; all amounts converted to EUR via `_fx()`; each lot carries `currency`, `proceeds_eur`, `cost_basis_eur`, `gain_loss_eur`; **`TaxTransaction` uses `sell_quantity`/`sell_amount`/`purchase_amount` — not `quantity`/`proceeds`/`cost_basis`**)
+- `GET /api/v1/analytics/fees` | `GET /api/v1/analytics/tax-report?year=` — plain `def` (blocking `_fx()` calls); per-lot FIFO + withholding; all amounts converted to EUR via `_fx()`; response lot keys: `symbol`, `quantity`, `proceeds`, `cost_basis`, `gain_loss`, `proceeds_eur`, `cost_basis_eur`, `gain_loss_eur`; **`TaxTransaction` internal fields use `sell_quantity`/`sell_amount`/`purchase_amount` — different from response keys**
 - `GET /api/v1/analytics/data-freshness?stale_days=4` — price freshness + stale asset list; powers dashboard chip + alerts banner
 - **Data Quality**: `GET /api/v1/analytics/dq/reconciliation|duplicates|suspicious` — pure DB checks (plain `def`). Powers Diagnostics page Data Quality tab. Dismissals in `localStorage["pfmDismissedIssues"]`.
 - `services/tax_rates.py` — IRPF brackets; `GET /api/v1/public/summary` off unless `PORTF_PUBLIC_VIEW=true`
@@ -172,7 +172,7 @@ Daily cron at **20:00 UTC** via `~/scripts/portf-update-prices.sh`. Manual CLI: 
 On-demand via API (powers the dashboard "Refresh prices" button):
 - `POST /api/v1/analytics/trigger-price-update` — starts a background thread; returns `{"status":"started"}` or 409 if already running
 - `GET /api/v1/analytics/price-update-status` — returns `{"running": bool, "started_at": "..."}`
-- Core logic in `portf_manager/services/price_updater.py::run_price_update(db)` — shared by CLI and API. Records each run in `price_update_runs`.
+- Core logic in `portf_manager/services/price_updater.py::run_price_update(db, symbols=None, source="api")` — shared by CLI and API. Records each run in `price_update_runs`. CLI passes `source="manual"` (specific symbols) or `source="cron"` (all assets). **`_CRYPTO_YF_OVERRIDES` lives here** (single source of truth); analytics.py imports it from here — do not define a local copy.
 
 - **GBX**: yfinance returns UK stocks in GBX (pence). `fetch_latest_prices` auto-converts when `fast_info.currency == "GBp"` (÷100). Never store raw yfinance prices for UK ISINs without this check.
 - **Crypto**: `{SYM}-EUR` format. Some tokens need `_CRYPTO_YF_OVERRIDES` (e.g. `SUI → ("SUI20947-USD", "USD")`); USD results converted to EUR before storing.
