@@ -79,7 +79,6 @@ _HEADER_SYNONYMS: dict[str, set[str]] = {
         "qty",
         "shares",
         "units",
-        "amount",
         "cantidad",
         "participaciones",
         "num_shares",
@@ -159,7 +158,7 @@ _TYPE_MAP: dict[str, str] = {
     "cupon": "interest",
 }
 
-_DATE_FORMATS = [
+_DATE_FORMATS_EU = [
     "%Y-%m-%d",
     "%d/%m/%Y",
     "%m/%d/%Y",
@@ -168,6 +167,56 @@ _DATE_FORMATS = [
     "%Y/%m/%d",
     "%d.%m.%Y",
 ]
+
+_DATE_FORMATS_US = [
+    "%Y-%m-%d",
+    "%m/%d/%Y",
+    "%d/%m/%Y",
+    "%d-%m-%Y",
+    "%m-%d-%Y",
+    "%Y/%m/%d",
+    "%d.%m.%Y",
+]
+
+_ASSET_TYPE_MAP: dict[str, str] = {
+    "stock": "stock",
+    "accion": "stock",
+    "acción": "stock",
+    "etf": "etf",
+    "fund": "fund",
+    "fondo": "fund",
+    "bond": "bond",
+    "bono": "bond",
+    "crypto": "crypto",
+    "criptomoneda": "crypto",
+    "commodity": "commodity",
+    "materia prima": "commodity",
+    "index": "index",
+    "indice": "index",
+    "índice": "index",
+}
+
+
+def _detect_slash_date_style(rows: list[list[str]], date_col_idx: int) -> str:
+    """Return 'eu' (DD/MM/YYYY) or 'us' (MM/DD/YYYY) by sampling data rows."""
+    for row in rows[1 : min(11, len(rows))]:
+        if date_col_idx >= len(row):
+            continue
+        cell = row[date_col_idx].strip()
+        if "/" not in cell:
+            continue
+        parts = cell.split("/")
+        if len(parts) != 3:
+            continue
+        try:
+            first, second = int(parts[0]), int(parts[1])
+        except ValueError:
+            continue
+        if first > 12:
+            return "eu"
+        if second > 12:
+            return "us"
+    return "eu"
 
 
 def _norm_header(h: str) -> str:
@@ -207,10 +256,10 @@ def _parse_number(s: str) -> float:
     return float(s)
 
 
-def _parse_date(s: str) -> str:
+def _parse_date(s: str, formats: list[str] = _DATE_FORMATS_EU) -> str:
     """Return ISO date string or raise ValueError."""
     s = s.strip()
-    for fmt in _DATE_FORMATS:
+    for fmt in formats:
         try:
             return datetime.strptime(s, fmt).strftime("%Y-%m-%d")
         except ValueError:
@@ -259,6 +308,12 @@ def parse_generic_csv(content: str) -> GenericCSVParseResult:
         )
         return result
 
+    date_formats = (
+        _DATE_FORMATS_US
+        if _detect_slash_date_style(rows, col_map["date"]) == "us"
+        else _DATE_FORMATS_EU
+    )
+
     def _get(row: list[str], col: str, default: str = "") -> str:
         idx = col_map.get(col)
         if idx is None or idx >= len(row):
@@ -270,7 +325,7 @@ def parse_generic_csv(content: str) -> GenericCSVParseResult:
             continue  # skip blank lines
         raw = delimiter.join(row)
         try:
-            date_str = _parse_date(_get(row, "date"))
+            date_str = _parse_date(_get(row, "date"), date_formats)
         except ValueError as e:
             result.skipped.append((f"row {row_num}", f"Date error: {e}"))
             continue
@@ -320,6 +375,7 @@ def parse_generic_csv(content: str) -> GenericCSVParseResult:
         name = _get(row, "name") or symbol
         notes = _get(row, "notes")
         raw_with_notes = f"{raw} | {notes}" if notes else raw
+        asset_type = _ASSET_TYPE_MAP.get(_get(row, "asset_type").strip().lower(), "")
 
         result.importable.append(
             LLMTransaction(
@@ -332,6 +388,7 @@ def parse_generic_csv(content: str) -> GenericCSVParseResult:
                 currency=currency,
                 fees=fees,
                 raw_text=raw_with_notes,
+                asset_type=asset_type,
             )
         )
 
