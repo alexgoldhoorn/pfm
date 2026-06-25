@@ -79,7 +79,7 @@ class ServerSettings(BaseSettings):
         default="A comprehensive API for portfolio management, transaction tracking, and tax reporting",
         description="API description",
     )
-    version: str = Field(default="1.0.0", description="API version")
+    version: str = Field(default="2.5.7", description="API version")
 
     # External service configuration
     gemini_api_key: Optional[str] = Field(
