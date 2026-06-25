@@ -2715,6 +2715,18 @@ class PortfolioManagerCLI:
 
             from portf_manager.services.price_updater import run_price_update
 
+            if symbols:
+                not_found = [
+                    s
+                    for s in symbols
+                    if not self.db_manager.get_asset_by_symbol(s.upper())
+                ]
+                for s in not_found:
+                    print(f"⚠️  Asset with symbol '{s.upper()}' not found")
+                if len(not_found) == len(symbols):
+                    print("❌ No valid assets found for the specified symbols")
+                    return
+
             print("📡 Fetching latest prices from API...")
             result = run_price_update(
                 self.db_manager,
