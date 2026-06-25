@@ -62,7 +62,7 @@ class TestUpdatePricesCLI:
             os.remove(self.db_path)
         os.rmdir(self.temp_dir)
 
-    @patch("portf_manager.cli.get_client")
+    @patch("portf_manager.api_client.get_client")
     def test_update_prices_success(self, mock_get_client):
         """Test successful price update for a single symbol."""
         # Mock the API client and its fetch_latest_prices method
@@ -88,7 +88,7 @@ class TestUpdatePricesCLI:
             source="yfinance",
         )
 
-    @patch("portf_manager.cli.get_client")
+    @patch("portf_manager.api_client.get_client")
     def test_update_prices_uses_ticker_when_set(self, mock_get_client):
         """An asset with a Yahoo ticker (v18 assets.ticker) is fetched by that
         ticker, and the returned price is stored under the asset's ISIN symbol."""
@@ -129,7 +129,7 @@ class TestUpdatePricesCLI:
             source="yfinance",
         )
 
-    @patch("portf_manager.cli.get_client")
+    @patch("portf_manager.api_client.get_client")
     def test_update_prices_invalid_symbol(self, mock_get_client):
         """Test price update with an invalid symbol."""
         # Mock the API client to return an empty dict for the invalid symbol
@@ -152,7 +152,7 @@ class TestUpdatePricesCLI:
         # Verify that insert_price_record was not called
         self.cli.db_manager.insert_price_record.assert_not_called()
 
-    @patch("portf_manager.cli.get_client")
+    @patch("portf_manager.api_client.get_client")
     def test_update_prices_partial_success(self, mock_get_client):
         """Test price update with a mix of valid and invalid symbols."""
         # Add another asset
@@ -191,7 +191,7 @@ class TestUpdatePricesCLI:
             source="yfinance",
         )
 
-    @patch("portf_manager.cli.get_client")
+    @patch("portf_manager.api_client.get_client")
     def test_update_prices_no_symbols_provided(self, mock_get_client):
         """Test price update when no symbols are provided (updates all assets)."""
         # Add another asset
@@ -238,7 +238,7 @@ class TestUpdatePricesCLI:
             source="yfinance",
         )
 
-    @patch("portf_manager.cli.get_client")
+    @patch("portf_manager.api_client.get_client")
     def test_update_prices_db_record_creation(self, mock_get_client):
         """
         Verify correct DB records creation with accurate created_at, price_date, price_type, source.
@@ -272,7 +272,7 @@ class TestUpdatePricesCLI:
         created_at_datetime = datetime.fromisoformat(record_dict["created_at"])
         assert (datetime.now() - created_at_datetime).total_seconds() < 5
 
-    @patch("portf_manager.cli.get_client")
+    @patch("portf_manager.api_client.get_client")
     def test_update_prices_db_error(self, mock_get_client):
         """Test graceful handling of a database error during price insertion."""
         # Mock the API client to return a successful response

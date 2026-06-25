@@ -219,6 +219,18 @@ def _detect_slash_date_style(rows: list[list[str]], date_col_idx: int) -> str:
     return "eu"
 
 
+def _detect_decimal_style(rows: list[list[str]], num_col_indices: list[int]) -> str:
+    """Return 'eu' or 'us' by finding a cell with both comma and period (unambiguous)."""
+    for row in rows[1 : min(11, len(rows))]:
+        for idx in num_col_indices:
+            if idx >= len(row):
+                continue
+            cell = row[idx].strip().replace(" ", "")
+            if "," in cell and "." in cell:
+                return "eu" if cell.rindex(",") > cell.rindex(".") else "us"
+    return "us"
+
+
 def _norm_header(h: str) -> str:
     return re.sub(r"[^a-z0-9]", "", (h or "").strip().lower())
 
@@ -236,8 +248,14 @@ def _detect_delimiter(text: str) -> str:
     return ";" if first_line.count(";") >= first_line.count(",") else ","
 
 
-def _parse_number(s: str) -> float:
-    """Parse European ('1.234,56') or US ('1,234.56') formatted numbers."""
+def _parse_number(s: str, decimal_style: str = "us") -> float:
+    """Parse European ('1.234,56') or US ('1,234.56') formatted numbers.
+
+    Args:
+        s: Raw number string.
+        decimal_style: 'eu' (comma is decimal) or 'us' (period is decimal).
+            Only matters for the ambiguous case '1,500' (3 digits after single comma).
+    """
     s = s.strip().replace(" ", "")
     if not s:
         return 0.0
@@ -247,9 +265,12 @@ def _parse_number(s: str) -> float:
         else:
             s = s.replace(",", "")
     elif "," in s:
-        # Could be decimal comma (European) or thousands separator
         parts = s.split(",")
         if len(parts) == 2 and len(parts[1]) <= 2:
+            # Unambiguous: ≤2 decimal digits → decimal comma
+            s = s.replace(",", ".")
+        elif len(parts) == 2 and len(parts[1]) == 3 and decimal_style == "eu":
+            # Ambiguous "1,500": in a file with EU decimals this means 1.5, not 1500
             s = s.replace(",", ".")
         else:
             s = s.replace(",", "")
@@ -313,6 +334,10 @@ def parse_generic_csv(content: str) -> GenericCSVParseResult:
         if _detect_slash_date_style(rows, col_map["date"]) == "us"
         else _DATE_FORMATS_EU
     )
+    num_col_indices = [
+        col_map[c] for c in ("quantity", "price", "fees") if c in col_map
+    ]
+    decimal_style = _detect_decimal_style(rows, num_col_indices)
 
     def _get(row: list[str], col: str, default: str = "") -> str:
         idx = col_map.get(col)
@@ -344,7 +369,7 @@ def parse_generic_csv(content: str) -> GenericCSVParseResult:
             continue
 
         try:
-            quantity = _parse_number(_get(row, "quantity"))
+            quantity = _parse_number(_get(row, "quantity"), decimal_style)
         except ValueError:
             result.skipped.append(
                 (f"row {row_num}", f"Invalid quantity: {_get(row, 'quantity')!r}")
@@ -355,7 +380,7 @@ def parse_generic_csv(content: str) -> GenericCSVParseResult:
             continue
 
         try:
-            price = _parse_number(_get(row, "price"))
+            price = _parse_number(_get(row, "price"), decimal_style)
         except ValueError:
             result.skipped.append(
                 (f"row {row_num}", f"Invalid price: {_get(row, 'price')!r}")
@@ -368,7 +393,7 @@ def parse_generic_csv(content: str) -> GenericCSVParseResult:
         currency = _get(row, "currency", "EUR").upper() or "EUR"
         fees_raw = _get(row, "fees", "0")
         try:
-            fees = _parse_number(fees_raw) if fees_raw else 0.0
+            fees = _parse_number(fees_raw, decimal_style) if fees_raw else 0.0
         except ValueError:
             fees = 0.0
 

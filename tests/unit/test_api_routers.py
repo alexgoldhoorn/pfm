@@ -487,6 +487,97 @@ class TestTaxRouter:
         assert response.status_code in [status.HTTP_200_OK, status.HTTP_404_NOT_FOUND]
 
 
+class TestAnalyticsRouter:
+    """Test cases for analytics router."""
+
+    @pytest.mark.unit
+    @pytest.mark.api
+    @pytest.mark.asyncio
+    async def test_tax_report_shape_with_realised_gain(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        """Tax-report realised_lots are non-zero after a buy then sell."""
+        portfolio_resp = await async_test_client.post(
+            "/api/v1/portfolios",
+            json={"name": "Tax Test Broker", "base_currency": "EUR"},
+            headers=auth_headers,
+        )
+        assert portfolio_resp.status_code in (200, 201)
+        portfolio_id = portfolio_resp.json()["id"]
+
+        asset_resp = await async_test_client.post(
+            "/api/v1/assets",
+            json={
+                "symbol": "TAXTEST",
+                "name": "Tax Test Corp",
+                "asset_type": "stock",
+                "currency": "EUR",
+            },
+            headers=auth_headers,
+        )
+        assert asset_resp.status_code == 201
+        asset_id = asset_resp.json()["id"]
+
+        # tax_report filters by user_id=1; test DB is fresh so the first user is id=1
+        user_id = 1
+
+        # Buy 10 shares @ 100 EUR on 2024-01-10
+        buy_resp = await async_test_client.post(
+            "/api/v1/transactions",
+            json={
+                "asset_id": asset_id,
+                "transaction_type": "buy",
+                "quantity": 10,
+                "price": 100.0,
+                "total_amount": 1000.0,
+                "transaction_date": "2024-01-10",
+                "portfolio_id": portfolio_id,
+                "currency": "EUR",
+                "user_id": user_id,
+            },
+            headers=auth_headers,
+        )
+        assert buy_resp.status_code == 200
+
+        # Sell 5 shares @ 150 EUR on 2024-06-01 → FIFO gain = 5 * (150-100) = 250
+        sell_resp = await async_test_client.post(
+            "/api/v1/transactions",
+            json={
+                "asset_id": asset_id,
+                "transaction_type": "sell",
+                "quantity": 5,
+                "price": 150.0,
+                "total_amount": 750.0,
+                "transaction_date": "2024-06-01",
+                "portfolio_id": portfolio_id,
+                "currency": "EUR",
+                "user_id": user_id,
+            },
+            headers=auth_headers,
+        )
+        assert sell_resp.status_code == 200
+
+        response = await async_test_client.get(
+            "/api/v1/analytics/tax-report?year=2024", headers=auth_headers
+        )
+        assert response.status_code == 200
+        data = response.json()
+
+        assert "realised_lots" in data
+        assert "realised_gain_total" in data
+        assert data["lot_count"] >= 1
+
+        lot = next(
+            (lo for lo in data["realised_lots"] if lo["symbol"] == "TAXTEST"), None
+        )
+        assert lot is not None, "TAXTEST lot missing from realised_lots"
+        # EUR asset → fx=1.0 so proceeds/cost/gain equal their _eur counterparts
+        assert lot["quantity"] == pytest.approx(5.0)
+        assert lot["proceeds_eur"] == pytest.approx(750.0, rel=0.01)
+        assert lot["cost_basis_eur"] == pytest.approx(500.0, rel=0.01)
+        assert lot["gain_loss_eur"] == pytest.approx(250.0, rel=0.01)
+
+
 # Performance and error handling tests
 class TestErrorHandling:
     """Test cases for API error handling."""
