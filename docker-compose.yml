@@ -73,7 +73,7 @@ services:
       retries: 3
     ports:
       - "${PORTF_PORT:-8000}:8000"
-    restart: "no"
+    restart: unless-stopped
 
   backend-prod:
     profiles:
