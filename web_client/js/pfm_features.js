@@ -402,20 +402,26 @@ function createAuthManager() {
             form.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 const input = document.getElementById('apiKey');
+                const errEl = document.getElementById('apiKeyError');
                 const apiKey = input.value.trim();
+                if (errEl) errEl.textContent = '';
 
                 if (!apiKey) {
-                    alert('Please enter an API key');
+                    if (errEl) errEl.textContent = 'Please enter an API key.';
                     return;
                 }
 
-                const isValid = await window.apiClient.validateApiKey(apiKey);
-                if (isValid) {
-                    window.apiClient.setApiKey(apiKey);
-                    this.hideLoginModal();
-                    this.showDashboard();
-                } else {
-                    alert('Invalid API key. Please try again.');
+                try {
+                    const isValid = await window.apiClient.validateApiKey(apiKey);
+                    if (isValid) {
+                        window.apiClient.setApiKey(apiKey);
+                        this.hideLoginModal();
+                        this.showDashboard();
+                    } else {
+                        if (errEl) errEl.textContent = 'Invalid API key. Please try again.';
+                    }
+                } catch (err) {
+                    if (errEl) errEl.textContent = err.message;
                 }
             });
 

@@ -1120,6 +1120,9 @@ function createAPIClient() {
                 });
                 return response.status === 200;
             } catch (error) {
+                if (error instanceof TypeError) {
+                    throw new Error('Cannot reach the server. Please check that the backend is running.');
+                }
                 console.error('API validation error:', error);
                 return false;
             }
@@ -1127,11 +1130,16 @@ function createAPIClient() {
 
         // Username/password login → returns the API key the data endpoints need
         loginWithPassword: async function(username, password) {
-            const resp = await fetch(this.baseURL + '/api/v1/auth/login-key', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username, password })
-            });
+            let resp;
+            try {
+                resp = await fetch(this.baseURL + '/api/v1/auth/login-key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+            } catch (error) {
+                throw new Error('Cannot reach the server. Please check that the backend is running.');
+            }
             if (!resp.ok) {
                 const err = await resp.json().catch(() => ({}));
                 throw new Error(err.detail || 'Login failed');
