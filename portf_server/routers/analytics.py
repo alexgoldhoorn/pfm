@@ -583,10 +583,10 @@ def get_tax_estimate(
         for sym, txns in report.items():
             a = db.get_asset_by_symbol(sym)
             currency = ((a or {}).get("currency") or "EUR").upper()
-            fx = _fx(currency)
-            sym_total_eur = sum(
-                float(getattr(t, "gain_loss", 0) or 0) * fx for t in txns
-            )
+            sym_total_eur = 0.0
+            for t in txns:
+                proceeds_eur, cost_eur = _lot_eur_amounts(db, currency, t)
+                sym_total_eur += proceeds_eur - cost_eur
             realised_gain += sym_total_eur
             realised_by_symbol.append(
                 {
@@ -666,8 +666,12 @@ def get_tax_optimizer(
     calc = TaxCalculator(db)
     try:
         report = calc.calculate_tax_report(user_id=1, start_date=start, end_date=end)
-        for _sym, txns in report.items():
-            realised_gain += sum(float(getattr(t, "gain_loss", 0) or 0) for t in txns)
+        for sym, txns in report.items():
+            a = db.get_asset_by_symbol(sym)
+            currency = ((a or {}).get("currency") or "EUR").upper()
+            for t in txns:
+                proceeds_eur, cost_eur = _lot_eur_amounts(db, currency, t)
+                realised_gain += proceeds_eur - cost_eur
     except Exception as e:
         logger.warning(f"Tax optimizer realised calc failed: {e}")
 
@@ -1066,27 +1070,31 @@ def get_tax_report(
         report = calc.calculate_tax_report(user_id=1, start_date=start, end_date=end)
         for symbol, txns in report.items():
             currency = asset_currencies.get(symbol, "EUR")
-            fx = _fx(currency)
             for t in txns:
                 # TaxTransaction uses sell_quantity / sell_amount / purchase_amount
                 qty = float(getattr(t, "sell_quantity", 0) or 0)
                 proceeds = float(getattr(t, "sell_amount", 0) or 0)
                 cost_basis = float(getattr(t, "purchase_amount", 0) or 0)
                 gain = float(getattr(t, "gain_loss", 0) or 0)
-                total_gain_eur += gain * fx
+                # IRPF: proceeds at sell-date FX, cost at purchase-date FX; the
+                # FX gain/loss is part of the taxable result.
+                proceeds_eur, cost_basis_eur = _lot_eur_amounts(db, currency, t)
+                gain_eur = proceeds_eur - cost_basis_eur
+                total_gain_eur += gain_eur
                 lots.append(
                     {
                         "symbol": symbol,
                         "name": asset_names.get(symbol, ""),
                         "sell_date": str(getattr(t, "sell_date", "")),
+                        "purchase_date": str(getattr(t, "purchase_date", "")),
                         "quantity": qty,
                         "currency": currency,
                         "proceeds": round(proceeds, 2),
                         "cost_basis": round(cost_basis, 2),
                         "gain_loss": round(gain, 2),
-                        "proceeds_eur": round(proceeds * fx, 2),
-                        "cost_basis_eur": round(cost_basis * fx, 2),
-                        "gain_loss_eur": round(gain * fx, 2),
+                        "proceeds_eur": round(proceeds_eur, 2),
+                        "cost_basis_eur": round(cost_basis_eur, 2),
+                        "gain_loss_eur": round(gain_eur, 2),
                         "holding_days": getattr(t, "holding_period_days", None),
                     }
                 )
@@ -1108,7 +1116,7 @@ def get_tax_report(
             continue
         if start <= dd <= end:
             cur = (tx.get("currency") or "EUR").upper()
-            fx = _fx(cur)
+            fx = _fx_on(db, cur, dd)
             withholding_eur += float(tx.get("tax") or 0) * fx
             dividends_gross_eur += float(tx.get("total_amount") or 0) * fx
 
@@ -1120,8 +1128,9 @@ def get_tax_report(
         "dividends_gross_eur": round(dividends_gross_eur, 2),
         "dividend_withholding_eur": round(withholding_eur, 2),
         "note": (
-            "FIFO realised gains converted to EUR at current FX rates. "
-            "Withholding is the tax already paid at source on dividends."
+            "FIFO realised gains converted to EUR at transaction-date FX "
+            "(proceeds at sell-date, cost at purchase-date). Withholding is "
+            "the tax already paid at source on dividends."
         ),
     }
 
