@@ -599,19 +599,9 @@ def get_tax_estimate(
     except Exception as e:
         logger.warning(f"Tax report calc failed: {e}")
 
-    # Dividend income this year
+    # Dividend + interest income this year, converted at transaction-date FX
     all_txns = db.get_all_transactions()
-    div = dividend_income(all_txns)
-    div_this_year = div["by_year"].get(str(yr), 0.0)
-
-    # Interest income this year (P2P / savings — taxed in the savings base too)
-    interest_this_year = 0.0
-    for tx in all_txns:
-        if (tx.get("transaction_type") or "").lower() != "interest":
-            continue
-        d = str(tx.get("transaction_date", ""))[:10]
-        if d[:4] == str(yr):
-            interest_this_year += float(tx.get("total_amount") or 0)
+    div_this_year, interest_this_year = _savings_income_eur(db, all_txns, yr)
 
     savings_base = realised_gain + div_this_year + interest_this_year
     estimated_tax = irpf_savings_tax(savings_base)
@@ -681,15 +671,9 @@ def get_tax_optimizer(
     except Exception as e:
         logger.warning(f"Tax optimizer realised calc failed: {e}")
 
-    # Income this year (dividends + interest) — both in the savings base
+    # Income this year (dividends + interest) at transaction-date FX
     all_txns = db.get_all_transactions()
-    div_this_year = dividend_income(all_txns)["by_year"].get(str(yr), 0.0)
-    interest_this_year = sum(
-        float(t.get("total_amount") or 0)
-        for t in all_txns
-        if (t.get("transaction_type") or "").lower() == "interest"
-        and str(t.get("transaction_date", ""))[:4] == str(yr)
-    )
+    div_this_year, interest_this_year = _savings_income_eur(db, all_txns, yr)
     income = div_this_year + interest_this_year
 
     # Harvest candidates: held positions at an unrealised loss, with the most
