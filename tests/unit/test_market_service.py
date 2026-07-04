@@ -288,3 +288,75 @@ class TestGetFundamentals:
         )
         f = market.get_fundamentals(db, "NOPE", max_age=3600)
         assert f.get("error")
+
+
+def _patch_ticker_history(monkeypatch, rates=None, raise_exc=False):
+    """Replace market.yf.Ticker with a fake whose .history() returns *rates*.
+
+    *rates* is a {"YYYY-MM-DD": close} dict rendered as a pandas DataFrame
+    with a DatetimeIndex and a Close column, matching real yfinance output.
+    fast_info also raises so any accidental get_fx_eur live fetch fails loudly.
+    """
+    import pandas as pd
+
+    class FakeTicker:
+        def __init__(self, symbol):
+            self.symbol = symbol
+
+        @property
+        def fast_info(self):
+            raise RuntimeError("fast_info not available in this test")
+
+        def history(self, start=None, end=None):
+            if raise_exc:
+                raise RuntimeError("yahoo down")
+            idx = pd.to_datetime(list(rates.keys()))
+            return pd.DataFrame({"Close": list(rates.values())}, index=idx)
+
+    monkeypatch.setattr(market.yf, "Ticker", FakeTicker)
+
+
+class TestGetFxEurOn:
+    def test_eur_short_circuits(self, db):
+        assert market.get_fx_eur_on(db, "EUR", date(2024, 6, 3)) == (1.0, False)
+
+    def test_exact_date_hit(self, db, monkeypatch):
+        _patch_ticker_history(monkeypatch, {"2024-06-03": 0.92, "2024-06-04": 0.93})
+        rate, stale = market.get_fx_eur_on(db, "USD", date(2024, 6, 3))
+        assert rate == 0.92
+        assert stale is False
+
+    def test_weekend_uses_prior_trading_day(self, db, monkeypatch):
+        # 2024-06-09 is a Sunday; nearest prior close is Friday 06-07.
+        _patch_ticker_history(monkeypatch, {"2024-06-07": 0.91})
+        rate, stale = market.get_fx_eur_on(db, "USD", date(2024, 6, 9))
+        assert rate == 0.91
+        assert stale is False
+
+    def test_cached_series_avoids_refetch(self, db, monkeypatch):
+        _patch_ticker_history(monkeypatch, {"2024-06-03": 0.92})
+        market.get_fx_eur_on(db, "USD", date(2024, 6, 3))
+        # Second call must be served from kv_cache even though yfinance is down.
+        _patch_ticker_history(monkeypatch, raise_exc=True)
+        rate, stale = market.get_fx_eur_on(db, "USD", date(2024, 6, 3))
+        assert rate == 0.92
+        assert stale is False
+
+    def test_fetch_failure_falls_back_to_current_rate(self, db, monkeypatch):
+        _patch_ticker_history(monkeypatch, raise_exc=True)
+        rate, stale = market.get_fx_eur_on(db, "USD", date(2024, 6, 3))
+        # History and fast_info both fail → hard fallback table, flagged stale.
+        assert rate == market._FX_FALLBACK["USD"]
+        assert stale is True
+
+    def test_today_or_future_delegates_to_current_rate(self, db, monkeypatch):
+        monkeypatch.setattr(
+            market, "get_fx_eur", lambda d, cur, max_age=3600: (0.5, False)
+        )
+        assert market.get_fx_eur_on(db, "USD", date.today()) == (0.5, False)
+
+    def test_none_date_delegates_to_current_rate(self, db, monkeypatch):
+        monkeypatch.setattr(
+            market, "get_fx_eur", lambda d, cur, max_age=3600: (0.5, False)
+        )
+        assert market.get_fx_eur_on(db, "USD", None) == (0.5, False)
