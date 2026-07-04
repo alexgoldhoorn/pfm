@@ -377,6 +377,13 @@ class TestTaxRatesAndReport:
 
 
 class TestHistoricalFxHelpers:
+    @pytest.fixture(autouse=True)
+    def _clear_fx_memo(self):
+        """Keep the module-level FX memo isolated across tests in this class."""
+        analytics_router._FX_HIST_MEMO.clear()
+        yield
+        analytics_router._FX_HIST_MEMO.clear()
+
     def _patch_rates(self, monkeypatch, table):
         """Route _fx_on through a {(cur, 'YYYY-MM-DD'): rate} lookup table."""
 
@@ -462,3 +469,28 @@ class TestHistoricalFxHelpers:
     def test_fx_on_bad_date_falls_back_to_current(self, monkeypatch):
         monkeypatch.setattr(analytics_router, "_fx", lambda cur: 0.5)
         assert analytics_router._fx_on(None, "USD", "not-a-date") == 0.5
+
+    def test_fx_on_memoizes_non_stale_rate_and_skips_second_lookup(self, monkeypatch):
+        # First call: a non-stale rate is returned and must be memoised.
+        monkeypatch.setattr(
+            analytics_router.market, "get_fx_eur_on", lambda db, cur, d: (0.7, False)
+        )
+        assert analytics_router._fx_on(None, "USD", "2024-06-01") == 0.7
+        assert analytics_router._FX_HIST_MEMO[("USD", "2024-06-01")] == 0.7
+
+        # Second call for the same (currency, date): if the memo hit didn't
+        # skip the live lookup, this would blow up instead of returning 0.7.
+        def _boom(db, cur, d):
+            raise AssertionError(
+                "market.get_fx_eur_on should not be called on a memo hit"
+            )
+
+        monkeypatch.setattr(analytics_router.market, "get_fx_eur_on", _boom)
+        assert analytics_router._fx_on(None, "USD", "2024-06-01") == 0.7
+
+    def test_fx_on_does_not_memoize_stale_rate(self, monkeypatch):
+        monkeypatch.setattr(
+            analytics_router.market, "get_fx_eur_on", lambda db, cur, d: (0.6, True)
+        )
+        assert analytics_router._fx_on(None, "USD", "2024-07-15") == 0.6
+        assert ("USD", "2024-07-15") not in analytics_router._FX_HIST_MEMO
