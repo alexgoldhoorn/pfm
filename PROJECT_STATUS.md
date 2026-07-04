@@ -5,7 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-06-25
+Last updated: 2026-07-04
+
+**Recent (v2.5.8):** **Transaction-date FX for all tax figures** — new `market.get_fx_eur_on(db, currency, date)` (per-currency-year yfinance history, kv-cached as `mkt:fxhist:{CUR}:{year}`); tax-report lots now convert proceeds at sell-date FX and cost basis at purchase-date FX (`gain_loss_eur` includes the FX gain/loss, as IRPF requires) and each lot carries `purchase_date`; tax-estimate and tax-optimizer convert dividend + interest income per transaction at its own date/currency (previously raw-summed across currencies) and realised gains per lot at historical FX (tax-optimizer previously applied no FX at all).
 
 **Recent (v2.5.7):** **Pre-public code review fixes** — 10 issues addressed: `_CRYPTO_YF_OVERRIDES` consolidated to single source in `price_updater.py`; `get_tax_report` changed to `def` (was illegally `async`); tax-estimate now applies `_fx()` per symbol for realised gains; `started_at` race in trigger-price-update fixed; CLI `update_prices` delegates to shared service; `LLMTransaction.asset_type` field added; generic CSV parser passes `asset_type` through to DB; `"amount"` removed from quantity synonyms; date-style detection added to generic CSV parser; `innerHTML` safety comments added. Integration test for tax-report FIFO shape added. `_parse_number` now accepts `decimal_style` param resolved file-wide via `_detect_decimal_style`.
 
@@ -92,9 +94,9 @@ Last updated: 2026-06-25
 
 ## Test Status
 
-**705 passed, 0 failed, 6 skipped** (unit tests, excluding integration/e2e)
+**721 passed, 0 failed, 6 skipped** (unit tests, excluding integration/e2e)
 
-All tests passing as of 2026-06-25.
+All tests passing as of 2026-07-04.
 
 ## Recent Changes (main)
 
@@ -104,7 +106,6 @@ See `git log --oneline` for full history. Notable milestones: agentic chat (v2.5
 
 ### Low Priority
 - [ ] **Web client smoke test** — Frontend verified working via API smoke tests (generic CSV import, tax-report, price-update-status, assets); full browser test not done
-- [ ] **`dividend_income` FX** — `get_tax_estimate` sums `total_amount` for dividends without per-symbol FX; minor for EUR-only portfolios but could be wrong for multi-currency dividend holdings
 
 ## Data Import Support
 
