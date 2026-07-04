@@ -204,6 +204,69 @@ def get_fx_eur(db, currency: str, max_age: float = 3600) -> tuple[float, bool]:
     return _FX_FALLBACK.get(cur, 1.0), True
 
 
+def _rate_at_or_before(
+    rates: dict, on_date: date, max_lookback: int = 7
+) -> Optional[float]:
+    """Close for *on_date* or the nearest prior day within *max_lookback* days."""
+    for i in range(max_lookback + 1):
+        value = rates.get(str(on_date - timedelta(days=i)))
+        if value:
+            return float(value)
+    return None
+
+
+def get_fx_eur_on(db, currency: str, on_date: Optional[date]) -> tuple[float, bool]:
+    """EUR rate for *currency* on *on_date* (nearest prior trading day).
+
+    Daily closes for the ``{CUR}EUR=X`` ticker are fetched one calendar year
+    at a time (single yfinance call) and cached under
+    ``mkt:fxhist:{CUR}:{year}``. Historical closes never change, so a cache
+    hit is always fresh. Falls back to the current rate with ``stale=True``
+    when history is unavailable; ``on_date`` of None/today/future delegates
+    to :func:`get_fx_eur` directly.
+
+    Args:
+        db: Database handle for the kv_cache (may be None).
+        currency: ISO currency code, e.g. "USD".
+        on_date: The historical date to price, or None for "now".
+
+    Returns:
+        (rate, stale) — stale=True means the rate is NOT transaction-date
+        accurate (current-rate fallback was used).
+    """
+    cur = currency.strip().upper()
+    if cur == "EUR":
+        return 1.0, False
+    if on_date is None or on_date >= date.today():
+        return get_fx_eur(db, cur)
+    key = f"mkt:fxhist:{cur}:{on_date.year}"
+    cached = _cache_get(db, key)
+    rates = (cached or {}).get("rates", {})
+    rate = _rate_at_or_before(rates, on_date)
+    if rate is not None:
+        return rate, False
+    try:
+        # Start in late December of the prior year so early-January dates can
+        # look back to the last trading days of the previous year.
+        hist = yf.Ticker(f"{cur}EUR=X").history(
+            start=f"{on_date.year - 1}-12-20", end=f"{on_date.year + 1}-01-01"
+        )
+        fetched = {
+            str(idx.date()): round(float(close), 6)
+            for idx, close in hist["Close"].items()
+            if close and close > 0
+        }
+        if fetched:
+            rates.update(fetched)
+            _cache_set(db, key, {"rates": rates, "fetched_at": time.time()})
+            rate = _rate_at_or_before(rates, on_date)
+            if rate is not None:
+                return rate, False
+    except Exception as e:
+        logger.warning(f"FX history {cur}->EUR fetch failed for {on_date}: {e}")
+    return get_fx_eur(db, cur)[0], True
+
+
 def get_fundamentals(db, symbol: str, max_age: float = 21600) -> dict:
     """Key fundamentals for *symbol*, no older than *max_age* seconds.
 
