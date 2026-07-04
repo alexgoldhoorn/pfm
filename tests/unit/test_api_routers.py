@@ -577,6 +577,84 @@ class TestAnalyticsRouter:
         assert lot["cost_basis_eur"] == pytest.approx(500.0, rel=0.01)
         assert lot["gain_loss_eur"] == pytest.approx(250.0, rel=0.01)
 
+    @pytest.mark.unit
+    @pytest.mark.api
+    @pytest.mark.asyncio
+    async def test_tax_report_uses_transaction_date_fx(
+        self, async_test_client: AsyncClient, auth_headers, monkeypatch
+    ):
+        """USD lot: proceeds at sell-date FX, cost basis at purchase-date FX."""
+        from portf_server.routers import analytics as analytics_router
+
+        rates = {"2024-01-10": 0.90, "2024-06-01": 0.80}
+
+        def fake_fx_on(db, cur, on_date):
+            if cur.upper() == "EUR":
+                return 1.0
+            return rates.get(str(on_date)[:10], 1.0)
+
+        monkeypatch.setattr(analytics_router, "_fx_on", fake_fx_on)
+
+        p = await async_test_client.post(
+            "/api/v1/portfolios",
+            json={"name": "FX Lot Broker", "base_currency": "EUR"},
+            headers=auth_headers,
+        )
+        portfolio_id = p.json()["id"]
+        a = await async_test_client.post(
+            "/api/v1/assets",
+            json={
+                "symbol": "FXLOT",
+                "name": "Example FX Corp",
+                "asset_type": "stock",
+                "currency": "USD",
+            },
+            headers=auth_headers,
+        )
+        asset_id = a.json()["id"]
+        # Buy 10 @ $100 on 2024-01-10, sell 5 @ $150 on 2024-06-01.
+        for tx in [
+            {
+                "transaction_type": "buy",
+                "quantity": 10,
+                "price": 100.0,
+                "total_amount": 1000.0,
+                "transaction_date": "2024-01-10",
+            },
+            {
+                "transaction_type": "sell",
+                "quantity": 5,
+                "price": 150.0,
+                "total_amount": 750.0,
+                "transaction_date": "2024-06-01",
+            },
+        ]:
+            r = await async_test_client.post(
+                "/api/v1/transactions",
+                json={
+                    **tx,
+                    "asset_id": asset_id,
+                    "portfolio_id": portfolio_id,
+                    "currency": "USD",
+                    "user_id": 1,
+                },
+                headers=auth_headers,
+            )
+            assert r.status_code == 200
+
+        resp = await async_test_client.get(
+            "/api/v1/analytics/tax-report?year=2024", headers=auth_headers
+        )
+        assert resp.status_code == 200
+        lot = next(lo for lo in resp.json()["realised_lots"] if lo["symbol"] == "FXLOT")
+        # $750 proceeds at sell-date 0.80 → €600.
+        assert lot["proceeds_eur"] == pytest.approx(600.0, rel=0.01)
+        # $500 cost at purchase-date 0.90 → €450.
+        assert lot["cost_basis_eur"] == pytest.approx(450.0, rel=0.01)
+        # Gain includes the FX loss: 600 - 450 = €150 (NOT $250 × one rate).
+        assert lot["gain_loss_eur"] == pytest.approx(150.0, rel=0.01)
+        assert lot["purchase_date"] == "2024-01-10"
+
 
 # Performance and error handling tests
 class TestErrorHandling:
