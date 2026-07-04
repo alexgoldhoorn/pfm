@@ -74,6 +74,10 @@ services:
     ports:
       - "${PORTF_PORT:-8000}:8000"
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1.5g
 
   backend-prod:
     profiles:
