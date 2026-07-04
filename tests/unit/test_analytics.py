@@ -493,6 +493,7 @@ class TestHistoricalFxHelpers:
             analytics_router.market, "get_fx_eur_on", lambda db, cur, d: (0.6, True)
         )
         assert analytics_router._fx_on(None, "USD", "2024-07-15") == 0.6
+        assert ("USD", "2024-07-15") not in analytics_router._FX_HIST_MEMO
 
 
 class TestTaxEstimateFx:
@@ -547,4 +548,3 @@ class TestTaxEstimateFx:
         assert resp.status_code == 200
         # $100 at 0.5 → €50, not €100 (the old raw-sum bug).
         assert resp.json()["dividend_income_eur"] == pytest.approx(50.0)
-        assert ("USD", "2024-07-15") not in analytics_router._FX_HIST_MEMO
