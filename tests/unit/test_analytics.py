@@ -2,6 +2,9 @@
 
 import pytest
 from datetime import date
+from datetime import date as _date
+from decimal import Decimal
+from types import SimpleNamespace
 from httpx import AsyncClient
 from fastapi import status
 
@@ -11,6 +14,7 @@ from portf_manager.services.analytics_service import (
     money_weighted_irr,
     simple_return,
 )
+from portf_server.routers import analytics as analytics_router
 
 
 class TestAnalyticsService:
@@ -370,3 +374,91 @@ class TestTaxRatesAndReport:
         assert "realised_lots" in d
         assert "dividend_withholding_eur" in d
         assert "realised_gain_total" in d
+
+
+class TestHistoricalFxHelpers:
+    def _patch_rates(self, monkeypatch, table):
+        """Route _fx_on through a {(cur, 'YYYY-MM-DD'): rate} lookup table."""
+
+        def fake(db, cur, on_date):
+            key = (cur.upper(), str(on_date)[:10])
+            return table.get(key, 1.0)
+
+        monkeypatch.setattr(analytics_router, "_fx_on", fake)
+
+    def test_savings_income_eur_converts_per_transaction(self, monkeypatch):
+        self._patch_rates(
+            monkeypatch,
+            {("USD", "2025-03-01"): 0.9, ("USD", "2025-05-01"): 0.8},
+        )
+        txns = [
+            {
+                "transaction_type": "dividend",
+                "transaction_date": "2025-03-01",
+                "total_amount": 100,
+                "currency": "USD",
+            },
+            {
+                "transaction_type": "dividend",
+                "transaction_date": "2025-04-01",
+                "total_amount": 50,
+                "currency": "EUR",
+            },
+            {
+                "transaction_type": "interest",
+                "transaction_date": "2025-05-01",
+                "total_amount": 20,
+                "currency": "USD",
+            },
+            # Wrong year — must be ignored.
+            {
+                "transaction_type": "dividend",
+                "transaction_date": "2024-03-01",
+                "total_amount": 999,
+                "currency": "USD",
+            },
+            # Not income — must be ignored.
+            {
+                "transaction_type": "buy",
+                "transaction_date": "2025-03-01",
+                "total_amount": 999,
+                "currency": "USD",
+            },
+        ]
+        div, interest = analytics_router._savings_income_eur(None, txns, 2025)
+        assert div == pytest.approx(100 * 0.9 + 50)
+        assert interest == pytest.approx(20 * 0.8)
+
+    def test_lot_eur_amounts_uses_both_dates(self, monkeypatch):
+        self._patch_rates(
+            monkeypatch,
+            {("USD", "2024-01-10"): 0.9, ("USD", "2024-06-01"): 0.8},
+        )
+        lot = SimpleNamespace(
+            sell_date=_date(2024, 6, 1),
+            purchase_date=_date(2024, 1, 10),
+            sell_amount=Decimal("750"),
+            purchase_amount=Decimal("500"),
+        )
+        proceeds_eur, cost_eur = analytics_router._lot_eur_amounts(None, "USD", lot)
+        assert proceeds_eur == pytest.approx(750 * 0.8)
+        assert cost_eur == pytest.approx(500 * 0.9)
+
+    def test_fx_on_eur_is_one_without_any_lookup(self):
+        # db=None would crash any real lookup — EUR must short-circuit first.
+        assert analytics_router._fx_on(None, "EUR", "2024-06-01") == 1.0
+
+    def test_fx_on_parses_string_dates(self, monkeypatch):
+        seen = {}
+
+        def fake_market_fx(db, cur, on_date):
+            seen["on_date"] = on_date
+            return 0.77, False
+
+        monkeypatch.setattr(analytics_router.market, "get_fx_eur_on", fake_market_fx)
+        assert analytics_router._fx_on(None, "usd", "2024-06-01 15:30:00") == 0.77
+        assert seen["on_date"] == _date(2024, 6, 1)
+
+    def test_fx_on_bad_date_falls_back_to_current(self, monkeypatch):
+        monkeypatch.setattr(analytics_router, "_fx", lambda cur: 0.5)
+        assert analytics_router._fx_on(None, "USD", "not-a-date") == 0.5
