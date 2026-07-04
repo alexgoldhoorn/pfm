@@ -32,6 +32,7 @@ from portf_manager.tax_calculator import TaxCalculator
 from portf_manager.positions import compute_positions
 from portf_manager.cache import cached
 from portf_manager.services.price_updater import _CRYPTO_YF_OVERRIDES
+from portf_manager import market
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
@@ -42,6 +43,73 @@ from ..dependencies import get_api_key_manager, get_database
 # can't make us re-hit the network per position — the cause of the tax-estimate
 # 504 gateway timeouts).
 from .portfolios import _get_fx_rate as _fx
+
+# Historical rates are immutable — memoise per (currency, date) for the
+# lifetime of the worker so per-lot loops don't re-hit the kv_cache.
+_FX_HIST_MEMO: dict[tuple[str, str], float] = {}
+
+
+def _fx_on(db, currency: str, on_date) -> float:
+    """EUR rate at *on_date* (transaction-date FX); current rate as fallback.
+
+    Accepts a date, a 'YYYY-MM-DD...' string, or None. Only genuinely
+    historical (non-stale) rates are memoised.
+    """
+    cur = (currency or "EUR").strip().upper()
+    if cur == "EUR":
+        return 1.0
+    if isinstance(on_date, str):
+        try:
+            on_date = datetime.strptime(on_date[:10], "%Y-%m-%d").date()
+        except ValueError:
+            on_date = None
+    if on_date is None:
+        return _fx(cur)
+    memo_key = (cur, on_date.isoformat())
+    if memo_key in _FX_HIST_MEMO:
+        return _FX_HIST_MEMO[memo_key]
+    rate, stale = market.get_fx_eur_on(db, cur, on_date)
+    if not stale:
+        _FX_HIST_MEMO[memo_key] = rate
+    return rate
+
+
+def _savings_income_eur(db, transactions: list, yr: int) -> tuple[float, float]:
+    """Dividend and interest income for *yr* in EUR at transaction-date FX.
+
+    Returns:
+        (dividends_eur, interest_eur) — the two savings-base income legs.
+    """
+    dividends = 0.0
+    interest = 0.0
+    for tx in transactions:
+        tx_type = (tx.get("transaction_type") or "").lower()
+        if tx_type not in ("dividend", "interest"):
+            continue
+        d = str(tx.get("transaction_date", ""))[:10]
+        if d[:4] != str(yr):
+            continue
+        cur = (tx.get("currency") or "EUR").upper()
+        amount_eur = float(tx.get("total_amount") or 0) * _fx_on(db, cur, d)
+        if tx_type == "dividend":
+            dividends += amount_eur
+        else:
+            interest += amount_eur
+    return dividends, interest
+
+
+def _lot_eur_amounts(db, currency: str, t) -> tuple[float, float]:
+    """(proceeds_eur, cost_basis_eur) for one TaxTransaction lot.
+
+    IRPF rule: proceeds convert at sell-date FX, cost basis at purchase-date
+    FX — the FX gain/loss is itself part of the taxable result.
+    """
+    proceeds = float(getattr(t, "sell_amount", 0) or 0)
+    cost = float(getattr(t, "purchase_amount", 0) or 0)
+    fx_sell = _fx_on(db, currency, getattr(t, "sell_date", None))
+    fx_buy = _fx_on(db, currency, getattr(t, "purchase_date", None))
+    return proceeds * fx_sell, cost * fx_buy
+
 
 _STRESS_SCENARIOS: dict[str, dict] = {
     "2008": {
