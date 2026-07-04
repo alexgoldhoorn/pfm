@@ -493,4 +493,58 @@ class TestHistoricalFxHelpers:
             analytics_router.market, "get_fx_eur_on", lambda db, cur, d: (0.6, True)
         )
         assert analytics_router._fx_on(None, "USD", "2024-07-15") == 0.6
+
+
+class TestTaxEstimateFx:
+    @pytest.mark.asyncio
+    async def test_usd_dividend_converted_at_transaction_date_fx(
+        self, async_test_client, auth_headers, monkeypatch
+    ):
+        # Any USD lookup resolves at 0.5 so conversion is unmistakable.
+        monkeypatch.setattr(
+            analytics_router,
+            "_fx_on",
+            lambda db, cur, d: 0.5 if cur.upper() == "USD" else 1.0,
+        )
+        p = await async_test_client.post(
+            "/api/v1/portfolios",
+            json={"name": "FX Div Broker", "base_currency": "EUR"},
+            headers=auth_headers,
+        )
+        portfolio_id = p.json()["id"]
+        a = await async_test_client.post(
+            "/api/v1/assets",
+            json={
+                "symbol": "FXDIV",
+                "name": "Example Corp",
+                "asset_type": "stock",
+                "currency": "USD",
+            },
+            headers=auth_headers,
+        )
+        asset_id = a.json()["id"]
+        year = _date.today().year
+        r = await async_test_client.post(
+            "/api/v1/transactions",
+            json={
+                "asset_id": asset_id,
+                "transaction_type": "dividend",
+                "quantity": 1,
+                "price": 100.0,
+                "total_amount": 100.0,
+                "transaction_date": f"{year}-02-15",
+                "portfolio_id": portfolio_id,
+                "currency": "USD",
+                "user_id": 1,
+            },
+            headers=auth_headers,
+        )
+        assert r.status_code == 200
+
+        resp = await async_test_client.get(
+            f"/api/v1/analytics/tax-estimate?year={year}", headers=auth_headers
+        )
+        assert resp.status_code == 200
+        # $100 at 0.5 → €50, not €100 (the old raw-sum bug).
+        assert resp.json()["dividend_income_eur"] == pytest.approx(50.0)
         assert ("USD", "2024-07-15") not in analytics_router._FX_HIST_MEMO
