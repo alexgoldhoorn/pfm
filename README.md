@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.13%2B-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Code Style](https://img.shields.io/badge/Code%20Style-Black-000000.svg)](https://github.com/psf/black)
-[![Testing](https://img.shields.io/badge/Tests-705%20passing-brightgreen.svg)](https://pytest.org)
+[![Testing](https://img.shields.io/badge/Tests-728%20passing-brightgreen.svg)](https://pytest.org)
 
 Python CLI + FastAPI server + web client for tracking stocks, ETFs, funds, bonds, crypto and commodities across multiple brokers. Features LLM-powered import, an agentic AI chat with live portfolio tools, an MCP server for AI assistants, full Portfolio Dividend Tracker (PDT) v2 compatibility, Google Sheets sync, and Spanish IRPF tax reporting.
 
@@ -494,7 +494,7 @@ The `mcp/` directory is also symlinked from `~/mcp/pfm/` so existing Claude regi
 
 ## Tax Reporting (Spanish IRPF)
 
-FIFO cost-basis, compatible with Spanish IRPF Box 27 (_rendimientos del capital mobiliario_):
+FIFO cost-basis, compatible with Spanish IRPF Box 27 (_rendimientos del capital mobiliario_). FIFO runs over the full transaction history (sells in earlier years still consume the oldest lots), purchase fees are included in the cost basis and sale fees are deducted from proceeds:
 
 ```bash
 python -m portf_manager extract-tax-report \

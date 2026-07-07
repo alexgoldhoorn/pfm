@@ -1245,7 +1245,7 @@ async function loadAnalyticsTaxReport() {
                 <div class="col-6 col-md-3"><div class="border rounded p-3 h-100"><div class="small text-muted mb-1">Realised gain ${year}</div><div class="fw-bold ${d.realised_gain_total >= 0 ? 'text-success' : 'text-danger'}">${anFmtEur2(d.realised_gain_total)}</div></div></div>
                 <div class="col-6 col-md-3"><div class="border rounded p-3 h-100"><div class="small text-muted mb-1">Lots sold</div><div class="fw-bold">${d.lot_count}</div></div></div>
                 <div class="col-6 col-md-3"><div class="border rounded p-3 h-100"><div class="small text-muted mb-1">Dividends (gross, EUR)</div><div class="fw-bold">${anFmtEur2(d.dividends_gross_eur)}</div></div></div>
-                <div class="col-6 col-md-3"><div class="border rounded p-3 h-100"><div class="small text-muted mb-1">Withholding paid (EUR)</div><div class="fw-bold">${anFmtEur2(d.dividend_withholding_eur)}</div></div></div>
+                <div class="col-6 col-md-3"><div class="border rounded p-3 h-100"><div class="small text-muted mb-1">Withholding paid (EUR)</div><div class="fw-bold">${anFmtEur2((d.dividend_withholding_eur || 0) + (d.interest_withholding_eur || 0))}</div></div></div>
             </div>
             <div class="table-responsive"><table class="table table-sm table-hover mb-2">
                 <thead><tr><th>Symbol</th><th>Sold</th><th class="text-end">Qty</th>${hasNonEur ? '<th>CCY</th>' : ''}<th class="text-end">Proceeds</th><th class="text-end">Cost basis</th><th class="text-end">Gain/Loss (EUR)</th><th class="text-end">Held</th></tr></thead>
@@ -1273,6 +1273,7 @@ function downloadTaxReportCsv() {
     rows.push(['Realised gain total (EUR)', d.realised_gain_total]);
     rows.push(['Dividends gross (EUR)', d.dividends_gross_eur]);
     rows.push(['Dividend withholding (EUR)', d.dividend_withholding_eur]);
+    rows.push(['Interest withholding (EUR)', d.interest_withholding_eur ?? 0]);
     const csv = '﻿' + rows.map(r => r.map(c => {
         const s = c == null ? '' : String(c);
         return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
