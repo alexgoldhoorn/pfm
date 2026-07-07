@@ -5,20 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+> **Note:** the detailed per-version history for the 2.x series is maintained in
+> [`PROJECT_STATUS.md`](PROJECT_STATUS.md) (one "Recent (vX.Y.Z)" paragraph per
+> release). This file records major milestones only.
 
-### Added
-- **Ticker aliases** (`assets.ticker`, DB schema v18): assets gain a yfinance-style
-  market-symbol alias (NVDA, ASML.AS, BTC-EUR) next to their ISIN symbol.
-  `get_asset_by_symbol` and `/research/{symbol}/lookup` resolve tickers to
-  ISIN-stored assets; the holdings API exposes `ticker`; one-time backfill via
-  `scripts/backfill_tickers.py` (Yahoo search). Consumed by the homelab finance
-  mail digest.
+## [2.5.9] - 2026-07-07
 
 ### Fixed
-- Migration helper `_add_column_if_missing` no longer swallows unexpected SQLite
-  errors (e.g. a locked live DB), which could stamp a schema version without
-  applying the migration.
+- **FIFO tax engine**: sells outside the report window now still consume FIFO
+  lots — previously a prior-year sell left its lots intact, so later-year
+  reports matched already-sold lots and misstated cost basis (affected
+  tax-report, tax-estimate, tax-optimizer, `/tax/report`, chat tax tool, CLI).
+- **Fees in realised gains (IRPF)**: purchase fees are now included in the cost
+  basis and sale fees deducted from proceeds, allocated per share (gross
+  prices unchanged; per-share fees scale through stock splits).
+- **Realised gains were empty on live data**: `calculate_tax_report` filtered
+  transactions by `user_id`, but stored rows carry `user_id` NULL (the users
+  table is unused under API-key auth) — so tax-report, tax-estimate and
+  tax-optimizer reported zero realised gains. The filter is now ignored.
+- **Legacy Google Sheets exporter**: the Tax Report sheet was silently empty —
+  `calculate_tax_report()` was called without its required arguments and the
+  resulting TypeError was swallowed.
+- **Interest withholding reported**: withholding at source on interest rows
+  (e.g. Mintos P2P) was invisible — the tax report only summed the `tax`
+  field on dividends. New `interest_withholding_eur` response field; the
+  web UI withholding tile and CSV export include it.
+
+## [2.1.0 – 2.5.8] - 2026-06/07
+
+See `PROJECT_STATUS.md` for the per-release detail: ticker aliases (schema
+v18), fixed deposits (v19), monthly cashflow (v20), app settings (v21), PWA
+push (v22), chat sessions (v24), agentic chat tool calling, generic CSV
+import, MCP server tools, on-demand price refresh, and transaction-date FX
+for all tax figures.
 
 ## [2.0.0] - 2026-06
 
@@ -117,6 +136,80 @@ portf list-transactions --quantity "<1" --to-date 2025-07-01
 - Performance optimizations for bulk price updates
 
 
+## [1.2.0] - 2024 - Transaction Management Enhancement
+
+### Added
+- **New CLI Commands**:
+  - `delete-transaction <id>` - Delete a transaction with confirmation prompt
+  - `update-transaction <id> [options]` - Update transaction fields (quantity, price, date, type, description)
+
+### Enhanced
+- **Transaction List Output**: Added "Name" column showing asset names (truncated to 24 chars)
+- **Server API**: Added DELETE and PUT endpoints for transaction management
+- **HTTP Client**: Added `delete_transaction()` and `update_transaction()` methods
+- **Error Handling**: Comprehensive validation and user-friendly error messages
+
+### Features
+- **Automatic Calculations**: Total amount recalculated when quantity or price updated
+- **Confirmation Prompts**: Safe deletion with transaction details preview
+- **Multi-field Updates**: Update multiple transaction fields in single command
+- **Cross-mode Support**: Works in both local SQLite and server modes
+- **Input Validation**: Transaction type validation, date format checking
+- **User Security**: Transaction ownership verification in local mode
+
+### Examples
+```bash
+# Update transaction quantity
+python -m portf_manager update-transaction 17 --quantity 120
+
+# Update multiple fields
+python -m portf_manager update-transaction 17 --quantity 100 --price 148.50 --type sell
+
+# Delete with confirmation
+python -m portf_manager delete-transaction 17
+```
+
+### Documentation
+- Added comprehensive transaction management guide: `TRANSACTION_MANAGEMENT.md`
+- Updated API documentation with new endpoints
+- Enhanced CLI help text and examples
+
+
+### Asset Management Enhancement
+
+#### Added
+- **New CLI Commands**:
+  - `update-asset <id> [options]` - Update asset information (name, exchange, currency, sector, description, active status)
+  - `delete-asset <id>` - Delete asset with soft delete (marks as inactive)
+
+#### Enhanced  
+- **Server API Support**: Asset update/delete commands work in both local and server modes
+- **HTTP Client**: Added `delete_asset()` method to complement existing `update_asset()` 
+- **Interactive Console**: Added autocomplete and help text for asset management commands
+- **Safe Operations**: Asset deletion uses soft delete to preserve data integrity
+
+#### Features
+- **Comprehensive Options**: Update name, exchange, currency, sector, description, and active status
+- **Confirmation Prompts**: Safe deletion with asset details preview
+- **Data Integrity**: Soft delete design protects transaction history
+- **Error Handling**: Asset existence validation and user-friendly error messages
+- **Cross-mode Support**: Works identically in local SQLite and server modes
+
+#### Examples
+```bash
+# Update asset information
+python -m portf_manager update-asset 5 --name "Apple Inc." --exchange NASDAQ
+
+# Soft delete asset
+python -m portf_manager delete-asset 5
+```
+
+#### Documentation
+- Enhanced `TRANSACTION_MANAGEMENT.md` with comprehensive asset management guide
+- Added asset management examples and best practices
+
+
+
 ## [1.1.0] - 2024-01-XX
 
 ### Added
@@ -211,76 +304,3 @@ For detailed migration documentation, see `README_REPAIR.md`.
 - Comprehensive test suite
 - LLM-powered transaction parsing
 - Import/export functionality
-
-## [Latest] - Transaction Management Enhancement
-
-### Added
-- **New CLI Commands**:
-  - `delete-transaction <id>` - Delete a transaction with confirmation prompt
-  - `update-transaction <id> [options]` - Update transaction fields (quantity, price, date, type, description)
-
-### Enhanced
-- **Transaction List Output**: Added "Name" column showing asset names (truncated to 24 chars)
-- **Server API**: Added DELETE and PUT endpoints for transaction management
-- **HTTP Client**: Added `delete_transaction()` and `update_transaction()` methods
-- **Error Handling**: Comprehensive validation and user-friendly error messages
-
-### Features
-- **Automatic Calculations**: Total amount recalculated when quantity or price updated
-- **Confirmation Prompts**: Safe deletion with transaction details preview
-- **Multi-field Updates**: Update multiple transaction fields in single command
-- **Cross-mode Support**: Works in both local SQLite and server modes
-- **Input Validation**: Transaction type validation, date format checking
-- **User Security**: Transaction ownership verification in local mode
-
-### Examples
-```bash
-# Update transaction quantity
-python -m portf_manager update-transaction 17 --quantity 120
-
-# Update multiple fields
-python -m portf_manager update-transaction 17 --quantity 100 --price 148.50 --type sell
-
-# Delete with confirmation
-python -m portf_manager delete-transaction 17
-```
-
-### Documentation
-- Added comprehensive transaction management guide: `TRANSACTION_MANAGEMENT.md`
-- Updated API documentation with new endpoints
-- Enhanced CLI help text and examples
-
-
-### Asset Management Enhancement
-
-#### Added
-- **New CLI Commands**:
-  - `update-asset <id> [options]` - Update asset information (name, exchange, currency, sector, description, active status)
-  - `delete-asset <id>` - Delete asset with soft delete (marks as inactive)
-
-#### Enhanced  
-- **Server API Support**: Asset update/delete commands work in both local and server modes
-- **HTTP Client**: Added `delete_asset()` method to complement existing `update_asset()` 
-- **Interactive Console**: Added autocomplete and help text for asset management commands
-- **Safe Operations**: Asset deletion uses soft delete to preserve data integrity
-
-#### Features
-- **Comprehensive Options**: Update name, exchange, currency, sector, description, and active status
-- **Confirmation Prompts**: Safe deletion with asset details preview
-- **Data Integrity**: Soft delete design protects transaction history
-- **Error Handling**: Asset existence validation and user-friendly error messages
-- **Cross-mode Support**: Works identically in local SQLite and server modes
-
-#### Examples
-```bash
-# Update asset information
-python -m portf_manager update-asset 5 --name "Apple Inc." --exchange NASDAQ
-
-# Soft delete asset
-python -m portf_manager delete-asset 5
-```
-
-#### Documentation
-- Enhanced `TRANSACTION_MANAGEMENT.md` with comprehensive asset management guide
-- Added asset management examples and best practices
-

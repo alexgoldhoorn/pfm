@@ -139,7 +139,7 @@ Plain `def`; gathers 6 data bundles via `ThreadPoolExecutor` → LLM prompt → 
 - `GET /api/v1/analytics/diversification` — sector/country/currency/type + Herfindahl HHI (slow, fetches yfinance)
 - `GET /api/v1/analytics/risk?benchmark=^GSPC` — max drawdown, volatility, Sharpe, `sortino_ratio`, `calmar_ratio`, `beta`, `alpha_pct`. Plain `def` (threadpool).
 - `GET /api/v1/analytics/fees` — plain `def` (blocking `_fx()` calls); amounts converted to EUR at **current** FX via `_fx()`
-- `GET /api/v1/analytics/tax-report?year=` — plain `def`; per-lot FIFO + withholding; all amounts converted to EUR at **transaction-date FX** via `_fx_on()` (proceeds at sell-date, cost basis at purchase-date; dividends/withholding at dividend date); response lot keys: `symbol`, `quantity`, `proceeds`, `cost_basis`, `gain_loss`, `proceeds_eur`, `cost_basis_eur`, `gain_loss_eur`, `purchase_date`; **`TaxTransaction` internal fields use `sell_quantity`/`sell_amount`/`purchase_amount` — different from response keys**
+- `GET /api/v1/analytics/tax-report?year=` — plain `def`; per-lot FIFO (full-history: prior-year sells consume lots, fees in amounts — see Spanish tax gotcha) + withholding; all amounts converted to EUR at **transaction-date FX** via `_fx_on()` (proceeds at sell-date, cost basis at purchase-date; dividends/withholding at dividend date); withholding counts the `tax` field on **both dividend and interest** rows (`dividend_withholding_eur` + `interest_withholding_eur`); response lot keys: `symbol`, `quantity`, `proceeds`, `cost_basis`, `gain_loss`, `proceeds_eur`, `cost_basis_eur`, `gain_loss_eur`, `purchase_date`; **`TaxTransaction` internal fields use `sell_quantity`/`sell_amount`/`purchase_amount` — different from response keys**
 - `GET /api/v1/analytics/data-freshness?stale_days=4` — price freshness + stale asset list; powers dashboard chip + alerts banner
 - **Data Quality**: `GET /api/v1/analytics/dq/reconciliation|duplicates|suspicious` — pure DB checks (plain `def`). Powers Diagnostics page Data Quality tab. Dismissals in `localStorage["pfmDismissedIssues"]`.
 - `services/tax_rates.py` — IRPF brackets; `GET /api/v1/public/summary` off unless `PORTF_PUBLIC_VIEW=true`
@@ -217,7 +217,7 @@ docker compose build web && docker stop portf_web && WEB_PORT=8080 docker compos
 `saveImportedTransactions(transactions, bookings = [], portfolioId = null)` — always pass bookings array (even if empty) so PDT bookings are saved alongside transactions.
 
 ## Testing
-- Unit tests: `uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e` (635 passing, 6 skipped)
+- Unit tests: `uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e` (728 passing, 6 skipped)
 - JS tests: `make test-js` or `node --test web_client/js/tests/`
 - Pre-push hook runs full unit suite automatically.
 - F541 fixer: `uv run python scripts/fix_f541.py`
@@ -252,7 +252,7 @@ When writing tests, invent asset names (e.g. "Example Corp", "Global Bond Fund")
 - **App always uses SQLite**: `app.py` falls back to `portfolio.db`. Container data at `/app/portfolio.db` inside `portf_backend_dev`.
 - **Linting**: `uv run flake8 portf_manager/ portf_server/ --max-line-length=88 --extend-ignore=E203,W503,E501`. flake8 currently reports 0 warnings — keep it that way.
 - **`sqlite3.Row` name collision**: never rely on `SELECT t.*, ..., COALESCE(t.col, other) AS col` — use explicit column list. First occurrence wins in dict.
-- **Spanish tax**: FIFO cost basis; stocks/ETFs/bonds/funds = IRPF Box 27 ("rendimientos del capital mobiliario").
+- **Spanish tax**: FIFO cost basis; stocks/ETFs/bonds/funds = IRPF Box 27 ("rendimientos del capital mobiliario"). `TaxCalculator` runs FIFO over the **full** history — out-of-window sells still consume lots; only in-window sells are reported. Fees follow IRPF: `purchase_amount` includes purchase fees, `sell_amount` is net of sale fees (allocated per share; `purchase_price`/`sell_price` stay gross). `calculate_tax_report`'s `user_id` param is **ignored** — transaction rows store `user_id` NULL, so filtering by it returns an empty report.
 - **PDT XLSX**: openpyxl writes to a file path, not BytesIO. Always clean up with `os.unlink()`.
 - **Env var prefixes**: `portf_server/settings.py` uses `PORTF_` prefix. Google vars (`GOOGLE_SERVICE_ACCOUNT_FILE`, `GOOGLE_SPREADSHEET_ID`) are NOT prefixed — read via `os.getenv()` in sync router and `pdt_sheets_sync.py`.
 - **GBX normalization**: `portf_manager/currency_utils.normalize_gbx_amounts()` ÷100 on import (`imports.py` save + `sync.py` pull). Live price fetch normalizes separately in `api_client.py`. Missing this → cost basis 100× too high.

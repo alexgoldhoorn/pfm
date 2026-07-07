@@ -1,5 +1,4 @@
 import unittest
-import logging
 from datetime import date
 from decimal import Decimal
 from portf_manager.tax_calculator import TaxCalculator, TaxLot, TaxTransaction
@@ -91,7 +90,7 @@ class TestTaxCalculator(unittest.TestCase):
         ]
         self.calculator.db_manager.get_all_transactions = lambda user_id: transactions
         with self.assertLogs(level="WARNING") as log:
-            tax_report = self.calculator.calculate_tax_report(
+            self.calculator.calculate_tax_report(
                 user_id=1, start_date=date(2025, 1, 1), end_date=date(2025, 12, 31)
             )
         self.assertIn("Could not match 3 shares for AAPL sell on", "".join(log.output))
@@ -505,6 +504,230 @@ class TestTaxCalculator(unittest.TestCase):
         self.assertEqual(second_tx.sell_quantity, Decimal("3"))
         self.assertEqual(second_tx.purchase_price, Decimal("100"))
         self.assertEqual(second_tx.purchase_date, date(2024, 1, 1))
+
+    def test_report_includes_transactions_without_user_id(self):
+        """Live rows have user_id NULL; a user_id filter must not drop them."""
+        rows = [
+            {
+                "id": 1,
+                "transaction_date": "2025-01-10",
+                "transaction_type": "buy",
+                "quantity": "10",
+                "price": "100",
+                "symbol": "EXA",
+                "portfolio_id": 1,
+            },
+            {
+                "id": 2,
+                "transaction_date": "2025-06-10",
+                "transaction_type": "sell",
+                "quantity": "10",
+                "price": "150",
+                "symbol": "EXA",
+                "portfolio_id": 1,
+            },
+        ]
+
+        # Mimic Database.get_all_transactions: user_id is a real SQL filter,
+        # and stored rows carry user_id NULL.
+        def get_all_transactions(user_id=None):
+            if user_id is None:
+                return rows
+            return [r for r in rows if r.get("user_id") == user_id]
+
+        self.calculator.db_manager.get_all_transactions = get_all_transactions
+        tax_report = self.calculator.calculate_tax_report(
+            user_id=1, start_date=date(2025, 1, 1), end_date=date(2025, 12, 31)
+        )
+
+        self.assertIn("EXA", tax_report)
+        self.assertEqual(len(tax_report["EXA"]), 1)
+
+    def test_prior_year_sells_consume_lots(self):
+        """Sells before the report window must still consume FIFO lots."""
+        transactions = [
+            {
+                "id": 1,
+                "transaction_date": "2023-01-10",
+                "transaction_type": "buy",
+                "quantity": "10",
+                "price": "100",
+                "symbol": "EXA",
+                "portfolio_id": 1,
+            },
+            {
+                "id": 2,
+                "transaction_date": "2023-06-10",
+                "transaction_type": "buy",
+                "quantity": "10",
+                "price": "200",
+                "symbol": "EXA",
+                "portfolio_id": 1,
+            },
+            # 2024 sell (outside window) consumes the first lot entirely.
+            {
+                "id": 3,
+                "transaction_date": "2024-03-01",
+                "transaction_type": "sell",
+                "quantity": "10",
+                "price": "300",
+                "symbol": "EXA",
+                "portfolio_id": 1,
+            },
+            # 2025 sell must therefore match the SECOND lot (cost 200).
+            {
+                "id": 4,
+                "transaction_date": "2025-03-01",
+                "transaction_type": "sell",
+                "quantity": "10",
+                "price": "400",
+                "symbol": "EXA",
+                "portfolio_id": 1,
+            },
+        ]
+        self.calculator.db_manager.get_all_transactions = lambda user_id: transactions
+        tax_report = self.calculator.calculate_tax_report(
+            user_id=1, start_date=date(2025, 1, 1), end_date=date(2025, 12, 31)
+        )
+
+        # Only the in-window sell is reported...
+        self.assertEqual(len(tax_report["EXA"]), 1)
+        tx = tax_report["EXA"][0]
+        # ...and it must be matched against the second lot, not the
+        # already-sold first one.
+        self.assertEqual(tx.purchase_date, date(2023, 6, 10))
+        self.assertEqual(tx.purchase_price, Decimal("200"))
+        self.assertEqual(tx.gain_loss, Decimal("2000"))
+
+    def test_fees_included_in_cost_basis_and_proceeds(self):
+        """Purchase fees increase cost basis; sale fees reduce proceeds (IRPF)."""
+        transactions = [
+            {
+                "id": 1,
+                "transaction_date": "2025-01-10",
+                "transaction_type": "buy",
+                "quantity": "10",
+                "price": "100",
+                "fees": "10",
+                "symbol": "EXA",
+                "portfolio_id": 1,
+            },
+            {
+                "id": 2,
+                "transaction_date": "2025-06-10",
+                "transaction_type": "sell",
+                "quantity": "10",
+                "price": "150",
+                "fees": "5",
+                "symbol": "EXA",
+                "portfolio_id": 1,
+            },
+        ]
+        self.calculator.db_manager.get_all_transactions = lambda user_id: transactions
+        tax_report = self.calculator.calculate_tax_report(
+            user_id=1, start_date=date(2025, 1, 1), end_date=date(2025, 12, 31)
+        )
+
+        tx = tax_report["EXA"][0]
+        # Prices stay gross; the amount fields carry the fee adjustment.
+        self.assertEqual(tx.purchase_price, Decimal("100"))
+        self.assertEqual(tx.sell_price, Decimal("150"))
+        self.assertEqual(tx.purchase_amount, Decimal("1010"))
+        self.assertEqual(tx.sell_amount, Decimal("1495"))
+        self.assertEqual(tx.gain_loss, Decimal("485"))
+
+    def test_fees_allocated_proportionally_across_lots(self):
+        """A sell spanning lots allocates its fee per share sold."""
+        transactions = [
+            {
+                "id": 1,
+                "transaction_date": "2025-01-10",
+                "transaction_type": "buy",
+                "quantity": "10",
+                "price": "100",
+                "fees": "10",
+                "symbol": "EXA",
+                "portfolio_id": 1,
+            },
+            {
+                "id": 2,
+                "transaction_date": "2025-02-10",
+                "transaction_type": "buy",
+                "quantity": "10",
+                "price": "200",
+                "fees": "20",
+                "symbol": "EXA",
+                "portfolio_id": 1,
+            },
+            # Sell 15 with 15 fees → 1/share: 10 from lot 1, 5 from lot 2.
+            {
+                "id": 3,
+                "transaction_date": "2025-06-10",
+                "transaction_type": "sell",
+                "quantity": "15",
+                "price": "300",
+                "fees": "15",
+                "symbol": "EXA",
+                "portfolio_id": 1,
+            },
+        ]
+        self.calculator.db_manager.get_all_transactions = lambda user_id: transactions
+        tax_report = self.calculator.calculate_tax_report(
+            user_id=1, start_date=date(2025, 1, 1), end_date=date(2025, 12, 31)
+        )
+
+        lot1_tx, lot2_tx = tax_report["EXA"]
+        # Lot 1: proceeds 10*300-10, cost 10*100+10 (1/share buy fee).
+        self.assertEqual(lot1_tx.sell_amount, Decimal("2990"))
+        self.assertEqual(lot1_tx.purchase_amount, Decimal("1010"))
+        self.assertEqual(lot1_tx.gain_loss, Decimal("1980"))
+        # Lot 2: proceeds 5*300-5, cost 5*200+5*2 (2/share buy fee).
+        self.assertEqual(lot2_tx.sell_amount, Decimal("1495"))
+        self.assertEqual(lot2_tx.purchase_amount, Decimal("1010"))
+        self.assertEqual(lot2_tx.gain_loss, Decimal("485"))
+
+    def test_fees_survive_stock_split(self):
+        """Per-share purchase fees scale with a split like the price does."""
+        transactions = [
+            {
+                "id": 1,
+                "transaction_date": "2025-01-10",
+                "transaction_type": "buy",
+                "quantity": "10",
+                "price": "100",
+                "fees": "10",
+                "symbol": "EXA",
+                "portfolio_id": 1,
+            },
+            # 2-for-1 split: 20 shares, cost basis still 1010.
+            {
+                "id": 2,
+                "transaction_date": "2025-02-10",
+                "transaction_type": "split",
+                "quantity": "2",
+                "price": "0",
+                "symbol": "EXA",
+                "portfolio_id": 1,
+            },
+            {
+                "id": 3,
+                "transaction_date": "2025-06-10",
+                "transaction_type": "sell",
+                "quantity": "20",
+                "price": "100",
+                "symbol": "EXA",
+                "portfolio_id": 1,
+            },
+        ]
+        self.calculator.db_manager.get_all_transactions = lambda user_id: transactions
+        tax_report = self.calculator.calculate_tax_report(
+            user_id=1, start_date=date(2025, 1, 1), end_date=date(2025, 12, 31)
+        )
+
+        tx = tax_report["EXA"][0]
+        self.assertEqual(tx.purchase_amount, Decimal("1010"))
+        self.assertEqual(tx.sell_amount, Decimal("2000"))
+        self.assertEqual(tx.gain_loss, Decimal("990"))
 
     def test_empty_report_no_sells(self):
         """Test that empty report is returned when no sells in date range."""
