@@ -98,6 +98,44 @@ def _savings_income_eur(db, transactions: list, yr: int) -> tuple[float, float]:
     return dividends, interest
 
 
+def _year_withholding_eur(
+    db, transactions: list, start, end
+) -> tuple[float, float, float]:
+    """Gross dividends + withholding at source for the period, in EUR.
+
+    Withholding (the per-transaction ``tax`` field) is counted on both
+    dividend and interest rows — P2P/savings interest (e.g. Mintos) is
+    withheld at source too and is equally creditable under IRPF.
+
+    Returns:
+        (dividends_gross_eur, dividend_withholding_eur, interest_withholding_eur)
+    """
+    dividends_gross = 0.0
+    dividend_wh = 0.0
+    interest_wh = 0.0
+    for tx in transactions:
+        tx_type = (tx.get("transaction_type") or "").lower()
+        if tx_type not in ("dividend", "interest"):
+            continue
+        try:
+            dd = datetime.strptime(
+                str(tx.get("transaction_date", ""))[:10], "%Y-%m-%d"
+            ).date()
+        except ValueError:
+            continue
+        if not (start <= dd <= end):
+            continue
+        cur = (tx.get("currency") or "EUR").upper()
+        fx = _fx_on(db, cur, dd)
+        withheld = float(tx.get("tax") or 0) * fx
+        if tx_type == "dividend":
+            dividends_gross += float(tx.get("total_amount") or 0) * fx
+            dividend_wh += withheld
+        else:
+            interest_wh += withheld
+    return dividends_gross, dividend_wh, interest_wh
+
+
 def _lot_eur_amounts(db, currency: str, t) -> tuple[float, float]:
     """(proceeds_eur, cost_basis_eur) for one TaxTransaction lot.
 
@@ -1103,22 +1141,10 @@ def get_tax_report(
 
     lots.sort(key=lambda x: x["sell_date"])
 
-    # Dividend and withholding sums converted to EUR via per-transaction currency.
-    withholding_eur = 0.0
-    dividends_gross_eur = 0.0
-    for tx in db.get_all_transactions():
-        if tx.get("transaction_type", "").lower() != "dividend":
-            continue
-        d = tx.get("transaction_date", "")
-        try:
-            dd = datetime.strptime(str(d)[:10], "%Y-%m-%d").date()
-        except ValueError:
-            continue
-        if start <= dd <= end:
-            cur = (tx.get("currency") or "EUR").upper()
-            fx = _fx_on(db, cur, dd)
-            withholding_eur += float(tx.get("tax") or 0) * fx
-            dividends_gross_eur += float(tx.get("total_amount") or 0) * fx
+    # Dividend/interest withholding converted to EUR via per-transaction currency.
+    dividends_gross_eur, dividend_wh_eur, interest_wh_eur = _year_withholding_eur(
+        db, db.get_all_transactions(), start, end
+    )
 
     return {
         "year": yr,
@@ -1126,11 +1152,12 @@ def get_tax_report(
         "realised_gain_total": round(total_gain_eur, 2),
         "lot_count": len(lots),
         "dividends_gross_eur": round(dividends_gross_eur, 2),
-        "dividend_withholding_eur": round(withholding_eur, 2),
+        "dividend_withholding_eur": round(dividend_wh_eur, 2),
+        "interest_withholding_eur": round(interest_wh_eur, 2),
         "note": (
             "FIFO realised gains converted to EUR at transaction-date FX "
             "(proceeds at sell-date, cost at purchase-date). Withholding is "
-            "the tax already paid at source on dividends."
+            "the tax already paid at source on dividends and interest."
         ),
     }
 

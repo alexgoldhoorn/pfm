@@ -24,6 +24,9 @@ class TaxLot:
     remaining_quantity: Decimal
     transaction_id: int
     description: str = ""
+    # Purchase fees spread over the lot's shares; IRPF acquisition cost
+    # includes purchase expenses, so this is added to price in cost basis.
+    fee_per_share: Decimal = Decimal("0")
 
     def __post_init__(self):
         """Ensure remaining_quantity is initially set to quantity."""
@@ -96,7 +99,9 @@ class TaxCalculator:
         Calculate tax report for specified period using FIFO methodology.
 
         Args:
-            user_id: User ID for transactions
+            user_id: Legacy parameter, ignored — the app is single-user and
+                stored transactions carry user_id NULL, so filtering by it
+                would return an empty report.
             start_date: Start date for sell transactions
             end_date: End date for sell transactions
             symbols: Optional list of symbols to filter by
@@ -106,17 +111,18 @@ class TaxCalculator:
             Dictionary mapping symbol to list of tax transactions
         """
         self.logger.info(
-            f"Calculating tax report for user {user_id} from {start_date} to {end_date}"
+            f"Calculating tax report from {start_date} to {end_date}"
             + (f" portfolio_id={portfolio_id}" if portfolio_id is not None else "")
         )
 
-        # Get transactions: filtered by portfolio if specified, otherwise all user transactions
+        # Get transactions: filtered by portfolio if specified, otherwise all.
+        # Never filter by user_id — transaction rows store it as NULL.
         if portfolio_id is not None:
             all_transactions = self.db_manager.get_transactions_by_portfolio(
                 portfolio_id
             )
         else:
-            all_transactions = self.db_manager.get_all_transactions(user_id=user_id)
+            all_transactions = self.db_manager.get_all_transactions(user_id=None)
 
         # Filter by symbols if provided
         if symbols:
@@ -173,6 +179,7 @@ class TaxCalculator:
             tx_type = tx["transaction_type"]
             quantity = Decimal(str(tx["quantity"]))
             price = Decimal(str(tx["price"]))
+            fees = Decimal(str(tx.get("fees") or 0))
 
             if tx_type == "buy":
                 # Add new tax lot
@@ -183,24 +190,36 @@ class TaxCalculator:
                     remaining_quantity=quantity,
                     transaction_id=tx["id"],
                     description=tx.get("description", ""),
+                    fee_per_share=fees / quantity if quantity > 0 else Decimal("0"),
                 )
                 tax_lots.append(tax_lot)
 
             elif tx_type == "sell":
-                # Only process sells within the specified time frame
+                # Every sell consumes lots (FIFO runs over the full history);
+                # only sells inside the report window are included in the output.
+                sell_transactions = self._process_sell_transaction(
+                    symbol,
+                    tx,
+                    tax_lots,
+                    tx_date,
+                    quantity,
+                    price,
+                    sell_fee_per_share=(
+                        fees / quantity if quantity > 0 else Decimal("0")
+                    ),
+                )
                 if start_date <= tx_date <= end_date:
-                    sell_transactions = self._process_sell_transaction(
-                        symbol, tx, tax_lots, tx_date, quantity, price
-                    )
                     tax_transactions.extend(sell_transactions)
 
             elif tx_type == "split" and quantity > 0:
                 # Split ratio is stored in quantity (2-for-1 → 2). Scale every
-                # open lot's shares and divide its price so cost basis is kept.
+                # open lot's shares and divide its per-share price and fee so
+                # cost basis is kept.
                 for lot in tax_lots:
                     lot.quantity *= quantity
                     lot.remaining_quantity *= quantity
                     lot.price /= quantity
+                    lot.fee_per_share /= quantity
 
         return tax_transactions
 
@@ -212,6 +231,7 @@ class TaxCalculator:
         sell_date: date,
         sell_quantity: Decimal,
         sell_price: Decimal,
+        sell_fee_per_share: Decimal = Decimal("0"),
     ) -> List[TaxTransaction]:
         """
         Process a sell transaction using FIFO methodology.
@@ -223,6 +243,9 @@ class TaxCalculator:
             sell_date: Date of sale
             sell_quantity: Quantity sold
             sell_price: Price per share sold
+            sell_fee_per_share: Sale fees spread over the shares sold; IRPF
+                transmission value is net of sale expenses, so this is
+                subtracted from the proceeds.
 
         Returns:
             List of tax transactions for this sell
@@ -248,9 +271,12 @@ class TaxCalculator:
             # Determine how much to sell from this lot
             quantity_from_lot = min(remaining_to_sell, tax_lot.remaining_quantity)
 
-            # Calculate amounts
-            sell_amount = quantity_from_lot * sell_price
-            purchase_amount = quantity_from_lot * tax_lot.price
+            # Amounts follow the IRPF definitions: proceeds net of sale fees,
+            # cost basis including purchase fees (prices stay gross).
+            sell_amount = quantity_from_lot * (sell_price - sell_fee_per_share)
+            purchase_amount = quantity_from_lot * (
+                tax_lot.price + tax_lot.fee_per_share
+            )
             gain_loss = sell_amount - purchase_amount
 
             # Calculate holding period

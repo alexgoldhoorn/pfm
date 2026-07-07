@@ -436,6 +436,40 @@ class TestHistoricalFxHelpers:
         assert div == pytest.approx(100 * 0.9 + 50)
         assert interest == pytest.approx(20 * 0.8)
 
+    def test_withholding_includes_interest_transactions(self, monkeypatch):
+        """Withholding at source on interest (e.g. Mintos) counts too."""
+        self._patch_rates(monkeypatch, {("USD", "2025-03-01"): 0.9})
+        txns = [
+            {
+                "transaction_type": "dividend",
+                "transaction_date": "2025-03-01",
+                "total_amount": 100,
+                "tax": 15,
+                "currency": "USD",
+            },
+            {
+                "transaction_type": "interest",
+                "transaction_date": "2025-05-01",
+                "total_amount": 20,
+                "tax": 4.18,
+                "currency": "EUR",
+            },
+            # Wrong year — must be ignored.
+            {
+                "transaction_type": "interest",
+                "transaction_date": "2024-05-01",
+                "total_amount": 20,
+                "tax": 2.89,
+                "currency": "EUR",
+            },
+        ]
+        div_gross, div_wh, int_wh = analytics_router._year_withholding_eur(
+            None, txns, _date(2025, 1, 1), _date(2025, 12, 31)
+        )
+        assert div_gross == pytest.approx(100 * 0.9)
+        assert div_wh == pytest.approx(15 * 0.9)
+        assert int_wh == pytest.approx(4.18)
+
     def test_lot_eur_amounts_uses_both_dates(self, monkeypatch):
         self._patch_rates(
             monkeypatch,

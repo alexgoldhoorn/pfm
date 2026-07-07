@@ -6,7 +6,7 @@ with three sheets: All Transactions, Tax Report, and Portfolio Summary.
 """
 
 import os
-from datetime import datetime
+from datetime import date, datetime
 from typing import Dict, List, Optional, Any
 
 try:
@@ -182,8 +182,10 @@ class GoogleSheetsExporter:
             # Create tax calculator
             tax_calc = TaxCalculator(self.db_adapter)
 
-            # Get all tax transactions (you might want to filter by year)
-            tax_report = tax_calc.calculate_tax_report()
+            # All-time realised lots (the sheet is not filtered by year).
+            tax_report = tax_calc.calculate_tax_report(
+                user_id=1, start_date=date(1900, 1, 1), end_date=date.today()
+            )
 
             if not tax_report:
                 return [
