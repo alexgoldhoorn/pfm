@@ -55,8 +55,38 @@ const Fmt = {
         else out = `${y}-${mo}-${d}`;
         return time ? `${out} ${time}` : out;
     },
+    // Native <input type="date"> ignores PREFS.dateFormat — it renders using
+    // the browser/OS locale. Chrome and Firefox both honor a per-element
+    // `lang` attribute for the field/picker's day/month/year order, so we pick
+    // a locale whose native order matches the user's setting (separator is
+    // still locale-dependent, but the order lines up).
+    dateInputLang() {
+        if (window.PREFS.dateFormat === 'dmy') return 'en-GB';
+        if (window.PREFS.dateFormat === 'mdy') return 'en-US';
+        return 'en-CA'; // ISO order: YYYY-MM-DD
+    },
 };
 window.Fmt = Fmt;
+
+// Keep every native date input (including ones rendered later into import
+// previews, chat cards, modals, etc.) in sync with PREFS.dateFormat.
+function applyDateInputLocale(root) {
+    const lang = Fmt.dateInputLang();
+    (root || document).querySelectorAll('input[type="date"]').forEach(el => { el.lang = lang; });
+}
+window.applyDateInputLocale = applyDateInputLocale;
+applyDateInputLocale(); // static form inputs already in the DOM
+if (document.body && typeof MutationObserver !== 'undefined') {
+    new MutationObserver(muts => {
+        for (const m of muts) {
+            m.addedNodes.forEach(n => {
+                if (n.nodeType !== 1) return;
+                if (n.matches && n.matches('input[type="date"]')) n.lang = Fmt.dateInputLang();
+                else if (n.querySelectorAll) applyDateInputLocale(n);
+            });
+        }
+    }).observe(document.body, { childList: true, subtree: true });
+}
 
 // Escape text before interpolating it into innerHTML. Asset names, symbols,
 // notes and broker names come from imported broker files and LLM extraction —

@@ -3493,6 +3493,7 @@ function setupSettings() {
         applyTheme();
         applyPrivacy();
         applyDefaultCurrency();
+        applyDateInputLocale();
         // Reflect the default benchmark in the analytics selector if present.
         const bm = document.getElementById('anBenchmark');
         if (bm) bm.value = PREFS.benchmark;
@@ -3509,6 +3510,7 @@ function setupSettings() {
         load();
         applyTheme();
         applyPrivacy();
+        applyDateInputLocale();
     });
 
     // Change password
