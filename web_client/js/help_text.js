@@ -182,9 +182,10 @@ window.PAGE_HELP = {
     body: `
       <p>Your complete financial picture: brokerage investments plus off-brokerage assets and liabilities, all converted to EUR.</p>
       <ul class="mb-2">
-        <li><strong>Investments</strong> are auto-calculated from your portfolio positions. <strong>Fixed Deposits</strong> tracks active term deposits; maturing one posts an interest transaction automatically.</li>
-        <li>Add <strong>manual assets</strong> (cash, property, pension) and <strong>liabilities</strong> (mortgage, loans) to complete the picture.</li>
-        <li><strong>Monthly Cash Flow</strong> tracks rough recurring income (salary, other) vs expenses (mortgage payment, loan, rest). The net figure feeds Goals and Forecast projections.</li>
+        <li><strong>Investments</strong> are auto-calculated from your portfolio positions. <strong>Fixed Deposits</strong> tracks active term deposits — only <em>active</em> ones count toward net worth, so click "Mark as Matured" once a deposit's term ends (this doesn't happen automatically) to record the interest and stop it inflating a stale total.</li>
+        <li>Add <strong>manual assets</strong> (cash, property, pension) and <strong>liabilities</strong> (mortgage, loans) to complete the picture. If you carry a mortgage, add your home's value too — otherwise the debt is counted with nothing offsetting it, which can make net worth look far more negative than reality.</li>
+        <li>The <strong>Setup checklist</strong> card flags common gaps (home value, bank accounts, income, expenses) and overdue-but-still-active deposits; the "Run setup wizard" button walks through filling them in one at a time.</li>
+        <li><strong>Monthly Cash Flow</strong> tracks rough recurring income (salary, other) vs expenses (mortgage payment, loan, rest) for your own reference — it does not currently feed Goals or Forecast projections.</li>
         <li>FIRE goals project from total net worth, not just the brokerage value.</li>
       </ul>
       <p class="text-muted small mb-0">All amounts converted to EUR at live FX rates.</p>`

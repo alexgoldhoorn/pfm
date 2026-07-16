@@ -146,9 +146,16 @@ Plain `def`; gathers 6 data bundles via `ThreadPoolExecutor` → LLM prompt → 
 - Auth: `POST /api/v1/auth/login-key`
 - Cron: `portf-price-alerts.sh` (20:05), `portf-monthly-report.sh` (1st of month 09:00)
 
+### Net Worth API (`portf_server/routers/networth.py`)
+- `GET /api/v1/networth/` — brokerage (live positions) + manual assets/liabilities + **active** fixed deposits (principal only) → `net_worth_eur`. `net_worth_eur(db)` is the shared total-only helper — Goals imports it so the two pages can't drift apart.
+- Manual assets: `GET|POST /api/v1/networth/` (item), `PUT|DELETE /api/v1/networth/{id}` — categories include `savings_account`/`current_account`/`cash` (bank balances), `property`/`vehicle`/`pension`/`investment_external`, liabilities `mortgage`/`personal_loan`/`car_loan`/`credit_card`/`other_debt`. Flat user-entered amount, no transaction ledger — home/property value only counts toward net worth if entered here.
+- Fixed deposits (`portf_server/routers/deposits.py`, `fixed_deposits` table v19): `status` is `active`/`matured`/`closed`. Only `active` deposits count toward net worth. `POST /{id}/mature` posts an interest transaction to a synthetic `DEPOSITS` asset and flips status — nothing does this automatically; the Setup checklist (below) flags deposits past maturity still `active` with a one-click link to the existing "Mark Deposit as Matured" modal.
+- Monthly cash flow (`monthly_cashflow` table v20): `GET|POST /api/v1/networth/cashflow`, `DELETE /cashflow/{id}` — categories `salary`/`other_income`/`mortgage`/`loan`/`rest`. **Not wired into Goals or Forecast** — it's a standalone reference tracker only.
+- **Setup checklist + wizard** (`web_client/js/pfm_analytics.js`): `computeNetWorthChecklist(items, cashflowItems, deposits)` — pure function, no new backend surface — flags missing home value (only if a mortgage exists), bank/cash accounts, monthly income, monthly expenses, plus a separate `attention` list for active-but-overdue deposits. Rendered as a card above the manual-assets form; "Run setup wizard" opens a 4-step modal (`NW_WIZARD_STEP_DEFS`) that calls the same `createManualAsset`/`createCashflowEntry` endpoints as the inline forms, skipping steps already satisfied. Unit-tested in `web_client/js/tests/`.
+
 ### Watchlist / Goals / Sync APIs
 - Watchlist: `GET|POST /api/v1/watchlist/`, `DELETE /api/v1/watchlist/{symbol}`, `GET /api/v1/watchlist/alerts/check`
-- Goals: `GET|POST /api/v1/goals/`, `DELETE /api/v1/goals/{id}`; GET computes progress %, projected value, on-track flag, required monthly contribution
+- Goals: `GET|POST /api/v1/goals/`, `DELETE /api/v1/goals/{id}`; GET computes progress %, projected value, on-track flag, required monthly contribution. Current net worth basis = `networth.net_worth_eur(db)` (same total as the Net Worth page).
 - Sync: `GET|PUT /api/v1/sync/pdt-config`, `POST pdt-pull`, `POST pdt-push`, `POST pdt-backup`. Resolution order for `spreadsheet_id`: query param → DB `app_settings` → `GOOGLE_SPREADSHEET_ID` env var.
 
 ### LLM API (`portf_server/routers/llm.py`)

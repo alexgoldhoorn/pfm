@@ -10,8 +10,7 @@ from pydantic import BaseModel
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
-from .networth import _brokerage_value_eur
-from .portfolios import _get_fx_rate as _fx
+from .networth import net_worth_eur
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -31,23 +30,6 @@ async def _auth(
     return await require_api_key(api_key_manager)(request)
 
 
-def _current_networth(db) -> float:
-    """Total net worth = brokerage value + manual assets − liabilities (EUR).
-
-    Uses the live brokerage value (same basis as the Net Worth page) plus any
-    off-brokerage assets/liabilities, so FIRE projections start from the whole
-    picture rather than just tracked investments.
-    """
-    total = _brokerage_value_eur(db)
-    try:
-        for it in db.get_manual_assets():
-            amt = float(it.get("amount") or 0) * _fx(it.get("currency", "EUR"))
-            total += -amt if it.get("is_liability") else amt
-    except Exception as e:
-        logger.warning(f"Manual assets net-worth sum failed: {e}")
-    return total
-
-
 def _project(
     current: float, monthly: float, annual_return: float, months: int
 ) -> float:
@@ -65,10 +47,10 @@ def _project(
 def list_goals(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
     """List goals with progress and on-track projection.
 
-    Sync (plain ``def``): _current_networth → _fx does blocking FX lookups that
+    Sync (plain ``def``): net_worth_eur → _fx does blocking FX lookups that
     would stall the event loop on a cache miss in an async handler.
     """
-    current_nw = _current_networth(db)
+    current_nw = net_worth_eur(db)
     out = []
     today = date.today()
     for g in db.get_goals():
