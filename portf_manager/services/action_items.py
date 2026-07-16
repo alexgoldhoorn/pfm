@@ -137,3 +137,143 @@ def check_price_update_failures(db) -> list[dict]:
             "context": {"run_id": run["id"], "symbols": symbols},
         }
     ]
+
+
+STALE_RESEARCH_DAYS = 90
+
+
+def check_stale_research(db, today: date = None) -> list[dict]:
+    """Held assets with no research note in the last 90 days."""
+    from portf_manager.positions import compute_positions
+
+    today = today or date.today()
+    positions, _ = compute_positions(db.get_all_transactions())
+    held_asset_ids = {aid for aid, pos in positions.items() if pos["quantity"] > 0}
+    if not held_asset_ids:
+        return []
+
+    latest_by_asset = {}
+    for note in db.get_latest_research_notes():
+        if note.get("asset_id") in held_asset_ids:
+            latest_by_asset[note["asset_id"]] = note
+
+    stale_symbols = []
+    for aid in held_asset_ids:
+        note = latest_by_asset.get(aid)
+        if note is None:
+            asset = db.get_asset(aid) or {}
+            stale_symbols.append(asset.get("symbol", f"#{aid}"))
+            continue
+        created = _parse_date(note.get("created_at"))
+        if created is None or (today - created).days >= STALE_RESEARCH_DAYS:
+            stale_symbols.append(note.get("symbol", f"#{aid}"))
+
+    if not stale_symbols:
+        return []
+    return [
+        {
+            "id": "errors:stale-research",
+            "category": "errors",
+            "severity": "low",
+            "title": (
+                f"{len(stale_symbols)} holding(s) not re-valued in "
+                f"{STALE_RESEARCH_DAYS}+ days"
+            ),
+            "detail": ", ".join(sorted(stale_symbols)),
+            "link_page": "research",
+            "context": {"symbols": sorted(stale_symbols)},
+        }
+    ]
+
+
+def check_goals_off_track(db) -> list[dict]:
+    """Savings goals whose projected value falls short of their target."""
+    from portf_server.routers.goals import list_goals
+
+    items = []
+    for g in list_goals(db=db, api_key_info={}):
+        if g.get("on_track"):
+            continue
+        items.append(
+            {
+                "id": f"goals:{g['id']}",
+                "category": "goals",
+                "severity": "medium",
+                "title": f"Goal \"{g['name']}\" is off track",
+                "detail": (
+                    f"Projected {g['projected_value_eur']:,.0f} EUR vs target "
+                    f"{g['target_amount_eur']:,.0f} EUR by {g['target_date']}. "
+                    f"Required monthly contribution: "
+                    f"{g.get('required_monthly_eur')} EUR."
+                ),
+                "link_page": "goals",
+                "context": {"goal_id": g["id"]},
+            }
+        )
+    return items
+
+
+def check_price_alerts(db) -> list[dict]:
+    """Watchlist buy-zone hits and price-target crossings."""
+    from portf_server.routers.research import compute_price_target_alerts
+    from portf_server.routers.watchlist import check_watchlist_alerts
+
+    items = []
+    for a in check_watchlist_alerts(db=db, api_key_info={})["alerts"]:
+        items.append(
+            {
+                "id": f"watchlist:{a['symbol']}",
+                "category": "watchlist",
+                "severity": "medium",
+                "title": f"{a['symbol']} dropped into its buy zone",
+                "detail": (
+                    f"Price {a['price']} at or below buy-below {a['buy_below']}."
+                ),
+                "link_page": "watchlist",
+                "context": {"symbol": a["symbol"]},
+            }
+        )
+
+    for a in compute_price_target_alerts(db):
+        triggers = ", ".join(t["type"] for t in a["triggers"])
+        items.append(
+            {
+                "id": f"research:{a['symbol']}",
+                "category": "watchlist",
+                "severity": "medium",
+                "title": f"{a['symbol']} crossed a price target ({triggers})",
+                "detail": (
+                    f"Currently held: {a['quantity']} units, unrealised P&L "
+                    f"{a['unrealized_pnl']} ({a['unrealized_pnl_pct']}%)."
+                ),
+                "link_page": "research",
+                "context": {"symbol": a["symbol"]},
+            }
+        )
+    return items
+
+
+_SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+
+
+def get_action_items(db) -> list[dict]:
+    """Run every check independently; one failure doesn't take down the rest."""
+    import logging
+
+    logger = logging.getLogger(__name__)
+    checks = [
+        check_stale_imports,
+        check_data_quality,
+        check_price_update_failures,
+        check_stale_research,
+        check_goals_off_track,
+        check_price_alerts,
+    ]
+    items = []
+    for check in checks:
+        try:
+            items.extend(check(db))
+        except Exception:
+            logger.exception(f"Action-items check {check.__name__} failed")
+    items.sort(key=lambda i: _SEVERITY_ORDER.get(i["severity"], 99))
+    return items
