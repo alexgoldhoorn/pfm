@@ -185,7 +185,13 @@ class GeminiLLMClient:
         response = self._client.models.generate_content(
             model=self.model_name, contents=prompt, config=config
         )
-        text = response.text or ""
+        if not response.text:
+            raise RuntimeError(
+                "Empty response from Gemini API (search-grounded call) — "
+                "the model may have exhausted its token budget on thinking/search "
+                "without producing a final answer, or been safety-blocked"
+            )
+        text = response.text
         sources: list[dict] = []
         try:
             gm = response.candidates[0].grounding_metadata
