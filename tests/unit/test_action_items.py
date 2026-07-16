@@ -1,6 +1,7 @@
 """Unit tests for the cross-cutting Action Items aggregator."""
 
 from datetime import date, timedelta
+from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient
@@ -177,6 +178,28 @@ class TestGetActionItems:
 
     def test_empty_db_returns_empty_list(self, test_database):
         assert get_action_items(test_database) == []
+
+    def test_one_failing_check_does_not_take_down_others(self, test_database):
+        test_database.record_price_update_run(
+            started_at="2026-07-15T20:00:00",
+            duration_seconds=1.0,
+            updated_count=0,
+            skipped_count=0,
+            error_count=1,
+            error_symbols=["AAPL"],
+            source="cron",
+        )
+
+        def _raise(db):
+            raise RuntimeError("boom")
+
+        with patch(
+            "portf_manager.services.action_items.check_data_quality",
+            new=_raise,
+        ):
+            items = get_action_items(test_database)
+        assert items
+        assert any(i["id"].startswith("errors:price-update:") for i in items)
 
 
 class TestActionItemsEndpoint:
