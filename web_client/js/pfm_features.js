@@ -348,7 +348,7 @@ function _renderActionItems(items) {
                 </div>
                 <div class="d-flex gap-2 ms-2 flex-shrink-0">
                     <a href="#" data-page="${esc(item.link_page)}" class="btn btn-sm btn-outline-primary">Go to page</a>
-                    <button class="btn btn-sm btn-outline-secondary" onclick="window._dismissActionItem('${item.id}')" title="Dismiss"><i class="bi bi-x-lg"></i></button>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="window._dismissActionItem('${esc(item.id)}')" title="Dismiss"><i class="bi bi-x-lg"></i></button>
                 </div>
             </div>
         </div>`).join('');
