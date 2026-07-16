@@ -99,6 +99,25 @@ class TestGeminiSearchCapable:
         assert sources[0]["title"] == "Apple Q1"
         assert sources[0]["url"] == "http://apple.com/q1"
 
+    def test_gemini_search_raises_on_empty_response(self):
+        """response.text can be None (e.g. thinking-token exhaustion, safety block).
+
+        generate() already guards against this; _gemini_search must too, so the
+        caller gets a clear error instead of an empty string that later fails
+        json.loads() with a cryptic "Expecting value: line 1 column 1" error.
+        """
+        client = self._make_client()
+
+        mock_response = MagicMock()
+        mock_response.text = None
+        mock_response.candidates = []
+
+        client._client.models.generate_content.return_value = mock_response
+
+        with patch("google.genai.types"):
+            with pytest.raises(RuntimeError, match="Empty response from Gemini"):
+                client._gemini_search("test prompt")
+
     def test_gemini_search_handles_missing_grounding_metadata(self):
         client = self._make_client()
 

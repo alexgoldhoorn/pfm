@@ -54,7 +54,7 @@ Provider-agnostic via `portf_manager/llm_client.py`. Factory `get_llm_client()` 
 
 Override: `PORTF_LLM_PROVIDER=auto|ollama|gemini|openrouter|anthropic`, `PORTF_LLM_MODEL=<model>`.
 
-**Search grounding**: `GeminiLLMClient` and `AnthropicLLMClient` implement `generate_with_search(prompt, symbol) -> str`. Research `generate_valuation_report()` detects via `hasattr(llm, "generate_with_search")`. Returns `{"text": "<llm json>", "sources": [...]}`. Ollama/OpenRouter do NOT support search grounding.
+**Search grounding**: `GeminiLLMClient` and `AnthropicLLMClient` implement `generate_with_search(prompt, symbol) -> str`. Research `generate_valuation_report()` detects via `hasattr(llm, "generate_with_search")`. Returns `{"text": "<llm json>", "sources": [...]}`. Ollama/OpenRouter do NOT support search grounding. `GeminiLLMClient._gemini_search()` raises `RuntimeError` if `response.text` is empty (thinking-token exhaustion or safety block) — same guard as `generate()` — so callers get a clear error instead of `json.loads("")` blowing up downstream with `Expecting value: line 1 column 1 (char 0)`.
 
 **Tool calling (chat agentic loop)**: All 4 providers implement `ToolCapableLLMClient` (protocol in `portf_manager/llm_client.py`):
 - `generate_with_tools(messages, tools) -> ToolResponse` — first pass; returns either `ToolResponse(text=...)` or `ToolResponse(tool_call=ToolCallRequest(name, arguments, call_id))`
