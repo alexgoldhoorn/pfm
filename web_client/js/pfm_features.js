@@ -348,7 +348,7 @@ function _renderActionItems(items) {
                 </div>
                 <div class="d-flex gap-2 ms-2 flex-shrink-0">
                     <a href="#" data-page="${esc(item.link_page)}" class="btn btn-sm btn-outline-primary">Go to page</a>
-                    <button class="btn btn-sm btn-outline-secondary" onclick="window._dismissActionItem('${esc(item.id)}')" title="Dismiss"><i class="bi bi-x-lg"></i></button>
+                    <button class="btn btn-sm btn-outline-secondary" data-dismiss-action-item="${esc(item.id)}" title="Dismiss"><i class="bi bi-x-lg"></i></button>
                 </div>
             </div>
         </div>`).join('');
@@ -362,6 +362,14 @@ async function loadActionItemsPage() {
     if (refreshBtn && !refreshBtn._wired) {
         refreshBtn._wired = true;
         refreshBtn.addEventListener('click', () => loadActionItemsPage());
+    }
+
+    if (!wrap._dismissWired) {
+        wrap._dismissWired = true;
+        wrap.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-dismiss-action-item]');
+            if (btn) window._dismissActionItem(btn.dataset.dismissActionItem);
+        });
     }
 
     wrap.innerHTML = '<div class="text-muted small">Loading…</div>';
