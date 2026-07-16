@@ -719,14 +719,14 @@ async def set_targets(
     return db.get_price_target(asset["id"])
 
 
-@router.get("/alerts/check")
-async def check_alerts(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def compute_price_target_alerts(db) -> list[dict]:
+    """Compare all price targets against latest stored prices.
+
+    Pure computation (no push-notification side effect) so other call sites
+    (the Action Items aggregator) can reuse it without re-triggering a push
+    send on every read. ``check_alerts`` below is the HTTP entry point that
+    adds push dispatch on top of this.
     """
-    Compare all price targets against latest stored prices.
-    Returns triggered alerts (does NOT send Telegram — use the cron for that).
-    """
-    # Current positions (quantity + cost basis) keyed by asset_id, so each alert
-    # can report how much is held and the unrealised P&L if acted on.
     positions, _ = compute_positions(db.get_all_transactions())
 
     alerts = []
@@ -773,6 +773,16 @@ async def check_alerts(db=Depends(get_database), api_key_info: dict = Depends(_a
                     "triggers": triggered,
                 }
             )
+    return alerts
+
+
+@router.get("/alerts/check")
+async def check_alerts(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+    """
+    Compare all price targets against latest stored prices.
+    Returns triggered alerts (does NOT send Telegram — use the cron for that).
+    """
+    alerts = compute_price_target_alerts(db)
     # Dispatch push notifications for triggered alerts
     if alerts:
         try:
