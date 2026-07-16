@@ -411,3 +411,51 @@ test("computeGoalOverlays: target year beyond the slider's years is not marked o
     assert.equal(o.offChart, false);
     assert.equal(o.onChartYear, false);
 });
+
+test("mergeActionItems: combines backend items with open net-worth checklist items", () => {
+    const { mergeActionItems } = loadAppIntoContext();
+    const backend = [
+        { id: "a", category: "errors", severity: "high", title: "A", detail: "", link_page: "diagnostics" },
+    ];
+    const nw = {
+        checklist: [{ key: "bank_accounts", label: "Bank accounts", done: false, hint: "Add one" }],
+        attention: [],
+    };
+    const merged = mergeActionItems(backend, nw, []);
+    assert.equal(merged.length, 2);
+    assert.ok(merged.some(i => i.id === "networth:bank_accounts"));
+});
+
+test("mergeActionItems: done checklist items are excluded", () => {
+    const { mergeActionItems } = loadAppIntoContext();
+    const nw = { checklist: [{ key: "bank_accounts", label: "Bank accounts", done: true, hint: "" }], attention: [] };
+    assert.equal(mergeActionItems([], nw, []).length, 0);
+});
+
+test("mergeActionItems: matured deposits become medium-severity items", () => {
+    const { mergeActionItems } = loadAppIntoContext();
+    const nw = { checklist: [], attention: [{ id: 7, name: "Term Deposit", maturity_date: "2026-01-01", days_overdue: 10 }] };
+    const merged = mergeActionItems([], nw, []);
+    assert.equal(merged.length, 1);
+    assert.equal(merged[0].id, "networth:deposit:7");
+    assert.equal(merged[0].severity, "medium");
+});
+
+test("mergeActionItems: dismissed ids are filtered out", () => {
+    const { mergeActionItems } = loadAppIntoContext();
+    const backend = [
+        { id: "a", category: "errors", severity: "high", title: "A", detail: "", link_page: "diagnostics" },
+    ];
+    assert.equal(mergeActionItems(backend, { checklist: [], attention: [] }, ["a"]).length, 0);
+});
+
+test("mergeActionItems: sorts by severity high -> medium -> low", () => {
+    const { mergeActionItems } = loadAppIntoContext();
+    const backend = [
+        { id: "low1", category: "errors", severity: "low", title: "L", detail: "", link_page: "x" },
+        { id: "high1", category: "errors", severity: "high", title: "H", detail: "", link_page: "x" },
+        { id: "med1", category: "errors", severity: "medium", title: "M", detail: "", link_page: "x" },
+    ];
+    const merged = mergeActionItems(backend, { checklist: [], attention: [] }, []);
+    assert.deepEqual(merged.map(i => i.id), ["high1", "med1", "low1"]);
+});
