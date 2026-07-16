@@ -272,13 +272,131 @@ function setupGoalsPage() {
 }
 
 // ---------------------------------------------------------------------------
+// Action Items — cross-cutting maintenance checklist
+// ---------------------------------------------------------------------------
+const ACTIONITEMS_SEVERITY_ORDER = { high: 0, medium: 1, low: 2 };
+
+function _actionItemDismiss(id) {
+    const items = JSON.parse(localStorage.getItem('pfmDismissedActionItems') || '[]');
+    if (!items.some(i => i.id === id)) {
+        items.push({ id, dismissed_at: new Date().toISOString() });
+        localStorage.setItem('pfmDismissedActionItems', JSON.stringify(items));
+    }
+}
+
+// Pure: converts the Net Worth checklist's {checklist, attention} shape into
+// action-item-shaped objects, merges with the backend-provided items,
+// filters dismissed ids, and sorts by severity. Unit-tested in
+// web_client/js/tests/web_client.test.mjs.
+function mergeActionItems(backendItems, netWorthResult, dismissedIds) {
+    backendItems = backendItems || [];
+    dismissedIds = dismissedIds || [];
+    const nw = netWorthResult || { checklist: [], attention: [] };
+
+    const nwItems = (nw.checklist || [])
+        .filter(c => !c.done)
+        .map(c => ({
+            id: `networth:${c.key}`,
+            category: 'networth',
+            severity: 'low',
+            title: c.label,
+            detail: c.hint,
+            link_page: 'networth',
+            context: {},
+        }));
+
+    const attentionItems = (nw.attention || []).map(a => ({
+        id: `networth:deposit:${a.id}`,
+        category: 'networth',
+        severity: 'medium',
+        title: `${a.name} matured ${a.days_overdue} day${a.days_overdue === 1 ? '' : 's'} ago`,
+        detail: 'Mark it matured to include the payout in your net worth.',
+        link_page: 'networth',
+        context: { deposit_id: a.id },
+    }));
+
+    const dismissedSet = new Set(dismissedIds);
+    return backendItems.concat(nwItems, attentionItems)
+        .filter(i => !dismissedSet.has(i.id))
+        .sort((a, b) => (ACTIONITEMS_SEVERITY_ORDER[a.severity] ?? 99) - (ACTIONITEMS_SEVERITY_ORDER[b.severity] ?? 99));
+}
+window.mergeActionItems = mergeActionItems;
+
+const ACTIONITEMS_CATEGORY_LABELS = {
+    import: 'Broker Imports', data_quality: 'Data Quality', errors: 'Errors',
+    goals: 'Goals', watchlist: 'Price Alerts', networth: 'Net Worth',
+};
+const ACTIONITEMS_SEVERITY_BADGE = {
+    high: 'text-bg-danger', medium: 'text-bg-warning', low: 'text-bg-secondary',
+};
+
+function _renderActionItems(items) {
+    const wrap = document.getElementById('actionItemsList');
+    if (!wrap) return;
+    if (!items.length) {
+        wrap.innerHTML = '<div class="alert alert-success"><i class="bi bi-check-circle me-1"></i>All clear — nothing needs your attention.</div>';
+        return;
+    }
+    wrap.innerHTML = items.map(item => `
+        <div class="card mb-2">
+            <div class="card-body py-2 d-flex justify-content-between align-items-start">
+                <div>
+                    <span class="badge ${ACTIONITEMS_SEVERITY_BADGE[item.severity] || 'text-bg-secondary'} me-2">${esc(item.severity)}</span>
+                    <span class="text-muted small">${esc(ACTIONITEMS_CATEGORY_LABELS[item.category] || item.category)}</span>
+                    <div class="fw-semibold">${esc(item.title)}</div>
+                    <div class="small text-muted">${esc(item.detail || '')}</div>
+                </div>
+                <div class="d-flex gap-2 ms-2 flex-shrink-0">
+                    <a href="#" data-page="${esc(item.link_page)}" class="btn btn-sm btn-outline-primary">Go to page</a>
+                    <button class="btn btn-sm btn-outline-secondary" onclick="window._dismissActionItem('${item.id}')" title="Dismiss"><i class="bi bi-x-lg"></i></button>
+                </div>
+            </div>
+        </div>`).join('');
+}
+
+async function loadActionItemsPage() {
+    const wrap = document.getElementById('actionItemsList');
+    if (!wrap) return;
+
+    const refreshBtn = document.getElementById('refreshActionItems');
+    if (refreshBtn && !refreshBtn._wired) {
+        refreshBtn._wired = true;
+        refreshBtn.addEventListener('click', () => loadActionItemsPage());
+    }
+
+    wrap.innerHTML = '<div class="text-muted small">Loading…</div>';
+    try {
+        const [backendData, nwData, cfData] = await Promise.all([
+            window.apiClient.getActionItems(),
+            window.apiClient.getNetworth(),
+            window.apiClient.getCashflow(),
+        ]);
+        const nwResult = computeNetWorthChecklist(nwData.items, (cfData && cfData.items) || [], nwData.deposits);
+        window._lastActionItems = { backendItems: backendData.items, nwResult };
+        const dismissed = JSON.parse(localStorage.getItem('pfmDismissedActionItems') || '[]').map(i => i.id);
+        _renderActionItems(mergeActionItems(backendData.items, nwResult, dismissed));
+    } catch (err) {
+        wrap.innerHTML = `<div class="text-danger small">Could not load action items: ${esc(err.message)}</div>`;
+    }
+}
+window.loadActionItemsPage = loadActionItemsPage;
+
+window._dismissActionItem = function(id) {
+    _actionItemDismiss(id);
+    if (window._lastActionItems) {
+        const dismissed = JSON.parse(localStorage.getItem('pfmDismissedActionItems') || '[]').map(i => i.id);
+        _renderActionItems(mergeActionItems(window._lastActionItems.backendItems, window._lastActionItems.nwResult, dismissed));
+    }
+};
+
+// ---------------------------------------------------------------------------
 // Navigation Manager
 // ---------------------------------------------------------------------------
 function createNavigationManager() {
     return {
         currentPage: 'dashboard',
         showPage: function(pageName) {
-            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'holdingsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage', 'helpPage', 'versionPage', 'aboutPage', 'resourcesPage', 'networthPage', 'diagnosticsPage'];
+            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'holdingsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage', 'helpPage', 'versionPage', 'aboutPage', 'resourcesPage', 'networthPage', 'diagnosticsPage', 'actionitemsPage'];
             pages.forEach(pageId => {
                 const page = document.getElementById(pageId);
                 if (page) page.style.display = 'none';
@@ -311,6 +429,7 @@ function createNavigationManager() {
                 forecast: 'Wealth Simulator', help: 'Help & Guide',
                 version: "What's New", about: 'About', resources: 'Resources',
                 networth: 'Net Worth', diagnostics: 'Diagnostics',
+                actionitems: 'Action Items',
             };
             const titleEl = document.getElementById('mobilePageTitle');
             if (titleEl) titleEl.textContent = PAGE_TITLES[pageName] || pageName;
@@ -338,6 +457,7 @@ function createNavigationManager() {
                 case 'resources':    if (window.renderResourcesPage) window.renderResourcesPage(); break;
                 case 'networth':     if (window.loadNetworthPage) window.loadNetworthPage(); break;
                 case 'diagnostics':  if (window.loadDiagnosticsPage) window.loadDiagnosticsPage(); break;
+                case 'actionitems':  if (window.loadActionItemsPage) window.loadActionItemsPage(); break;
             }
         },
 
