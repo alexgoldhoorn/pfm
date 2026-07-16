@@ -5,7 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-07-15
+Last updated: 2026-07-16
+
+**Recent (v2.5.15):** **Research: fixed cryptic Gemini valuation error** — `GeminiLLMClient._gemini_search()` (search-grounded valuation calls) could silently return an empty `text` when `response.text` was `None` (thinking-token budget exhausted before a final answer, or a safety block), which then made `generate_valuation_report()` crash on `json.loads("")` with a confusing `Expecting value: line 1 column 1 (char 0)` instead of a readable error. `_gemini_search` now raises `RuntimeError("Empty response from Gemini API...")` on empty text, matching the guard `generate()` already had — the existing outer try/except surfaces a clear message in the UI instead. 1 new regression test.
 
 **Recent (v2.5.14):** **Net Worth: staleness hint + split expense checklist** — bank/cash manual-asset rows (`savings_account`/`current_account`/`cash`) now show "Updated N days ago" under the name, in amber past 30 days (`NW_STALE_DAYS`), reusing the `updated_at` column that was already bumped on create/edit but never surfaced. The checklist/wizard's single "Monthly expenses" item is now three conditional items — **Mortgage payment** (shown only if you have a mortgage), **Loan payment** (shown only if you have a non-mortgage liability), **Other recurring expenses** (always shown, for utilities/insurance/subscriptions/etc.) — so entering just the mortgage payment no longer marks the whole category "done". 2 new unit tests, 2 existing tests updated for the new checklist keys.
 
