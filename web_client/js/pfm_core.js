@@ -1623,6 +1623,14 @@ function createAPIClient() {
             return resp.json();
         },
 
+        async getActionItems() {
+            const resp = await fetch(this.baseURL + '/api/v1/action-items/', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error('Failed to load action items');
+            return resp.json();
+        },
+
         async deleteBooking(id) {
             const resp = await fetch(this.baseURL + '/api/v1/bookings/' + id, {
                 method: 'DELETE',

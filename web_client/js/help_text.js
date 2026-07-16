@@ -292,6 +292,20 @@ window.PAGE_HELP = {
       </ul></p>
       <p class="text-muted small mb-0">Dismissals are stored in your browser (localStorage) and survive page reloads.</p>`
   },
+  actionitems: {
+    title: "Action Items",
+    body: `
+      <p>A single, dismissible checklist of everything that needs your attention across the app — pulled from Diagnostics, Net Worth, Goals, Watchlist, and Research so you don't have to visit each page separately.</p>
+      <ul class="mb-2 small">
+        <li><strong>Broker Imports</strong>: a broker/portfolio with transaction history but no activity in 60+ days.</li>
+        <li><strong>Data Quality</strong>: possible duplicate transactions or suspicious patterns (same checks as the Diagnostics Data Quality tab).</li>
+        <li><strong>Errors</strong>: the most recent price-update run had failures, or held positions haven't been re-valued in 90+ days.</li>
+        <li><strong>Goals</strong>: a savings goal is projected to miss its target.</li>
+        <li><strong>Price Alerts</strong>: a watchlist symbol dropped into its buy zone, or a held position crossed a saved price target.</li>
+        <li><strong>Net Worth</strong>: setup gaps (missing bank balance, income, etc.) or a fixed deposit past maturity — same checklist as the Net Worth page.</li>
+      </ul>
+      <p class="text-muted small mb-0">Dismissing an item hides it until the underlying issue changes (e.g. a new failing price-update run gets its own item).</p>`
+  },
   chat: {
     title: "Chat",
     body: `
