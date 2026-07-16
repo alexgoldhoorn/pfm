@@ -1680,8 +1680,19 @@
                                             </button>
                                         </div>
                                         <div class="form-text" id="fcStartValueNote"></div>
+                                        <div class="row g-2 mt-1 align-items-center">
+                                            <div class="col-7">
+                                                <label class="form-text mb-0" for="fcStocksContribution">Monthly contribution</label>
+                                            </div>
+                                            <div class="col-5">
+                                                <div class="input-group input-group-sm">
+                                                    <span class="input-group-text"><i class="bi bi-currency-euro"></i></span>
+                                                    <input type="number" class="form-control" id="fcStocksContribution" value="0" min="0" step="50">
+                                                </div>
+                                            </div>
+                                        </div>
                                         <div class="mt-2">
-                                            <button type="button" class="btn btn-sm btn-outline-secondary" id="fcLoadNetworth" title="Pre-fill Cash, Bonds and Mortgage from your Net Worth page">
+                                            <button type="button" class="btn btn-sm btn-outline-secondary" id="fcLoadNetworth" title="Pre-fill Cash, Bonds, Mortgage, monthly contribution and mortgage payment from your Net Worth page">
                                                 <i class="bi bi-piggy-bank me-1"></i>Load from Net Worth
                                             </button>
                                             <button type="button" class="btn btn-sm btn-outline-secondary ms-1" id="fcUseHistory" title="Set stock return &amp; volatility from your portfolio history">
@@ -1747,6 +1758,17 @@
                                 </div>
                             </div>
 
+                            <!-- Goals Card -->
+                            <div class="card mb-3">
+                                <div class="card-header fw-semibold">
+                                    <i class="bi bi-bullseye me-2 text-primary"></i>Goals
+                                </div>
+                                <div class="card-body">
+                                    <p class="small text-muted mb-2">Overlay one or more goal targets on the chart.</p>
+                                    <div id="fcGoalsList" class="small">Loading…</div>
+                                </div>
+                            </div>
+
                             <!-- Settings Card -->
                             <div class="card mb-3">
                                 <div class="card-header fw-semibold">
@@ -1796,6 +1818,7 @@
                                     </div>
                                 </div>
                                 <div class="card-body p-2">
+                                    <div id="fcGoalChips" class="d-flex flex-wrap gap-2 px-2 pt-1"></div>
                                     <div id="fcChartContainer" style="position:relative; width:100%; min-height:340px;">
                                         <div class="d-flex align-items-center justify-content-center h-100 text-muted" id="fcChartPlaceholder" style="min-height:340px;">
                                             <div class="text-center">
@@ -1842,7 +1865,7 @@
                                         <div class="card-body py-3">
                                             <div class="small opacity-75 mb-1">Investment Gains</div>
                                             <div class="fs-5 fw-bold" id="fcSumGains">—</div>
-                                            <div class="small opacity-75">liquid − starting capital</div>
+                                            <div class="small opacity-75">liquid − starting capital − contributions</div>
                                         </div>
                                     </div>
                                 </div>
