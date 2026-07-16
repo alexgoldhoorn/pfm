@@ -109,6 +109,8 @@ window.PAGE_HELP = {
       <ul class="mb-2">
         <li>Each goal projects forward from your current net worth using your <strong>monthly contribution</strong> and an assumed annual <strong>return %</strong> (compounded).</li>
         <li>Progress compares the projected value at the target date against the target amount.</li>
+        <li>The "Monthly €" field is pre-filled with your current net Monthly Cash Flow (income − expenses, from the Net Worth page) when adding a new goal — still yours to edit, and different goals can assume different contributions.</li>
+        <li>Click the <i class="bi bi-info-circle"></i> next to a goal's current/target figures to see the breakdown (brokerage + fixed deposits + manual assets − liabilities) behind the current net-worth number — useful when it's lower (or more negative) than you expect.</li>
       </ul>
       <p class="text-muted small mb-0">Assumed returns are your inputs — actual results will vary.</p>`
   },
@@ -120,11 +122,12 @@ window.PAGE_HELP = {
       <h6 class="fw-semibold mt-2 mb-1">Inputs</h6>
       <ul class="small mb-2">
         <li><strong>Stocks / ETFs</strong> value is auto-populated from your live holdings when the page loads. Hit the refresh icon <i class="bi bi-arrow-clockwise"></i> to reload it.</li>
-        <li><strong>Load from Net Worth</strong> pre-fills Cash, Bonds and Mortgage amounts from your Net Worth page (manual assets + liabilities).</li>
+        <li><strong>Load from Net Worth</strong> pre-fills Cash, Bonds and Mortgage amounts from your Net Worth page, plus <strong>Monthly contribution</strong> and the mortgage <strong>Monthly Payment</strong> from your Monthly Cash Flow entries (all still manually editable afterwards).</li>
         <li><strong>Use my history</strong> sets the Stocks annual return and volatility from your own portfolio's recorded snapshot history, replacing the defaults.</li>
         <li><strong>Annual return %</strong> per asset class is your assumed long-run real return, e.g. 8% for stocks, 4% for bonds, 1.5% for cash.</li>
         <li><strong>Volatility %</strong> (stocks only) controls how wide the confidence band is. Default 16%; your historical figure may differ.</li>
-        <li><strong>Monthly contribution</strong> is added to the liquid pool each month before compounding.</li>
+        <li><strong>Monthly contribution</strong> (under Stocks / ETFs) is added to the stocks bucket each month before compounding — it does not apply to cash or bonds.</li>
+        <li><strong>Goals</strong> — tick any goal to overlay its target on the chart: a dashed line at the target amount, plus a marker at the target date if it falls within the years shown. A target far outside the chart's natural range (e.g. a much larger goal than the current projection) is shown as a small chip above the chart instead of a line, so it doesn't flatten everything else.</li>
       </ul>
 
       <h6 class="fw-semibold mt-2 mb-1">Chart</h6>

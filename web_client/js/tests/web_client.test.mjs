@@ -369,3 +369,28 @@ test("computeNetWorthChecklist: flags an active deposit past its maturity date",
     assert.equal(attention[0].id, 1);
     assert.equal(attention[0].days_overdue, 3);
 });
+
+test("computeGoalOverlays: goal within the projection's range gets an on-chart line", () => {
+    const { computeGoalOverlays } = loadAppIntoContext();
+    const goals = [{ id: 1, name: "Small goal", target_amount_eur: 60000, months_left: 120 }];
+    const [o] = computeGoalOverlays(goals, -10000, 50000, 30);
+    assert.equal(o.offChart, false);
+    assert.equal(o.onChartYear, true);
+    assert.equal(o.targetYear, 10);
+});
+
+test("computeGoalOverlays: goal far outside the natural range is flagged offChart", () => {
+    const { computeGoalOverlays } = loadAppIntoContext();
+    const goals = [{ id: 1, name: "Retire at 60", target_amount_eur: 1000000, months_left: 192 }];
+    // Natural range roughly [-130000, 50000] — a 1,000,000 target dwarfs it.
+    const [o] = computeGoalOverlays(goals, -130000, 50000, 30);
+    assert.equal(o.offChart, true);
+});
+
+test("computeGoalOverlays: target year beyond the slider's years is not marked onChartYear", () => {
+    const { computeGoalOverlays } = loadAppIntoContext();
+    const goals = [{ id: 1, name: "Long goal", target_amount_eur: 40000, months_left: 600 }]; // 50 years
+    const [o] = computeGoalOverlays(goals, 0, 50000, 30);
+    assert.equal(o.offChart, false);
+    assert.equal(o.onChartYear, false);
+});

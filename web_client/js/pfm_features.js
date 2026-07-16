@@ -74,12 +74,14 @@ async function loadGoals() {
     const list = document.getElementById('goalsList');
     if (!list) return;
     list.innerHTML = '<div class="col-12 text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading…</div>';
+    _autofillGoalMonthlyFromCashflow();
     try {
         const goals = await window.apiClient.getGoals();
         if (!Array.isArray(goals) || goals.length === 0) {
             list.innerHTML = '<div class="col-12"><p class="text-muted text-center py-4 mb-0">No goals yet. Add one above to start tracking your progress.</p></div>';
             return;
         }
+        const nw = await window.apiClient.getNetworth().catch(() => null);
         list.innerHTML = goals.map(g => {
             const progress = Math.max(0, Math.min(100, parseFloat(g.progress_pct || 0)));
             const onTrack = !!g.on_track;
@@ -116,9 +118,23 @@ async function loadGoals() {
                                 </div>
                             </div>
                             <div class="d-flex justify-content-between small text-muted mb-1">
-                                <span>${anFmtEur(g.current_networth_eur)} of ${anFmtEur(g.target_amount_eur)}</span>
+                                <span>${anFmtEur(g.current_networth_eur)} of ${anFmtEur(g.target_amount_eur)}
+                                    ${nw ? `<button class="btn btn-sm btn-link p-0 ms-1 align-baseline" type="button" data-bs-toggle="collapse" data-bs-target="#nwBreak${g.id}" aria-expanded="false" title="Where does this number come from?"><i class="bi bi-info-circle"></i></button>` : ''}
+                                </span>
                                 <span>${progress.toFixed(1)}%</span>
                             </div>
+                            ${nw ? `
+                            <div class="collapse mb-2" id="nwBreak${g.id}">
+                                <table class="table table-sm mb-0 small">
+                                    <tbody>
+                                        <tr><td>Brokerage (investments)</td><td class="text-end">${anFmtEur(nw.brokerage_eur)}</td></tr>
+                                        <tr><td>Fixed deposits</td><td class="text-end">${anFmtEur(nw.deposits_eur || 0)}</td></tr>
+                                        <tr><td>Manual assets</td><td class="text-end">${anFmtEur(nw.manual_assets_eur)}</td></tr>
+                                        <tr><td>Liabilities</td><td class="text-end text-danger">−${anFmtEur(nw.manual_liabilities_eur)}</td></tr>
+                                        <tr class="border-top fw-semibold"><td>= Current net worth</td><td class="text-end">${anFmtEur(nw.net_worth_eur)}</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>` : ''}
                             <div class="progress mb-3" style="height:12px;">
                                 <div class="progress-bar ${barCls}" role="progressbar" style="width:${progress}%;"></div>
                             </div>
@@ -148,6 +164,22 @@ async function loadGoals() {
     } catch (err) {
         list.innerHTML = `<div class="col-12"><p class="text-danger small py-3 mb-0">Error loading goals: ${err.message}</p></div>`;
     }
+}
+
+// Suggest the current net monthly cashflow as the "Monthly €" value when
+// adding a new goal — only touches the field while it's still empty, so it
+// never clobbers something the user is already typing/has typed.
+async function _autofillGoalMonthlyFromCashflow() {
+    const input = document.getElementById('addGoalMonthly');
+    if (!input || input.value) return;
+    try {
+        const cf = await window.apiClient.getCashflow();
+        const net = Math.round(cf.net_monthly_eur || 0);
+        if (net > 0 && !input.value) {
+            input.value = net;
+            input.placeholder = String(net);
+        }
+    } catch (_) { /* non-fatal: leave the field empty */ }
 }
 
 window.deleteGoalRow = async function(id, name) {
@@ -299,7 +331,7 @@ function createNavigationManager() {
                 case 'importexport': if (window.loadImportExportPage) window.loadImportExportPage(); break;
                 case 'portfolios':   window.pageManager.loadPortfoliosPage(); break;
                 case 'research':     if (window.loadResearchPage) window.loadResearchPage(); break;
-                case 'forecast':     if (window._fcLoadStartValue) window._fcLoadStartValue(); break;
+                case 'forecast':     if (window._fcLoadStartValue) window._fcLoadStartValue(); if (window._fcLoadGoals) window._fcLoadGoals(); break;
                 case 'help':         if (window.renderHelpPage) window.renderHelpPage(); break;
                 case 'version':      break;
                 case 'about':        break;
@@ -1840,6 +1872,31 @@ function historyToForecast(perf, risk) {
 }
 window.historyToForecast = historyToForecast;
 
+// Pure: decide how to place each selected goal's target on the forecast
+// chart. A goal far outside the projection's natural value range (e.g. a
+// €1M target against a projection maxing out around €50k) is flagged
+// offChart instead of being drawn as a line — otherwise it would flatten
+// the entire chart to make room for it. Unit-tested in web_client/js/tests/.
+function computeGoalOverlays(goals, naturalMin, naturalMax, years) {
+    const range = (naturalMax - naturalMin) || 1;
+    const OFF_CHART_FACTOR = 1.5;
+    return (goals || []).map(g => {
+        const target = g.target_amount_eur || 0;
+        const targetYear = Math.max(0, (g.months_left || 0) / 12);
+        const offChart = target > naturalMax + range * OFF_CHART_FACTOR
+            || target < naturalMin - range * OFF_CHART_FACTOR;
+        return {
+            id: g.id,
+            name: g.name,
+            target,
+            targetYear,
+            onChartYear: targetYear <= years,
+            offChart,
+        };
+    });
+}
+window.computeGoalOverlays = computeGoalOverlays;
+
 function setupForecastPage() {
     // DOM refs - asset allocation inputs
     const cashAmountInput   = document.getElementById('fcCashAmount');
@@ -1847,10 +1904,12 @@ function setupForecastPage() {
     const stocksAmountInput = document.getElementById('fcStocksAmount');
     const stocksRateInput   = document.getElementById('fcStocksRate');
     const stocksVolInput    = document.getElementById('fcStocksVol');
+    const stocksContributionInput = document.getElementById('fcStocksContribution');
     const bondsAmountInput  = document.getElementById('fcBondsAmount');
     const bondsRateInput    = document.getElementById('fcBondsRate');
     const startNote         = document.getElementById('fcStartValueNote');
     const refreshBtn        = document.getElementById('fcRefreshBtn');
+    const goalsListEl       = document.getElementById('fcGoalsList');
 
     // Mortgage inputs
     const mortgagePrincipalInput = document.getElementById('fcMortgagePrincipal');
@@ -1901,6 +1960,36 @@ function setupForecastPage() {
         }
     }
 
+    // Load goals for the chart-overlay checklist
+    let _fcGoalsCache = [];
+    async function loadForecastGoals() {
+        if (!goalsListEl) return;
+        goalsListEl.innerHTML = 'Loading…';
+        try {
+            const goals = await window.apiClient.getGoals();
+            _fcGoalsCache = Array.isArray(goals) ? goals : [];
+            if (!_fcGoalsCache.length) {
+                goalsListEl.innerHTML = '<span class="text-muted">No goals yet — add one on the Goals page.</span>';
+                return;
+            }
+            goalsListEl.innerHTML = _fcGoalsCache.map((g, i) => `
+                <div class="form-check">
+                    <input class="form-check-input fc-goal-check" type="checkbox" value="${g.id}" id="fcGoal${g.id}">
+                    <label class="form-check-label" for="fcGoal${g.id}">
+                        ${esc(g.name || 'Goal')} <span class="text-muted">(${anFmtEur(g.target_amount_eur)} by ${g.target_date ? Fmt.date(g.target_date) : '—'})</span>
+                    </label>
+                </div>`).join('');
+        } catch (e) {
+            goalsListEl.innerHTML = `<span class="text-danger">Could not load goals: ${e.message}</span>`;
+        }
+    }
+    function selectedForecastGoals() {
+        if (!goalsListEl) return [];
+        const checked = Array.from(goalsListEl.querySelectorAll('.fc-goal-check:checked')).map(cb => parseInt(cb.value));
+        return _fcGoalsCache.filter(g => checked.includes(g.id));
+    }
+    window._fcLoadGoals = loadForecastGoals;
+
     // Update total liquid badge
     function updateTotalLiquidBadge() {
         const total = (parseFloat(cashAmountInput.value) || 0)
@@ -1925,13 +2014,20 @@ function setupForecastPage() {
         }
     }
 
-    // Per-asset GBM projection.
+    // Per-asset GBM projection, with an optional monthly contribution added
+    // as an ordinary annuity (annual compounding, deposits at each year-end
+    // — the same order of approximation as the rest of this model).
     // Returns array[0..years] of { year, mean, high, low }
-    function projectAccount(startAmount, annualRatePct, volatility, years, sigma) {
+    function projectAccount(startAmount, annualRatePct, volatility, years, sigma, monthlyContribution) {
         const r = annualRatePct / 100;
+        const contribution = monthlyContribution || 0;
         const points = [];
         for (let i = 0; i <= years; i++) {
-            const mean = startAmount * Math.pow(1 + r, i);
+            const grown = startAmount * Math.pow(1 + r, i);
+            const contributed = contribution <= 0 ? 0
+                : r > 0 ? contribution * 12 * ((Math.pow(1 + r, i) - 1) / r)
+                : contribution * 12 * i;
+            const mean = grown + contributed;
             const totalVol = volatility * Math.sqrt(i || 0.5);
             points.push({
                 year: i,
@@ -1946,11 +2042,12 @@ function setupForecastPage() {
     // Full projection: assets + mortgage amortization + net worth.
     // Returns { data[], mortgagePaidOffYear, totalInterestPaid }
     function runProjection(cashAmt, cashRate, stocksAmt, stocksRate, bondsAmt, bondsRate,
-                           mortgagePrincipal, mortgageRate, monthlyPayment, years, sigma, stocksVol) {
+                           mortgagePrincipal, mortgageRate, monthlyPayment, years, sigma, stocksVol,
+                           stocksMonthlyContribution) {
         const VOLATILITY = { cash: 0.01, bonds: 0.06, stocks: 0.16 };
 
         const cashProj   = projectAccount(cashAmt,   cashRate,   VOLATILITY.cash,   years, sigma);
-        const stocksProj = projectAccount(stocksAmt, stocksRate, (stocksVol != null ? stocksVol : VOLATILITY.stocks), years, sigma);
+        const stocksProj = projectAccount(stocksAmt, stocksRate, (stocksVol != null ? stocksVol : VOLATILITY.stocks), years, sigma, stocksMonthlyContribution);
         const bondsProj  = projectAccount(bondsAmt,  bondsRate,  VOLATILITY.bonds,  years, sigma);
 
         let currentMortgage     = mortgagePrincipal;
@@ -1996,7 +2093,7 @@ function setupForecastPage() {
     }
 
     // SVG chart rendering
-    function renderChart(projResult, totalStarting, years) {
+    function renderChart(projResult, totalStarting, years, goals) {
         const { data, mortgagePaidOffYear } = projResult;
         const container = document.getElementById('fcChartContainer');
         const W = container.clientWidth || 600;
@@ -2006,8 +2103,22 @@ function setupForecastPage() {
         const innerH = H - PAD.top - PAD.bottom;
 
         const allVals = data.flatMap(p => [p.netWorthHigh, p.netWorthLow, p.mortgage, 0]);
-        const maxVal = Math.max(...allVals);
-        const minVal = Math.min(...allVals, 0);
+        const naturalMax = Math.max(...allVals);
+        const naturalMin = Math.min(...allVals, 0);
+
+        const overlays = computeGoalOverlays(goals, naturalMin, naturalMax, years);
+        const onChartOverlays = overlays.filter(o => !o.offChart);
+        const offChartOverlays = overlays.filter(o => o.offChart);
+        const goalChipsEl = document.getElementById('fcGoalChips');
+        if (goalChipsEl) {
+            goalChipsEl.innerHTML = offChartOverlays.map(o => `
+                <span class="badge bg-light text-dark border" title="Target is far outside this projection's range, so it isn't drawn as a line">
+                    <i class="bi bi-bullseye me-1"></i>${esc(o.name || 'Goal')}: ${fmtEur(o.target)} — off-chart
+                </span>`).join('');
+        }
+
+        const maxVal = Math.max(naturalMax, ...onChartOverlays.map(o => o.target));
+        const minVal = Math.min(naturalMin, ...onChartOverlays.map(o => o.target));
         const range  = maxVal - minVal || 1;
 
         function xScale(t) {
@@ -2068,6 +2179,24 @@ function setupForecastPage() {
                      stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3"/>`
             : '';
 
+        const GOAL_COLORS = ['#a855f7', '#f59e0b', '#0891b2', '#db2777'];
+        const goalLines = onChartOverlays.map((o, i) => {
+            const color = GOAL_COLORS[i % GOAL_COLORS.length];
+            const gy = yScale(o.target);
+            const label = `${esc(o.name || 'Goal')} — ${fmtEur(o.target)}`;
+            let marker = `
+                <line x1="${PAD.left}" y1="${gy.toFixed(1)}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${gy.toFixed(1)}"
+                      stroke="${color}" stroke-width="1.5" stroke-dasharray="2 3"/>
+                <text x="${(PAD.left + innerW - 4).toFixed(1)}" y="${(gy - 4).toFixed(1)}" text-anchor="end" font-size="10" fill="${color}">${label}</text>`;
+            if (o.onChartYear) {
+                const gx = xScale(o.targetYear);
+                marker += `
+                <line x1="${gx.toFixed(1)}" y1="${PAD.top}" x2="${gx.toFixed(1)}" y2="${(PAD.top + innerH).toFixed(1)}"
+                      stroke="${color}" stroke-width="1" stroke-dasharray="2 3" opacity="0.6"/>`;
+            }
+            return marker;
+        }).join('');
+
         const svg = chartSvg;
         svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
         svg.setAttribute('height', H);
@@ -2113,6 +2242,9 @@ function setupForecastPage() {
             <!-- Mortgage payoff marker -->
             ${payoffLine}
 
+            <!-- Goal target lines -->
+            ${goalLines}
+
             <!-- Starting net worth marker -->
             <line x1="${PAD.left}" y1="${startY.toFixed(1)}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${startY.toFixed(1)}"
                   stroke="#64748b" stroke-width="1" stroke-dasharray="6 4"/>
@@ -2154,13 +2286,14 @@ function setupForecastPage() {
         const years         = parseInt(yearsSlider.value)              || 30;
         const sigma         = parseFloat(confSelect.value)             || 1.96;
         const stocksVol     = stocksVolInput ? (parseFloat(stocksVolInput.value) || 16) / 100 : null;
+        const stocksContribution = stocksContributionInput ? (parseFloat(stocksContributionInput.value) || 0) : 0;
 
         const proj = runProjection(
             cashAmt, cashRate, stocksAmt, stocksRate, bondsAmt, bondsRate,
-            mortPrincipal, mortRate, mortPayment, years, sigma, stocksVol
+            mortPrincipal, mortRate, mortPayment, years, sigma, stocksVol, stocksContribution
         );
 
-        renderChart(proj, cashAmt + stocksAmt + bondsAmt, years);
+        renderChart(proj, cashAmt + stocksAmt + bondsAmt, years, selectedForecastGoals());
 
         // Update mortgage payoff badge
         if (proj.mortgagePaidOffYear !== null) {
@@ -2177,7 +2310,8 @@ function setupForecastPage() {
         // Summary cards
         const finalData   = proj.data[years];
         const startLiquid = cashAmt + stocksAmt + bondsAmt;
-        const gains       = finalData.assets - startLiquid;
+        const totalContributed = stocksContribution * 12 * years;
+        const gains       = finalData.assets - startLiquid - totalContributed;
 
         document.getElementById('fcSumMean').textContent      = fmtEur(finalData.assets);
         document.getElementById('fcSumYearLabel').textContent  = `at year ${years}`;
@@ -2207,25 +2341,35 @@ function setupForecastPage() {
     refreshBtn.addEventListener('click', loadStartValue);
     runBtn.addEventListener('click', runForecast);
 
-    // Opt-in: pre-fill Cash / Bonds / Mortgage from the Net Worth page.
+    // Opt-in: pre-fill Cash / Bonds / Mortgage from the Net Worth page, and
+    // monthly contribution / mortgage payment from Monthly Cash Flow.
     const loadNwBtn = document.getElementById('fcLoadNetworth');
     const nwNote = document.getElementById('fcNetworthNote');
     if (loadNwBtn) {
         loadNwBtn.addEventListener('click', async () => {
             if (nwNote) nwNote.textContent = 'Loading from Net Worth…';
             try {
-                const d = await window.apiClient.getNetworth();
+                const [d, cf] = await Promise.all([
+                    window.apiClient.getNetworth(),
+                    window.apiClient.getCashflow().catch(() => null),
+                ]);
                 const m = mapNetworthToForecast(d.items || []);
                 cashAmountInput.value = Math.round(m.cash);
                 bondsAmountInput.value = Math.round(m.bonds);
                 mortgagePrincipalInput.value = Math.round(m.mortgage);
                 updateTotalLiquidBadge();
-                updateMortgageNote();
-                if (nwNote) {
-                    let msg = `Loaded Cash ${fmtEur(m.cash)} · Bonds ${fmtEur(m.bonds)} · Mortgage ${fmtEur(m.mortgage)} from Net Worth.`;
-                    if (m.skipped.length) msg += ` Skipped (not modelled): ${m.skipped.join(', ')}.`;
-                    nwNote.textContent = msg;
+
+                let msg = `Loaded Cash ${fmtEur(m.cash)} · Bonds ${fmtEur(m.bonds)} · Mortgage ${fmtEur(m.mortgage)} from Net Worth.`;
+                if (m.skipped.length) msg += ` Skipped (not modelled): ${m.skipped.join(', ')}.`;
+                if (cf) {
+                    const net = Math.round(Math.max(0, cf.net_monthly_eur || 0));
+                    if (stocksContributionInput) stocksContributionInput.value = net;
+                    const mortPayment = Math.round((cf.by_category && cf.by_category.mortgage) || 0);
+                    if (mortPayment > 0) monthlyPaymentInput.value = mortPayment;
+                    msg += ` Monthly contribution ${fmtEur(net)}${mortPayment > 0 ? ` · Mortgage payment ${fmtEur(mortPayment)}` : ''} from Cash Flow.`;
                 }
+                updateMortgageNote();
+                if (nwNote) nwNote.textContent = msg;
             } catch (e) {
                 if (nwNote) nwNote.textContent = 'Could not load Net Worth: ' + e.message;
             }
@@ -2265,7 +2409,16 @@ function setupForecastPage() {
         }, 200);
     });
 
-    // Expose loadStartValue so navigationManager can call it on page show
+    // Re-run when goal selection changes, if a chart is already showing
+    if (goalsListEl) {
+        goalsListEl.addEventListener('change', (e) => {
+            if (e.target.classList.contains('fc-goal-check') && chartSvg.style.display !== 'none') {
+                runForecast();
+            }
+        });
+    }
+
+    // Expose loadStartValue/loadGoals so navigationManager can call them on page show
     window._fcLoadStartValue = loadStartValue;
 }
 
