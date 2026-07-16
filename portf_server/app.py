@@ -25,6 +25,7 @@ from .auth_middleware import APIKeyManager
 from .settings import get_settings
 
 from .routers import (
+    action_items,
     assets,
     transactions,
     portfolios,
@@ -401,6 +402,13 @@ app.include_router(
     market.router,
     prefix="/api/v1/market",
     tags=["Market Data"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    action_items.router,
+    prefix="/api/v1/action-items",
+    tags=["Action Items"],
     dependencies=_PROTECTED,
 )
 
