@@ -17,6 +17,11 @@ const NW_CATEGORY_LABELS = {
 // Type values that count as liabilities (debt). Used to derive is_liability
 // from the chosen type (the separate checkbox was removed).
 const NW_LIABILITY_CATS = new Set(['mortgage', 'personal_loan', 'car_loan', 'credit_card', 'other_debt', 'loan', 'credit']);
+// Bank/cash categories change often enough to warrant a "last updated" /
+// staleness hint in the items table — other categories (property, pension…)
+// don't need that nudge.
+const NW_BANK_CATS = new Set(['savings_account', 'current_account', 'cash']);
+const NW_STALE_DAYS = 30;
 const CF_INCOME_CATS = new Set(['salary', 'other_income']);
 const CF_CATEGORY_LABELS = {
     salary: 'Salary', other_income: 'Other income',
@@ -46,9 +51,11 @@ async function loadNetworthPage() {
         } else {
             body.innerHTML = items.map(it => `
                 <tr>
-                    <td class="ps-3"><strong>${escapeForAttr(it.name)}</strong>${it.notes ? `<br><small class="text-muted">${escapeForAttr(it.notes)}</small>` : ''}</td>
+                    <td class="ps-3"><strong>${escapeForAttr(it.name)}</strong>${it.notes ? `<br><small class="text-muted">${escapeForAttr(it.notes)}</small>` : ''}${_updatedLine(it)}</td>
                     <td><span class="badge ${it.is_liability ? 'bg-danger' : 'bg-secondary'}">${NW_CATEGORY_LABELS[it.category] || it.category}</span></td>
-                    <td class="text-end">${Fmt.num(it.amount, 2, 2)} ${it.currency || ''}</td>
+                    <td class="text-end" id="nwAmtCell${it.id}" data-amount="${it.amount}" data-currency="${escapeForAttr(it.currency || 'EUR')}">
+                        <span class="nw-amt-display" style="cursor:pointer;" title="Click to update balance" onclick="window.editManualAssetAmount(${it.id})">${Fmt.num(it.amount, 2, 2)} ${it.currency || ''} <i class="bi bi-pencil-square text-muted" style="font-size:0.75em;"></i></span>
+                    </td>
                     <td class="text-end ${it.is_liability ? 'text-danger' : ''}">${it.is_liability ? '−' : ''}${Fmt.amt('€' + Fmt.num(it.amount_eur, 0, 0))}</td>
                     <td class="pe-3 text-end"><button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteManualAsset(${it.id})"><i class="bi bi-trash"></i></button></td>
                 </tr>`).join('');
@@ -72,11 +79,12 @@ function computeNetWorthChecklist(items, cashflowItems, deposits) {
 
     const hasMortgage = items.some(it => it.is_liability && it.category === 'mortgage');
     const hasProperty = items.some(it => !it.is_liability && it.category === 'property');
-    const BANK_CATS = new Set(['savings_account', 'current_account', 'cash']);
-    const hasBankAccount = items.some(it => !it.is_liability && BANK_CATS.has(it.category));
+    const hasBankAccount = items.some(it => !it.is_liability && NW_BANK_CATS.has(it.category));
+    const hasLoanLiability = items.some(it => it.is_liability && it.category !== 'mortgage');
     const hasIncome = cashflowItems.some(it => CF_INCOME_CATS.has(it.category));
-    const EXPENSE_CATS = new Set(['mortgage', 'loan', 'rest']);
-    const hasExpense = cashflowItems.some(it => EXPENSE_CATS.has(it.category));
+    const hasMortgagePayment = cashflowItems.some(it => it.category === 'mortgage');
+    const hasLoanPayment = cashflowItems.some(it => it.category === 'loan');
+    const hasOtherExpense = cashflowItems.some(it => it.category === 'rest');
 
     const checklist = [];
     if (hasMortgage) {
@@ -93,9 +101,21 @@ function computeNetWorthChecklist(items, cashflowItems, deposits) {
         key: 'monthly_income', label: 'Monthly income', done: hasIncome,
         hint: 'Add your salary or other income.',
     });
+    if (hasMortgage) {
+        checklist.push({
+            key: 'mortgage_payment', label: 'Mortgage payment', done: hasMortgagePayment,
+            hint: 'Record your monthly mortgage payment.',
+        });
+    }
+    if (hasLoanLiability) {
+        checklist.push({
+            key: 'loan_payment', label: 'Loan payment', done: hasLoanPayment,
+            hint: 'Record the monthly payment for your loan(s) — personal loan, car loan, credit card, etc.',
+        });
+    }
     checklist.push({
-        key: 'monthly_expenses', label: 'Monthly expenses', done: hasExpense,
-        hint: 'Add a recurring payment (mortgage, loan, other).',
+        key: 'other_expenses', label: 'Other recurring expenses', done: hasOtherExpense,
+        hint: 'A rough monthly estimate for everything else — utilities, insurance, subscriptions, groceries, etc.',
     });
 
     const today = new Date().toISOString().slice(0, 10);
@@ -142,6 +162,24 @@ function escapeForAttr(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+function _daysSince(dateStr) {
+    if (!dateStr) return null;
+    const d = new Date(String(dateStr).replace(' ', 'T'));
+    if (isNaN(d.getTime())) return null;
+    return Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000));
+}
+
+// "Last updated" hint for bank/cash rows (updated_at is bumped both on
+// create and on the click-to-edit save) — other categories don't need it.
+function _updatedLine(it) {
+    if (!NW_BANK_CATS.has(it.category)) return '';
+    const days = _daysSince(it.updated_at);
+    if (days == null) return '';
+    const stale = days > NW_STALE_DAYS;
+    const label = days === 0 ? 'today' : days === 1 ? '1 day ago' : `${days} days ago`;
+    return `<br><small class="${stale ? 'text-warning' : 'text-muted'}">${stale ? '<i class="bi bi-exclamation-triangle me-1"></i>' : ''}Updated ${label}</small>`;
+}
+
 function _wireNetworthForm() {
     const form = document.getElementById('nwAddForm');
     if (form && !form.dataset.wired) {
@@ -181,6 +219,44 @@ window.confirmDeleteManualAsset = async function (id) {
     if (!confirm('Delete this item?')) return;
     try { await window.apiClient.deleteManualAsset(id); loadNetworthPage(); }
     catch (err) { alert('Error: ' + err.message); }
+};
+
+// Click-to-edit the amount on a manual asset row (e.g. a bank balance you
+// update frequently) — swaps the cell for a number input, saves via the
+// existing PUT /networth/{id} on blur/Enter, discards on Escape.
+window.editManualAssetAmount = function (id) {
+    const cell = document.getElementById(`nwAmtCell${id}`);
+    if (!cell || cell.dataset.editing) return;
+    cell.dataset.editing = '1';
+    const amount = parseFloat(cell.dataset.amount) || 0;
+    const currency = cell.dataset.currency || 'EUR';
+    cell.innerHTML = `<div class="input-group input-group-sm" style="max-width:160px; margin-left:auto;">
+        <input type="number" step="any" class="form-control form-control-sm text-end" id="nwAmtInput${id}" value="${amount}">
+        <span class="input-group-text">${escapeForAttr(currency)}</span>
+    </div>`;
+    const input = document.getElementById(`nwAmtInput${id}`);
+    input.focus();
+    input.select();
+
+    let done = false;
+    const finish = async (commit) => {
+        if (done) return;
+        done = true;
+        const newAmount = parseFloat(input.value);
+        if (!commit || isNaN(newAmount) || newAmount === amount) { loadNetworthPage(); return; }
+        try {
+            await window.apiClient.updateManualAsset(id, { amount: newAmount });
+            if (window.showToast) window.showToast('Balance updated.', 'success');
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
+        loadNetworthPage();
+    };
+    input.addEventListener('blur', () => finish(true));
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') finish(true);
+        if (e.key === 'Escape') finish(false);
+    });
 };
 
 function _renderDeposits(deposits) {
@@ -452,14 +528,34 @@ const NW_WIZARD_STEP_DEFS = {
             label: v.wzLabel, category: 'salary', amount: parseFloat(v.wzAmount) || 0, currency: 'EUR',
         }),
     },
-    monthly_expenses: {
-        title: 'Monthly expenses',
+    mortgage_payment: {
+        title: 'Mortgage payment',
         fields: [
             { id: 'wzLabel', label: 'Label', value: 'Mortgage payment' },
             { id: 'wzAmount', label: 'Amount / month (EUR)', type: 'number' },
         ],
         submit: (v) => window.apiClient.createCashflowEntry({
             label: v.wzLabel, category: 'mortgage', amount: parseFloat(v.wzAmount) || 0, currency: 'EUR',
+        }),
+    },
+    loan_payment: {
+        title: 'Loan payment',
+        fields: [
+            { id: 'wzLabel', label: 'Label', value: 'Loan payment' },
+            { id: 'wzAmount', label: 'Amount / month (EUR)', type: 'number' },
+        ],
+        submit: (v) => window.apiClient.createCashflowEntry({
+            label: v.wzLabel, category: 'loan', amount: parseFloat(v.wzAmount) || 0, currency: 'EUR',
+        }),
+    },
+    other_expenses: {
+        title: 'Other recurring expenses',
+        fields: [
+            { id: 'wzLabel', label: 'Label', value: 'Utilities, insurance, subscriptions…' },
+            { id: 'wzAmount', label: 'Estimated amount / month (EUR)', type: 'number' },
+        ],
+        submit: (v) => window.apiClient.createCashflowEntry({
+            label: v.wzLabel, category: 'rest', amount: parseFloat(v.wzAmount) || 0, currency: 'EUR',
         }),
     },
 };

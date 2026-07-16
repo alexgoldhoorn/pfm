@@ -312,13 +312,15 @@ test("openChatWithContext sets pending context and calls navigationManager.showP
     assert.equal(showPageArg, "chat", "navigationManager.showPage called with 'chat'");
 });
 
-test("computeNetWorthChecklist: no mortgage hides the home-value item", () => {
+test("computeNetWorthChecklist: no mortgage/loans hides the mortgage/home/loan items", () => {
     const { computeNetWorthChecklist } = loadAppIntoContext();
     const { checklist } = computeNetWorthChecklist([], [], []);
     assert.equal(checklist.some((c) => c.key === "home_value"), false);
+    assert.equal(checklist.some((c) => c.key === "mortgage_payment"), false);
+    assert.equal(checklist.some((c) => c.key === "loan_payment"), false);
     assert.deepEqual(
         [...checklist].map((c) => c.key),
-        ["bank_accounts", "monthly_income", "monthly_expenses"]
+        ["bank_accounts", "monthly_income", "other_expenses"]
     );
     assert.ok(checklist.every((c) => c.done === false));
 });
@@ -330,6 +332,7 @@ test("computeNetWorthChecklist: mortgage present but no property → home_value 
     const home = checklist.find((c) => c.key === "home_value");
     assert.ok(home, "home_value item present when a mortgage exists");
     assert.equal(home.done, false);
+    assert.ok(checklist.find((c) => c.key === "mortgage_payment"), "mortgage_payment item present when a mortgage exists");
 });
 
 test("computeNetWorthChecklist: mortgage + property → home_value done", () => {
@@ -342,7 +345,7 @@ test("computeNetWorthChecklist: mortgage + property → home_value done", () => 
     assert.equal(checklist.find((c) => c.key === "home_value").done, true);
 });
 
-test("computeNetWorthChecklist: bank accounts / income / expenses detected by category", () => {
+test("computeNetWorthChecklist: bank accounts / income / other expenses detected by category", () => {
     const { computeNetWorthChecklist } = loadAppIntoContext();
     const items = [{ category: "current_account", is_liability: false, amount_eur: 3000 }];
     const cashflow = [
@@ -352,7 +355,21 @@ test("computeNetWorthChecklist: bank accounts / income / expenses detected by ca
     const { checklist } = computeNetWorthChecklist(items, cashflow, []);
     assert.equal(checklist.find((c) => c.key === "bank_accounts").done, true);
     assert.equal(checklist.find((c) => c.key === "monthly_income").done, true);
-    assert.equal(checklist.find((c) => c.key === "monthly_expenses").done, true);
+    assert.equal(checklist.find((c) => c.key === "other_expenses").done, true);
+});
+
+test("computeNetWorthChecklist: mortgage payment and loan payment tracked separately", () => {
+    const { computeNetWorthChecklist } = loadAppIntoContext();
+    const items = [
+        { category: "mortgage", is_liability: true, amount_eur: 279867 },
+        { category: "car_loan", is_liability: true, amount_eur: 12000 },
+    ];
+    const cashflow = [{ category: "mortgage", amount_eur: 1176 }]; // mortgage payment logged, loan payment not
+    const { checklist } = computeNetWorthChecklist(items, cashflow, []);
+    assert.equal(checklist.find((c) => c.key === "mortgage_payment").done, true);
+    const loanItem = checklist.find((c) => c.key === "loan_payment");
+    assert.ok(loanItem, "loan_payment item present when a non-mortgage liability exists");
+    assert.equal(loanItem.done, false);
 });
 
 test("computeNetWorthChecklist: flags an active deposit past its maturity date", () => {

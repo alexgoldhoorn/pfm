@@ -1484,6 +1484,14 @@ function createAPIClient() {
             if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to add');
             return resp.json();
         },
+        async updateManualAsset(id, payload) {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/' + id, {
+                method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(payload)
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to update');
+            return resp.json();
+        },
         async deleteManualAsset(id) {
             const resp = await fetch(this.baseURL + '/api/v1/networth/' + id, { method: 'DELETE', headers: { 'X-API-Key': this.apiKey } });
             if (!resp.ok) throw new Error('Failed to delete');
