@@ -54,12 +54,89 @@ async function loadNetworthPage() {
                 </tr>`).join('');
         }
         _renderDeposits(d.deposits || []);
-        _loadCashflow();
+        const cf = await _loadCashflow();
+        _renderChecklist(d, cf);
     } catch (err) {
         if (body) body.innerHTML = `<tr><td colspan="5" class="text-center text-danger py-3">${err.message}</td></tr>`;
     }
 }
 window.loadNetworthPage = loadNetworthPage;
+
+// Pure: Net Worth setup checklist + fixed deposits needing attention.
+// items = getNetworth().items, cashflowItems = getCashflow().items,
+// deposits = getNetworth().deposits. Unit-tested in web_client/js/tests/.
+function computeNetWorthChecklist(items, cashflowItems, deposits) {
+    items = items || [];
+    cashflowItems = cashflowItems || [];
+    deposits = deposits || [];
+
+    const hasMortgage = items.some(it => it.is_liability && it.category === 'mortgage');
+    const hasProperty = items.some(it => !it.is_liability && it.category === 'property');
+    const BANK_CATS = new Set(['savings_account', 'current_account', 'cash']);
+    const hasBankAccount = items.some(it => !it.is_liability && BANK_CATS.has(it.category));
+    const hasIncome = cashflowItems.some(it => CF_INCOME_CATS.has(it.category));
+    const EXPENSE_CATS = new Set(['mortgage', 'loan', 'rest']);
+    const hasExpense = cashflowItems.some(it => EXPENSE_CATS.has(it.category));
+
+    const checklist = [];
+    if (hasMortgage) {
+        checklist.push({
+            key: 'home_value', label: 'Home value', done: hasProperty,
+            hint: "Add your home's value as a Property asset — otherwise the mortgage counts as pure debt with no offsetting asset.",
+        });
+    }
+    checklist.push({
+        key: 'bank_accounts', label: 'Bank / cash accounts', done: hasBankAccount,
+        hint: 'Add a savings, current account or cash balance.',
+    });
+    checklist.push({
+        key: 'monthly_income', label: 'Monthly income', done: hasIncome,
+        hint: 'Add your salary or other income.',
+    });
+    checklist.push({
+        key: 'monthly_expenses', label: 'Monthly expenses', done: hasExpense,
+        hint: 'Add a recurring payment (mortgage, loan, other).',
+    });
+
+    const today = new Date().toISOString().slice(0, 10);
+    const attention = deposits
+        .filter(d => d.status === 'active' && d.maturity_date < today)
+        .map(d => ({
+            id: d.id,
+            name: d.name,
+            maturity_date: d.maturity_date,
+            days_overdue: Math.round((new Date(today) - new Date(d.maturity_date)) / 86400000),
+        }));
+
+    return { checklist, attention };
+}
+window.computeNetWorthChecklist = computeNetWorthChecklist;
+
+function _renderChecklist(nwData, cfData) {
+    const wrap = document.getElementById('nwChecklistWrap');
+    const card = document.getElementById('nwChecklistCard');
+    if (!wrap || !card) return;
+    const { checklist, attention } = computeNetWorthChecklist(
+        nwData.items, (cfData && cfData.items) || [], nwData.deposits
+    );
+    if (!checklist.length && !attention.length) { wrap.style.display = 'none'; return; }
+    wrap.style.display = '';
+
+    let html = attention.map(a => `
+        <div class="alert alert-warning py-2 small mb-2 d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-exclamation-triangle me-1"></i><strong>${esc(a.name)}</strong> matured ${a.days_overdue} day${a.days_overdue === 1 ? '' : 's'} ago — mark it matured to include the payout in your net worth.</span>
+            <button class="btn btn-sm btn-outline-success ms-2" onclick="openMatureDepositModal(${a.id}, 0, '${a.maturity_date}')">Mark matured</button>
+        </div>`).join('');
+
+    html += '<ul class="list-unstyled mb-0">' + checklist.map(c => `
+        <li class="mb-1">
+            <i class="bi ${c.done ? 'bi-check-circle-fill text-success' : 'bi-circle text-muted'} me-2"></i>
+            ${esc(c.label)}
+            ${c.done ? '' : `<button class="btn btn-sm btn-link p-0 ms-2" onclick="window.openNwWizard('${c.key}')">Add</button>`}
+        </li>`).join('') + '</ul>';
+
+    card.innerHTML = html;
+}
 
 function escapeForAttr(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -241,7 +318,7 @@ function _wireDepositForm() {
 
 async function _loadCashflow() {
     const body = document.getElementById('cfItemsBody');
-    if (!body) return;
+    if (!body) return null;
     body.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3"><span class="spinner-border spinner-border-sm me-2"></span>Loading…</td></tr>';
     const eur = v => Fmt.amt('€' + Fmt.num(v, 0, 0));
     try {
@@ -256,7 +333,7 @@ async function _loadCashflow() {
         if (card) card.style.background = d.net_monthly_eur >= 0 ? '#0d6efd' : '#dc3545';
         if (!d.items.length) {
             body.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">No entries yet. Add income and expenses below.</td></tr>';
-            return;
+            return d;
         }
         body.innerHTML = d.items.map(it => `
             <tr>
@@ -266,8 +343,10 @@ async function _loadCashflow() {
                 <td class="text-end ${CF_INCOME_CATS.has(it.category) ? 'text-success' : 'text-danger'}">${CF_INCOME_CATS.has(it.category) ? '' : '−'}${Fmt.amt('€' + Fmt.num(it.amount_eur, 0, 0))}</td>
                 <td class="pe-3 text-end"><button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteCashflow(${it.id})"><i class="bi bi-trash"></i></button></td>
             </tr>`).join('');
+        return d;
     } catch (err) {
         body.innerHTML = `<tr><td colspan="5" class="text-center text-danger py-3">${err.message}</td></tr>`;
+        return null;
     }
 }
 
@@ -292,7 +371,7 @@ function _wireCashflowForm() {
                 form.reset();
                 document.getElementById('cfCurrency').value = 'EUR';
                 status.textContent = '';
-                _loadCashflow();
+                loadNetworthPage();
             } catch (err) { status.className = 'small text-danger'; status.textContent = err.message; }
         });
     }
@@ -300,7 +379,7 @@ function _wireCashflowForm() {
 
 window.confirmDeleteCashflow = async function (id) {
     if (!confirm('Delete this entry?')) return;
-    try { await window.apiClient.deleteCashflowEntry(id); _loadCashflow(); }
+    try { await window.apiClient.deleteCashflowEntry(id); loadNetworthPage(); }
     catch (err) { alert('Error: ' + err.message); }
 };
 
@@ -336,6 +415,128 @@ window.openMatureDepositModal = function (id, projectedInterest, maturityDate) {
 
     new bootstrap.Modal(document.getElementById('depositMatureModal')).show();
 };
+
+// Net Worth Setup Wizard — steps through the checklist items produced by
+// computeNetWorthChecklist(), reusing the same create-manual-asset /
+// create-cashflow-entry endpoints as the inline forms on the page.
+const NW_WIZARD_STEP_DEFS = {
+    home_value: {
+        title: 'Home value',
+        fields: [
+            { id: 'wzName', label: 'Name', value: 'Home' },
+            { id: 'wzAmount', label: 'Estimated value (EUR)', type: 'number' },
+        ],
+        submit: (v) => window.apiClient.createManualAsset({
+            name: v.wzName, category: 'property', amount: parseFloat(v.wzAmount) || 0,
+            currency: 'EUR', is_liability: false,
+        }),
+    },
+    bank_accounts: {
+        title: 'Bank / cash account',
+        fields: [
+            { id: 'wzName', label: 'Name', value: 'Current account' },
+            { id: 'wzAmount', label: 'Balance (EUR)', type: 'number' },
+        ],
+        submit: (v) => window.apiClient.createManualAsset({
+            name: v.wzName, category: 'current_account', amount: parseFloat(v.wzAmount) || 0,
+            currency: 'EUR', is_liability: false,
+        }),
+    },
+    monthly_income: {
+        title: 'Monthly income',
+        fields: [
+            { id: 'wzLabel', label: 'Label', value: 'Salary' },
+            { id: 'wzAmount', label: 'Amount / month (EUR)', type: 'number' },
+        ],
+        submit: (v) => window.apiClient.createCashflowEntry({
+            label: v.wzLabel, category: 'salary', amount: parseFloat(v.wzAmount) || 0, currency: 'EUR',
+        }),
+    },
+    monthly_expenses: {
+        title: 'Monthly expenses',
+        fields: [
+            { id: 'wzLabel', label: 'Label', value: 'Mortgage payment' },
+            { id: 'wzAmount', label: 'Amount / month (EUR)', type: 'number' },
+        ],
+        submit: (v) => window.apiClient.createCashflowEntry({
+            label: v.wzLabel, category: 'mortgage', amount: parseFloat(v.wzAmount) || 0, currency: 'EUR',
+        }),
+    },
+};
+
+let _nwWizardSteps = [];
+let _nwWizardIdx = 0;
+
+window.openNwWizard = async function (startKey) {
+    const [d, cf] = await Promise.all([
+        window.apiClient.getNetworth().catch(() => ({ items: [], deposits: [] })),
+        window.apiClient.getCashflow().catch(() => ({ items: [] })),
+    ]);
+    const { checklist } = computeNetWorthChecklist(d.items, cf.items || [], d.deposits);
+    _nwWizardSteps = checklist;
+    _nwWizardIdx = startKey ? Math.max(0, checklist.findIndex(c => c.key === startKey)) : 0;
+    _nwWizardRenderStep();
+    new bootstrap.Modal(document.getElementById('nwWizardModal')).show();
+};
+
+function _nwWizardRenderStep() {
+    const total = _nwWizardSteps.length;
+    const stepLabelEl = document.getElementById('nwWizardStepLabel');
+    const bodyEl = document.getElementById('nwWizardStepBody');
+    const nextBtn = document.getElementById('nwWizardNextBtn');
+    const skipBtn = document.getElementById('nwWizardSkipBtn');
+    const statusEl = document.getElementById('nwWizardStatus');
+    statusEl.className = 'small mt-2';
+    statusEl.textContent = '';
+
+    if (_nwWizardIdx >= total) {
+        stepLabelEl.textContent = 'All done';
+        bodyEl.innerHTML = '<p class="text-center text-muted py-3 mb-0"><i class="bi bi-check-circle text-success me-2"></i>Setup complete.</p>';
+        nextBtn.textContent = 'Close';
+        skipBtn.style.display = 'none';
+        nextBtn.onclick = () => bootstrap.Modal.getInstance(document.getElementById('nwWizardModal')).hide();
+        return;
+    }
+
+    const item = _nwWizardSteps[_nwWizardIdx];
+    stepLabelEl.textContent = `Step ${_nwWizardIdx + 1} of ${total}`;
+    skipBtn.style.display = '';
+    skipBtn.onclick = () => { _nwWizardIdx++; _nwWizardRenderStep(); };
+
+    if (item.done) {
+        bodyEl.innerHTML = `<p class="mb-0"><i class="bi bi-check-circle text-success me-2"></i><strong>${esc(item.label)}</strong> already set up.</p>`;
+        nextBtn.textContent = 'Continue';
+        nextBtn.onclick = () => { _nwWizardIdx++; _nwWizardRenderStep(); };
+        return;
+    }
+
+    const step = NW_WIZARD_STEP_DEFS[item.key];
+    nextBtn.textContent = 'Save & continue';
+    bodyEl.innerHTML = `
+        <h6>${esc(step.title)}</h6>
+        <p class="small text-muted">${esc(item.hint)}</p>` +
+        step.fields.map(f => `
+            <div class="mb-2">
+                <label class="form-label small mb-1">${esc(f.label)}</label>
+                <input type="${f.type || 'text'}" ${f.type === 'number' ? 'step="any"' : ''} class="form-control form-control-sm" id="${f.id}" value="${esc(f.value != null ? String(f.value) : '')}">
+            </div>`).join('');
+    nextBtn.onclick = async () => {
+        const values = {};
+        step.fields.forEach(f => { values[f.id] = document.getElementById(f.id).value; });
+        nextBtn.disabled = true;
+        try {
+            await step.submit(values);
+            nextBtn.disabled = false;
+            _nwWizardIdx++;
+            _nwWizardRenderStep();
+            loadNetworthPage();
+        } catch (err) {
+            statusEl.className = 'small mt-2 text-danger';
+            statusEl.textContent = err.message;
+            nextBtn.disabled = false;
+        }
+    };
+}
 
 // (Re)initialise Bootstrap tooltips on all [data-bs-toggle="tooltip"] elements.
 // Disposes any existing instance first so re-rendered tiles don't leak handlers.
