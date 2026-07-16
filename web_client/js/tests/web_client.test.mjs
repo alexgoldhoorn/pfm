@@ -311,3 +311,61 @@ test("openChatWithContext sets pending context and calls navigationManager.showP
     assert.equal(showPageCalled, true, "navigationManager.showPage was called");
     assert.equal(showPageArg, "chat", "navigationManager.showPage called with 'chat'");
 });
+
+test("computeNetWorthChecklist: no mortgage hides the home-value item", () => {
+    const { computeNetWorthChecklist } = loadAppIntoContext();
+    const { checklist } = computeNetWorthChecklist([], [], []);
+    assert.equal(checklist.some((c) => c.key === "home_value"), false);
+    assert.deepEqual(
+        [...checklist].map((c) => c.key),
+        ["bank_accounts", "monthly_income", "monthly_expenses"]
+    );
+    assert.ok(checklist.every((c) => c.done === false));
+});
+
+test("computeNetWorthChecklist: mortgage present but no property → home_value missing", () => {
+    const { computeNetWorthChecklist } = loadAppIntoContext();
+    const items = [{ category: "mortgage", is_liability: true, amount_eur: 279867 }];
+    const { checklist } = computeNetWorthChecklist(items, [], []);
+    const home = checklist.find((c) => c.key === "home_value");
+    assert.ok(home, "home_value item present when a mortgage exists");
+    assert.equal(home.done, false);
+});
+
+test("computeNetWorthChecklist: mortgage + property → home_value done", () => {
+    const { computeNetWorthChecklist } = loadAppIntoContext();
+    const items = [
+        { category: "mortgage", is_liability: true, amount_eur: 279867 },
+        { category: "property", is_liability: false, amount_eur: 350000 },
+    ];
+    const { checklist } = computeNetWorthChecklist(items, [], []);
+    assert.equal(checklist.find((c) => c.key === "home_value").done, true);
+});
+
+test("computeNetWorthChecklist: bank accounts / income / expenses detected by category", () => {
+    const { computeNetWorthChecklist } = loadAppIntoContext();
+    const items = [{ category: "current_account", is_liability: false, amount_eur: 3000 }];
+    const cashflow = [
+        { category: "salary", amount_eur: 3000 },
+        { category: "rest", amount_eur: 500 },
+    ];
+    const { checklist } = computeNetWorthChecklist(items, cashflow, []);
+    assert.equal(checklist.find((c) => c.key === "bank_accounts").done, true);
+    assert.equal(checklist.find((c) => c.key === "monthly_income").done, true);
+    assert.equal(checklist.find((c) => c.key === "monthly_expenses").done, true);
+});
+
+test("computeNetWorthChecklist: flags an active deposit past its maturity date", () => {
+    const { computeNetWorthChecklist } = loadAppIntoContext();
+    const yesterday = new Date(Date.now() - 3 * 86400000).toISOString().slice(0, 10);
+    const future = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+    const deposits = [
+        { id: 1, name: "Overdue deposit", status: "active", maturity_date: yesterday },
+        { id: 2, name: "Future deposit", status: "active", maturity_date: future },
+        { id: 3, name: "Already matured", status: "matured", maturity_date: yesterday },
+    ];
+    const { attention } = computeNetWorthChecklist([], [], deposits);
+    assert.equal(attention.length, 1);
+    assert.equal(attention[0].id, 1);
+    assert.equal(attention[0].days_overdue, 3);
+});

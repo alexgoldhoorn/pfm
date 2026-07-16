@@ -75,6 +75,27 @@ def _brokerage_value_eur(db) -> float:
     return total
 
 
+def net_worth_eur(db) -> float:
+    """Total net worth = brokerage + manual assets − liabilities + active deposits (EUR).
+
+    Shared with Goals projections (see goals.py) so the two never drift apart.
+    """
+    items = db.get_manual_assets()
+    assets_eur = 0.0
+    liabilities_eur = 0.0
+    for it in items:
+        amt_eur = float(it["amount"] or 0) * _fx(it.get("currency", "EUR"))
+        if it["is_liability"]:
+            liabilities_eur += amt_eur
+        else:
+            assets_eur += amt_eur
+    deposits_eur = sum(
+        float(d["principal"]) * _fx(d.get("currency", "EUR"))
+        for d in db.get_fixed_deposits(status="active")
+    )
+    return _brokerage_value_eur(db) + assets_eur - liabilities_eur + deposits_eur
+
+
 @router.get("/")
 def get_networth(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
     """Brokerage value + manual assets/liabilities + deposits + total net worth (EUR)."""
