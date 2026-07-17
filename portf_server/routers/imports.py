@@ -229,6 +229,13 @@ def _parse_indexacapital(
             currency=tx.currency or "EUR",
             fees=tx.fees,
             notes=tx.raw_text or "",
+            # Tag with the broker so (1) the save step resolves the "Indexa
+            # Capital" portfolio when the user hasn't explicitly picked one,
+            # and (2) the upload-preview duplicate check (_flag_duplicates)
+            # can resolve the right portfolio_id — without this, existing
+            # rows (which always have a real portfolio_id) never match and
+            # every re-import looks entirely new. Same fix as Coinbase.
+            broker="Indexa Capital",
         )
         for tx in result.importable
     ]

@@ -15,6 +15,7 @@ from portf_manager.llm_client import (
     reset_llm_client,
 )
 from portf_manager.llm_types import LLMTransaction
+from portf_manager.parsers.indexacapital_csv_parser import parse_indexacapital_csv
 
 # ---------------------------------------------------------------------------
 # OpenRouterLLMClient
@@ -97,6 +98,49 @@ class TestOpenRouterLLMClient:
 
 
 # ---------------------------------------------------------------------------
+# IndexaCapital CSV parser
+# ---------------------------------------------------------------------------
+
+
+class TestIndexaCapitalCSVParser:
+    HEADER = (
+        '"Fecha valor";"Fecha operación";Inversión;"Código ISIN";Tipo;'
+        'Participaciones;Importe;Retenciones;"Resultado fiscal"\n'
+    )
+
+    def test_header_row_not_counted_as_skipped(self):
+        result = parse_indexacapital_csv(self.HEADER + MINIMAL_CSV)
+        assert len(result.importable) == 1
+        assert result.skipped == []
+
+    def test_parses_suscripcion_por_traspaso_as_buy(self):
+        csv_content = self.HEADER + (
+            '15/07/2026;2026-07-15;"Vanguard Dev World";IE0000000016;'
+            '"SUSCRIPCIÓN POR TRASPASO";0,790000;"280,50 €";"0,00 €";"0,00 €"\n'
+        )
+        result = parse_indexacapital_csv(csv_content)
+        assert result.skipped == []
+        assert len(result.importable) == 1
+        tx = result.importable[0]
+        assert tx.tx_type == "buy"
+        assert tx.symbol == "IE0000000016"
+        assert tx.quantity == 0.79
+
+    def test_parses_reembolso_por_traspaso_as_sell(self):
+        csv_content = self.HEADER + (
+            '12/09/2025;2025-09-15;"iShares Bond";IE0000000015;'
+            '"REEMBOLSO POR TRASPASO";28,870000;"280,50 €";"0,00 €";"0,00 €"\n'
+        )
+        result = parse_indexacapital_csv(csv_content)
+        assert result.skipped == []
+        assert len(result.importable) == 1
+        tx = result.importable[0]
+        assert tx.tx_type == "sell"
+        assert tx.symbol == "IE0000000015"
+        assert tx.quantity == 28.87
+
+
+# ---------------------------------------------------------------------------
 # Import router — /api/v1/import/upload
 # ---------------------------------------------------------------------------
 
@@ -151,6 +195,87 @@ class TestImportUpload:
         assert data["transactions"][0]["symbol"] == "US0378331005"
         assert data["transactions"][0]["asset_type"] == "etf"
         assert data["skipped_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_upload_indexacapital_tags_broker(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        fake_tx = LLMTransaction(
+            tx_type="buy",
+            symbol="US0378331005",
+            asset_name="Apple Inc.",
+            quantity=14.0,
+            price=9.87,
+            date="2024-01-17",
+            currency="EUR",
+            raw_text="row",
+        )
+        mock_result = MagicMock()
+        mock_result.importable = [fake_tx]
+        mock_result.skipped = []
+
+        with patch(
+            "portf_server.routers.imports.parse_indexacapital_csv",
+            return_value=mock_result,
+        ):
+            response = await async_test_client.post(
+                "/api/v1/import/upload",
+                headers=auth_headers,
+                data={"broker": "indexacapital"},
+                files={"file": ("ic.csv", MINIMAL_CSV.encode(), "text/csv")},
+            )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        # IndexaCapital previews must carry the broker so (1) the save step
+        # tags them to the "Indexa Capital" portfolio when the user hasn't
+        # explicitly picked one, and (2) the upload-preview duplicate check
+        # can resolve the right portfolio_id — without this, existing rows
+        # (which always have a real portfolio_id) never match and every
+        # re-import looks "new". Regression guard for that bug.
+        assert data["transactions"][0]["broker"] == "Indexa Capital"
+
+    @pytest.mark.asyncio
+    async def test_upload_indexacapital_flags_existing_duplicate(
+        self, async_test_client: AsyncClient, auth_headers, test_database
+    ):
+        # Seed a transaction identical to the one the CSV below will parse,
+        # under the real "Indexa Capital" portfolio (as a prior import would
+        # have created it).
+        portfolio_id = test_database.get_or_create_portfolio("Indexa Capital")
+        asset_id = test_database.create_asset(
+            symbol="LU0000000001",
+            name="Test Fund",
+            asset_type="etf",
+            currency="EUR",
+        )
+        test_database.create_transaction(
+            asset_id=asset_id,
+            transaction_type="buy",
+            quantity=10.0,
+            price=100.0,
+            total_amount=1000.0,
+            transaction_date="2026-07-15",
+            portfolio_id=portfolio_id,
+            currency="EUR",
+        )
+
+        csv_content = TestIndexaCapitalCSVParser.HEADER + (
+            '"15/07/2026";"2026-07-15";"Test Fund";LU0000000001;SUSCRIPCIÓN;'
+            '10,000000;"1.000,00 €";"0,00 €";"0,00 €"\n'
+        )
+        response = await async_test_client.post(
+            "/api/v1/import/upload",
+            headers=auth_headers,
+            data={"broker": "indexacapital"},
+            files={"file": ("ic.csv", csv_content.encode("utf-8-sig"), "text/csv")},
+        )
+
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert len(data["transactions"]) == 1
+        assert data["transactions"][0]["is_duplicate"] is True
+        assert data["duplicate_count"] == 1
 
     @pytest.mark.asyncio
     async def test_upload_coinbase(self, async_test_client: AsyncClient, auth_headers):
