@@ -404,7 +404,7 @@ function createNavigationManager() {
     return {
         currentPage: 'dashboard',
         showPage: function(pageName) {
-            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'holdingsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage', 'helpPage', 'versionPage', 'aboutPage', 'resourcesPage', 'networthPage', 'diagnosticsPage', 'actionitemsPage'];
+            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage', 'helpPage', 'versionPage', 'aboutPage', 'resourcesPage', 'networthPage', 'diagnosticsPage', 'actionitemsPage'];
             pages.forEach(pageId => {
                 const page = document.getElementById(pageId);
                 if (page) page.style.display = 'none';
@@ -431,7 +431,7 @@ function createNavigationManager() {
             // Update mobile topbar to show the current page name.
             const PAGE_TITLES = {
                 dashboard: 'Dashboard', assets: 'Assets', transactions: 'Transactions',
-                holdings: 'Holdings', analytics: 'Analytics', watchlist: 'Watchlist',
+                analytics: 'Analytics', watchlist: 'Watchlist',
                 goals: 'Goals', research: 'Research', chat: 'AI Chat',
                 importexport: 'Import / Export', portfolios: 'Brokers',
                 forecast: 'Wealth Simulator', help: 'Help & Guide',
@@ -450,7 +450,6 @@ function createNavigationManager() {
                 case 'dashboard':    window.pageManager.loadDashboardPage(); break;
                 case 'assets':       window.pageManager.loadAssetsPage(); break;
                 case 'transactions': window.pageManager.loadTransactionsPage(); break;
-                case 'holdings':     window.pageManager.loadHoldingsPage(); break;
                 case 'analytics':    window.pageManager.loadAnalyticsPage(); break;
                 case 'watchlist':    window.pageManager.loadWatchlistPage(); break;
                 case 'goals':        window.pageManager.loadGoalsPage(); break;
@@ -3912,11 +3911,6 @@ document.addEventListener('DOMContentLoaded', function() {
     setupWatchlistPage();
     setupGoalsPage();
     setupEditGoalModal();
-
-    const refreshHoldings = document.getElementById('refreshHoldings');
-    if (refreshHoldings) {
-        refreshHoldings.addEventListener('click', () => window.pageManager.loadHoldingsPage());
-    }
 
     const refreshTxPage = document.getElementById('refreshTransactionsPage');
     if (refreshTxPage) {
