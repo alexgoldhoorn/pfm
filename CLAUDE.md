@@ -69,7 +69,7 @@ All LLM calls: `LLMClient.generate(prompt) -> str`. `GeminiClient` is a legacy w
 
 ### CSV / File Parsers
 Each broker has a standalone parser returning `LLMTransaction` objects via `ParseResult`. Valid `tx_type`: `buy`, `sell`, `dividend`, `interest`. `LLMTransaction` (in `portf_manager/llm_types.py`) has an optional `asset_type: str = ""` field — when set, `imports.py` uses it instead of defaulting to `"stock"` on save.
-- `indexacapital_csv_parser.py` — semicolon CSV, European numbers, ISINs. Also auto-detects "Movimientos" cash statement → SEPA → deposit/withdrawal bookings; fund subscriptions skipped.
+- `indexacapital_csv_parser.py` — semicolon CSV, European numbers, ISINs. `Tipo` values matched by **prefix**: any `SUSCRIPCIÓN*` (including `SUSCRIPCIÓN POR TRASPASO`, an internal fund-switch) → buy, any `REEMBOLSO*` (including `REEMBOLSO POR TRASPASO`) → sell — do not require an exact string match, IndexaCapital's export uses several suffixed variants. Header row explicitly skipped. Also auto-detects "Movimientos" cash statement → SEPA → deposit/withdrawal bookings; fund subscriptions skipped.
 - `myinvestor_csv_parser.py` — "Movimientos Mi Cuenta": INVEST=deposit; `NAME @ QTY` with Importe<0=buy, >0=dividend; positive no-`@`=dividend lump-sum. No ISIN/fees → buys flagged "review".
 - `myinvestor_paste_parser.py` — MyInvestor statements pasted as text.
 - `mintos_csv_parser.py` — P2P statement. Aggregates interest/withholding **per month** into `interest` transactions vs synthetic `MINTOS` asset. Deposits/withdrawals kept individual → bookings. Large files → nginx `client_max_body_size 25m`.
@@ -275,6 +275,7 @@ When writing tests, invent asset names (e.g. "Example Corp", "Global Bond Fund")
 - **`asset_type` enum**: Pydantic (`portf_server/schemas/assets.py`) AND `models.py` — add new types to both or `/assets` 500s.
 - **`transaction_type`**: `models.py TransactionType` + SQLAlchemy CHECK + `transactions` table rebuild — update all three when adding new types.
 - **MyInvestor CSV**: semicolon-delimited, European numbers (comma=decimal, dot=thousands). No standalone parser — CLI or LLM text import.
+- **File-import preview duplicate detection requires `PreviewTransaction.broker`**: `POST /api/v1/import/upload` has no `portfolio_id` param — `_flag_duplicates()` (imports.py) only knows which portfolio to check against via each row's `broker` field (`db.get_portfolio_by_name(tx.broker)`), same field the `/save` step uses as its portfolio fallback. A parser that omits `broker=` gets `portfolio_id=None` passed into `find_duplicate_transaction`'s `(portfolio_id IS ? OR portfolio_id = ?)` filter, which then only matches other NULL-portfolio rows — since real imported transactions always have a real portfolio_id, **every** row looks new and duplicate detection silently does nothing. Coinbase and IndexaCapital both set `broker=` for this reason; a new broker parser must too.
 
 ## After Every Task — What Needs Restarting
 
