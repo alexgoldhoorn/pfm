@@ -294,7 +294,7 @@ function createPageManager() {
                         <td><strong>${esc(row.symbol || 'N/A')}</strong></td>
                         <td>${esc(row.name || 'N/A')}</td>
                         <td><span class="badge ${typeBadge}">${esc((row.asset_type || '').toUpperCase())}</span></td>
-                        <td>${row.exchange || 'N/A'}</td>
+                        <td>${esc(row.exchange || 'N/A')}</td>
                         <td>${row.currency || ''}</td>
                         <td class="text-end">${row.owned ? parseFloat(row.quantity).toLocaleString(Fmt.loc(), { maximumFractionDigits: 4 }) : dash}</td>
                         <td class="text-end">${row.owned ? fmt(row.avg_price) : dash}</td>
