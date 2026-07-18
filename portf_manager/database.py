@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 
 # Database version for migration tracking
-DATABASE_VERSION = 24
+DATABASE_VERSION = 25
 
 
 # black
@@ -198,6 +198,8 @@ class Database:
                 description TEXT,
                 website TEXT,
                 is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                account_type TEXT NOT NULL DEFAULT 'brokerage'
+                    CHECK (account_type IN ('brokerage', 'bank')),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (entity_id) REFERENCES entities (id) ON DELETE SET NULL,
@@ -595,6 +597,42 @@ class Database:
             """
         )
 
+        # Categorized bank-account transactions (spending/income), separate from
+        # the asset-shaped `transactions` table. See _migrate_to_v25.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS spending_transactions (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                portfolio_id       INTEGER NOT NULL,
+                date               DATE NOT NULL,
+                description        TEXT NOT NULL,
+                amount             REAL NOT NULL,
+                currency           TEXT NOT NULL DEFAULT 'EUR',
+                category           TEXT NOT NULL DEFAULT 'uncategorized',
+                is_transfer        INTEGER NOT NULL DEFAULT 0,
+                transfer_link_type TEXT CHECK (transfer_link_type IN ('spending', 'booking')),
+                transfer_link_id   INTEGER,
+                source             TEXT,
+                created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (portfolio_id) REFERENCES portfolios (id) ON DELETE CASCADE
+            )
+            """
+        )
+
+        # Description → category rules for spending_transactions. Global (not
+        # per-account); case-insensitive substring match, first match (by id,
+        # i.e. oldest = highest priority) wins. See _migrate_to_v25.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS spending_rules (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                pattern     TEXT NOT NULL,
+                category    TEXT NOT NULL,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
         # Create triggers for updated_at timestamps
         for table in [
             "entities",
@@ -663,6 +701,8 @@ class Database:
             self._migrate_to_v23(conn)
         if current_version < 24:
             self._migrate_to_v24(conn)
+        if current_version < 25:
+            self._migrate_to_v25(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -1377,6 +1417,49 @@ class Database:
         )
         conn.commit()
 
+    def _migrate_to_v25(self, conn: sqlite3.Connection) -> None:
+        """Migrate from v24 to v25 — bank spending tracking.
+
+        Adds portfolios.account_type (brokerage vs bank) plus the
+        spending_transactions and spending_rules tables.
+        """
+        _add_column_if_missing(
+            conn,
+            "portfolios",
+            "account_type",
+            "TEXT NOT NULL DEFAULT 'brokerage' CHECK (account_type IN ('brokerage', 'bank'))",
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS spending_transactions (
+                id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+                portfolio_id       INTEGER NOT NULL,
+                date               DATE NOT NULL,
+                description        TEXT NOT NULL,
+                amount             REAL NOT NULL,
+                currency           TEXT NOT NULL DEFAULT 'EUR',
+                category           TEXT NOT NULL DEFAULT 'uncategorized',
+                is_transfer        INTEGER NOT NULL DEFAULT 0,
+                transfer_link_type TEXT CHECK (transfer_link_type IN ('spending', 'booking')),
+                transfer_link_id   INTEGER,
+                source             TEXT,
+                created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (portfolio_id) REFERENCES portfolios (id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS spending_rules (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                pattern     TEXT NOT NULL,
+                category    TEXT NOT NULL,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.commit()
+
     # ── App settings (persistent key/value) ────────────────────────────────
 
     def _ensure_app_settings(self, conn: sqlite3.Connection) -> None:
@@ -1940,15 +2023,17 @@ class Database:
         entity_id: int = None,
         description: str = None,
         user_id: int = None,
+        account_type: str = "brokerage",
     ) -> int:
-        """Create a new portfolio."""
+        """Create a new portfolio (a portfolio doubles as a broker/bank account)."""
         with self.get_connection() as conn:
             cursor = conn.execute(
                 """
-                INSERT INTO portfolios (name, base_currency, entity_id, description, user_id)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO portfolios
+                    (name, base_currency, entity_id, description, user_id, account_type)
+                VALUES (?, ?, ?, ?, ?, ?)
             """,
-                (name, base_currency, entity_id, description, user_id),
+                (name, base_currency, entity_id, description, user_id, account_type),
             )
             conn.commit()
             return cursor.lastrowid
@@ -1986,14 +2071,19 @@ class Database:
             return dict(row) if row else None
 
     def get_or_create_portfolio(
-        self, name: str, base_currency: str = "EUR", description: str = None
+        self,
+        name: str,
+        base_currency: str = "EUR",
+        description: str = None,
+        account_type: str = "brokerage",
     ) -> int:
         """Return the portfolio ID for *name*, creating it if it does not exist.
 
         Args:
-            name: Portfolio / broker name.
+            name: Portfolio / broker / bank-account name.
             base_currency: Currency used when creating a new portfolio.
             description: Description used only when creating a new portfolio.
+            account_type: 'brokerage' or 'bank', used only when creating.
 
         Returns:
             int: Portfolio ID (existing or newly created).
@@ -2005,6 +2095,7 @@ class Database:
             name=name,
             base_currency=base_currency,
             description=description or "Auto-created from import",
+            account_type=account_type,
         )
 
     def get_all_portfolios(
@@ -2551,6 +2642,162 @@ class Database:
         """Delete a booking by ID."""
         with self.get_connection() as conn:
             cursor = conn.execute("DELETE FROM bookings WHERE id = ?", (booking_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    # CRUD Operations for Spending Transactions (categorized bank-account rows)
+
+    def create_spending_transaction(
+        self,
+        portfolio_id: int,
+        date: str,
+        description: str,
+        amount: float,
+        currency: str = "EUR",
+        category: str = "uncategorized",
+        source: str = None,
+    ) -> int:
+        """Create a spending transaction.
+
+        Args:
+            amount: Signed amount — negative = money out, positive = money in
+                (bank-statement convention, not the bookings Deposit/Withdrawal
+                text convention).
+        """
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                """
+                INSERT INTO spending_transactions
+                    (portfolio_id, date, description, amount, currency, category, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    portfolio_id,
+                    date,
+                    description,
+                    amount,
+                    currency.upper(),
+                    category,
+                    source,
+                ),
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def find_duplicate_spending_transaction(
+        self, portfolio_id: int, date: str, amount: float, description: str
+    ) -> Optional[Dict]:
+        """Return an existing spending row matching portfolio+date+amount+description, or None."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT id FROM spending_transactions
+                WHERE portfolio_id = ? AND date = ?
+                  AND ABS(amount - ?) < 0.001 AND description = ?
+                LIMIT 1
+                """,
+                (portfolio_id, date, amount, description),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def list_spending_transactions(
+        self,
+        portfolio_id: int = None,
+        category: str = None,
+        start_date: str = None,
+        end_date: str = None,
+        is_transfer: bool = None,
+    ) -> List[Dict]:
+        """List spending transactions with optional filters, newest first."""
+        with self.get_connection() as conn:
+            query = """
+                SELECT s.*, p.name AS portfolio_name
+                FROM spending_transactions s
+                LEFT JOIN portfolios p ON s.portfolio_id = p.id
+            """
+            conditions = []
+            params: List = []
+            if portfolio_id is not None:
+                conditions.append("s.portfolio_id = ?")
+                params.append(portfolio_id)
+            if category is not None:
+                conditions.append("s.category = ?")
+                params.append(category)
+            if start_date is not None:
+                conditions.append("s.date >= ?")
+                params.append(start_date)
+            if end_date is not None:
+                conditions.append("s.date <= ?")
+                params.append(end_date)
+            if is_transfer is not None:
+                conditions.append("s.is_transfer = ?")
+                params.append(1 if is_transfer else 0)
+            if conditions:
+                query += " WHERE " + " AND ".join(conditions)
+            query += " ORDER BY s.date DESC, s.id DESC"
+            cursor = conn.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_spending_transaction(self, spending_id: int) -> Optional[Dict]:
+        """Get a spending transaction by ID."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM spending_transactions WHERE id = ?", (spending_id,)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def update_spending_transaction(self, spending_id: int, **kwargs) -> bool:
+        """Update spending transaction fields (category, is_transfer, transfer link)."""
+        valid_fields = {
+            "category",
+            "is_transfer",
+            "transfer_link_type",
+            "transfer_link_id",
+        }
+        update_fields = {k: v for k, v in kwargs.items() if k in valid_fields}
+        if not update_fields:
+            return False
+        with self.get_connection() as conn:
+            set_clause = ", ".join(f"{field} = ?" for field in update_fields)
+            values = list(update_fields.values()) + [spending_id]
+            cursor = conn.execute(
+                f"UPDATE spending_transactions SET {set_clause} WHERE id = ?", values
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def list_unlinked_spending_transactions(self) -> List[Dict]:
+        """List spending rows not yet linked as a transfer (is_transfer = 0)."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM spending_transactions WHERE is_transfer = 0"
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    # CRUD Operations for Spending Rules (description → category matching)
+
+    def create_spending_rule(self, pattern: str, category: str) -> int:
+        """Create a spending category rule (case-insensitive substring match on description)."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "INSERT INTO spending_rules (pattern, category) VALUES (?, ?)",
+                (pattern, category),
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def list_spending_rules(self) -> List[Dict]:
+        """List all spending rules, oldest (highest priority) first."""
+        with self.get_connection() as conn:
+            cursor = conn.execute("SELECT * FROM spending_rules ORDER BY id")
+            return [dict(row) for row in cursor.fetchall()]
+
+    def delete_spending_rule(self, rule_id: int) -> bool:
+        """Delete a spending rule by ID."""
+        with self.get_connection() as conn:
+            cursor = conn.execute("DELETE FROM spending_rules WHERE id = ?", (rule_id,))
             conn.commit()
             return cursor.rowcount > 0
 
