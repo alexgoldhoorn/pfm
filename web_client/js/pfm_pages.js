@@ -132,6 +132,11 @@ function createPageManager() {
         loadAssetsPage: async function() {
             const tableBody = document.querySelector('#assetsPage tbody');
             if (tableBody) tableBody.innerHTML = '<tr><td colspan="13" class="text-center"><div class="spinner-border spinner-border-sm me-2"></div>Loading…</td></tr>';
+            // Force the "held anywhere" set to be recomputed on every full
+            // page load (nav or refresh) — otherwise, once cached with a
+            // specific portfolio filter selected, it never sees holdings
+            // changes from imports/transactions made elsewhere.
+            this._heldSymbolsGlobal = null;
             try {
                 // Populate broker dropdown once
                 const aPortFilter = document.getElementById('assetPortfolioFilter');
