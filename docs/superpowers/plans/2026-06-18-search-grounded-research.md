@@ -66,7 +66,7 @@ def test_existing_clients_not_search_capable_before_implementation():
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_llm_client.py -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_llm_client.py -v
 ```
 
 Expected: `ImportError: cannot import name 'SearchCapableLLMClient'`
@@ -107,7 +107,7 @@ In `pyproject.toml`, add after `"google-generativeai",` (line 13):
 - [ ] **Step 5: Run tests to verify they pass**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_llm_client.py -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_llm_client.py -v
 ```
 
 Expected: 2 PASSED
@@ -234,7 +234,7 @@ class TestGeminiSearchCapable:
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_llm_client.py::TestGeminiSearchCapable -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_llm_client.py::TestGeminiSearchCapable -v
 ```
 
 Expected: `AttributeError: 'GeminiLLMClient' object has no attribute 'generate_with_search'`
@@ -287,7 +287,7 @@ In `portf_manager/llm_client.py`, after the existing `generate()` method on `Gem
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_llm_client.py::TestGeminiSearchCapable -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_llm_client.py::TestGeminiSearchCapable -v
 ```
 
 Expected: 5 PASSED
@@ -408,7 +408,7 @@ Add `import pytest` to the top of the test file (after `import os`).
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_llm_client.py::TestAnthropicClient tests/unit/test_llm_client.py::TestFactoryWiring -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_llm_client.py::TestAnthropicClient tests/unit/test_llm_client.py::TestFactoryWiring -v
 ```
 
 Expected: `ImportError: cannot import name 'AnthropicLLMClient'`
@@ -520,7 +520,7 @@ Update the `raise RuntimeError` error message to include Anthropic as option 4:
 - [ ] **Step 5: Run tests to verify they pass**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_llm_client.py -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_llm_client.py -v
 ```
 
 Expected: all tests PASSED
@@ -671,7 +671,7 @@ def test_generate_valuation_returns_error_dict_on_llm_failure(mocker):
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_research_valuation.py -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_research_valuation.py -v
 ```
 
 Expected: 4 new tests FAIL (existing `compute_targets` tests still pass)
@@ -824,7 +824,7 @@ Replace lines 247-290 (the entire `try:` block) with:
 - [ ] **Step 6: Run all research tests to verify they pass**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_research_valuation.py -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_research_valuation.py -v
 ```
 
 Expected: all tests PASSED (5 original compute_targets tests + 4 new ones)
@@ -832,7 +832,7 @@ Expected: all tests PASSED (5 original compute_targets tests + 4 new ones)
 - [ ] **Step 7: Run full unit test suite to catch regressions**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v
 ```
 
 Expected: all tests PASSED, 0 failed
@@ -892,7 +892,7 @@ Prepend to the Recent (v2.1) summary line:
 - [ ] **Step 3: Final full test run**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e
 ```
 
 Expected: all tests PASSED, 0 failed

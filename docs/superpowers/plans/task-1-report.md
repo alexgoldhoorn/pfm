@@ -8,17 +8,17 @@
 
 ## Test Results
 
-Command: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_platform_export.py -v`
+Command: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_platform_export.py -v`
 
 Result: **26 passed in 0.11s**
 
-Full suite: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q`
+Full suite: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q`
 
 Result: **561 passed, 6 skipped** (no regressions introduced; the suite had 535 tests before this task)
 
 ## Files Created
 
-- `/home/agoldhoorn/repos/pfm/portf_manager/platform_export.py` — 188 lines
+- `~/repos/pfm/portf_manager/platform_export.py` — 188 lines
   - `_is_isin(s: str) -> bool`
   - `_resolve_ticker(symbol: str, ticker: Optional[str]) -> Optional[str]`
   - `_fetch_buy_sell_txs(db, portfolio_id: Optional[int]) -> list[dict]`
@@ -26,7 +26,7 @@ Result: **561 passed, 6 skipped** (no regressions introduced; the suite had 535 
   - `build_yahoo_finance_csv(db, portfolio_id: Optional[int], mode: str) -> tuple[str, list[str]]`
   - `build_simply_wall_st_csv(db, portfolio_id: Optional[int], mode: str) -> tuple[str, list[str]]`
 
-- `/home/agoldhoorn/repos/pfm/tests/unit/test_platform_export.py` — 26 tests
+- `~/repos/pfm/tests/unit/test_platform_export.py` — 26 tests
 
 ## Self-Review Notes
 
