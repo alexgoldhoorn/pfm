@@ -182,7 +182,7 @@ Replace with:
 - [ ] **Step 3: Run JS smoke test**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv make test-js
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv make test-js
 ```
 
 Expected: all tests pass (the smoke test loads all 4 JS files — catches syntax errors in the new code).

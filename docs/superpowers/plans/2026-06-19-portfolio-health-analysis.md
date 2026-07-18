@@ -151,7 +151,7 @@ class TestPromptAndParse:
 - [ ] **Step 2: Confirm tests fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_portfolio_analysis.py -v 2>&1 | head -30
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_portfolio_analysis.py -v 2>&1 | head -30
 ```
 Expected: `ModuleNotFoundError: No module named 'portf_manager.services.portfolio_advisor'`
 
@@ -591,21 +591,21 @@ def parse_analysis_response(raw: str) -> dict:
 - [ ] **Step 2: Run tests**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_portfolio_analysis.py -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_portfolio_analysis.py -v
 ```
 Expected: all tests pass.
 
 - [ ] **Step 3: Format and lint**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run black portf_manager/services/portfolio_advisor.py
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run flake8 portf_manager/services/portfolio_advisor.py --max-line-length=88 --extend-ignore=E203,W503,E501
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run black portf_manager/services/portfolio_advisor.py
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run flake8 portf_manager/services/portfolio_advisor.py --max-line-length=88 --extend-ignore=E203,W503,E501
 ```
 
 - [ ] **Step 4: Run full suite**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
 ```
 Expected: all previously passing tests still pass.
 
@@ -774,8 +774,8 @@ def get_portfolio_analysis(
 - [ ] **Step 4: Format, lint, full test run**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run black portf_server/routers/research.py
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run black portf_server/routers/research.py
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
 ```
 Expected: all tests pass.
 
@@ -1145,7 +1145,7 @@ Settings → "Portfolio Advisor cache" shows current value. Change to 6h, save, 
 - [ ] **Step 7: Full test suite**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
 ```
 Expected: all tests pass.
 

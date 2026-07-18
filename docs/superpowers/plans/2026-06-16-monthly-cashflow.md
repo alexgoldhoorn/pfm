@@ -85,7 +85,7 @@ def test_cashflow_notes_optional(db):
 - [ ] **Step 2: Run tests to confirm they fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_cashflow_db.py -v 2>&1 | tail -20
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_cashflow_db.py -v 2>&1 | tail -20
 ```
 
 Expected: `AttributeError: 'Database' object has no attribute 'create_monthly_cashflow'`
@@ -211,7 +211,7 @@ At the end of `portf_manager/database.py`, before the `cache_get` method (or aft
 - [ ] **Step 8: Run tests to confirm they pass**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_cashflow_db.py -v 2>&1 | tail -15
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_cashflow_db.py -v 2>&1 | tail -15
 ```
 
 Expected: `5 passed`
@@ -285,7 +285,7 @@ In `tests/test_database.py`, find `test_fresh_database_creation` (around line 10
 - [ ] **Step 3: Run the full DB test suite**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/test_database.py -v 2>&1 | tail -20
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/test_database.py -v 2>&1 | tail -20
 ```
 
 Expected: all tests pass (no `== 19` failures).
@@ -390,7 +390,7 @@ def delete_cashflow(
 - [ ] **Step 3: Run linter to catch any issues**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run black portf_server/routers/networth.py && UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run flake8 portf_server/routers/networth.py --max-line-length=88 --extend-ignore=E203,W503,E501
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run black portf_server/routers/networth.py && UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run flake8 portf_server/routers/networth.py --max-line-length=88 --extend-ignore=E203,W503,E501
 ```
 
 Expected: no errors.
@@ -533,7 +533,7 @@ def test_cashflow_other_income_is_income(tmp_path):
 - [ ] **Step 2: Run tests**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_networth.py -v 2>&1 | tail -20
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_networth.py -v 2>&1 | tail -20
 ```
 
 Expected: `6 passed`
@@ -541,7 +541,7 @@ Expected: `6 passed`
 - [ ] **Step 3: Run all unit tests to check nothing is broken**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q 2>&1 | tail -10
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q 2>&1 | tail -10
 ```
 
 Expected: all tests pass (count will be higher than the pre-feature baseline, no failures).
@@ -971,7 +971,7 @@ Add after it:
 - [ ] **Step 5: Run full test suite one final time**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q 2>&1 | tail -10
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q 2>&1 | tail -10
 ```
 
 Expected: all tests pass, 0 failures.

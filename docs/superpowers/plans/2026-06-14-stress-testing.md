@@ -117,7 +117,7 @@ class TestGetTickerReturn:
 - [ ] **Step 2: Run tests to confirm they fail (import error)**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_stress_testing.py::TestStressFallbacks tests/unit/test_stress_testing.py::TestGetTickerReturn -v 2>&1 | tail -20
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_stress_testing.py::TestStressFallbacks tests/unit/test_stress_testing.py::TestGetTickerReturn -v 2>&1 | tail -20
 ```
 
 Expected: `ImportError` — `_STRESS_SCENARIOS`, `_STRESS_FALLBACKS`, `_get_ticker_return` not yet defined.
@@ -224,7 +224,7 @@ def _get_ticker_return(sym: str, from_date: str, to_date: str) -> float | None:
 - [ ] **Step 5: Run data/helper tests — expect PASS**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_stress_testing.py::TestStressFallbacks tests/unit/test_stress_testing.py::TestGetTickerReturn -v 2>&1 | tail -20
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_stress_testing.py::TestStressFallbacks tests/unit/test_stress_testing.py::TestGetTickerReturn -v 2>&1 | tail -20
 ```
 
 Expected: all 8 tests PASS.
@@ -317,7 +317,7 @@ class TestStressTestEndpoint:
 - [ ] **Step 2: Run endpoint tests — expect 404 (endpoint not yet defined)**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_stress_testing.py::TestStressTestEndpoint -v 2>&1 | tail -20
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_stress_testing.py::TestStressTestEndpoint -v 2>&1 | tail -20
 ```
 
 Expected: failures (404 Not Found or import errors).
@@ -474,7 +474,7 @@ def stress_test(
 - [ ] **Step 4: Run all stress test tests — expect all PASS**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_stress_testing.py -v 2>&1 | tail -25
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_stress_testing.py -v 2>&1 | tail -25
 ```
 
 Expected: 13 tests PASS, 0 failed.
@@ -482,7 +482,7 @@ Expected: 13 tests PASS, 0 failed.
 - [ ] **Step 5: Run full unit suite to catch regressions**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q 2>&1 | tail -10
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q 2>&1 | tail -10
 ```
 
 Expected: same pass count as before (429+) plus 13 new, 0 failures.
