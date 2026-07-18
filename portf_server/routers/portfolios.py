@@ -195,6 +195,7 @@ async def list_portfolios(
                 "website_is_default": not p.get("website")
                 and bool(defaults.get("website")),
                 "is_active": p.get("is_active", True),
+                "account_type": p.get("account_type", "brokerage"),
                 "first_transaction_date": r.get("first_transaction_date"),
                 "last_transaction_date": r.get("last_transaction_date"),
                 "first_booking_date": r.get("first_booking_date"),
