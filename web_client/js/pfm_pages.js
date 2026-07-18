@@ -315,7 +315,7 @@ function createPageManager() {
                     </tr>`;
             };
             this._assetsST = this._assetsST || makeSortableTable({
-                table: document.querySelector('#assetsPage table'),
+                table: document.getElementById('assetsTable'),
                 columns: [
                     { key: 'symbol', type: 'text' }, { key: 'name', type: 'text' },
                     { key: 'asset_type', type: 'text' }, { key: 'exchange', type: 'text' },
