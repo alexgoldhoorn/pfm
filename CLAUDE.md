@@ -210,7 +210,7 @@ Single market-data source for web, MCP, cron:
 Single `index.html` + four JS files (no build step), **must load in order**: `help_text.js` → `pfm_core.js` → `pfm_pages.js` → `pfm_analytics.js` → `pfm_features.js`. They share one global scope.
 
 - `pfm_core.js`: prefs, `Fmt`, `esc`, `AssetSearch`, API + modal managers, `openChatWithContext()`
-- `pfm_pages.js`: page/nav/auth, dashboard, transactions, assets, holdings, help/resources
+- `pfm_pages.js`: page/nav/auth, dashboard, transactions, assets (positions + catalogue merged, see below), help/resources
 - `pfm_analytics.js`: net-worth/dividend/analytics/diversification charts
 - `pfm_features.js`: watchlist, goals, chat, portfolios, import/export, forecast, rebalance, research, settings + `DOMContentLoaded` bootstrap
 
@@ -221,6 +221,8 @@ Single `index.html` + four JS files (no build step), **must load in order**: `he
 `window.METRIC_HELP` / `window.PAGE_HELP` in `help_text.js` — tooltip definitions and per-page help modal content. Add entries when adding new pages or non-obvious cards.
 
 `makeSortableTable(config)` / `applyTableState(rows, columns, state)` in `pfm_core.js` — shared sortable/filterable tables; per-table state persists in `PREFS.tableState[<page>]`.
+
+**Assets page** (`loadAssetsPage`/`_loadHoldingsAndRender`/`_renderFilteredAssets` in `pfm_pages.js`): merges the old separate Holdings and Assets pages. Defaults to owned positions for the selected portfolio (`GET /api/v1/portfolios/holdings`, unchanged); the "Show assets with no holding" checkbox appends `GET /api/v1/assets/` catalogue entries whose symbol has zero quantity in *any* portfolio — computed via one unfiltered `getHoldings()` call, cached in `this._heldSymbolsGlobal`, independent of the portfolio filter. An asset held in a different, non-selected portfolio is excluded from both halves (not a position for the selected portfolio, not "held nowhere" either) — same as the old Holdings portfolio-filter behavior, nothing new to reconcile. `PREFS.tableState.holdings` is the sort/filter-state key (kept from the old Holdings page, not renamed).
 
 `window.PREFS` → `localStorage['pfmPrefs']`. Format numbers via `Fmt.num()`, dates via `Fmt.date()`. Theme = `data-bs-theme` on `<html>` (Bootstrap 5.3).
 
