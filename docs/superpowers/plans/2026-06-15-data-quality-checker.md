@@ -8,8 +8,8 @@
 
 **Tech Stack:** FastAPI (Python 3.13), SQLite via `portf_manager.database.Database`, vanilla JS + Bootstrap 5.3, pytest + httpx for tests.
 
-**Run tests with:** `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_data_quality.py -v`
-**Run all unit tests:** `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v`
+**Run tests with:** `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_data_quality.py -v`
+**Run all unit tests:** `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v`
 **Deploy web after HTML/JS changes:** `docker compose build web && docker stop portf_web && docker compose up -d web`
 
 ---
@@ -162,7 +162,7 @@ class TestDQReconciliation:
 - [ ] **Step 2: Run the test to confirm it fails**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_data_quality.py::TestDQReconciliation -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_data_quality.py::TestDQReconciliation -v
 ```
 
 Expected: `FAILED` — `404 Not Found` for `/api/v1/analytics/dq/reconciliation`.
@@ -259,7 +259,7 @@ def dq_reconciliation(
 - [ ] **Step 4: Run the tests and verify they pass**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_data_quality.py::TestDQReconciliation -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_data_quality.py::TestDQReconciliation -v
 ```
 
 Expected: 5 tests `PASSED`.
@@ -390,7 +390,7 @@ class TestDQDuplicates:
 - [ ] **Step 2: Run tests to confirm they fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_data_quality.py::TestDQDuplicates -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_data_quality.py::TestDQDuplicates -v
 ```
 
 Expected: `FAILED` — 404.
@@ -506,7 +506,7 @@ async def dq_duplicates(
 - [ ] **Step 4: Run tests and verify they pass**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_data_quality.py::TestDQDuplicates -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_data_quality.py::TestDQDuplicates -v
 ```
 
 Expected: 5 tests `PASSED`.
@@ -664,7 +664,7 @@ class TestDQSuspicious:
 - [ ] **Step 2: Run tests to confirm they fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_data_quality.py::TestDQSuspicious -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_data_quality.py::TestDQSuspicious -v
 ```
 
 Expected: `FAILED` — 404.
@@ -780,7 +780,7 @@ async def dq_suspicious(
 - [ ] **Step 4: Run all DQ tests**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_data_quality.py -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_data_quality.py -v
 ```
 
 Expected: all tests `PASSED`.
@@ -788,7 +788,7 @@ Expected: all tests `PASSED`.
 - [ ] **Step 5: Run the full unit suite to check for regressions**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v 2>&1 | tail -20
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v 2>&1 | tail -20
 ```
 
 Expected: no new failures.
@@ -1427,7 +1427,7 @@ git commit -m "docs: add documentation-update rule to CLAUDE.md; note data quali
 - [ ] **Step 1: Run the full unit test suite**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v 2>&1 | tail -30
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v 2>&1 | tail -30
 ```
 
 Expected: all tests pass, 0 failures.

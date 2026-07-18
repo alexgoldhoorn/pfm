@@ -87,7 +87,7 @@ Append this method inside `class TestPortfolioHoldings` in `tests/unit/test_rout
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_routers_coverage.py::TestPortfolioHoldings::test_holdings_filtered_by_portfolio_id -v`
+Run: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_routers_coverage.py::TestPortfolioHoldings::test_holdings_filtered_by_portfolio_id -v`
 Expected: FAIL — aggregated query ignores the param, so BrokerA returns 8.0, not 5.0 (assertion error on `a_qty == 5.0`).
 
 - [ ] **Step 3: Add the `Query` import**
@@ -125,7 +125,7 @@ def get_holdings(
 
 - [ ] **Step 5: Run test to verify it passes**
 
-Run: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_routers_coverage.py::TestPortfolioHoldings -v`
+Run: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_routers_coverage.py::TestPortfolioHoldings -v`
 Expected: PASS (3 tests in the class).
 
 - [ ] **Step 6: Commit**
@@ -532,12 +532,12 @@ git commit -m "feat(web): wire Top Positions config controls to render/refetch"
 
 - [ ] **Step 1: Full backend suite**
 
-Run: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q`
+Run: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q`
 Expected: all pass (430 passed: 429 prior + the 1 new holdings test), 6 skipped.
 
 - [ ] **Step 2: JS tests + lint**
 
-Run: `node --test web_client/js/tests/ && UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run black --check . && UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run ruff check portf_manager portf_server`
+Run: `node --test web_client/js/tests/ && UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run black --check . && UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run ruff check portf_manager portf_server`
 Expected: 9 JS tests pass; black + ruff clean.
 
 - [ ] **Step 3: Rebuild + redeploy web, manual smoke**
@@ -560,7 +560,7 @@ git commit -m "fix(web): Top Positions config smoke-test adjustments"
 
 ## Notes for the implementer
 
-- Run all Python tooling with the `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv` prefix (the `.venv` is root-owned).
+- Run all Python tooling with the `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv` prefix (the `.venv` is root-owned).
 - The web container bakes files at build time — JS/HTML changes need the rebuild in Task 6 Step 3 to be visible in the browser.
 - `getPortfolios()` returns an array (see `pfm_core.js`); the broker-populate code handles both array and `{portfolios:[...]}` shapes defensively.
 - Keep the holdings endpoint a plain `def` — do not make it `async`.

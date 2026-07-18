@@ -19,10 +19,10 @@ per user message; the old static-context `generate()` path is kept unchanged.
 
 ## Global Constraints
 
-- Python target: 3.13. Run all tooling with `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run …`
+- Python target: 3.13. Run all tooling with `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run …`
 - Black line length 88. Pre-commit runs black + flake8 + autoflake on every commit.
 - Conventional commits (`feat:`, `fix:`, `test:`). Co-author: `Co-Authored-By: Oz <oz-agent@warp.dev>`
-- Unit tests: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v`
+- Unit tests: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v`
 - After any `portf_server/` or `portf_manager/` Python change: `docker exec portf_backend_dev kill -HUP 1`
 - No HTTP round-trips inside tool handlers — call DB methods and internal services directly.
 - `execute_tool()` must catch all exceptions and return `"Error: <message>"` — never raise.
@@ -121,7 +121,7 @@ def test_mock_with_tool_methods_is_tool_capable():
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_llm_tool_calling.py -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_llm_tool_calling.py -v
 ```
 
 Expected: `ImportError` or `AttributeError` — `ToolDefinition` not yet defined.
@@ -191,7 +191,7 @@ class ToolCapableLLMClient(LLMClient, Protocol):
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_llm_tool_calling.py -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_llm_tool_calling.py -v
 ```
 
 Expected: all 6 tests PASS.
@@ -315,7 +315,7 @@ class TestAnthropicToolCalling:
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_llm_tool_calling.py::TestAnthropicToolCalling -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_llm_tool_calling.py::TestAnthropicToolCalling -v
 ```
 
 Expected: `AttributeError: 'AnthropicLLMClient' object has no attribute 'generate_with_tools'`
@@ -436,7 +436,7 @@ In `portf_manager/llm_client.py`, add these two methods to `AnthropicLLMClient` 
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_llm_tool_calling.py::TestAnthropicToolCalling -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_llm_tool_calling.py::TestAnthropicToolCalling -v
 ```
 
 Expected: all 4 tests PASS.
@@ -559,7 +559,7 @@ class TestGeminiToolCalling:
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_llm_tool_calling.py::TestGeminiToolCalling -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_llm_tool_calling.py::TestGeminiToolCalling -v
 ```
 
 Expected: `AttributeError` — `generate_with_tools` not yet defined on `GeminiLLMClient`.
@@ -677,7 +677,7 @@ In `portf_manager/llm_client.py`, add these two methods to `GeminiLLMClient` aft
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_llm_tool_calling.py::TestGeminiToolCalling -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_llm_tool_calling.py::TestGeminiToolCalling -v
 ```
 
 Expected: all 4 tests PASS.
@@ -797,7 +797,7 @@ class TestOpenRouterToolCalling:
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_llm_tool_calling.py::TestOpenRouterToolCalling -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_llm_tool_calling.py::TestOpenRouterToolCalling -v
 ```
 
 Expected: `AttributeError` — `generate_with_tools` not yet on `OpenRouterLLMClient`.
@@ -895,7 +895,7 @@ In `portf_manager/llm_client.py`, add these two methods to `OpenRouterLLMClient`
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_llm_tool_calling.py::TestOpenRouterToolCalling -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_llm_tool_calling.py::TestOpenRouterToolCalling -v
 ```
 
 Expected: all 4 tests PASS.
@@ -1036,7 +1036,7 @@ class TestOllamaToolCalling:
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_llm_tool_calling.py::TestOllamaToolCalling -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_llm_tool_calling.py::TestOllamaToolCalling -v
 ```
 
 Expected: `AttributeError` — `generate_with_tools` not yet on `OllamaLLMClient`.
@@ -1196,7 +1196,7 @@ In `portf_manager/llm_client.py`, add these methods to `OllamaLLMClient` after `
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_llm_tool_calling.py::TestOllamaToolCalling -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_llm_tool_calling.py::TestOllamaToolCalling -v
 ```
 
 Expected: all 5 tests PASS.
@@ -1204,7 +1204,7 @@ Expected: all 5 tests PASS.
 - [ ] **Step 5: Run full unit suite to check no regressions**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v
 ```
 
 Expected: all tests pass (635+ passing).
@@ -1398,7 +1398,7 @@ def test_execute_tool_get_tax_estimate_returns_year(db):
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_chat_tools.py -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_chat_tools.py -v
 ```
 
 Expected: `ModuleNotFoundError: No module named 'portf_server.chat_tools'`
@@ -1981,7 +1981,7 @@ TOOLS: list[ToolDefinition] = [
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_chat_tools.py -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_chat_tools.py -v
 ```
 
 Expected: all 13 tests PASS.
@@ -1989,7 +1989,7 @@ Expected: all 13 tests PASS.
 - [ ] **Step 5: Run full unit suite to check no regressions**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v
 ```
 
 Expected: all tests pass.
@@ -2076,7 +2076,7 @@ class TestEnhancedChatEngineToolLoop:
 - [ ] **Step 2: Run test to verify it fails**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_llm_tool_calling.py::TestEnhancedChatEngineToolLoop -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_llm_tool_calling.py::TestEnhancedChatEngineToolLoop -v
 ```
 
 Expected: test fails — `_generate_with_tool_loop` not yet defined.
@@ -2208,7 +2208,7 @@ Update `_generate_enhanced_response` in `EnhancedChatEngine` — replace the exi
 - [ ] **Step 4: Run the integration test**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_llm_tool_calling.py::TestEnhancedChatEngineToolLoop -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_llm_tool_calling.py::TestEnhancedChatEngineToolLoop -v
 ```
 
 Expected: PASS.
@@ -2216,7 +2216,7 @@ Expected: PASS.
 - [ ] **Step 5: Run full unit suite**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v
 ```
 
 Expected: all tests pass.

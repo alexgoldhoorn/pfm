@@ -6,8 +6,8 @@
 # most recent N. Scheduled via cron (see docs/BACKUP.md in the pfm repo).
 set -euo pipefail
 
-DB="${PFM_DB:-/home/agoldhoorn/repos/pfm/portfolio.db}"
-DEST_DIR="${PFM_BACKUP_DIR:-/home/agoldhoorn/backups/pfm}"
+DB="${PFM_DB:-$HOME/repos/pfm/portfolio.db}"
+DEST_DIR="${PFM_BACKUP_DIR:-$HOME/backups/pfm}"
 KEEP="${PFM_BACKUP_KEEP:-30}"
 
 mkdir -p "$DEST_DIR"

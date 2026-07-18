@@ -10,10 +10,10 @@
 
 ## Global Constraints
 
-- Black formatting, line length 88. Run `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run black <file>` after editing Python.
+- Black formatting, line length 88. Run `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run black <file>` after editing Python.
 - All Python function signatures must have type hints.
-- Test runner: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_platform_export.py -v`
-- Full test suite (pre-push hook): `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e`
+- Test runner: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_platform_export.py -v`
+- Full test suite (pre-push hook): `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e`
 - Web deploy after any `web_client/` change: `docker compose build web && docker stop portf_web && docker compose up -d web`
 - Commit messages: conventional commits (`feat:`, `fix:`, `docs:`). Co-author: `Co-Authored-By: Oz <oz-agent@warp.dev>`
 - Do NOT modify `_TX_COLS` in `database.py` — use a dedicated query in `platform_export.py`.
@@ -347,7 +347,7 @@ def test_sws_positions_excludes_sold_out():
 - [ ] **Step 2: Run tests to confirm they fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_platform_export.py -v 2>&1 | head -20
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_platform_export.py -v 2>&1 | head -20
 ```
 
 Expected: `ModuleNotFoundError: No module named 'portf_manager.platform_export'`
@@ -525,7 +525,7 @@ def build_simply_wall_st_csv(
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_platform_export.py -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_platform_export.py -v
 ```
 
 Expected: all tests PASS.
@@ -533,8 +533,8 @@ Expected: all tests PASS.
 - [ ] **Step 5: Format and lint**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run black portf_manager/platform_export.py
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run flake8 portf_manager/platform_export.py --max-line-length=88 --extend-ignore=E203,W503,E501
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run black portf_manager/platform_export.py
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run flake8 portf_manager/platform_export.py --max-line-length=88 --extend-ignore=E203,W503,E501
 ```
 
 - [ ] **Step 6: Commit**
@@ -631,13 +631,13 @@ async def export_simply_wall_st(
 - [ ] **Step 2: Format**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run black portf_server/routers/exports.py
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run black portf_server/routers/exports.py
 ```
 
 - [ ] **Step 3: Verify the full test suite still passes**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
 ```
 
 Expected: all tests pass, no new failures.

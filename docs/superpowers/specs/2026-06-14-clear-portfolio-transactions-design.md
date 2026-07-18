@@ -43,7 +43,7 @@ Add to `.env.local` (with explanatory comments, no new code):
 ```bash
 # Database backup — ~/scripts/portf-backup.sh runs daily via cron at 03:00
 # Backups are gzip-compressed SQLite snapshots; the newest KEEP are retained.
-PFM_BACKUP_DIR=/home/agoldhoorn/backups/pfm
+PFM_BACKUP_DIR=~/backups/pfm
 PFM_BACKUP_KEEP=30
 ```
 

@@ -626,7 +626,7 @@ git commit -m "feat(web): sortable Brokers table"
 - [ ] **Step 1: JS tests + full backend suite (regression):**
 ```bash
 node --test web_client/js/tests/
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
 ```
 Expected: 14 JS pass; backend 435 passed, 6 skipped (unchanged — no backend edits this feature).
 

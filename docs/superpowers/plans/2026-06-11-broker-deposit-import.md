@@ -6,7 +6,7 @@
 
 **Architecture:** Each parser emits a `bookings` list of `{date, action, amount, currency}` dicts (the pattern `parse_myinvestor_csv` already uses); the import upload endpoint wraps them in `PreviewBooking(broker=...)` and the existing save path resolves broker→portfolio and dedups them.
 
-**Tech Stack:** Python 3.13, pytest. Run tooling with `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run ...` (root-owned .venv). Pre-commit runs black/flake8/autoflake on `git commit`; if a hook reformats and aborts, re-stage and re-commit.
+**Tech Stack:** Python 3.13, pytest. Run tooling with `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run ...` (root-owned .venv). Pre-commit runs black/flake8/autoflake on `git commit`; if a hook reformats and aborts, re-stage and re-commit.
 
 Spec: `docs/superpowers/specs/2026-06-11-broker-deposit-import-design.md`
 
@@ -62,7 +62,7 @@ def test_trade_still_imported_and_crypto_transfer_skipped():
 ```
 
 - [ ] **Step 2: Run to verify it FAILS:**
-`UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/test_coinbase_parser.py -v`
+`UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/test_coinbase_parser.py -v`
 Expected: FAIL — `CoinbaseParseResult` has no attribute `bookings` (and currently the Deposit/Withdrawal rows are skipped).
 
 - [ ] **Step 3: Add the `bookings` field + classification constants.** In `coinbase_csv_parser.py`:
@@ -165,7 +165,7 @@ Add `bookings = []` next to the existing `importable = []` / `skipped = []` init
 (`Optional` is already imported in this file.)
 
 - [ ] **Step 5: Run to verify it PASSES:**
-`UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/test_coinbase_parser.py -v`
+`UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/test_coinbase_parser.py -v`
 Expected: PASS (2 tests).
 
 - [ ] **Step 6: Commit:**
@@ -213,7 +213,7 @@ git commit -m "feat(coinbase): parse fiat deposit/withdrawal rows as bookings"
 ```
 
 - [ ] **Step 2: Run to verify it FAILS:**
-`UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest "tests/unit/test_imports_exports.py::TestImportUpload::test_upload_coinbase_deposit_booking" -v`
+`UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest "tests/unit/test_imports_exports.py::TestImportUpload::test_upload_coinbase_deposit_booking" -v`
 Expected: FAIL — `_parse_coinbase` discards bookings (`bookings = []` in the dispatch), so `data["bookings"]` is empty.
 
 - [ ] **Step 3: Make `_parse_coinbase` return bookings.** In `portf_server/routers/imports.py`, change the `_parse_coinbase` signature + body:
@@ -268,7 +268,7 @@ Change it to:
 ```
 
 - [ ] **Step 6: Run to verify PASS (both tests + full import suite):**
-`UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_imports_exports.py -v`
+`UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_imports_exports.py -v`
 Expected: PASS (all import tests, including the new one).
 
 - [ ] **Step 7: Commit:**
@@ -308,7 +308,7 @@ def test_deposits_and_withdrawals_become_bookings():
 ```
 
 - [ ] **Step 2: Run to verify it FAILS:**
-`UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/test_mintos_parser.py::test_deposits_and_withdrawals_become_bookings -v`
+`UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/test_mintos_parser.py::test_deposits_and_withdrawals_become_bookings -v`
 Expected: FAIL — `MintosParseResult` has no attribute `bookings`.
 
 - [ ] **Step 3: Add the `bookings` field.** In `mintos_csv_parser.py`, update the dataclass:
@@ -359,7 +359,7 @@ Replace that `else:` block with a deposit/withdrawal check first, then the ignor
 NOTE: the interest/withholding branches (`"retenci"`, `"interes"`) come first and are unchanged, so interest rows never reach this classification. The keyword set is the spec's documented assumption — confirm against a real Mintos statement; unmatched types still land in `ignored_summary` (fail-safe).
 
 - [ ] **Step 5: Run to verify PASS:**
-`UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/test_mintos_parser.py -v`
+`UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/test_mintos_parser.py -v`
 Expected: PASS (all Mintos tests, including the new one).
 
 - [ ] **Step 6: Commit:**
@@ -404,7 +404,7 @@ git commit -m "feat(mintos): parse deposit/withdrawal rows as bookings"
 ```
 
 - [ ] **Step 2: Run to verify it FAILS:**
-`UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest "tests/unit/test_imports_exports.py::TestImportUpload::test_upload_mintos_deposit_booking" -v`
+`UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest "tests/unit/test_imports_exports.py::TestImportUpload::test_upload_mintos_deposit_booking" -v`
 Expected: FAIL — `_parse_mintos` returns `[]` for bookings, so `data["bookings"]` is empty.
 
 - [ ] **Step 3: Make `_parse_mintos` return bookings.** In `portf_server/routers/imports.py`, the `_parse_mintos` function ends with:
@@ -418,7 +418,7 @@ Just before the return, build the bookings list, and return it:
 ```
 
 - [ ] **Step 4: Run to verify PASS:**
-`UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_imports_exports.py -v`
+`UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_imports_exports.py -v`
 Expected: PASS.
 
 - [ ] **Step 5: Commit:**
@@ -436,9 +436,9 @@ git commit -m "feat(import): wire Mintos deposit/withdrawal bookings through upl
 
 - [ ] **Step 1: Full backend suite + lint:**
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run black --check .
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run ruff check portf_manager portf_server
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run black --check .
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run ruff check portf_manager portf_server
 ```
 Expected: all pass — **435 passed** (430 prior + 5 new: 2 Coinbase parser, 1 Coinbase upload, 1 Mintos parser, 1 Mintos upload), 6 skipped; black + ruff clean.
 
@@ -464,7 +464,7 @@ git commit -m "docs: note Coinbase/Mintos deposit-import support in CLAUDE.md"
 ---
 
 ## Notes for the implementer
-- Run all Python tooling with the `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv` prefix.
+- Run all Python tooling with the `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv` prefix.
 - The booking `date` is just the calendar date (`Timestamp[:10]` for Coinbase, `Fecha[:10]` for Mintos) — bookings don't need a time component.
 - `PreviewBooking` fields: `broker, date, action, amount, currency, is_duplicate` (is_duplicate defaults). Parser dicts intentionally omit `broker`; the router adds it via `PreviewBooking(broker="...", **bk)`.
 - Do not aggregate Mintos deposits (kept individual per the spec).

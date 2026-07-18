@@ -141,7 +141,7 @@ class TestNewMetrics:
 - [ ] **Step 2: Run tests to confirm they fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_analytics.py::TestNewMetrics -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_analytics.py::TestNewMetrics -v
 ```
 
 Expected: `ImportError` or `FAILED` — functions not yet defined.
@@ -258,7 +258,7 @@ Also extend `period_start_date` to handle `3y` and `5y`. Find the function and a
 - [ ] **Step 4: Run tests and confirm they pass**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_analytics.py -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_analytics.py -v
 ```
 
 Expected: all 14 existing + 9 new = **23 passed**.
@@ -306,7 +306,7 @@ Add to the `TestAnalyticsRouter` class in `tests/unit/test_analytics.py`:
 - [ ] **Step 2: Run test to confirm it fails**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest "tests/unit/test_analytics.py::TestAnalyticsRouter::test_performance_has_cagr_fields" -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest "tests/unit/test_analytics.py::TestAnalyticsRouter::test_performance_has_cagr_fields" -v
 ```
 
 Expected: `FAILED` — `inception_date` not in response.
@@ -366,7 +366,7 @@ Then extend the `return` dict at the end of `get_performance()`:
 - [ ] **Step 5: Run test to confirm it passes**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_analytics.py -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_analytics.py -v
 ```
 
 Expected: all **24 passed**.
@@ -421,7 +421,7 @@ Add to `TestAnalyticsRouter` in `tests/unit/test_analytics.py`:
 - [ ] **Step 2: Run tests to confirm they fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest "tests/unit/test_analytics.py::TestAnalyticsRouter::test_risk_has_sortino_calmar_fields" "tests/unit/test_analytics.py::TestAnalyticsRouter::test_risk_accepts_benchmark_param" -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest "tests/unit/test_analytics.py::TestAnalyticsRouter::test_risk_has_sortino_calmar_fields" "tests/unit/test_analytics.py::TestAnalyticsRouter::test_risk_accepts_benchmark_param" -v
 ```
 
 Expected: `FAILED` — fields not in response.
@@ -582,7 +582,7 @@ def get_risk(
 - [ ] **Step 5: Run all analytics tests**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_analytics.py -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_analytics.py -v
 ```
 
 Expected: all **27 passed** (14 original + 9 from Task 1 + 2 from Task 2 + 2 new).
@@ -590,7 +590,7 @@ Expected: all **27 passed** (14 original + 9 from Task 1 + 2 from Task 2 + 2 new
 - [ ] **Step 6: Run full unit suite to confirm no regressions**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
 ```
 
 Expected: 580+ passed, 0 failed.
@@ -1035,7 +1035,7 @@ Analytics: CAGR, Annualized Gain, Inception Date on Performance tab; Sortino, Ca
 - [ ] **Step 3: Run full unit suite one final time**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
 ```
 
 Expected: 580+ passed, 0 failed.

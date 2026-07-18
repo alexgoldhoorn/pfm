@@ -427,7 +427,7 @@ Immediately after the new `</ul>`, add `<div class="tab-content">`. Then wrap ea
 - [ ] **Step 3: Run JS smoke test**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv make test-js
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv make test-js
 ```
 
 Expected: 20/20 pass. This catches malformed HTML that breaks the JS load.
@@ -552,7 +552,7 @@ function setupAnalyticsTabs() {
 - [ ] **Step 6: Run JS smoke test**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv make test-js
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv make test-js
 ```
 
 Expected: 20/20 pass.
@@ -873,7 +873,7 @@ In `index.html`, find the entire block from the tab bar through the end of the r
 - [ ] **Step 2: Run JS smoke test**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv make test-js
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv make test-js
 ```
 
 Expected: 20/20 pass.
@@ -960,7 +960,7 @@ Find the two functions and their call at the end of `setupImportExportPage` (≈
 - [ ] **Step 5: Run JS smoke test**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv make test-js
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv make test-js
 ```
 
 Expected: 20/20 pass.
