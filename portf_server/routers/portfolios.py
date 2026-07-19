@@ -5,7 +5,7 @@ Handles portfolio management and analysis.
 """
 
 import time
-from typing import Optional
+from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException, status, Depends, Request, Query
 from pydantic import BaseModel, Field
 import logging
@@ -74,6 +74,10 @@ class PortfolioCreate(BaseModel):
     entity_id: Optional[int] = Field(None, description="Linked entity/broker ID")
     description: Optional[str] = Field(None, description="Portfolio description")
     website: Optional[str] = Field(None, description="Broker website URL")
+    account_type: Literal["brokerage", "bank"] = Field(
+        "brokerage",
+        description="'brokerage' for investment accounts, 'bank' for checking/savings accounts",
+    )
 
 
 class PortfolioUpdate(BaseModel):
@@ -424,6 +428,7 @@ async def create_portfolio(
             base_currency=portfolio.base_currency,
             entity_id=portfolio.entity_id,
             description=portfolio.description,
+            account_type=portfolio.account_type,
         )
         return {
             "id": portfolio_id,
@@ -431,6 +436,7 @@ async def create_portfolio(
             "base_currency": portfolio.base_currency,
             "entity_id": portfolio.entity_id,
             "description": portfolio.description,
+            "account_type": portfolio.account_type,
         }
     except Exception as e:
         raise HTTPException(
