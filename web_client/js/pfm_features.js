@@ -4246,7 +4246,7 @@ function _wireSpendingImportModal() {
                     await window.apiClient.createSpendingRule(r._suggestedPattern, r.category);
                 }
                 const result = await window.apiClient.saveSpendingTransactions(
-                    preview_.account_portfolio_id, preview_.rows, 'skip'
+                    preview_.account_portfolio_id, preview_.rows, _spDupAction()
                 );
                 status.textContent = `Saved ${result.saved}, ${result.duplicates_skipped} duplicate(s) skipped, ${result.transfers_linked} transfer(s) linked.`;
                 preview.innerHTML = '';
@@ -4258,10 +4258,39 @@ function _wireSpendingImportModal() {
     }
 }
 
+// Shown above the spending import preview when some rows already exist in
+// the DB, mirroring the investment-import `_dupControl` pattern (pfm_core.js)
+// for consistency. The <select id="spDuplicateAction"> value is read by the
+// save handler via _spDupAction().
+function _spDupControl(rows) {
+    const dupCount = (rows || []).filter(r => r.is_duplicate).length;
+    if (dupCount === 0) return '';
+    return `
+        <div class="alert alert-warning py-2 small d-flex flex-wrap align-items-center gap-2 mb-2">
+            <span><i class="bi bi-exclamation-triangle me-1"></i><strong>${dupCount}</strong> row(s) already exist (marked <span class="badge bg-warning text-dark">dup</span> below).</span>
+            <label class="ms-auto mb-0 d-flex align-items-center">On duplicates:
+                <select id="spDuplicateAction" class="form-select form-select-sm d-inline-block w-auto ms-1">
+                    <option value="skip">Skip duplicates</option>
+                    <option value="add">Add anyway</option>
+                    <option value="overwrite">Overwrite existing</option>
+                </select>
+            </label>
+        </div>`;
+}
+
+// Reads the current duplicate_action choice from the import modal. Defaults
+// to 'skip' (safe default, matching prior hard-coded behavior) when the
+// control isn't rendered — i.e. no duplicates were found in the preview.
+function _spDupAction() {
+    const el = document.getElementById('spDuplicateAction');
+    return el ? el.value : 'skip';
+}
+
 function _renderSpImportPreview(result) {
     const preview = document.getElementById('spImportPreview');
     if (!preview) return;
     preview.innerHTML = `
+        ${_spDupControl(result.rows)}
         <div class="table-responsive" style="max-height:300px;">
             <table class="table table-sm">
                 <thead><tr><th>Date</th><th>Description</th><th>Amount</th><th>Category</th></tr></thead>

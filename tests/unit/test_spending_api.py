@@ -247,6 +247,83 @@ def test_transfer_to_brokerage_booking(tmp_path):
     assert row["transfer_link_type"] == "booking"
 
 
+def test_booking_not_reused_across_separate_save_calls(tmp_path):
+    """Regression test: a Deposit booking already claimed as a transfer
+    counterpart in one /save call must not be claimed again by an unrelated
+    outflow in a later /save call.
+
+    Two different bank accounts each send a -1000 EUR outflow within the
+    +/-3 day match window of a single brokerage Deposit booking. Only the
+    first outflow (bank outflow A) may legitimately link to that booking —
+    the second (bank outflow B, from a different account, a genuinely
+    separate expense) must stay unlinked rather than wrongly reusing it.
+    """
+    client, db = _make_client(tmp_path)
+    pid_bank_a = db.create_portfolio("Bank A", account_type="bank")
+    pid_bank_b = db.create_portfolio("Bank B", account_type="bank")
+    pid_broker = db.create_portfolio("Example Broker", account_type="brokerage")
+    booking_id = db.create_booking(
+        date="2026-01-10",
+        action="Deposit",
+        amount=1000.0,
+        currency="EUR",
+        portfolio_id=pid_broker,
+    )
+
+    r1 = client.post(
+        "/api/v1/spending/save",
+        json={
+            "account_portfolio_id": pid_bank_a,
+            "rows": [
+                {
+                    "date": "2026-01-10",
+                    "description": "TRANSFERENCIA A BROKER",
+                    "amount": -1000.0,
+                    "currency": "EUR",
+                    "category": "uncategorized",
+                },
+            ],
+        },
+        headers=HEADERS,
+    )
+    assert r1.json()["transfers_linked"] == 1
+
+    r2 = client.post(
+        "/api/v1/spending/save",
+        json={
+            "account_portfolio_id": pid_bank_b,
+            "rows": [
+                {
+                    "date": "2026-01-12",
+                    "description": "UNRELATED EXPENSE",
+                    "amount": -1000.0,
+                    "currency": "EUR",
+                    "category": "uncategorized",
+                },
+            ],
+        },
+        headers=HEADERS,
+    )
+    # The second, unrelated outflow must NOT wrongly claim the
+    # already-linked booking.
+    assert r2.json()["transfers_linked"] == 0
+
+    rows = client.get("/api/v1/spending/", headers=HEADERS).json()
+    linked_to_booking = [
+        row
+        for row in rows
+        if row["transfer_link_type"] == "booking"
+        and row["transfer_link_id"] == booking_id
+    ]
+    # Only bank outflow A should be linked to the booking.
+    assert len(linked_to_booking) == 1
+    assert linked_to_booking[0]["description"] == "TRANSFERENCIA A BROKER"
+
+    unrelated = next(row for row in rows if row["description"] == "UNRELATED EXPENSE")
+    assert unrelated["is_transfer"] is False
+    assert unrelated["category"] == "uncategorized"
+
+
 def test_rules_crud(tmp_path):
     client, _ = _make_client(tmp_path)
     r = client.post(
