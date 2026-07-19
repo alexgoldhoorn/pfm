@@ -1096,6 +1096,23 @@ const KNOWN_BROKERS_HINTS = {
     'xtb':                   { website: 'https://www.xtb.com',                    description: 'European online broker (stocks, ETFs, CFDs).' },
 };
 
+// Reflects the selected/edited account type (brokerage vs bank) onto the
+// Add/Edit Broker modal's title and "Broker website" field — bank accounts
+// have no "known broker" auto-fill concept, so the website field is hidden
+// and the copy switches from "Broker" to the more generic "Account".
+function _updatePortfolioModalForType(accountType) {
+    const isBank   = accountType === 'bank';
+    const isEdit   = !!document.getElementById('portfolioEditId').value;
+    const titleEl  = document.getElementById('portfolioModalTitle');
+    const siteGroup = document.getElementById('portfolioWebsiteGroup');
+    if (titleEl) {
+        titleEl.textContent = isBank
+            ? (isEdit ? 'Edit Account' : 'Add Account')
+            : (isEdit ? 'Edit Broker' : 'Add Broker');
+    }
+    if (siteGroup) siteGroup.style.display = isBank ? 'none' : '';
+}
+
 function setupPortfoliosPage() {
     const addBtn = document.getElementById('addPortfolioBtn');
     const form   = document.getElementById('portfolioForm');
@@ -1118,8 +1135,12 @@ function setupPortfoliosPage() {
         if (site && !site.value) site.value = hint.website;
     });
 
+    const typeSelEl = document.getElementById('portfolioAccountType');
+    typeSelEl && typeSelEl.addEventListener('change', () => {
+        _updatePortfolioModalForType(typeSelEl.value);
+    });
+
     addBtn.addEventListener('click', () => {
-        document.getElementById('portfolioModalTitle').textContent = 'Add Broker';
         document.getElementById('portfolioEditId').value = '';
         document.getElementById('portfolioName').value = '';
         document.getElementById('portfolioCurrency').value = 'EUR';
@@ -1129,6 +1150,7 @@ function setupPortfoliosPage() {
         if (typeSel) { typeSel.value = 'brokerage'; typeSel.disabled = false; }
         const typeHint = document.getElementById('portfolioAccountTypeHint');
         if (typeHint) typeHint.textContent = '';
+        _updatePortfolioModalForType('brokerage');
         bsModal.show();
     });
 
@@ -1175,17 +1197,18 @@ window.setAssetPrice = async function(id, symbol, currency) {
     }
 };
 
-window.editPortfolio = function(id, name, currency, description, website) {
-    document.getElementById('portfolioModalTitle').textContent = 'Edit Broker';
+window.editPortfolio = function(id, name, currency, description, website, accountType) {
     document.getElementById('portfolioEditId').value           = id;
     document.getElementById('portfolioName').value             = name;
     document.getElementById('portfolioCurrency').value         = currency;
     document.getElementById('portfolioDescription').value      = description === 'null' ? '' : (description || '');
     document.getElementById('portfolioWebsite').value          = website === 'null' ? '' : (website || '');
+    const resolvedType = (accountType === 'null' || !accountType) ? 'brokerage' : accountType;
     const typeSel = document.getElementById('portfolioAccountType');
-    if (typeSel) typeSel.disabled = true;
+    if (typeSel) { typeSel.value = resolvedType; typeSel.disabled = true; }
     const typeHint = document.getElementById('portfolioAccountTypeHint');
     if (typeHint) typeHint.textContent = "Account type can't be changed after creation.";
+    _updatePortfolioModalForType(resolvedType);
     bootstrap.Modal.getOrCreateInstance(document.getElementById('portfolioModal')).show();
 };
 
