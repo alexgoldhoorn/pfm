@@ -459,3 +459,50 @@ test("mergeActionItems: sorts by severity high -> medium -> low", () => {
     const merged = mergeActionItems(backend, { checklist: [], attention: [] }, []);
     assert.deepEqual(merged.map(i => i.id), ["high1", "med1", "low1"]);
 });
+
+test("filterSpendingRows: no filters returns all rows", () => {
+    const { filterSpendingRows } = loadAppIntoContext();
+    const rows = [
+        { portfolio_id: 1, category: "Groceries", date: "2026-01-05" },
+        { portfolio_id: 2, category: "Dining", date: "2026-01-06" },
+    ];
+    assert.equal(filterSpendingRows(rows, {}).length, 2);
+});
+
+test("filterSpendingRows: filters by account and category", () => {
+    const { filterSpendingRows } = loadAppIntoContext();
+    const rows = [
+        { portfolio_id: 1, category: "Groceries", date: "2026-01-05" },
+        { portfolio_id: 2, category: "Dining", date: "2026-01-06" },
+    ];
+    const result = filterSpendingRows(rows, { accountId: "1" });
+    assert.equal(result.length, 1);
+    assert.equal(result[0].category, "Groceries");
+
+    const result2 = filterSpendingRows(rows, { category: "Dining" });
+    assert.equal(result2.length, 1);
+    assert.equal(result2[0].portfolio_id, 2);
+});
+
+test("filterSpendingRows: filters by date range", () => {
+    const { filterSpendingRows } = loadAppIntoContext();
+    const rows = [
+        { portfolio_id: 1, category: "Groceries", date: "2026-01-05" },
+        { portfolio_id: 1, category: "Groceries", date: "2026-02-05" },
+    ];
+    const result = filterSpendingRows(rows, { fromDate: "2026-02-01" });
+    assert.equal(result.length, 1);
+    assert.equal(result[0].date, "2026-02-05");
+
+    const result2 = filterSpendingRows(rows, { toDate: "2026-01-31" });
+    assert.equal(result2.length, 1);
+    assert.equal(result2[0].date, "2026-01-05");
+});
+
+test("filterSpendingRows: does not mutate input", () => {
+    const { filterSpendingRows } = loadAppIntoContext();
+    const rows = [{ portfolio_id: 1, category: "Groceries", date: "2026-01-05" }];
+    const copy = JSON.parse(JSON.stringify(rows));
+    filterSpendingRows(rows, { accountId: "1" });
+    assert.deepEqual(rows, copy);
+});
