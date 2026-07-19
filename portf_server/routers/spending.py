@@ -342,10 +342,30 @@ async def update_spending_category(
     db=Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
-    """Edit a spending row's category (inline edit from the UI table)."""
-    if not db.get_spending_transaction(spending_id):
+    """Edit a spending row's category (inline edit from the UI table).
+
+    Recategorizing a row away from "Transfer" also clears its transfer flag
+    and link fields — otherwise the row would keep showing the "Transfer"
+    badge and stay excluded from spent_eur/income_eur even though the user
+    just said it isn't a transfer. Only this row is reset; its counterpart
+    (the other leg of the pair, if any) is left untouched — a known,
+    accepted limitation for this pass.
+
+    Recategorizing TO "Transfer" does not itself set is_transfer=True — that
+    flag is only meant to reflect a genuine match made by the transfer
+    matcher, not a manual category edit.
+    """
+    existing = db.get_spending_transaction(spending_id)
+    if not existing:
         raise HTTPException(status_code=404, detail="Spending transaction not found")
-    db.update_spending_transaction(spending_id, category=body.category)
+
+    update_kwargs = {"category": body.category}
+    if body.category != "Transfer" and existing.get("is_transfer"):
+        update_kwargs["is_transfer"] = False
+        update_kwargs["transfer_link_type"] = None
+        update_kwargs["transfer_link_id"] = None
+
+    db.update_spending_transaction(spending_id, **update_kwargs)
     return {"id": spending_id, "category": body.category}
 
 
