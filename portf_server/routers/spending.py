@@ -1,0 +1,422 @@
+"""
+Spending Router for Portfolio Management API
+
+Bank-statement transaction import, rule-based categorization, and
+inter-account transfer detection. Kept separate from the investment import
+router (imports.py) — spending rows have no asset/quantity/price and use
+different dedup + transfer semantics.
+"""
+
+import logging
+from typing import List, Literal, Optional
+
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    status,
+)
+from pydantic import BaseModel
+
+from portf_manager.parsers.generic_bank_csv_parser import parse_generic_bank_csv
+from portf_manager.services.transfer_matcher import find_all_transfer_matches
+
+from ..dependencies import get_database
+from ..auth_middleware import APIKeyManager, require_api_key
+from ..dependencies import get_api_key_manager
+
+router = APIRouter()
+logger = logging.getLogger(__name__)
+
+
+async def _auth(
+    request: Request, api_key_manager: APIKeyManager = Depends(get_api_key_manager)
+) -> dict:
+    return await require_api_key(api_key_manager)(request)
+
+
+def _fx(currency: str) -> float:
+    """EUR conversion rate — delegates to the portfolios router helper.
+
+    Lazy import to avoid a circular import (portfolios.py doesn't import
+    this module), matching the pattern already used in portfolio_advisor.py.
+    """
+    from portf_server.routers.portfolios import _get_fx_rate
+
+    return _get_fx_rate(currency)
+
+
+class PreviewSpendingRow(BaseModel):
+    date: str
+    description: str
+    amount: float
+    currency: str = "EUR"
+    category: str = "uncategorized"
+    is_duplicate: bool = False
+
+
+class SpendingUploadResponse(BaseModel):
+    account_portfolio_id: int
+    rows: List[PreviewSpendingRow]
+    skipped_count: int
+    skipped: List[dict]
+    duplicate_count: int
+
+
+class SpendingSaveRequest(BaseModel):
+    account_portfolio_id: int
+    rows: List[PreviewSpendingRow]
+    duplicate_action: Literal["skip", "add", "overwrite"] = "skip"
+
+
+class SpendingSaveResponse(BaseModel):
+    saved: int
+    duplicates_skipped: int
+    overwritten: int
+    transfers_linked: int
+    errors: List[str]
+
+
+class SpendingTransactionResponse(BaseModel):
+    id: int
+    portfolio_id: int
+    portfolio_name: Optional[str] = None
+    date: str
+    description: str
+    amount: float
+    currency: str
+    category: str
+    is_transfer: bool
+    transfer_link_type: Optional[str] = None
+    transfer_link_id: Optional[int] = None
+    source: Optional[str] = None
+
+
+class CategoryUpdateBody(BaseModel):
+    category: str
+
+
+class SpendingRuleBody(BaseModel):
+    pattern: str
+    category: str
+
+
+class SpendingRuleResponse(BaseModel):
+    id: int
+    pattern: str
+    category: str
+
+
+class SpendingSummaryResponse(BaseModel):
+    spent_eur: float
+    income_eur: float
+    transferred_eur: float
+    by_category_eur: dict
+
+
+def _apply_rules(description: str, rules: List[dict]) -> str:
+    """First-match-wins, case-insensitive substring match.
+
+    Rules are already ordered by id (oldest = highest priority) by
+    db.list_spending_rules().
+    """
+    desc_lower = description.lower()
+    for rule in rules:
+        if rule["pattern"].lower() in desc_lower:
+            return rule["category"]
+    return "uncategorized"
+
+
+def _resolve_account(
+    db, account_portfolio_id: Optional[int], account_name: Optional[str]
+) -> int:
+    if account_portfolio_id:
+        return account_portfolio_id
+    if account_name:
+        return db.get_or_create_portfolio(
+            account_name, base_currency="EUR", account_type="bank"
+        )
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Provide either account_portfolio_id or account_name",
+    )
+
+
+@router.post("/upload", response_model=SpendingUploadResponse)
+async def upload_bank_statement(
+    file: UploadFile = File(..., description="Bank statement CSV"),
+    account_portfolio_id: Optional[int] = Form(None),
+    account_name: Optional[str] = Form(None),
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Parse a bank statement CSV and return a rule-categorized preview. No DB write."""
+    portfolio_id = _resolve_account(db, account_portfolio_id, account_name)
+
+    file_bytes = await file.read()
+    try:
+        content = file_bytes.decode("utf-8-sig")
+        result = parse_generic_bank_csv(content)
+    except Exception as e:
+        logger.exception("Error parsing bank statement")
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Failed to parse file: {str(e)}",
+        )
+
+    rules = db.list_spending_rules()
+    dup_count = 0
+    rows: List[PreviewSpendingRow] = []
+    for r in result.rows:
+        category = _apply_rules(r.description, rules)
+        is_dup = (
+            db.find_duplicate_spending_transaction(
+                portfolio_id=portfolio_id,
+                date=r.date,
+                amount=r.amount,
+                description=r.description,
+            )
+            is not None
+        )
+        if is_dup:
+            dup_count += 1
+        rows.append(
+            PreviewSpendingRow(
+                date=r.date,
+                description=r.description,
+                amount=r.amount,
+                currency=r.currency,
+                category=category,
+                is_duplicate=is_dup,
+            )
+        )
+
+    skipped = [{"row": row, "reason": reason} for row, reason in result.skipped]
+    return SpendingUploadResponse(
+        account_portfolio_id=portfolio_id,
+        rows=rows,
+        skipped_count=len(skipped),
+        skipped=skipped,
+        duplicate_count=dup_count,
+    )
+
+
+def _run_transfer_matching(db, saved_ids: List[int]) -> int:
+    """Run transfer auto-linking over the given spending row ids. Returns count linked."""
+    if not saved_ids:
+        return 0
+    unlinked = db.list_unlinked_spending_transactions()
+    rows = [r for r in unlinked if r["id"] in saved_ids]
+    if not rows:
+        return 0
+    deposit_bookings = [
+        b for b in db.get_all_bookings() if b.get("action") == "Deposit"
+    ]
+    matches = find_all_transfer_matches(rows, unlinked, deposit_bookings)
+    for m in matches:
+        db.update_spending_transaction(
+            m.spending_id,
+            category="Transfer",
+            is_transfer=True,
+            transfer_link_type=m.link_type,
+            transfer_link_id=m.link_id,
+        )
+        if m.link_type == "spending":
+            db.update_spending_transaction(
+                m.link_id,
+                category="Transfer",
+                is_transfer=True,
+                transfer_link_type="spending",
+                transfer_link_id=m.spending_id,
+            )
+    return len(matches)
+
+
+@router.post("/save", response_model=SpendingSaveResponse)
+async def save_spending_transactions(
+    body: SpendingSaveRequest,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Save previewed spending rows, honoring duplicate_action, then auto-link transfers."""
+    saved = 0
+    duplicates_skipped = 0
+    overwritten = 0
+    errors: List[str] = []
+    saved_ids: List[int] = []
+
+    for row in body.rows:
+        try:
+            existing = db.find_duplicate_spending_transaction(
+                portfolio_id=body.account_portfolio_id,
+                date=row.date,
+                amount=row.amount,
+                description=row.description,
+            )
+            if existing:
+                if body.duplicate_action == "skip":
+                    duplicates_skipped += 1
+                    continue
+                if body.duplicate_action == "overwrite":
+                    db.update_spending_transaction(
+                        existing["id"], category=row.category
+                    )
+                    overwritten += 1
+                    saved_ids.append(existing["id"])
+                    continue
+                # "add": fall through and insert a second copy
+
+            new_id = db.create_spending_transaction(
+                portfolio_id=body.account_portfolio_id,
+                date=row.date,
+                description=row.description,
+                amount=row.amount,
+                currency=row.currency,
+                category=row.category,
+                source="generic",
+            )
+            saved += 1
+            saved_ids.append(new_id)
+        except Exception as e:
+            errors.append(f"{row.date} {row.description}: {str(e)}")
+            logger.warning(f"Failed to save spending row: {e}")
+
+    transfers_linked = _run_transfer_matching(db, saved_ids)
+
+    return SpendingSaveResponse(
+        saved=saved,
+        duplicates_skipped=duplicates_skipped,
+        overwritten=overwritten,
+        transfers_linked=transfers_linked,
+        errors=errors,
+    )
+
+
+@router.get("/", response_model=List[SpendingTransactionResponse])
+async def list_spending(
+    portfolio_id: Optional[int] = None,
+    category: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    is_transfer: Optional[bool] = None,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """List spending transactions with optional filters."""
+    rows = db.list_spending_transactions(
+        portfolio_id=portfolio_id,
+        category=category,
+        start_date=start_date,
+        end_date=end_date,
+        is_transfer=is_transfer,
+    )
+    return [
+        SpendingTransactionResponse(**{**r, "is_transfer": bool(r["is_transfer"])})
+        for r in rows
+    ]
+
+
+@router.put("/{spending_id}", response_model=dict)
+async def update_spending_category(
+    spending_id: int,
+    body: CategoryUpdateBody,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Edit a spending row's category (inline edit from the UI table)."""
+    if not db.get_spending_transaction(spending_id):
+        raise HTTPException(status_code=404, detail="Spending transaction not found")
+    db.update_spending_transaction(spending_id, category=body.category)
+    return {"id": spending_id, "category": body.category}
+
+
+@router.post("/rescan-transfers", response_model=dict)
+async def rescan_transfers(
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Re-run transfer matching over all currently-unlinked spending rows.
+
+    Covers the case where a matching leg is imported later, from a different
+    account's statement.
+    """
+    unlinked = db.list_unlinked_spending_transactions()
+    ids = [r["id"] for r in unlinked]
+    linked = _run_transfer_matching(db, ids)
+    return {"transfers_linked": linked}
+
+
+@router.get("/rules", response_model=List[SpendingRuleResponse])
+async def list_rules(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+    """List all spending category rules."""
+    return [SpendingRuleResponse(**r) for r in db.list_spending_rules()]
+
+
+@router.post("/rules", response_model=SpendingRuleResponse, status_code=201)
+async def create_rule(
+    body: SpendingRuleBody,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Create a spending category rule."""
+    rule_id = db.create_spending_rule(pattern=body.pattern, category=body.category)
+    return SpendingRuleResponse(
+        id=rule_id, pattern=body.pattern, category=body.category
+    )
+
+
+@router.delete("/rules/{rule_id}", response_model=dict)
+async def delete_rule(
+    rule_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+):
+    """Delete a spending category rule."""
+    if not db.delete_spending_rule(rule_id):
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return {"deleted": True, "id": rule_id}
+
+
+@router.get("/summary", response_model=SpendingSummaryResponse)
+def get_spending_summary(
+    days: int = 30,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Aggregate spending/income/transfers across all bank accounts for the
+    last N days, converted to EUR. Powers the Spending page summary cards and
+    the Net Worth page's read-only comparison widget.
+
+    Plain ``def`` — the blocking FX lookups in ``_fx`` run in the threadpool.
+    """
+    from datetime import date, timedelta
+
+    start_date = (date.today() - timedelta(days=days)).isoformat()
+    rows = db.list_spending_transactions(start_date=start_date)
+
+    spent_eur = 0.0
+    income_eur = 0.0
+    transferred_eur = 0.0
+    by_category_eur: dict = {}
+
+    for r in rows:
+        amt_eur = float(r["amount"]) * _fx(r.get("currency", "EUR"))
+        if r["is_transfer"]:
+            transferred_eur += abs(amt_eur)
+            continue
+        if amt_eur < 0:
+            spent_eur += abs(amt_eur)
+            by_category_eur[r["category"]] = by_category_eur.get(
+                r["category"], 0.0
+            ) + abs(amt_eur)
+        else:
+            income_eur += amt_eur
+
+    return SpendingSummaryResponse(
+        spent_eur=round(spent_eur, 2),
+        income_eur=round(income_eur, 2),
+        transferred_eur=round(transferred_eur, 2),
+        by_category_eur={k: round(v, 2) for k, v in by_category_eur.items()},
+    )
