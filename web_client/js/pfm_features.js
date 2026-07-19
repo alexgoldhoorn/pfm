@@ -404,7 +404,7 @@ function createNavigationManager() {
     return {
         currentPage: 'dashboard',
         showPage: function(pageName) {
-            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage', 'helpPage', 'versionPage', 'aboutPage', 'resourcesPage', 'networthPage', 'diagnosticsPage', 'actionitemsPage'];
+            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage', 'helpPage', 'versionPage', 'aboutPage', 'resourcesPage', 'networthPage', 'diagnosticsPage', 'actionitemsPage', 'spendingPage'];
             pages.forEach(pageId => {
                 const page = document.getElementById(pageId);
                 if (page) page.style.display = 'none';
@@ -437,7 +437,7 @@ function createNavigationManager() {
                 forecast: 'Wealth Simulator', help: 'Help & Guide',
                 version: "What's New", about: 'About', resources: 'Resources',
                 networth: 'Net Worth', diagnostics: 'Diagnostics',
-                actionitems: 'Action Items',
+                actionitems: 'Action Items', spending: 'Spending',
             };
             const titleEl = document.getElementById('mobilePageTitle');
             if (titleEl) titleEl.textContent = PAGE_TITLES[pageName] || pageName;
@@ -465,6 +465,7 @@ function createNavigationManager() {
                 case 'networth':     if (window.loadNetworthPage) window.loadNetworthPage(); break;
                 case 'diagnostics':  if (window.loadDiagnosticsPage) window.loadDiagnosticsPage(); break;
                 case 'actionitems':  if (window.loadActionItemsPage) window.loadActionItemsPage(); break;
+                case 'spending':     if (window.loadSpendingPage) window.loadSpendingPage(); break;
             }
         },
 
@@ -3991,3 +3992,305 @@ document.addEventListener('DOMContentLoaded', function() {
         window.authManager.showLoginModal();
     }
 });
+
+// ---------------------------------------------------------------------------
+// Spending Page
+// ---------------------------------------------------------------------------
+
+function filterSpendingRows(rows, filters) {
+    const { accountId, category, fromDate, toDate } = filters || {};
+    return (rows || []).filter(r =>
+        (!accountId || String(r.portfolio_id) === String(accountId)) &&
+        (!category || r.category === category) &&
+        (!fromDate || r.date >= fromDate) &&
+        (!toDate || r.date <= toDate)
+    );
+}
+window.filterSpendingRows = filterSpendingRows;
+
+async function loadSpendingPage() {
+    _wireSpendingRuleForm();
+    _wireSpendingImportModal();
+    const rescanBtn = document.getElementById('spRescanTransfers');
+    if (rescanBtn && !rescanBtn.dataset.wired) {
+        rescanBtn.dataset.wired = '1';
+        rescanBtn.addEventListener('click', async () => {
+            rescanBtn.disabled = true;
+            try {
+                await window.apiClient.rescanTransfers();
+                await _refreshSpendingData();
+            } catch (err) { alert('Error: ' + err.message); }
+            rescanBtn.disabled = false;
+        });
+    }
+    ['spAccountFilter', 'spCategoryFilter', 'spFromDate', 'spToDate'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el && !el.dataset.wired) {
+            el.dataset.wired = '1';
+            el.addEventListener('change', () => _renderSpendingTable());
+        }
+    });
+    await _refreshSpendingData();
+}
+window.loadSpendingPage = loadSpendingPage;
+
+async function _refreshSpendingData() {
+    try {
+        const [summary, portfolios, txs, rules] = await Promise.all([
+            window.apiClient.getSpendingSummary(30),
+            window.apiClient.getPortfolios(),
+            window.apiClient.getSpendingTransactions(),
+            window.apiClient.getSpendingRules(),
+        ]);
+        const eur = v => Fmt.amt('€' + Fmt.num(v, 0, 0));
+        const el = id => document.getElementById(id);
+        if (el('spSpent')) el('spSpent').innerHTML = eur(summary.spent_eur);
+        if (el('spIncome')) el('spIncome').innerHTML = eur(summary.income_eur);
+        if (el('spTransferred')) el('spTransferred').innerHTML = eur(summary.transferred_eur);
+
+        window._spendingAllRows = txs;
+        const bankAccounts = (portfolios || []).filter(p => p.account_type === 'bank');
+        _populateSpendingAccountFilters(bankAccounts);
+        _renderSpendingCategoryChart(summary.by_category_eur || {});
+        _renderSpendingTable();
+        _renderSpendingRules(rules);
+    } catch (err) {
+        const body = document.getElementById('spTxBody');
+        if (body) body.innerHTML = `<tr><td colspan="6" class="text-center text-danger py-3">${esc(err.message)}</td></tr>`;
+    }
+}
+
+function _populateSpendingAccountFilters(bankAccounts) {
+    const filterSel = document.getElementById('spAccountFilter');
+    const importSel = document.getElementById('spImportAccountSelect');
+    const opts = bankAccounts.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+    if (filterSel) filterSel.innerHTML = '<option value="">All accounts</option>' + opts;
+    if (importSel) importSel.innerHTML = '<option value="">— New account —</option>' + opts;
+}
+
+function _renderSpendingCategoryChart(byCategoryEur) {
+    const wrap = document.getElementById('spCategoryChart');
+    if (!wrap) return;
+    const entries = Object.entries(byCategoryEur).sort((a, b) => b[1] - a[1]);
+    if (!entries.length) {
+        wrap.innerHTML = '<div class="text-muted small">No categorized spending yet.</div>';
+        return;
+    }
+    const max = Math.max(...entries.map(e => e[1]));
+    wrap.innerHTML = entries.map(([cat, amt]) => `
+        <div class="d-flex align-items-center mb-1">
+            <div class="small text-muted" style="width:140px;">${esc(cat)}</div>
+            <div class="flex-grow-1 bg-light rounded" style="height:18px;">
+                <div class="bg-danger rounded" style="height:18px;width:${Math.max(2, amt / max * 100)}%;"></div>
+            </div>
+            <div class="small ms-2" style="width:80px;text-align:right;">€${Fmt.num(amt, 0, 0)}</div>
+        </div>`).join('');
+}
+
+function _renderSpendingTable() {
+    const rows = window._spendingAllRows || [];
+    const filtered = filterSpendingRows(rows, {
+        accountId: document.getElementById('spAccountFilter')?.value,
+        category: document.getElementById('spCategoryFilter')?.value,
+        fromDate: document.getElementById('spFromDate')?.value,
+        toDate: document.getElementById('spToDate')?.value,
+    });
+
+    const catSel = document.getElementById('spCategoryFilter');
+    if (catSel && !catSel.dataset.populated) {
+        catSel.dataset.populated = '1';
+        const cats = [...new Set(rows.map(r => r.category))].sort();
+        catSel.innerHTML = '<option value="">All categories</option>' +
+            cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+    }
+
+    window._spTable = window._spTable || makeSortableTable({
+        table: document.querySelector('#spendingPage table'),
+        columns: [
+            { key: 'date', type: 'date' }, { key: 'portfolio_name', type: 'text' },
+            { key: 'description', type: 'text' }, { key: 'category', type: 'text' },
+            { key: 'amount', type: 'num' }, { key: null },
+        ],
+        getRows: () => window._spFilteredRows || [],
+        renderRows: (sorted, tbody) => {
+            const categories = [...new Set(['uncategorized', 'Transfer', ...rows.map(r => r.category)])];
+            tbody.innerHTML = sorted.length ? sorted.map(r => `
+                <tr>
+                    <td class="ps-3">${Fmt.date(r.date)}</td>
+                    <td>${esc(r.portfolio_name || '')}</td>
+                    <td>${esc(r.description)}</td>
+                    <td>
+                        <select class="form-select form-select-sm d-inline-block" style="width:auto;" onchange="window.updateSpendingRowCategory(${r.id}, this.value)">
+                            ${categories.map(c => `<option value="${esc(c)}" ${c === r.category ? 'selected' : ''}>${esc(c)}</option>`).join('')}
+                        </select>
+                        ${r.is_transfer ? '<span class="badge bg-info ms-1">Transfer</span>' : ''}
+                    </td>
+                    <td class="text-end ${r.amount < 0 ? 'text-danger' : 'text-success'}">${Fmt.num(r.amount, 2, 2)} ${r.currency || ''}</td>
+                    <td class="pe-3"></td>
+                </tr>`).join('') : '<tr><td colspan="6" class="text-center text-muted py-3">No transactions match the current filters.</td></tr>';
+        },
+        prefsKey: 'spending',
+    });
+    window._spFilteredRows = filtered;
+    window._spTable.refresh();
+}
+
+window.updateSpendingRowCategory = async function (id, category) {
+    try {
+        await window.apiClient.updateSpendingCategory(id, category);
+        const row = (window._spendingAllRows || []).find(r => r.id === id);
+        if (row) row.category = category;
+    } catch (err) { alert('Error: ' + err.message); }
+};
+
+function _renderSpendingRules(rules) {
+    const body = document.getElementById('spRulesBody');
+    if (!body) return;
+    body.innerHTML = rules.length ? rules.map(r => `
+        <tr>
+            <td class="ps-3">${esc(r.pattern)}</td>
+            <td>${esc(r.category)}</td>
+            <td class="pe-3 text-end"><button class="btn btn-sm btn-outline-danger" onclick="window.deleteSpendingRule(${r.id})"><i class="bi bi-trash"></i></button></td>
+        </tr>`).join('') : '<tr><td colspan="3" class="text-center text-muted py-2">No rules yet.</td></tr>';
+}
+
+window.deleteSpendingRule = async function (id) {
+    if (!confirm('Delete this rule?')) return;
+    try {
+        await window.apiClient.deleteSpendingRule(id);
+        await _refreshSpendingData();
+    } catch (err) { alert('Error: ' + err.message); }
+};
+
+function _wireSpendingRuleForm() {
+    const form = document.getElementById('spRuleAddForm');
+    if (form && !form.dataset.wired) {
+        form.dataset.wired = '1';
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const pattern = document.getElementById('spRulePattern').value.trim();
+            const category = document.getElementById('spRuleCategory').value.trim();
+            if (!pattern || !category) return;
+            try {
+                await window.apiClient.createSpendingRule(pattern, category);
+                form.reset();
+                await _refreshSpendingData();
+            } catch (err) { alert('Error: ' + err.message); }
+        });
+    }
+}
+
+function _wireSpendingImportModal() {
+    const parseBtn = document.getElementById('spParseBtn');
+    const suggestBtn = document.getElementById('spSuggestBtn');
+    const saveBtn = document.getElementById('spSaveBtn');
+    const preview = document.getElementById('spImportPreview');
+    const status = document.getElementById('spImportStatus');
+    const templateLink = document.getElementById('spDownloadTemplate');
+    if (templateLink && !templateLink.dataset.wired) {
+        templateLink.dataset.wired = '1';
+        templateLink.addEventListener('click', (e) => { e.preventDefault(); downloadGenericBankTemplate(); });
+    }
+    if (parseBtn && !parseBtn.dataset.wired) {
+        parseBtn.dataset.wired = '1';
+        parseBtn.addEventListener('click', async () => {
+            const fileInput = document.getElementById('spImportFile');
+            const file = fileInput.files[0];
+            if (!file) { status.textContent = 'Choose a file first.'; return; }
+            const accountId = document.getElementById('spImportAccountSelect').value || null;
+            const accountName = document.getElementById('spImportAccountName').value.trim() || null;
+            status.textContent = 'Parsing…';
+            try {
+                const result = await window.apiClient.uploadBankStatement(file, accountId, accountName);
+                window._spImportPreview = result;
+                _renderSpImportPreview(result);
+                status.textContent = `${result.rows.length} row(s) parsed, ${result.duplicate_count} duplicate(s), ${result.skipped_count} skipped.`;
+                suggestBtn.style.display = result.rows.some(r => r.category === 'uncategorized') ? 'inline-block' : 'none';
+                saveBtn.style.display = 'inline-block';
+            } catch (err) { status.textContent = err.message; }
+        });
+    }
+    if (suggestBtn && !suggestBtn.dataset.wired) {
+        suggestBtn.dataset.wired = '1';
+        suggestBtn.addEventListener('click', async () => {
+            const preview_ = window._spImportPreview;
+            if (!preview_) return;
+            const uncategorized = preview_.rows.filter(r => r.category === 'uncategorized');
+            status.textContent = 'Asking AI for category suggestions…';
+            try {
+                const { suggestions } = await window.apiClient.suggestSpendingCategories(uncategorized);
+                const byDesc = new Map(suggestions.map(s => [s.description, s]));
+                preview_.rows.forEach(r => {
+                    const s = byDesc.get(r.description);
+                    if (s && r.category === 'uncategorized') {
+                        r.category = s.category;
+                        r._suggestedPattern = s.suggested_pattern;
+                        r._aiSuggested = true;
+                    }
+                });
+                _renderSpImportPreview(preview_);
+                status.textContent = 'Suggestions applied — review and edit before saving.';
+            } catch (err) { status.textContent = err.message; }
+        });
+    }
+    if (saveBtn && !saveBtn.dataset.wired) {
+        saveBtn.dataset.wired = '1';
+        saveBtn.addEventListener('click', async () => {
+            const preview_ = window._spImportPreview;
+            if (!preview_) return;
+            status.textContent = 'Saving…';
+            try {
+                // AI-accepted suggestions become permanent rules so future imports auto-match.
+                const newRules = preview_.rows.filter(r => r._aiSuggested && r._suggestedPattern);
+                for (const r of newRules) {
+                    await window.apiClient.createSpendingRule(r._suggestedPattern, r.category);
+                }
+                const result = await window.apiClient.saveSpendingTransactions(
+                    preview_.account_portfolio_id, preview_.rows, 'skip'
+                );
+                status.textContent = `Saved ${result.saved}, ${result.duplicates_skipped} duplicate(s) skipped, ${result.transfers_linked} transfer(s) linked.`;
+                preview.innerHTML = '';
+                saveBtn.style.display = 'none';
+                suggestBtn.style.display = 'none';
+                await _refreshSpendingData();
+            } catch (err) { status.textContent = err.message; }
+        });
+    }
+}
+
+function _renderSpImportPreview(result) {
+    const preview = document.getElementById('spImportPreview');
+    if (!preview) return;
+    preview.innerHTML = `
+        <div class="table-responsive" style="max-height:300px;">
+            <table class="table table-sm">
+                <thead><tr><th>Date</th><th>Description</th><th>Amount</th><th>Category</th></tr></thead>
+                <tbody>
+                    ${result.rows.map(r => `
+                        <tr class="${r.is_duplicate ? 'table-warning' : ''}">
+                            <td>${esc(r.date)}</td>
+                            <td>${esc(r.description)}</td>
+                            <td class="text-end">${Fmt.num(r.amount, 2, 2)} ${esc(r.currency)}</td>
+                            <td>${esc(r.category)}${r.is_duplicate ? ' <span class="badge bg-warning text-dark">dup</span>' : ''}</td>
+                        </tr>`).join('')}
+                </tbody>
+            </table>
+        </div>`;
+}
+
+// Generates and downloads the generic bank-statement CSV import template.
+function downloadGenericBankTemplate() {
+    const csv = [
+        'date,description,amount,currency',
+        '2026-01-05,MERCADONA COMPRA,-24.50,EUR',
+        '2026-01-06,NOMINA EMPRESA SL,2100.00,EUR',
+        '2026-01-10,TRASPASO A AHORRO,-500.00,EUR',
+    ].join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'generic_bank_import_template.csv';
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+window.downloadGenericBankTemplate = downloadGenericBankTemplate;
