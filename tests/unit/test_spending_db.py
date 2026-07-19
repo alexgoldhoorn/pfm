@@ -147,3 +147,14 @@ def test_spending_rules_crud(db):
 
 def test_delete_spending_rule_missing_returns_false(db):
     assert db.delete_spending_rule(999999) is False
+
+
+def test_delete_spending_transaction(db):
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    tx_id = db.create_spending_transaction(pid, "2026-01-05", "Desc", -10.0)
+    assert db.delete_spending_transaction(tx_id) is True
+    assert db.get_spending_transaction(tx_id) is None
+
+
+def test_delete_spending_transaction_missing_returns_false(db):
+    assert db.delete_spending_transaction(999999) is False
