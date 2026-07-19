@@ -158,6 +158,64 @@ def test_update_category_missing_row(tmp_path):
     assert r.status_code == 404
 
 
+def test_update_category_clears_transfer_flag(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid_a = db.create_portfolio("Bank A", account_type="bank")
+    pid_b = db.create_portfolio("Bank B", account_type="bank")
+    id_a = db.create_spending_transaction(pid_a, "2026-01-05", "Transfer out", -100.0)
+    id_b = db.create_spending_transaction(pid_b, "2026-01-06", "Transfer in", 100.0)
+    # Link the two rows as a spending<->spending transfer pair, mirroring
+    # what _run_transfer_matching does.
+    db.update_spending_transaction(
+        id_a,
+        category="Transfer",
+        is_transfer=True,
+        transfer_link_type="spending",
+        transfer_link_id=id_b,
+    )
+    db.update_spending_transaction(
+        id_b,
+        category="Transfer",
+        is_transfer=True,
+        transfer_link_type="spending",
+        transfer_link_id=id_a,
+    )
+
+    r = client.put(
+        f"/api/v1/spending/{id_a}", json={"category": "Groceries"}, headers=HEADERS
+    )
+    assert r.status_code == 200
+
+    recategorized = db.get_spending_transaction(id_a)
+    assert recategorized["category"] == "Groceries"
+    assert recategorized["is_transfer"] == 0
+    assert recategorized["transfer_link_type"] is None
+    assert recategorized["transfer_link_id"] is None
+
+    # The counterpart is deliberately left untouched by this endpoint.
+    counterpart = db.get_spending_transaction(id_b)
+    assert counterpart["is_transfer"] == 1
+    assert counterpart["category"] == "Transfer"
+    assert counterpart["transfer_link_id"] == id_a
+
+
+def test_update_category_non_transfer_row_unaffected(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    tx_id = db.create_spending_transaction(pid, "2026-01-05", "Desc", -10.0)
+
+    r = client.put(
+        f"/api/v1/spending/{tx_id}", json={"category": "Dining"}, headers=HEADERS
+    )
+    assert r.status_code == 200
+
+    row = db.get_spending_transaction(tx_id)
+    assert row["category"] == "Dining"
+    assert row["is_transfer"] == 0
+    assert row["transfer_link_type"] is None
+    assert row["transfer_link_id"] is None
+
+
 def test_save_auto_links_transfer_between_two_accounts(tmp_path):
     client, db = _make_client(tmp_path)
     pid_a = db.create_portfolio("Bank A", account_type="bank")
