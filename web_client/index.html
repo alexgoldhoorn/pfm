@@ -142,6 +142,10 @@
                     <i class="bi bi-list-check me-2"></i>Action Items
                 </a>
 
+                <a class="sidebar-nav-link" href="#" data-page="spending">
+                    <i class="bi bi-wallet2 me-2"></i>Spending
+                </a>
+
                 <button type="button" class="sidebar-section-toggle" data-sect="portfolio"><span>Portfolio</span><i class="bi bi-chevron-down sect-chevron"></i></button>
                 <div class="sidebar-section-items" data-sect-items="portfolio">
                     <a class="sidebar-nav-link" href="#" data-page="transactions"><i class="bi bi-arrow-left-right me-2"></i>Transactions</a>
@@ -204,6 +208,10 @@
 
                 <a class="sidebar-nav-link" href="#" data-page="actionitems">
                     <i class="bi bi-list-check me-2"></i>Action Items
+                </a>
+
+                <a class="sidebar-nav-link" href="#" data-page="spending">
+                    <i class="bi bi-wallet2 me-2"></i>Spending
                 </a>
 
                 <button type="button" class="sidebar-section-toggle" data-sect="portfolio"><span>Portfolio</span><i class="bi bi-chevron-down sect-chevron"></i></button>
@@ -2458,6 +2466,155 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                     </div>
                     <div id="actionItemsList">
                         <div class="text-muted small">Loading…</div>
+                    </div>
+                </div>
+
+                <!-- Spending Page -->
+                <div id="spendingPage" class="page-content" style="display: none;">
+                    <div class="d-flex align-items-center justify-content-between mb-3">
+                        <div>
+                            <h4 class="mb-0"><i class="bi bi-wallet2 me-2 text-primary"></i>Spending<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('spending')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
+                            <p class="text-muted small mb-0">Categorized bank-account spending, income, and transfers between your own accounts.</p>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-outline-secondary" id="spRescanTransfers" title="Re-scan for transfers"><i class="bi bi-arrow-repeat"></i> Re-scan transfers</button>
+                            <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#spImportModal"><i class="bi bi-upload me-1"></i>Import statement</button>
+                        </div>
+                    </div>
+
+                    <div class="row g-2 mb-3">
+                        <div class="col-6 col-md-3">
+                            <div class="card h-100 border-danger">
+                                <div class="card-body py-2">
+                                    <div class="small text-muted mb-1">Spent (30d)</div>
+                                    <div class="fs-6 fw-bold text-danger" id="spSpent">—</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <div class="card h-100 border-success">
+                                <div class="card-body py-2">
+                                    <div class="small text-muted mb-1">Income (30d)</div>
+                                    <div class="fs-6 fw-bold text-success" id="spIncome">—</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <div class="card h-100">
+                                <div class="card-body py-2">
+                                    <div class="small text-muted mb-1">Moved to other accounts (30d)</div>
+                                    <div class="fs-6 fw-bold" id="spTransferred">—</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-body py-2">
+                            <div class="row g-2 align-items-end">
+                                <div class="col-6 col-md-3">
+                                    <label class="form-label small mb-1">Account</label>
+                                    <select class="form-select form-select-sm" id="spAccountFilter"><option value="">All accounts</option></select>
+                                </div>
+                                <div class="col-6 col-md-3">
+                                    <label class="form-label small mb-1">Category</label>
+                                    <select class="form-select form-select-sm" id="spCategoryFilter"><option value="">All categories</option></select>
+                                </div>
+                                <div class="col-6 col-md-3">
+                                    <label class="form-label small mb-1">From</label>
+                                    <input type="date" class="form-control form-control-sm" id="spFromDate">
+                                </div>
+                                <div class="col-6 col-md-3">
+                                    <label class="form-label small mb-1">To</label>
+                                    <input type="date" class="form-control form-control-sm" id="spToDate">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-header fw-semibold">Spending by category</div>
+                        <div class="card-body">
+                            <div id="spCategoryChart"><div class="text-muted small">Loading…</div></div>
+                        </div>
+                    </div>
+
+                    <div class="card mb-3">
+                        <div class="card-header fw-semibold">Transactions</div>
+                        <div class="table-responsive">
+                            <table class="table table-hover mb-0">
+                                <thead><tr>
+                                    <th class="ps-3" data-key="date" data-type="date">Date</th>
+                                    <th data-key="portfolio_name" data-type="text">Account</th>
+                                    <th data-key="description" data-type="text">Description</th>
+                                    <th data-key="category" data-type="text">Category</th>
+                                    <th class="text-end" data-key="amount" data-type="num">Amount</th>
+                                    <th class="pe-3"></th>
+                                </tr></thead>
+                                <tbody id="spTxBody"><tr><td colspan="6" class="text-center text-muted py-3">No transactions yet. Import a bank statement to get started.</td></tr></tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header fw-semibold">Category rules</div>
+                        <div class="table-responsive">
+                            <table class="table table-sm mb-0">
+                                <thead><tr><th class="ps-3">Pattern</th><th>Category</th><th class="pe-3"></th></tr></thead>
+                                <tbody id="spRulesBody"><tr><td colspan="3" class="text-center text-muted py-2">No rules yet.</td></tr></tbody>
+                            </table>
+                        </div>
+                        <div class="card-body border-top">
+                            <form id="spRuleAddForm" class="row g-2 align-items-end">
+                                <div class="col-6 col-sm-5">
+                                    <label class="form-label small mb-1">Pattern (matches description)</label>
+                                    <input class="form-control form-control-sm" id="spRulePattern" placeholder="e.g. MERCADONA" required>
+                                </div>
+                                <div class="col-6 col-sm-5">
+                                    <label class="form-label small mb-1">Category</label>
+                                    <input class="form-control form-control-sm" id="spRuleCategory" placeholder="e.g. Groceries" required>
+                                </div>
+                                <div class="col-12 col-sm-2">
+                                    <button type="submit" class="btn btn-sm btn-primary w-100"><i class="bi bi-plus-lg me-1"></i>Add</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Import Bank Statement Modal -->
+                <div class="modal fade" id="spImportModal" tabindex="-1">
+                    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title">Import Bank Statement</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="row g-2 mb-3">
+                                    <div class="col-12 col-sm-6">
+                                        <label class="form-label small mb-1">Account</label>
+                                        <select class="form-select form-select-sm" id="spImportAccountSelect"><option value="">— New account —</option></select>
+                                    </div>
+                                    <div class="col-12 col-sm-6">
+                                        <label class="form-label small mb-1">New account name (if not selected above)</label>
+                                        <input class="form-control form-control-sm" id="spImportAccountName" placeholder="e.g. BBVA Checking">
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label small mb-1">CSV file</label>
+                                    <input type="file" class="form-control form-control-sm" id="spImportFile" accept=".csv">
+                                    <div class="form-text">Columns: date, description, amount (optional: balance, currency). <a href="#" id="spDownloadTemplate">Download template</a></div>
+                                </div>
+                                <div id="spImportPreview"></div>
+                            </div>
+                            <div class="modal-footer">
+                                <div class="small text-muted me-auto" id="spImportStatus"></div>
+                                <button type="button" class="btn btn-outline-secondary" id="spParseBtn">Parse</button>
+                                <button type="button" class="btn btn-outline-primary" id="spSuggestBtn" style="display:none;">Suggest categories (AI)</button>
+                                <button type="button" class="btn btn-primary" id="spSaveBtn" style="display:none;">Save</button>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
