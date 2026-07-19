@@ -4119,7 +4119,7 @@ function _renderSpendingTable() {
     window._spTable = window._spTable || makeSortableTable({
         table: document.querySelector('#spendingPage table'),
         columns: [
-            { key: 'date', type: 'date' }, { key: 'portfolio_name', type: 'text' },
+            { key: null }, { key: 'date', type: 'date' }, { key: 'portfolio_name', type: 'text' },
             { key: 'description', type: 'text' }, { key: 'category', type: 'text' },
             { key: 'amount', type: 'num' }, { key: null },
         ],
@@ -4128,7 +4128,8 @@ function _renderSpendingTable() {
             const categories = [...new Set(['uncategorized', 'Transfer', ...rows.map(r => r.category)])];
             tbody.innerHTML = sorted.length ? sorted.map(r => `
                 <tr>
-                    <td class="ps-3">${Fmt.date(r.date)}</td>
+                    <td class="ps-3"><input type="checkbox" class="form-check-input sp-row-check" data-id="${r.id}"></td>
+                    <td>${Fmt.date(r.date)}</td>
                     <td>${esc(r.portfolio_name || '')}</td>
                     <td>${esc(r.description)}</td>
                     <td>
@@ -4139,12 +4140,85 @@ function _renderSpendingTable() {
                     </td>
                     <td class="text-end ${r.amount < 0 ? 'text-danger' : 'text-success'}">${Fmt.num(r.amount, 2, 2)} ${r.currency || ''}</td>
                     <td class="pe-3"></td>
-                </tr>`).join('') : '<tr><td colspan="6" class="text-center text-muted py-3">No transactions match the current filters.</td></tr>';
+                </tr>`).join('') : '<tr><td colspan="7" class="text-center text-muted py-3">No transactions match the current filters.</td></tr>';
+            _populateSpBulkCategorySelect(categories);
+            _updateSpBulkBar();
         },
         prefsKey: 'spending',
     });
     window._spFilteredRows = filtered;
     window._spTable.refresh();
+    _wireSpBulkActions();
+}
+
+function _populateSpBulkCategorySelect(categories) {
+    const sel = document.getElementById('spBulkCategorySelect');
+    if (!sel) return;
+    sel.innerHTML = categories.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+}
+
+function _selectedSpendingIds() {
+    return Array.from(document.querySelectorAll('#spTxBody .sp-row-check:checked'))
+        .map(cb => parseInt(cb.dataset.id, 10));
+}
+
+function _updateSpBulkBar() {
+    const ids = _selectedSpendingIds();
+    const bar = document.getElementById('spBulkBar');
+    const count = document.getElementById('spSelectedCount');
+    if (count) count.textContent = String(ids.length);
+    if (bar) bar.style.display = ids.length > 0 ? '' : 'none';
+    const selectAll = document.getElementById('spSelectAll');
+    const rowChecks = document.querySelectorAll('#spTxBody .sp-row-check');
+    if (selectAll) selectAll.checked = rowChecks.length > 0 && ids.length === rowChecks.length;
+}
+
+function _wireSpBulkActions() {
+    document.querySelectorAll('#spTxBody .sp-row-check').forEach(cb => {
+        cb.addEventListener('change', _updateSpBulkBar);
+    });
+    const selectAll = document.getElementById('spSelectAll');
+    if (selectAll && !selectAll.dataset.wired) {
+        selectAll.dataset.wired = '1';
+        selectAll.addEventListener('change', () => {
+            document.querySelectorAll('#spTxBody .sp-row-check').forEach(cb => { cb.checked = selectAll.checked; });
+            _updateSpBulkBar();
+        });
+    }
+    const recatBtn = document.getElementById('spBulkRecategorizeBtn');
+    if (recatBtn && !recatBtn.dataset.wired) {
+        recatBtn.dataset.wired = '1';
+        recatBtn.addEventListener('click', async () => {
+            const ids = _selectedSpendingIds();
+            const category = document.getElementById('spBulkCategorySelect')?.value;
+            if (!ids.length || !category) return;
+            recatBtn.disabled = true;
+            try {
+                for (const id of ids) {
+                    await window.apiClient.updateSpendingCategory(id, category);
+                }
+                await _refreshSpendingData();
+            } catch (err) { alert('Error: ' + err.message); }
+            recatBtn.disabled = false;
+        });
+    }
+    const delBtn = document.getElementById('spBulkDeleteBtn');
+    if (delBtn && !delBtn.dataset.wired) {
+        delBtn.dataset.wired = '1';
+        delBtn.addEventListener('click', async () => {
+            const ids = _selectedSpendingIds();
+            if (!ids.length) return;
+            if (!confirm(`Delete ${ids.length} transaction(s)? This cannot be undone.`)) return;
+            delBtn.disabled = true;
+            try {
+                for (const id of ids) {
+                    await window.apiClient.deleteSpendingTransaction(id);
+                }
+                await _refreshSpendingData();
+            } catch (err) { alert('Error: ' + err.message); }
+            delBtn.disabled = false;
+        });
+    }
 }
 
 window.updateSpendingRowCategory = async function (id, category) {
