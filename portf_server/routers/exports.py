@@ -13,7 +13,7 @@ import os
 import sqlite3
 import tempfile
 from datetime import datetime
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
@@ -53,15 +53,17 @@ async def _auth(
 
 @router.get("/csv")
 async def export_transactions_csv(
-    portfolio_id: Optional[int] = Query(
-        default=None, description="Filter by portfolio ID"
+    portfolio_id: Optional[List[int]] = Query(
+        default=None, description="Filter by one or more portfolio IDs"
     ),
     db=Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Download all transactions as a CSV file."""
-    if portfolio_id is not None:
-        transactions = db.get_transactions_by_portfolio(portfolio_id)
+    if portfolio_id:
+        transactions = []
+        for pid in portfolio_id:
+            transactions.extend(db.get_transactions_by_portfolio(pid))
     else:
         transactions = db.get_all_transactions(limit=100_000)
 
