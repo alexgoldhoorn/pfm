@@ -1381,8 +1381,12 @@ function createAPIClient() {
                 body: form
             });
             if (!response.ok) {
-                const err = await response.text();
-                throw new Error(`Parse failed: ${err}`);
+                let detail = 'Parse failed';
+                try {
+                    const body = await response.json();
+                    detail = body.detail || detail;
+                } catch (e) { /* response wasn't JSON, use the generic message */ }
+                throw new Error(detail);
             }
             return response.json();
         },
@@ -1393,8 +1397,12 @@ function createAPIClient() {
                 body: JSON.stringify({ account_portfolio_id: accountPortfolioId, rows, duplicate_action: duplicateAction })
             });
             if (!response.ok) {
-                const err = await response.text();
-                throw new Error(`Save failed: ${err}`);
+                let detail = 'Save failed';
+                try {
+                    const body = await response.json();
+                    detail = body.detail || detail;
+                } catch (e) { /* response wasn't JSON, use the generic message */ }
+                throw new Error(detail);
             }
             return response.json();
         },
@@ -1405,8 +1413,12 @@ function createAPIClient() {
                 body: JSON.stringify({ rows })
             });
             if (!response.ok) {
-                const err = await response.text();
-                throw new Error(`Suggestion failed: ${err}`);
+                let detail = 'Suggestion failed';
+                try {
+                    const body = await response.json();
+                    detail = body.detail || detail;
+                } catch (e) { /* response wasn't JSON, use the generic message */ }
+                throw new Error(detail);
             }
             return response.json();
         },
@@ -1424,7 +1436,14 @@ function createAPIClient() {
                 headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
                 body: JSON.stringify({ category })
             });
-            if (!response.ok) throw new Error('Failed to update category');
+            if (!response.ok) {
+                let detail = 'Failed to update category';
+                try {
+                    const body = await response.json();
+                    detail = body.detail || detail;
+                } catch (e) { /* response wasn't JSON, use the generic message */ }
+                throw new Error(detail);
+            }
             return response.json();
         },
         async rescanTransfers() {
@@ -1432,14 +1451,28 @@ function createAPIClient() {
                 method: 'POST',
                 headers: { 'X-API-Key': this.apiKey }
             });
-            if (!response.ok) throw new Error('Failed to rescan transfers');
+            if (!response.ok) {
+                let detail = 'Failed to rescan transfers';
+                try {
+                    const body = await response.json();
+                    detail = body.detail || detail;
+                } catch (e) { /* response wasn't JSON, use the generic message */ }
+                throw new Error(detail);
+            }
             return response.json();
         },
         async getSpendingRules() {
             const response = await fetch(this.baseURL + '/api/v1/spending/rules', {
                 headers: { 'X-API-Key': this.apiKey }
             });
-            if (!response.ok) throw new Error('Failed to load rules');
+            if (!response.ok) {
+                let detail = 'Failed to load rules';
+                try {
+                    const body = await response.json();
+                    detail = body.detail || detail;
+                } catch (e) { /* response wasn't JSON, use the generic message */ }
+                throw new Error(detail);
+            }
             return response.json();
         },
         async createSpendingRule(pattern, category) {
@@ -1448,7 +1481,14 @@ function createAPIClient() {
                 headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
                 body: JSON.stringify({ pattern, category })
             });
-            if (!response.ok) throw new Error('Failed to create rule');
+            if (!response.ok) {
+                let detail = 'Failed to create rule';
+                try {
+                    const body = await response.json();
+                    detail = body.detail || detail;
+                } catch (e) { /* response wasn't JSON, use the generic message */ }
+                throw new Error(detail);
+            }
             return response.json();
         },
         async deleteSpendingRule(id) {
@@ -1456,14 +1496,28 @@ function createAPIClient() {
                 method: 'DELETE',
                 headers: { 'X-API-Key': this.apiKey }
             });
-            if (!response.ok) throw new Error('Failed to delete rule');
+            if (!response.ok) {
+                let detail = 'Failed to delete rule';
+                try {
+                    const body = await response.json();
+                    detail = body.detail || detail;
+                } catch (e) { /* response wasn't JSON, use the generic message */ }
+                throw new Error(detail);
+            }
             return response.json();
         },
         async getSpendingSummary(days = 30) {
             const response = await fetch(this.baseURL + '/api/v1/spending/summary?days=' + days, {
                 headers: { 'X-API-Key': this.apiKey }
             });
-            if (!response.ok) throw new Error('Failed to load spending summary');
+            if (!response.ok) {
+                let detail = 'Failed to load spending summary';
+                try {
+                    const body = await response.json();
+                    detail = body.detail || detail;
+                } catch (e) { /* response wasn't JSON, use the generic message */ }
+                throw new Error(detail);
+            }
             return response.json();
         },
         async deleteSpendingTransaction(id) {
@@ -1471,7 +1525,14 @@ function createAPIClient() {
                 method: 'DELETE',
                 headers: { 'X-API-Key': this.apiKey }
             });
-            if (!response.ok) throw new Error('Failed to delete transaction');
+            if (!response.ok) {
+                let detail = 'Failed to delete transaction';
+                try {
+                    const body = await response.json();
+                    detail = body.detail || detail;
+                } catch (e) { /* response wasn't JSON, use the generic message */ }
+                throw new Error(detail);
+            }
             return response.json();
         },
 
