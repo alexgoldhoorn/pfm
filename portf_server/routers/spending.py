@@ -460,6 +460,37 @@ Descriptions:
 """
 
 
+def _parse_suggestions(data: object) -> List[CategorySuggestion]:
+    """Turn parsed LLM JSON into validated suggestions, tolerating junk items.
+
+    The LLM is asked for a JSON array of objects, but syntactically valid
+    JSON can still mis-shape the payload (e.g. a flat list of strings). Any
+    element that isn't a dict is skipped rather than raising, matching the
+    existing tolerant handling of blank descriptions below.
+
+    Args:
+        data: The `json.loads()` result of the LLM response.
+
+    Returns:
+        Validated suggestions built only from well-formed dict items.
+    """
+    suggestions: List[CategorySuggestion] = []
+    for item in data if isinstance(data, list) else []:
+        if not isinstance(item, dict):
+            continue
+        desc = str(item.get("description") or "").strip()
+        category = str(item.get("category") or "").strip() or "Other"
+        pattern = str(item.get("suggested_pattern") or "").strip() or desc[:20]
+        if not desc:
+            continue
+        suggestions.append(
+            CategorySuggestion(
+                description=desc, category=category, suggested_pattern=pattern
+            )
+        )
+    return suggestions
+
+
 @router.post("/suggest-categories", response_model=SuggestCategoriesResponse)
 async def suggest_categories(
     body: SuggestCategoriesRequest,
@@ -493,16 +524,4 @@ async def suggest_categories(
             detail=f"Category suggestion failed: {str(e)}",
         )
 
-    suggestions: List[CategorySuggestion] = []
-    for item in data if isinstance(data, list) else []:
-        desc = str(item.get("description", "")).strip()
-        category = str(item.get("category", "")).strip() or "Other"
-        pattern = str(item.get("suggested_pattern", "")).strip() or desc[:20]
-        if not desc:
-            continue
-        suggestions.append(
-            CategorySuggestion(
-                description=desc, category=category, suggested_pattern=pattern
-            )
-        )
-    return SuggestCategoriesResponse(suggestions=suggestions)
+    return SuggestCategoriesResponse(suggestions=_parse_suggestions(data))
