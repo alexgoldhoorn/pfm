@@ -2017,6 +2017,10 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                 </div>
                                 <div class="card-body">
                                     <p class="text-muted small mb-3">Download all transactions. CSV is compatible with spreadsheets; PDT (XLSX) is the Portfolio Dividend Tracker format (includes bookings).</p>
+                                    <div class="mb-3" style="max-width:320px;">
+                                        <label class="form-label small mb-1" for="ioExportCsvPortfolios">Accounts (CSV export — leave empty for all)</label>
+                                        <select class="form-select form-select-sm" id="ioExportCsvPortfolios" multiple size="4"></select>
+                                    </div>
                                     <div class="d-flex gap-3 flex-wrap mb-3">
                                         <button class="btn btn-sm btn-outline-primary" id="ioExportCsvBtn">
                                             <i class="bi bi-filetype-csv me-2"></i>Export CSV
