@@ -647,6 +647,126 @@ class TestExportCSV:
         text = response.content.decode("utf-8-sig")
         assert sample_asset_data["symbol"] in text
 
+    @pytest.mark.asyncio
+    async def test_export_csv_multiple_portfolio_ids(
+        self, async_test_client: AsyncClient, auth_headers, sample_asset_data
+    ):
+        """Repeated ?portfolio_id= params should union transactions from each."""
+        pf_a = await async_test_client.post(
+            "/api/v1/portfolios",
+            json={"name": "Broker A", "base_currency": "EUR"},
+            headers=auth_headers,
+        )
+        pf_b = await async_test_client.post(
+            "/api/v1/portfolios",
+            json={"name": "Broker B", "base_currency": "EUR"},
+            headers=auth_headers,
+        )
+        assert pf_a.status_code == 201 and pf_b.status_code == 201
+        portfolio_id_a = pf_a.json()["id"]
+        portfolio_id_b = pf_b.json()["id"]
+
+        asset_resp = await async_test_client.post(
+            "/api/v1/assets", json=sample_asset_data, headers=auth_headers
+        )
+        asset_id = asset_resp.json()["id"]
+
+        await async_test_client.post(
+            "/api/v1/transactions",
+            json={
+                "asset_id": asset_id,
+                "portfolio_id": portfolio_id_a,
+                "transaction_type": "buy",
+                "quantity": 1.0,
+                "price": 10.0,
+                "total_amount": 10.0,
+                "transaction_date": "2024-01-05",
+            },
+            headers=auth_headers,
+        )
+        await async_test_client.post(
+            "/api/v1/transactions",
+            json={
+                "asset_id": asset_id,
+                "portfolio_id": portfolio_id_b,
+                "transaction_type": "buy",
+                "quantity": 2.0,
+                "price": 20.0,
+                "total_amount": 40.0,
+                "transaction_date": "2024-01-06",
+            },
+            headers=auth_headers,
+        )
+
+        response = await async_test_client.get(
+            "/api/v1/export/csv",
+            params=[("portfolio_id", portfolio_id_a), ("portfolio_id", portfolio_id_b)],
+            headers=auth_headers,
+        )
+        assert response.status_code == status.HTTP_200_OK
+        text = response.content.decode("utf-8-sig")
+        assert text.count(sample_asset_data["symbol"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_export_csv_single_portfolio_id_still_works(
+        self, async_test_client: AsyncClient, auth_headers, sample_asset_data
+    ):
+        """A single ?portfolio_id= keeps filtering to just that portfolio."""
+        pf_a = await async_test_client.post(
+            "/api/v1/portfolios",
+            json={"name": "Broker C", "base_currency": "EUR"},
+            headers=auth_headers,
+        )
+        pf_b = await async_test_client.post(
+            "/api/v1/portfolios",
+            json={"name": "Broker D", "base_currency": "EUR"},
+            headers=auth_headers,
+        )
+        assert pf_a.status_code == 201 and pf_b.status_code == 201
+        portfolio_id_a = pf_a.json()["id"]
+        portfolio_id_b = pf_b.json()["id"]
+
+        asset_resp = await async_test_client.post(
+            "/api/v1/assets", json=sample_asset_data, headers=auth_headers
+        )
+        asset_id = asset_resp.json()["id"]
+
+        await async_test_client.post(
+            "/api/v1/transactions",
+            json={
+                "asset_id": asset_id,
+                "portfolio_id": portfolio_id_a,
+                "transaction_type": "buy",
+                "quantity": 1.0,
+                "price": 10.0,
+                "total_amount": 10.0,
+                "transaction_date": "2024-01-05",
+            },
+            headers=auth_headers,
+        )
+        await async_test_client.post(
+            "/api/v1/transactions",
+            json={
+                "asset_id": asset_id,
+                "portfolio_id": portfolio_id_b,
+                "transaction_type": "buy",
+                "quantity": 2.0,
+                "price": 20.0,
+                "total_amount": 40.0,
+                "transaction_date": "2024-01-06",
+            },
+            headers=auth_headers,
+        )
+
+        response = await async_test_client.get(
+            "/api/v1/export/csv",
+            params={"portfolio_id": portfolio_id_a},
+            headers=auth_headers,
+        )
+        assert response.status_code == status.HTTP_200_OK
+        text = response.content.decode("utf-8-sig")
+        assert text.count(sample_asset_data["symbol"]) == 1
+
 
 class TestExportPDT:
     @pytest.mark.asyncio

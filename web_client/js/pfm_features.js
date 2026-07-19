@@ -1552,9 +1552,27 @@ function setupImportExportPage() {
     // --- Export section ---
     const ioCsvBtn = document.getElementById('ioExportCsvBtn');
     const ioPdtBtn = document.getElementById('ioExportPdtBtn');
+    const ioCsvPortfolios = document.getElementById('ioExportCsvPortfolios');
+    if (ioCsvPortfolios && ioCsvPortfolios.options.length === 0) {
+        (async () => {
+            try {
+                const portfolios = await window.apiClient.getPortfolios();
+                portfolios.forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p.id; opt.textContent = p.name;
+                    ioCsvPortfolios.appendChild(opt);
+                });
+            } catch (e) { /* silent */ }
+        })();
+    }
     if (ioCsvBtn) ioCsvBtn.addEventListener('click', async () => {
         try {
-            await window.apiClient.downloadBlob(window.apiClient.baseURL + '/api/v1/export/csv', 'transactions.csv');
+            const selectedIds = ioCsvPortfolios
+                ? Array.from(ioCsvPortfolios.selectedOptions).map(o => o.value)
+                : [];
+            const qs = selectedIds.map(id => `portfolio_id=${encodeURIComponent(id)}`).join('&');
+            const url = window.apiClient.baseURL + '/api/v1/export/csv' + (qs ? '?' + qs : '');
+            await window.apiClient.downloadBlob(url, 'transactions.csv');
         } catch (err) { alert('Export error: ' + err.message); }
     });
     if (ioPdtBtn) ioPdtBtn.addEventListener('click', async () => {
