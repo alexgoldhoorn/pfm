@@ -1124,6 +1124,10 @@ function setupPortfoliosPage() {
         document.getElementById('portfolioCurrency').value = 'EUR';
         document.getElementById('portfolioDescription').value = '';
         document.getElementById('portfolioWebsite').value = '';
+        const typeSel = document.getElementById('portfolioAccountType');
+        if (typeSel) { typeSel.value = 'brokerage'; typeSel.disabled = false; }
+        const typeHint = document.getElementById('portfolioAccountTypeHint');
+        if (typeHint) typeHint.textContent = '';
         bsModal.show();
     });
 
@@ -1136,6 +1140,10 @@ function setupPortfoliosPage() {
             description: document.getElementById('portfolioDescription').value.trim() || null,
             website: document.getElementById('portfolioWebsite').value.trim() || null,
         };
+        if (!id) {
+            const typeSel = document.getElementById('portfolioAccountType');
+            data.account_type = typeSel ? typeSel.value : 'brokerage';
+        }
         try {
             if (id) {
                 await window.apiClient.updatePortfolio(parseInt(id), data);
@@ -1173,6 +1181,10 @@ window.editPortfolio = function(id, name, currency, description, website) {
     document.getElementById('portfolioCurrency').value         = currency;
     document.getElementById('portfolioDescription').value      = description === 'null' ? '' : (description || '');
     document.getElementById('portfolioWebsite').value          = website === 'null' ? '' : (website || '');
+    const typeSel = document.getElementById('portfolioAccountType');
+    if (typeSel) typeSel.disabled = true;
+    const typeHint = document.getElementById('portfolioAccountTypeHint');
+    if (typeHint) typeHint.textContent = "Account type can't be changed after creation.";
     bootstrap.Modal.getOrCreateInstance(document.getElementById('portfolioModal')).show();
 };
 

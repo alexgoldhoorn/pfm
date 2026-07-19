@@ -3569,6 +3569,14 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                             <input type="text" class="form-control" id="portfolioName" placeholder="e.g. IndexaCapital" required>
                         </div>
                         <div class="mb-3">
+                            <label class="form-label" for="portfolioAccountType">Account type</label>
+                            <select class="form-select" id="portfolioAccountType">
+                                <option value="brokerage">Brokerage / investment account</option>
+                                <option value="bank">Bank account (checking/savings — for Spending tracking)</option>
+                            </select>
+                            <div class="form-text" id="portfolioAccountTypeHint"></div>
+                        </div>
+                        <div class="mb-3">
                             <label class="form-label" for="portfolioCurrency">Currency</label>
                             <input type="text" class="form-control" id="portfolioCurrency" value="EUR" maxlength="3">
                         </div>
