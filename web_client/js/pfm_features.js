@@ -1549,6 +1549,28 @@ function setupImportExportPage() {
         }
     });
 
+    // --- Bank Statement import (reuses Spending page logic with different element ids) ---
+    const ioSpAccountSelect = document.getElementById('ioSpImportAccountSelect');
+    if (ioSpAccountSelect && ioSpAccountSelect.options.length <= 1) {
+        (async () => {
+            try {
+                const portfolios = await window.apiClient.getPortfolios();
+                portfolios.filter(p => p.account_type === 'bank').forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p.id; opt.textContent = p.name;
+                    ioSpAccountSelect.appendChild(opt);
+                });
+            } catch (e) { /* silent */ }
+        })();
+    }
+    _wireSpendingImportModal({
+        parseBtn: 'ioSpParseBtn', suggestBtn: 'ioSpSuggestBtn', saveBtn: 'ioSpSaveBtn',
+        preview: 'ioSpImportPreview', status: 'ioSpImportStatus', templateLink: 'ioSpDownloadTemplate',
+        accountSelect: 'ioSpImportAccountSelect', accountName: 'ioSpImportAccountName',
+        fileInput: 'ioSpImportFile', dupSelectId: 'ioSpDuplicateAction',
+        onSaved: async () => { if (window.loadSpendingPage) await _refreshSpendingDataIfLoaded(); },
+    });
+
     // --- Export section ---
     const ioCsvBtn = document.getElementById('ioExportCsvBtn');
     const ioPdtBtn = document.getElementById('ioExportPdtBtn');
@@ -1809,6 +1831,16 @@ function setupImportExportPage() {
 
     setupImportExportTabs();
     window.loadImportExportPage = () => setupImportExportTabs();
+}
+
+// The Import/Export page's Bank Statement card can save spending rows before
+// the Spending page has ever been visited (window._spendingAllRows unset) —
+// only refresh Spending's own cached data if it's actually been loaded once,
+// to avoid touching DOM elements that don't exist yet.
+async function _refreshSpendingDataIfLoaded() {
+    if (typeof window._spendingAllRows !== 'undefined') {
+        await _refreshSpendingData();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -4284,13 +4316,23 @@ function _wireSpendingRuleForm() {
     }
 }
 
-function _wireSpendingImportModal() {
-    const parseBtn = document.getElementById('spParseBtn');
-    const suggestBtn = document.getElementById('spSuggestBtn');
-    const saveBtn = document.getElementById('spSaveBtn');
-    const preview = document.getElementById('spImportPreview');
-    const status = document.getElementById('spImportStatus');
-    const templateLink = document.getElementById('spDownloadTemplate');
+// `ids` lets the same import-modal logic drive both the Spending page's own
+// modal (default ids below, unchanged behavior) and the Import/Export page's
+// Bank Statement card (its own id set + onSaved callback, see
+// setupImportExportPage).
+function _wireSpendingImportModal(ids) {
+    ids = ids || {
+        parseBtn: 'spParseBtn', suggestBtn: 'spSuggestBtn', saveBtn: 'spSaveBtn',
+        preview: 'spImportPreview', status: 'spImportStatus', templateLink: 'spDownloadTemplate',
+        accountSelect: 'spImportAccountSelect', accountName: 'spImportAccountName',
+        dupSelectId: 'spDuplicateAction', onSaved: () => _refreshSpendingData(),
+    };
+    const parseBtn = document.getElementById(ids.parseBtn);
+    const suggestBtn = document.getElementById(ids.suggestBtn);
+    const saveBtn = document.getElementById(ids.saveBtn);
+    const preview = document.getElementById(ids.preview);
+    const status = document.getElementById(ids.status);
+    const templateLink = document.getElementById(ids.templateLink);
     if (templateLink && !templateLink.dataset.wired) {
         templateLink.dataset.wired = '1';
         templateLink.addEventListener('click', (e) => { e.preventDefault(); downloadGenericBankTemplate(); });
@@ -4298,16 +4340,16 @@ function _wireSpendingImportModal() {
     if (parseBtn && !parseBtn.dataset.wired) {
         parseBtn.dataset.wired = '1';
         parseBtn.addEventListener('click', async () => {
-            const fileInput = document.getElementById('spImportFile');
+            const fileInput = document.getElementById(ids.fileInput || 'spImportFile');
             const file = fileInput.files[0];
             if (!file) { status.textContent = 'Choose a file first.'; return; }
-            const accountId = document.getElementById('spImportAccountSelect').value || null;
-            const accountName = document.getElementById('spImportAccountName').value.trim() || null;
+            const accountId = document.getElementById(ids.accountSelect).value || null;
+            const accountName = document.getElementById(ids.accountName).value.trim() || null;
             status.textContent = 'Parsing…';
             try {
                 const result = await window.apiClient.uploadBankStatement(file, accountId, accountName);
                 window._spImportPreview = result;
-                _renderSpImportPreview(result);
+                _renderSpImportPreview(result, ids);
                 status.textContent = `${result.rows.length} row(s) parsed, ${result.duplicate_count} duplicate(s), ${result.skipped_count} skipped.`;
                 suggestBtn.style.display = result.rows.some(r => r.category === 'uncategorized') ? 'inline-block' : 'none';
                 saveBtn.style.display = 'inline-block';
@@ -4332,7 +4374,7 @@ function _wireSpendingImportModal() {
                         r._aiSuggested = true;
                     }
                 });
-                _renderSpImportPreview(preview_);
+                _renderSpImportPreview(preview_, ids);
                 status.textContent = 'Suggestions applied — review and edit before saving.';
             } catch (err) { status.textContent = err.message; }
         });
@@ -4350,13 +4392,13 @@ function _wireSpendingImportModal() {
                     await window.apiClient.createSpendingRule(r._suggestedPattern, r.category);
                 }
                 const result = await window.apiClient.saveSpendingTransactions(
-                    preview_.account_portfolio_id, preview_.rows, _spDupAction()
+                    preview_.account_portfolio_id, preview_.rows, _spDupAction(ids.dupSelectId)
                 );
                 status.textContent = `Saved ${result.saved}, ${result.duplicates_skipped} duplicate(s) skipped, ${result.transfers_linked} transfer(s) linked.`;
                 preview.innerHTML = '';
                 saveBtn.style.display = 'none';
                 suggestBtn.style.display = 'none';
-                await _refreshSpendingData();
+                await ids.onSaved();
             } catch (err) { status.textContent = err.message; }
         });
     }
@@ -4364,16 +4406,18 @@ function _wireSpendingImportModal() {
 
 // Shown above the spending import preview when some rows already exist in
 // the DB, mirroring the investment-import `_dupControl` pattern (pfm_core.js)
-// for consistency. The <select id="spDuplicateAction"> value is read by the
-// save handler via _spDupAction().
-function _spDupControl(rows) {
+// for consistency. The rendered <select id="{dupSelectId}"> value is read by
+// the save handler via _spDupAction(dupSelectId). dupSelectId defaults to
+// the original Spending-page control id.
+function _spDupControl(rows, dupSelectId) {
+    dupSelectId = dupSelectId || 'spDuplicateAction';
     const dupCount = (rows || []).filter(r => r.is_duplicate).length;
     if (dupCount === 0) return '';
     return `
         <div class="alert alert-warning py-2 small d-flex flex-wrap align-items-center gap-2 mb-2">
             <span><i class="bi bi-exclamation-triangle me-1"></i><strong>${dupCount}</strong> row(s) already exist (marked <span class="badge bg-warning text-dark">dup</span> below).</span>
             <label class="ms-auto mb-0 d-flex align-items-center">On duplicates:
-                <select id="spDuplicateAction" class="form-select form-select-sm d-inline-block w-auto ms-1">
+                <select id="${dupSelectId}" class="form-select form-select-sm d-inline-block w-auto ms-1">
                     <option value="skip">Skip duplicates</option>
                     <option value="add">Add anyway</option>
                     <option value="overwrite">Overwrite existing</option>
@@ -4385,16 +4429,19 @@ function _spDupControl(rows) {
 // Reads the current duplicate_action choice from the import modal. Defaults
 // to 'skip' (safe default, matching prior hard-coded behavior) when the
 // control isn't rendered — i.e. no duplicates were found in the preview.
-function _spDupAction() {
-    const el = document.getElementById('spDuplicateAction');
+// dupSelectId defaults to the original Spending-page control id.
+function _spDupAction(dupSelectId) {
+    const el = document.getElementById(dupSelectId || 'spDuplicateAction');
     return el ? el.value : 'skip';
 }
 
-function _renderSpImportPreview(result) {
-    const preview = document.getElementById('spImportPreview');
+// ids defaults to the original Spending-page preview/dup-select ids.
+function _renderSpImportPreview(result, ids) {
+    ids = ids || { preview: 'spImportPreview', dupSelectId: 'spDuplicateAction' };
+    const preview = document.getElementById(ids.preview);
     if (!preview) return;
     preview.innerHTML = `
-        ${_spDupControl(result.rows)}
+        ${_spDupControl(result.rows, ids.dupSelectId)}
         <div class="table-responsive" style="max-height:300px;">
             <table class="table table-sm">
                 <thead><tr><th>Date</th><th>Description</th><th>Amount</th><th>Category</th></tr></thead>

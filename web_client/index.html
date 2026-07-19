@@ -2004,6 +2004,37 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                 </div>
                             </div>
                         </div>
+
+                        <!-- Import Bank Statement (Spending) -->
+                        <div class="col-12 col-lg-6">
+                            <div class="card h-100">
+                                <div class="card-header fw-semibold">
+                                    <i class="bi bi-wallet2 me-2"></i>Import Bank Statement (Spending)
+                                </div>
+                                <div class="card-body d-flex flex-column">
+                                    <p class="text-muted small mb-2">Categorized day-to-day spending, tracked separately from investment transactions. See the <strong>Spending</strong> page for the full view.</p>
+                                    <div class="row g-2 mb-2">
+                                        <div class="col-12">
+                                            <select class="form-select form-select-sm" id="ioSpImportAccountSelect"><option value="">— New account —</option></select>
+                                        </div>
+                                        <div class="col-12">
+                                            <input class="form-control form-control-sm" id="ioSpImportAccountName" placeholder="New account name (if not selected above)">
+                                        </div>
+                                    </div>
+                                    <div class="mb-2">
+                                        <input type="file" class="form-control form-control-sm" id="ioSpImportFile" accept=".csv">
+                                        <div class="form-text">Columns: date, description, amount (optional: balance, currency). <a href="#" id="ioSpDownloadTemplate">Download template</a></div>
+                                    </div>
+                                    <div id="ioSpImportPreview" class="flex-grow-1"></div>
+                                    <div class="d-flex gap-2 mt-auto pt-3 flex-wrap">
+                                        <button class="btn btn-sm btn-outline-secondary" id="ioSpParseBtn">Parse</button>
+                                        <button class="btn btn-sm btn-outline-primary" id="ioSpSuggestBtn" style="display:none;">Suggest categories (AI)</button>
+                                        <button class="btn btn-sm btn-primary" id="ioSpSaveBtn" style="display:none;">Save</button>
+                                        <div class="small text-muted w-100" id="ioSpImportStatus"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                             </div>
                         </div><!-- /#ioTabImport -->
 
