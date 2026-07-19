@@ -4097,10 +4097,22 @@ async function loadSpendingPage() {
         rescanBtn.dataset.wired = '1';
         rescanBtn.addEventListener('click', async () => {
             rescanBtn.disabled = true;
+            const status = document.getElementById('spRescanStatus');
+            if (status) { status.className = 'small text-muted mb-2'; status.textContent = 'Scanning…'; }
             try {
-                await window.apiClient.rescanTransfers();
+                const result = await window.apiClient.rescanTransfers();
+                const n = (result && result.transfers_linked) || 0;
                 await _refreshSpendingData();
-            } catch (err) { alert('Error: ' + err.message); }
+                if (status) {
+                    status.className = n > 0 ? 'small text-success mb-2' : 'small text-muted mb-2';
+                    status.textContent = n > 0
+                        ? `Found and linked ${n} transfer${n === 1 ? '' : 's'}.`
+                        : 'No new transfers found.';
+                }
+            } catch (err) {
+                if (status) { status.className = 'small text-danger mb-2'; status.textContent = 'Error: ' + err.message; }
+                else alert('Error: ' + err.message);
+            }
             rescanBtn.disabled = false;
         });
     }
@@ -4262,12 +4274,21 @@ function _wireSpBulkActions() {
             const category = document.getElementById('spBulkCategorySelect')?.value;
             if (!ids.length || !category) return;
             recatBtn.disabled = true;
-            try {
-                for (const id of ids) {
+            let succeeded = 0, failed = 0;
+            for (const id of ids) {
+                try {
                     await window.apiClient.updateSpendingCategory(id, category);
-                }
-                await _refreshSpendingData();
-            } catch (err) { alert('Error: ' + err.message); }
+                    succeeded++;
+                } catch (err) { failed++; }
+            }
+            await _refreshSpendingData();
+            const status = document.getElementById('spBulkStatus');
+            if (status) {
+                status.className = failed > 0 ? 'small text-danger px-3 pt-2' : 'small text-success px-3 pt-2';
+                status.textContent = failed > 0
+                    ? `Recategorized ${succeeded} of ${ids.length} (${failed} failed).`
+                    : `Recategorized ${succeeded} of ${ids.length}.`;
+            }
             recatBtn.disabled = false;
         });
     }
@@ -4279,12 +4300,21 @@ function _wireSpBulkActions() {
             if (!ids.length) return;
             if (!confirm(`Delete ${ids.length} transaction(s)? This cannot be undone.`)) return;
             delBtn.disabled = true;
-            try {
-                for (const id of ids) {
+            let succeeded = 0, failed = 0;
+            for (const id of ids) {
+                try {
                     await window.apiClient.deleteSpendingTransaction(id);
-                }
-                await _refreshSpendingData();
-            } catch (err) { alert('Error: ' + err.message); }
+                    succeeded++;
+                } catch (err) { failed++; }
+            }
+            await _refreshSpendingData();
+            const status = document.getElementById('spBulkStatus');
+            if (status) {
+                status.className = failed > 0 ? 'small text-danger px-3 pt-2' : 'small text-success px-3 pt-2';
+                status.textContent = failed > 0
+                    ? `Deleted ${succeeded} of ${ids.length} (${failed} failed).`
+                    : `Deleted ${succeeded} of ${ids.length}.`;
+            }
             delBtn.disabled = false;
         });
     }
