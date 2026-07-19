@@ -2971,6 +2971,35 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                             </div>
                                         </div>
                                     </div>
+                                    <div class="row g-2 mb-2" id="cfActualRow" style="display:none;">
+                                        <div class="col-12">
+                                            <div class="small text-muted mb-1">Actual (last 30 days, from imported spending) <span class="ms-1" style="cursor:help" title="Computed from categorized bank imports on the Spending page. Comparison only — does not affect the figures above or Goals/Forecast projections."><i class="bi bi-info-circle"></i></span></div>
+                                        </div>
+                                        <div class="col-6 col-md-3">
+                                            <div class="card h-100 border-success">
+                                                <div class="card-body py-2">
+                                                    <div class="small text-muted mb-1">Actual income</div>
+                                                    <div class="fs-6 fw-bold text-success" id="cfActualIncome">—</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-6 col-md-3">
+                                            <div class="card h-100 border-danger">
+                                                <div class="card-body py-2">
+                                                    <div class="small text-muted mb-1">Actual spending</div>
+                                                    <div class="fs-6 fw-bold text-danger" id="cfActualSpent">—</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div class="col-12 col-md-6">
+                                            <div class="card h-100">
+                                                <div class="card-body py-2">
+                                                    <div class="small text-muted mb-1">Moved to other accounts</div>
+                                                    <div class="fs-6 fw-bold" id="cfActualTransferred">—</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                                 <!-- Entries table -->
                                 <div class="table-responsive">
