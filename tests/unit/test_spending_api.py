@@ -436,3 +436,19 @@ def test_suggest_categories_llm_failure_returns_502(tmp_path, mocker):
         headers=HEADERS,
     )
     assert r.status_code == 502
+
+
+def test_delete_spending_transaction(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    tx_id = db.create_spending_transaction(pid, "2026-01-05", "Desc", -10.0)
+    r = client.delete(f"/api/v1/spending/{tx_id}", headers=HEADERS)
+    assert r.status_code == 200
+    assert r.json() == {"deleted": True, "id": tx_id}
+    assert client.get("/api/v1/spending/", headers=HEADERS).json() == []
+
+
+def test_delete_spending_transaction_missing(tmp_path):
+    client, _ = _make_client(tmp_path)
+    r = client.delete("/api/v1/spending/999999", headers=HEADERS)
+    assert r.status_code == 404
