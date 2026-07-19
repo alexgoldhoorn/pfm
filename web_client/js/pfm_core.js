@@ -1466,6 +1466,14 @@ function createAPIClient() {
             if (!response.ok) throw new Error('Failed to load spending summary');
             return response.json();
         },
+        async deleteSpendingTransaction(id) {
+            const response = await fetch(this.baseURL + '/api/v1/spending/' + id, {
+                method: 'DELETE',
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) throw new Error('Failed to delete transaction');
+            return response.json();
+        },
 
         async sendChat(message, sessionId) {
             const response = await fetch(this.baseURL + '/api/v1/llm/chat', {

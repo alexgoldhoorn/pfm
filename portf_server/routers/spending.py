@@ -349,6 +349,16 @@ async def update_spending_category(
     return {"id": spending_id, "category": body.category}
 
 
+@router.delete("/{spending_id}", response_model=dict)
+async def delete_spending(
+    spending_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+):
+    """Delete a spending transaction (hard delete)."""
+    if not db.delete_spending_transaction(spending_id):
+        raise HTTPException(status_code=404, detail="Spending transaction not found")
+    return {"deleted": True, "id": spending_id}
+
+
 @router.post("/rescan-transfers", response_model=dict)
 async def rescan_transfers(
     db=Depends(get_database),

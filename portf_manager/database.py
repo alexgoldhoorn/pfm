@@ -2776,6 +2776,16 @@ class Database:
             )
             return [dict(row) for row in cursor.fetchall()]
 
+    def delete_spending_transaction(self, spending_id: int) -> bool:
+        """Delete a spending transaction by ID (hard delete — this table has
+        no soft-delete concept, consistent with bookings/spending_rules)."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "DELETE FROM spending_transactions WHERE id = ?", (spending_id,)
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
     # CRUD Operations for Spending Rules (description → category matching)
 
     def create_spending_rule(self, pattern: str, category: str) -> int:
