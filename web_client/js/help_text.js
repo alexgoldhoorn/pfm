@@ -182,8 +182,20 @@ window.PAGE_HELP = {
         <li>The <strong>Setup checklist</strong> card flags common gaps — home value, bank accounts, income, mortgage/loan payments, other recurring expenses — and overdue-but-still-active deposits; the "Run setup wizard" button walks through filling them in one at a time.</li>
         <li><strong>Monthly Cash Flow</strong> tracks rough recurring income (salary, other) vs expenses (mortgage payment, loan, rest) for your own reference — it does not currently feed Goals or Forecast projections.</li>
         <li>FIRE goals project from total net worth, not just the brokerage value.</li>
+        <li>If you import bank statements on the <strong>Spending</strong> page, an "Actual" comparison appears here for the last 30 days — read-only, doesn't change the manual figures above.</li>
       </ul>
       <p class="text-muted small mb-0">All amounts converted to EUR at live FX rates.</p>`
+  },
+  spending: {
+    title: "Spending",
+    body: `
+      <p>Categorized day-to-day spending imported from your bank/checking accounts — separate from the investment transactions tracked elsewhere in the app.</p>
+      <ul class="mb-2">
+        <li><strong>Import a statement</strong> (CSV: date, description, amount) via the button top-right. Each row is matched against your saved <strong>category rules</strong> (a keyword in the description, e.g. "MERCADONA" → Groceries); anything left uncategorized can be resolved with the <strong>"Suggest categories (AI)"</strong> button — review and edit before saving. Accepting a suggestion creates a new rule automatically, so future imports for that merchant auto-categorize.</li>
+        <li><strong>Transfers</strong> between your own accounts (e.g. checking → savings, or checking → a brokerage account already tracked here) are detected automatically by matching an outflow in one account to an inflow of the same amount within a few days in another — shown separately, not counted as spending. Use "Re-scan transfers" if you import a matching account's statement later.</li>
+        <li>Click a row's category to change it by hand at any time.</li>
+      </ul>
+      <p class="text-muted small mb-0">A read-only summary of the last 30 days also appears on the Net Worth page, next to your manual Monthly Cash Flow entries, for comparison.</p>`
   },
   stressTest: {
     title: "Stress Testing — Methodology",
