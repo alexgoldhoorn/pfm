@@ -7,6 +7,7 @@ router (imports.py) — spending rows have no asset/quantity/price and use
 different dedup + transfer semantics.
 """
 
+import json
 import logging
 from typing import List, Literal, Optional
 
@@ -24,6 +25,7 @@ from pydantic import BaseModel
 
 from portf_manager.parsers.generic_bank_csv_parser import parse_generic_bank_csv
 from portf_manager.services.transfer_matcher import find_all_transfer_matches
+from portf_manager.llm_client import get_llm_client
 
 from ..dependencies import get_database
 from ..auth_middleware import APIKeyManager, require_api_key
@@ -420,3 +422,87 @@ def get_spending_summary(
         transferred_eur=round(transferred_eur, 2),
         by_category_eur={k: round(v, 2) for k, v in by_category_eur.items()},
     )
+
+
+class SuggestCategoriesRequest(BaseModel):
+    rows: List[PreviewSpendingRow]
+
+
+class CategorySuggestion(BaseModel):
+    description: str
+    category: str
+    suggested_pattern: str
+
+
+class SuggestCategoriesResponse(BaseModel):
+    suggestions: List[CategorySuggestion]
+
+
+def _build_suggest_prompt(descriptions: List[str]) -> str:
+    lines = "\n".join(f"- {d}" for d in descriptions)
+    return f"""
+You categorize bank statement transaction descriptions into everyday spending
+categories. For each description below, suggest ONE category from this set
+(or a similarly short new one if none fit): Groceries, Dining, Transport,
+Utilities, Housing, Health, Entertainment, Shopping, Income, Subscriptions,
+Other.
+
+Also suggest a short "pattern" — a distinctive substring of the description
+(e.g. the merchant name) that could be reused to auto-match future rows with
+the same category. Keep it as short as possible while still being specific
+to this merchant (avoid matching unrelated transactions).
+
+Return ONLY a JSON array, one object per description, in the same order:
+[{{"description": "...", "category": "...", "suggested_pattern": "..."}}]
+
+Descriptions:
+{lines}
+"""
+
+
+@router.post("/suggest-categories", response_model=SuggestCategoriesResponse)
+async def suggest_categories(
+    body: SuggestCategoriesRequest,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """LLM-assisted category suggestions for rows no rule matched.
+
+    Explicit user-triggered action (a button in the import preview) — not
+    run automatically on every upload, since LLM calls are slow/costly.
+    """
+    if not body.rows:
+        return SuggestCategoriesResponse(suggestions=[])
+
+    descriptions = [r.description for r in body.rows]
+    prompt = _build_suggest_prompt(descriptions)
+
+    try:
+        llm = get_llm_client()
+        response_text = llm.generate(prompt).strip()
+        if response_text.startswith("```"):
+            lines = response_text.split("\n")
+            response_text = "\n".join(
+                ln for ln in lines if not ln.strip().startswith("```")
+            )
+        data = json.loads(response_text)
+    except Exception as e:
+        logger.warning(f"Category suggestion LLM call failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Category suggestion failed: {str(e)}",
+        )
+
+    suggestions: List[CategorySuggestion] = []
+    for item in data if isinstance(data, list) else []:
+        desc = str(item.get("description", "")).strip()
+        category = str(item.get("category", "")).strip() or "Other"
+        pattern = str(item.get("suggested_pattern", "")).strip() or desc[:20]
+        if not desc:
+            continue
+        suggestions.append(
+            CategorySuggestion(
+                description=desc, category=category, suggested_pattern=pattern
+            )
+        )
+    return SuggestCategoriesResponse(suggestions=suggestions)
