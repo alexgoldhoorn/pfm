@@ -1040,11 +1040,12 @@ window.openEditTransaction = async function(id) {
     document.getElementById('editTxCurrency').value = tx.currency || '';
     document.getElementById('editTxNotes').value    = tx.description || '';
 
-    // Populate portfolio dropdown
+    // Populate portfolio dropdown (investment transactions only belong to
+    // brokerage accounts — bank accounts never populate `transactions`)
     const sel = document.getElementById('editTxPortfolio');
     sel.innerHTML = '<option value="">— none —</option>';
     const portfolios = await window.apiClient.getPortfolios();
-    portfolios.forEach(p => {
+    portfolios.filter(p => p.account_type !== 'bank').forEach(p => {
         const opt = document.createElement('option');
         opt.value = p.id;
         opt.textContent = p.name;
@@ -1276,10 +1277,13 @@ function setupImportExportPage() {
     let _filePortfolios = [];
 
     // Populate portfolio dropdown and keep a local copy for broker auto-matching.
+    // Imported broker CSVs carry investment transactions — exclude bank
+    // accounts so they can never become an import target (transactions never
+    // belong to a bank-type portfolio).
     (async () => {
         if (ioFilePortfolio && ioFilePortfolio.options.length <= 1) {
             try {
-                _filePortfolios = await window.apiClient.getPortfolios();
+                _filePortfolios = (await window.apiClient.getPortfolios()).filter(p => p.account_type !== 'bank');
                 _filePortfolios.forEach(p => {
                     const opt = document.createElement('option');
                     opt.value = p.id; opt.textContent = p.name;
@@ -1407,11 +1411,12 @@ function setupImportExportPage() {
     const textPreview    = document.getElementById('ioTextPreview');
     if (!textarea) return;
 
-    // Populate portfolio dropdown asynchronously
+    // Populate portfolio dropdown asynchronously — AI-extracted rows are
+    // investment transactions, so exclude bank accounts as import targets.
     (async () => {
         if (ioTextPortfolio && ioTextPortfolio.options.length <= 1) {
             try {
-                const portfolios = await window.apiClient.getPortfolios();
+                const portfolios = (await window.apiClient.getPortfolios()).filter(p => p.account_type !== 'bank');
                 portfolios.forEach(p => {
                     const opt = document.createElement('option');
                     opt.value = p.id; opt.textContent = p.name;
@@ -1578,7 +1583,9 @@ function setupImportExportPage() {
     if (ioCsvPortfolios && ioCsvPortfolios.options.length === 0) {
         (async () => {
             try {
-                const portfolios = await window.apiClient.getPortfolios();
+                // Investment-transaction CSV export — bank accounts have no
+                // transactions, so selecting one would silently export nothing.
+                const portfolios = (await window.apiClient.getPortfolios()).filter(p => p.account_type !== 'bank');
                 portfolios.forEach(p => {
                     const opt = document.createElement('option');
                     opt.value = p.id; opt.textContent = p.name;
@@ -1664,7 +1671,9 @@ function setupImportExportPage() {
         if (!platformExportBtn) return;
 
         try {
-            const portfolios = await window.apiClient.getPortfolios();
+            // Yahoo Finance / Simply Wall St exports are transactions/positions
+            // only — bank accounts hold neither, so exclude them here too.
+            const portfolios = (await window.apiClient.getPortfolios()).filter(p => p.account_type !== 'bank');
             portfolios.forEach(p => {
                 const opt = document.createElement('option');
                 opt.value = p.id;
@@ -1751,7 +1760,11 @@ function setupImportExportPage() {
     if (addBookingPortfolio && addBookingPortfolio.options.length <= 1) {
         (async () => {
             try {
-                const portfolios = await window.apiClient.getPortfolios();
+                // Bookings are brokerage cash-flow entries (deposits/withdrawals
+                // into an investment account, consumed by IRR and transfer
+                // matching as "brokerage Deposit"); bank-account cash movements
+                // are tracked separately via Spending's bank-statement import.
+                const portfolios = (await window.apiClient.getPortfolios()).filter(p => p.account_type !== 'bank');
                 portfolios.forEach(p => {
                     const opt = document.createElement('option');
                     opt.value = p.id; opt.textContent = p.name;
@@ -2984,7 +2997,9 @@ function setupAddTransaction() {
             });
         } catch (e) { /* ignore */ }
         try {
-            const pfs = await window.apiClient.getPortfolios();
+            // Manually-added rows are investment transactions — exclude
+            // bank accounts as a target portfolio.
+            const pfs = (await window.apiClient.getPortfolios()).filter(p => p.account_type !== 'bank');
             (pfs || []).forEach(p => {
                 const o = document.createElement('option');
                 o.value = p.id; o.textContent = p.name;
@@ -3769,11 +3784,15 @@ function setupSettings() {
         $('setRowsPerPage').value = PREFS.rowsPerPage;
         $('setHoldingsSort').value = PREFS.holdingsSort || 'value';
         $('setHideBelowEur').value = PREFS.hideBelowEur || 0;
-        // Populate the broker select from the user's portfolios (by name)
+        // Populate the broker select from the user's portfolios (by name).
+        // This preference preselects the portfolio in the Add Transaction and
+        // Add Booking forms (via selectDefaultBroker()), both investment
+        // write-paths — exclude bank accounts so a bank account can never
+        // become the default target there.
         (async () => {
             try {
                 const sel = $('setDefaultBroker');
-                const pfs = await window.apiClient.getPortfolios();
+                const pfs = (await window.apiClient.getPortfolios()).filter(p => p.account_type !== 'bank');
                 sel.innerHTML = '<option value="">— none —</option>' +
                     (pfs || []).map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
                 sel.value = PREFS.defaultBroker || '';
