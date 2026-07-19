@@ -158,3 +158,52 @@ def test_delete_spending_transaction(db):
 
 def test_delete_spending_transaction_missing_returns_false(db):
     assert db.delete_spending_transaction(999999) is False
+
+
+def test_delete_spending_transaction_resets_transfer_counterpart(db):
+    pid_a = db.create_portfolio("Bank A", account_type="bank")
+    pid_b = db.create_portfolio("Bank B", account_type="bank")
+    id_a = db.create_spending_transaction(pid_a, "2026-01-05", "Transfer out", -100.0)
+    id_b = db.create_spending_transaction(pid_b, "2026-01-06", "Transfer in", 100.0)
+    # Link the two rows as a spending<->spending transfer pair, mirroring
+    # what _run_transfer_matching does.
+    db.update_spending_transaction(
+        id_a,
+        category="Transfer",
+        is_transfer=True,
+        transfer_link_type="spending",
+        transfer_link_id=id_b,
+    )
+    db.update_spending_transaction(
+        id_b,
+        category="Transfer",
+        is_transfer=True,
+        transfer_link_type="spending",
+        transfer_link_id=id_a,
+    )
+
+    assert db.delete_spending_transaction(id_a) is True
+
+    survivor = db.get_spending_transaction(id_b)
+    assert survivor is not None
+    assert survivor["is_transfer"] == 0
+    assert survivor["transfer_link_type"] is None
+    assert survivor["transfer_link_id"] is None
+    assert survivor["category"] == "uncategorized"
+
+
+def test_delete_spending_transaction_booking_linked_unaffected(db):
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    tx_id = db.create_spending_transaction(pid, "2026-01-05", "Desc", -10.0)
+    db.update_spending_transaction(
+        tx_id,
+        category="Transfer",
+        is_transfer=True,
+        transfer_link_type="booking",
+        transfer_link_id=42,
+    )
+
+    # Deleting a booking-linked row should just delete cleanly — there is no
+    # spending-side counterpart to reset.
+    assert db.delete_spending_transaction(tx_id) is True
+    assert db.get_spending_transaction(tx_id) is None

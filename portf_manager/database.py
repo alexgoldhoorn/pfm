@@ -2778,8 +2778,43 @@ class Database:
 
     def delete_spending_transaction(self, spending_id: int) -> bool:
         """Delete a spending transaction by ID (hard delete — this table has
-        no soft-delete concept, consistent with bookings/spending_rules)."""
+        no soft-delete concept, consistent with bookings/spending_rules).
+
+        If the row being deleted is one leg of a spending<->spending transfer
+        pair (`transfer_link_type == "spending"`), the surviving leg would
+        otherwise be left orphaned: still flagged `is_transfer=1` with a
+        `transfer_link_id` pointing at a now-nonexistent row, permanently
+        excluded from spending totals and invisible to rescan-transfers. The
+        counterpart is reset back to an un-transferred state before the
+        delete proceeds, but only when its own `transfer_link_id` genuinely
+        points back at this row (a true reciprocal link, not a coincidence).
+        Booking-linked rows (`transfer_link_type == "booking"`) have no
+        spending-side counterpart to touch and are unaffected.
+        """
         with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT transfer_link_type, transfer_link_id "
+                "FROM spending_transactions WHERE id = ?",
+                (spending_id,),
+            ).fetchone()
+            if row and row["transfer_link_type"] == "spending":
+                counterpart = conn.execute(
+                    "SELECT id FROM spending_transactions "
+                    "WHERE id = ? AND transfer_link_id = ?",
+                    (row["transfer_link_id"], spending_id),
+                ).fetchone()
+                if counterpart:
+                    conn.execute(
+                        """
+                        UPDATE spending_transactions
+                        SET is_transfer = 0,
+                            transfer_link_type = NULL,
+                            transfer_link_id = NULL,
+                            category = 'uncategorized'
+                        WHERE id = ?
+                        """,
+                        (counterpart["id"],),
+                    )
             cursor = conn.execute(
                 "DELETE FROM spending_transactions WHERE id = ?", (spending_id,)
             )
