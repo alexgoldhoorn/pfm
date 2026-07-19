@@ -140,6 +140,31 @@ def test_find_all_transfer_matches_multiple_pairs():
     assert {m.link_id for m in matches} == {3, 4}
 
 
+def test_find_all_transfer_matches_source_row_not_reused_as_counterpart():
+    """A row already resolved as the *source* of one match must not itself be
+    claimed as the *counterpart* for a later, unrelated row in the same batch.
+
+    row1 (-500, portfolio 10) has a genuine pre-existing counterpart row3
+    (+500, portfolio 30) that is NOT part of the batch being matched — it's
+    only present in the unlinked pool. row6 (+500, portfolio 60) is an
+    unrelated row in the batch with the same date/amount as row1 but no
+    real counterpart of its own. Before the fix, row1 (already matched to
+    row3) could still be picked up as row6's counterpart.
+    """
+    row1 = _spending(1, portfolio_id=10, date="2026-01-10", amount=-500.0)
+    row3 = _spending(3, portfolio_id=30, date="2026-01-10", amount=500.0)
+    row6 = _spending(6, portfolio_id=60, date="2026-01-10", amount=500.0)
+    rows = [row1, row6]
+    unlinked = [row1, row3, row6]
+
+    matches = find_all_transfer_matches(rows, unlinked, [])
+
+    assert len(matches) == 1
+    assert matches[0].spending_id == 1
+    assert matches[0].link_id == 3
+    assert all(m.spending_id != 6 for m in matches)
+
+
 def test_find_all_transfer_matches_skips_already_transfer_rows():
     rows = [
         _spending(
