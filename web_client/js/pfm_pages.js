@@ -817,7 +817,7 @@ function createPageManager() {
                             <td><small class="text-muted">${esc(p.description || '')}</small></td>
                             <td class="pe-3 text-nowrap">
                                 <div class="btn-group btn-group-sm">
-                                    <button class="btn btn-outline-secondary" title="Edit" onclick="editPortfolio(${p.id}, '${esc(p.name)}', '${p.base_currency || 'EUR'}', '${esc(p.description)}', '${esc(p.website)}')">
+                                    <button class="btn btn-outline-secondary" title="Edit" onclick="editPortfolio(${p.id}, '${esc(p.name)}', '${p.base_currency || 'EUR'}', '${esc(p.description)}', '${esc(p.website)}', '${esc(p.account_type || 'brokerage')}')">
                                         <i class="bi bi-pencil"></i>
                                     </button>
                                     <button class="btn btn-outline-warning" title="Clear all transactions" onclick="clearPortfolioTransactions(${p.id}, '${esc(p.name)}')">
