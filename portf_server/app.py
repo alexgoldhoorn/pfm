@@ -37,6 +37,7 @@ from .routers import (
     imports,
     exports,
     bookings,
+    spending,
     sync,
     rebalance,
     research,
@@ -339,6 +340,13 @@ app.include_router(
     bookings.router,
     prefix="/api/v1/bookings",
     tags=["Bookings"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    spending.router,
+    prefix="/api/v1/spending",
+    tags=["Spending"],
     dependencies=_PROTECTED,
 )
 
