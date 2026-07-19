@@ -215,8 +215,21 @@ def _run_transfer_matching(db, saved_ids: List[int]) -> int:
     rows = [r for r in unlinked if r["id"] in saved_ids]
     if not rows:
         return 0
+    # Bookings already claimed as a transfer counterpart in a prior save/
+    # rescan call must be excluded — otherwise an unrelated later spending
+    # row with the same amount/currency in the date window could wrongly
+    # link to the same already-used Deposit booking (bookings have no
+    # per-call "consumed" tracking of their own, unlike spending rows which
+    # drop out of the unlinked pool once is_transfer=1).
+    already_linked_booking_ids = {
+        r["transfer_link_id"]
+        for r in db.list_spending_transactions(is_transfer=True)
+        if r.get("transfer_link_type") == "booking"
+    }
     deposit_bookings = [
-        b for b in db.get_all_bookings() if b.get("action") == "Deposit"
+        b
+        for b in db.get_all_bookings()
+        if b.get("action") == "Deposit" and b["id"] not in already_linked_booking_ids
     ]
     matches = find_all_transfer_matches(rows, unlinked, deposit_bookings)
     for m in matches:
