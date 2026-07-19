@@ -103,7 +103,7 @@ Google Sheets API: `UNFORMATTED_VALUE + SERIAL_NUMBER` for reading (dates = floa
 - `find_duplicate_transaction` is **time-aware**: matches date + time-of-day only when both rows carry one. `find_duplicate_booking` matches date+action+amount+currency+portfolio.
 
 ### Export API (`portf_server/routers/exports.py`)
-- `GET /api/v1/export/csv` — all transactions as UTF-8 CSV (Excel BOM); `?portfolio_id=` accepts the param repeated (`?portfolio_id=1&portfolio_id=2`) to union transactions across multiple accounts — bound as `Optional[List[int]]`. Export tab in the web client has a multi-select account list (`#ioExportCsvPortfolios`, populated from `getPortfolios()`) feeding this; leaving it empty exports all portfolios as before.
+- `GET /api/v1/export/csv` — all transactions as UTF-8 CSV (Excel BOM); `?portfolio_id=`
 - `GET /api/v1/export/pdt` — PDT XLSX (5 sheets)
 - `GET /api/v1/export/yahoo-finance?portfolio_id=&mode=transactions|positions` — Yahoo CSV (MM/DD/YYYY); assets without `ticker` skipped (X-Skipped-Count / X-Skipped-Symbols headers)
 - `GET /api/v1/export/simply-wall-st?portfolio_id=&mode=transactions|positions` — SWS CSV (YYYY-MM-DD)
