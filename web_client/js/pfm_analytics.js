@@ -62,6 +62,7 @@ async function loadNetworthPage() {
         }
         _renderDeposits(d.deposits || []);
         const cf = await _loadCashflow();
+        _loadActualSpendingComparison();
         _renderChecklist(d, cf);
     } catch (err) {
         if (body) body.innerHTML = `<tr><td colspan="5" class="text-center text-danger py-3">${err.message}</td></tr>`;
@@ -423,6 +424,23 @@ async function _loadCashflow() {
     } catch (err) {
         body.innerHTML = `<tr><td colspan="5" class="text-center text-danger py-3">${err.message}</td></tr>`;
         return null;
+    }
+}
+
+async function _loadActualSpendingComparison() {
+    const row = document.getElementById('cfActualRow');
+    if (!row) return;
+    try {
+        const s = await window.apiClient.getSpendingSummary(30);
+        if (!s || (s.spent_eur === 0 && s.income_eur === 0 && s.transferred_eur === 0)) return;
+        const eur = v => Fmt.amt('€' + Fmt.num(v, 0, 0));
+        const el = id => document.getElementById(id);
+        if (el('cfActualIncome')) el('cfActualIncome').innerHTML = eur(s.income_eur);
+        if (el('cfActualSpent')) el('cfActualSpent').innerHTML = eur(s.spent_eur);
+        if (el('cfActualTransferred')) el('cfActualTransferred').innerHTML = eur(s.transferred_eur);
+        row.style.display = '';
+    } catch (err) {
+        // Silent — this is a supplementary comparison widget, not core Net Worth data.
     }
 }
 
