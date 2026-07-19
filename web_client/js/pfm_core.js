@@ -2623,7 +2623,7 @@ function setupLlmImportModal() {
     modal.addEventListener('show.bs.modal', async () => {
         if (portfolioSelect && portfolioSelect.options.length <= 1) {
             try {
-                const portfolios = await window.apiClient.getPortfolios();
+                const portfolios = (await window.apiClient.getPortfolios()).filter(p => p.account_type !== 'bank');
                 portfolios.forEach(p => {
                     const opt = document.createElement('option');
                     opt.value = p.id;
