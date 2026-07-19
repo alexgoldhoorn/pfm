@@ -126,6 +126,11 @@ def find_all_transfer_matches(
         match = find_transfer_match(row, pool, bookings_pool)
         if match:
             matches.append(match)
+            # Exclude the row itself from later candidate pools too, not just
+            # its counterpart — otherwise an already-resolved source row can
+            # be claimed as a *different* row's counterpart later in the
+            # same batch.
+            consumed_spending_ids.add(row["id"])
             if match.link_type == "spending":
                 consumed_spending_ids.add(match.link_id)
             else:
