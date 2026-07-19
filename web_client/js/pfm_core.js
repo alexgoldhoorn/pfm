@@ -1370,6 +1370,103 @@ function createAPIClient() {
             return response.json();
         },
 
+        async uploadBankStatement(file, accountPortfolioId, accountName) {
+            const form = new FormData();
+            form.append('file', file);
+            if (accountPortfolioId) form.append('account_portfolio_id', accountPortfolioId);
+            if (accountName) form.append('account_name', accountName);
+            const response = await fetch(this.baseURL + '/api/v1/spending/upload', {
+                method: 'POST',
+                headers: { 'X-API-Key': this.apiKey },
+                body: form
+            });
+            if (!response.ok) {
+                const err = await response.text();
+                throw new Error(`Parse failed: ${err}`);
+            }
+            return response.json();
+        },
+        async saveSpendingTransactions(accountPortfolioId, rows, duplicateAction = 'skip') {
+            const response = await fetch(this.baseURL + '/api/v1/spending/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify({ account_portfolio_id: accountPortfolioId, rows, duplicate_action: duplicateAction })
+            });
+            if (!response.ok) {
+                const err = await response.text();
+                throw new Error(`Save failed: ${err}`);
+            }
+            return response.json();
+        },
+        async suggestSpendingCategories(rows) {
+            const response = await fetch(this.baseURL + '/api/v1/spending/suggest-categories', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify({ rows })
+            });
+            if (!response.ok) {
+                const err = await response.text();
+                throw new Error(`Suggestion failed: ${err}`);
+            }
+            return response.json();
+        },
+        async getSpendingTransactions(params = {}) {
+            const qs = new URLSearchParams(params).toString();
+            const response = await fetch(this.baseURL + '/api/v1/spending/' + (qs ? '?' + qs : ''), {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) throw new Error('Failed to load spending transactions');
+            return response.json();
+        },
+        async updateSpendingCategory(id, category) {
+            const response = await fetch(this.baseURL + '/api/v1/spending/' + id, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify({ category })
+            });
+            if (!response.ok) throw new Error('Failed to update category');
+            return response.json();
+        },
+        async rescanTransfers() {
+            const response = await fetch(this.baseURL + '/api/v1/spending/rescan-transfers', {
+                method: 'POST',
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) throw new Error('Failed to rescan transfers');
+            return response.json();
+        },
+        async getSpendingRules() {
+            const response = await fetch(this.baseURL + '/api/v1/spending/rules', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) throw new Error('Failed to load rules');
+            return response.json();
+        },
+        async createSpendingRule(pattern, category) {
+            const response = await fetch(this.baseURL + '/api/v1/spending/rules', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify({ pattern, category })
+            });
+            if (!response.ok) throw new Error('Failed to create rule');
+            return response.json();
+        },
+        async deleteSpendingRule(id) {
+            const response = await fetch(this.baseURL + '/api/v1/spending/rules/' + id, {
+                method: 'DELETE',
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) throw new Error('Failed to delete rule');
+            return response.json();
+        },
+        async getSpendingSummary(days = 30) {
+            const response = await fetch(this.baseURL + '/api/v1/spending/summary?days=' + days, {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) throw new Error('Failed to load spending summary');
+            return response.json();
+        },
+
         async sendChat(message, sessionId) {
             const response = await fetch(this.baseURL + '/api/v1/llm/chat', {
                 method: 'POST',
