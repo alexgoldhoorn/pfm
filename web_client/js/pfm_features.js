@@ -744,8 +744,6 @@ function setupChatPage() {
             const checkedIdxs = Array.from(card.querySelectorAll('.chat-tx-select:checked'))
                 .map(cb => parseInt(cb.dataset.idx));
             if (checkedIdxs.length === 0) { alert('Nothing selected.'); return; }
-            btn.disabled = true;
-            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
             const f = (cls, i) => card.querySelector(`.${cls}[data-idx="${i}"]`);
             const normalized = checkedIdxs.map(i => ({
                 symbol: f('chat-tx-symbol', i).value,
@@ -759,6 +757,13 @@ function setupChatPage() {
                 fees: parseFloat(f('chat-tx-fees', i).value) || 0,
                 notes: transactions[i] ? (transactions[i].raw_text || '') : ''
             }));
+            const missingDate = normalized.filter(t => !t.date || !t.date.trim());
+            if (missingDate.length > 0) {
+                alert(`Please fill in a date for: ${missingDate.map(t => t.symbol || '(row)').join(', ')}`);
+                return;
+            }
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Saving…';
             try {
                 const result = await window.apiClient.saveImportedTransactions(normalized);
                 btn.remove();
@@ -1361,6 +1366,11 @@ function setupImportExportPage() {
         const selectedDeps = Array.from(document.querySelectorAll('#ioFilePreview .file-dep-select:checked'))
             .map(cb => parsedFileDeposits[parseInt(cb.dataset.idx)]);
         if (selected.length === 0 && parsedFileBookings.length === 0 && selectedDeps.length === 0) { alert('No data selected.'); return; }
+        const missingDate = selected.filter(t => !t.date || !String(t.date).trim());
+        if (missingDate.length > 0) {
+            alert(`Please fill in a date for: ${missingDate.map(t => t.symbol || '(row)').join(', ')}`);
+            return;
+        }
         fileSaveBtn.disabled = true;
         fileSaveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving…';
         try {
@@ -1513,6 +1523,11 @@ function setupImportExportPage() {
             fees: parseFloat(document.getElementById(`iotx_fees_${i}`).value) || 0,
             notes: extractedText[i] ? (extractedText[i].raw_text || '') : ''
         }));
+        const missingDate = normalized.filter(t => !t.date || !t.date.trim());
+        if (missingDate.length > 0) {
+            alert(`Please fill in a date for: ${missingDate.map(t => t.symbol || '(row)').join(', ')}`);
+            return;
+        }
         textSaveBtn.disabled = true;
         textSaveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving…';
         try {
@@ -2799,10 +2814,10 @@ function renderResearchReport(report) {
 }
 
 // Open the research modal for a symbol, load cached report + targets
-window.openResearchModal = async function(symbol) {
+window.openResearchModal = async function(symbol, name) {
     _researchSymbol = symbol;
     const symEl = document.getElementById('researchModalSymbol');
-    if (symEl) symEl.textContent = symbol;
+    if (symEl) symEl.textContent = name ? `${name} (${symbol})` : symbol;
     const linksEl = document.getElementById('researchModalLinks');
     if (linksEl) linksEl.innerHTML = assetLinks(symbol);
     const statusEl = document.getElementById('researchTargetsStatus');
@@ -2976,6 +2991,54 @@ function setupAddTransaction() {
             if (window.pageManager) window.pageManager.loadTransactionsPage();
         } catch (err) {
             alert('Error adding transaction: ' + err.message);
+        }
+    });
+}
+
+// Manual "Add Cash" modal on the Transactions page — deposit / withdrawal booking.
+function setupAddCash() {
+    const form = document.getElementById('addCashForm');
+    const modalEl = document.getElementById('addCashModal');
+    if (!form || !modalEl) return;
+    const $ = id => document.getElementById(id);
+    const portfolioSel = $('cashPortfolio');
+    let populated = false;
+
+    async function populate() {
+        if (populated) return;
+        populated = true;
+        try {
+            const pfs = await window.apiClient.getPortfolios();
+            (pfs || []).forEach(p => {
+                const o = document.createElement('option');
+                o.value = p.id; o.textContent = p.name;
+                portfolioSel.appendChild(o);
+            });
+            selectDefaultBroker(portfolioSel);
+        } catch (e) { /* ignore */ }
+        if (!$('cashDate').value) $('cashDate').value = new Date().toISOString().slice(0, 10);
+    }
+    modalEl.addEventListener('show.bs.modal', populate);
+
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const payload = {
+            date: $('cashDate').value,
+            action: $('cashAction').value,
+            amount: parseFloat($('cashAmount').value),
+            currency: ($('cashCurrency').value || 'EUR').toUpperCase(),
+            portfolio_id: portfolioSel.value ? parseInt(portfolioSel.value) : null,
+        };
+        if (!payload.date || !payload.amount || payload.amount <= 0) {
+            alert('Please enter a valid date and amount.'); return;
+        }
+        try {
+            await window.apiClient.createBooking(payload);
+            bootstrap.Modal.getInstance(modalEl).hide();
+            form.reset();
+            if (window.pageManager) window.pageManager.loadTransactionsPage();
+        } catch (err) {
+            alert('Error adding cash movement: ' + err.message);
         }
     });
 }
@@ -3892,6 +3955,7 @@ document.addEventListener('DOMContentLoaded', function() {
     setupSidebarSections();
     setupSettings();
     setupAddTransaction();
+    setupAddCash();
     setupResearchPage();
 
     window.authManager.setupLoginForm();
