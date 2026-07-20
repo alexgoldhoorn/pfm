@@ -73,10 +73,11 @@ window.loadNetworthPage = loadNetworthPage;
 // Pure: Net Worth setup checklist + fixed deposits needing attention.
 // items = getNetworth().items, cashflowItems = getCashflow().items,
 // deposits = getNetworth().deposits. Unit-tested in web_client/js/tests/.
-function computeNetWorthChecklist(items, cashflowItems, deposits) {
+function computeNetWorthChecklist(items, cashflowItems, deposits, bankAccounts) {
     items = items || [];
     cashflowItems = cashflowItems || [];
     deposits = deposits || [];
+    bankAccounts = bankAccounts || [];
 
     const hasMortgage = items.some(it => it.is_liability && it.category === 'mortgage');
     const hasProperty = items.some(it => !it.is_liability && it.category === 'property');
@@ -129,7 +130,21 @@ function computeNetWorthChecklist(items, cashflowItems, deposits) {
             days_overdue: Math.round((new Date(today) - new Date(d.maturity_date)) / 86400000),
         }));
 
-    return { checklist, attention };
+    const missingBalanceAccounts = bankAccounts
+        .filter(a => a.balance === null || a.balance === undefined)
+        .map(a => ({ portfolio_id: a.portfolio_id, name: a.name }));
+
+    const hasBalanceBearingBankAccount = bankAccounts.some(
+        a => a.balance !== null && a.balance !== undefined
+    );
+    const hasManualCashAsset = items.some(
+        it => !it.is_liability && NW_BANK_CATS.has(it.category)
+    );
+    const duplicateWarning = (hasBalanceBearingBankAccount && hasManualCashAsset)
+        ? "You have both a manual cash/bank balance entry and at least one bank account with an imported balance — check you're not counting the same money twice, and remove the outdated manual entry if so."
+        : null;
+
+    return { checklist, attention, missingBalanceAccounts, duplicateWarning };
 }
 window.computeNetWorthChecklist = computeNetWorthChecklist;
 
