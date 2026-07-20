@@ -207,3 +207,61 @@ def test_delete_spending_transaction_booking_linked_unaffected(db):
     # spending-side counterpart to reset.
     assert db.delete_spending_transaction(tx_id) is True
     assert db.get_spending_transaction(tx_id) is None
+
+
+def test_create_spending_transaction_with_balance(db):
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    tx_id = db.create_spending_transaction(
+        pid, "2026-01-05", "MERCADONA COMPRA", -24.50, balance=475.50
+    )
+    row = db.get_spending_transaction(tx_id)
+    assert row["balance"] == 475.50
+
+
+def test_create_spending_transaction_balance_defaults_none(db):
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    tx_id = db.create_spending_transaction(pid, "2026-01-05", "Desc", -10.0)
+    row = db.get_spending_transaction(tx_id)
+    assert row["balance"] is None
+
+
+def test_get_latest_bank_balance_picks_most_recent_date(db):
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_transaction(pid, "2026-01-05", "A", -10.0, balance=100.0)
+    db.create_spending_transaction(pid, "2026-01-10", "B", -20.0, balance=80.0)
+    db.create_spending_transaction(pid, "2026-01-07", "C", -5.0, balance=95.0)
+    latest = db.get_latest_bank_balance(pid)
+    assert latest["date"] == "2026-01-10"
+    assert latest["balance"] == 80.0
+
+
+def test_get_latest_bank_balance_ties_broken_by_id(db):
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_transaction(pid, "2026-01-10", "Morning", -10.0, balance=90.0)
+    id2 = db.create_spending_transaction(
+        pid, "2026-01-10", "Evening", -5.0, balance=85.0
+    )
+    latest = db.get_latest_bank_balance(pid)
+    assert latest["balance"] == 85.0
+    assert id2 > 0  # sanity: second row really was inserted after the first
+
+
+def test_get_latest_bank_balance_ignores_null_balance_rows(db):
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_transaction(pid, "2026-01-05", "A", -10.0, balance=100.0)
+    db.create_spending_transaction(pid, "2026-01-10", "B (no balance)", -20.0)
+    latest = db.get_latest_bank_balance(pid)
+    assert latest["date"] == "2026-01-05"
+    assert latest["balance"] == 100.0
+
+
+def test_get_latest_bank_balance_no_rows_returns_none(db):
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    assert db.get_latest_bank_balance(pid) is None
+
+
+def test_get_latest_bank_balance_scoped_to_portfolio(db):
+    pid_a = db.create_portfolio("Bank A", account_type="bank")
+    pid_b = db.create_portfolio("Bank B", account_type="bank")
+    db.create_spending_transaction(pid_a, "2026-01-05", "A", -10.0, balance=100.0)
+    assert db.get_latest_bank_balance(pid_b) is None
