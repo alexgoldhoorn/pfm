@@ -474,6 +474,79 @@ class TestImportSave:
         assert response.json()["saved"] == 1
 
     @pytest.mark.asyncio
+    async def test_save_corrects_asset_type_of_existing_asset(
+        self, async_test_client: AsyncClient, auth_headers, sample_asset_data
+    ):
+        """A parser can carry a more accurate asset_type than the one the
+
+        asset was first created with (e.g. misclassified "stock" later
+        re-imported from a broker parser that correctly tags it "etf") — the
+        existing asset's type should be corrected, not silently ignored.
+        """
+        await async_test_client.post(
+            "/api/v1/assets", json=sample_asset_data, headers=auth_headers
+        )
+
+        payload = {
+            "transactions": [
+                {
+                    "symbol": sample_asset_data["symbol"],
+                    "name": sample_asset_data["name"],
+                    "asset_type": "etf",
+                    "tx_type": "buy",
+                    "date": "2024-06-15",
+                    "quantity": 2.0,
+                    "price": 155.0,
+                    "currency": "USD",
+                    "fees": 0.0,
+                    "notes": "",
+                }
+            ]
+        }
+        response = await async_test_client.post(
+            "/api/v1/import/save", json=payload, headers=auth_headers
+        )
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["saved"] == 1
+
+        assets_resp = await async_test_client.get(
+            "/api/v1/assets", headers=auth_headers
+        )
+        matching = [
+            a for a in assets_resp.json() if a["symbol"] == sample_asset_data["symbol"]
+        ]
+        assert len(matching) == 1
+        assert matching[0]["asset_type"] == "etf"
+
+    @pytest.mark.asyncio
+    async def test_save_requires_date(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        payload = {
+            "transactions": [
+                {
+                    "symbol": "NODATE",
+                    "name": "No Date Corp",
+                    "asset_type": "stock",
+                    "tx_type": "buy",
+                    "date": "",
+                    "quantity": 1.0,
+                    "price": 10.0,
+                    "currency": "USD",
+                    "fees": 0.0,
+                    "notes": "",
+                }
+            ]
+        }
+        response = await async_test_client.post(
+            "/api/v1/import/save", json=payload, headers=auth_headers
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["saved"] == 0
+        assert any("date is required" in e for e in data["errors"])
+
+    @pytest.mark.asyncio
     async def test_save_empty_list(self, async_test_client: AsyncClient, auth_headers):
         response = await async_test_client.post(
             "/api/v1/import/save", json={"transactions": []}, headers=auth_headers

@@ -352,6 +352,11 @@ Be concise and data-driven. If this is a crypto, ETF, or P2P asset where DCF doe
             raw = "\n".join(
                 line for line in raw.splitlines() if not line.strip().startswith("```")
             )
+        if not raw.strip():
+            raise RuntimeError(
+                "LLM returned an empty response (model may have exhausted its "
+                "token budget or been safety-blocked)"
+            )
         report = json.loads(raw)
         # Validate required keys
         for key in ("recommendation", "confidence", "summary"):

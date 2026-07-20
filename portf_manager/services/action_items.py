@@ -18,6 +18,15 @@ from datetime import date, datetime
 STALE_IMPORT_DAYS = 60
 
 
+def _name_code(name: str | None, symbol: str) -> str:
+    """Format an asset for display as "Name (SYMBOL)", falling back to the
+
+    bare symbol when no name is known — users generally don't recognise
+    ISINs or less common tickers by code alone.
+    """
+    return f"{name} ({symbol})" if name else symbol
+
+
 def _parse_date(value) -> date | None:
     if not value:
         return None
@@ -123,6 +132,10 @@ def check_price_update_failures(db) -> list[dict]:
     if not run.get("error_count"):
         return []
     symbols = run.get("error_symbols") or []
+    labels = []
+    for sym in symbols:
+        asset = db.get_asset_by_symbol(sym)
+        labels.append(_name_code(asset.get("name") if asset else None, sym))
     return [
         {
             "id": f"errors:price-update:{run['id']}",
@@ -131,7 +144,7 @@ def check_price_update_failures(db) -> list[dict]:
             "title": f"{run['error_count']} asset(s) failed to update prices",
             "detail": (
                 f"Last run ({str(run.get('finished_at', ''))[:16]}): "
-                + (", ".join(symbols) if symbols else "see Diagnostics for details")
+                + (", ".join(labels) if labels else "see Diagnostics for details")
             ),
             "link_page": "diagnostics",
             "context": {"run_id": run["id"], "symbols": symbols},
@@ -157,19 +170,26 @@ def check_stale_research(db, today: date = None) -> list[dict]:
         if note.get("asset_id") in held_asset_ids:
             latest_by_asset[note["asset_id"]] = note
 
+    stale_labels = []
     stale_symbols = []
     for aid in held_asset_ids:
         note = latest_by_asset.get(aid)
         if note is None:
             asset = db.get_asset(aid) or {}
-            stale_symbols.append(asset.get("symbol", f"#{aid}"))
+            symbol = asset.get("symbol", f"#{aid}")
+            stale_labels.append(_name_code(asset.get("name"), symbol))
+            stale_symbols.append(symbol)
             continue
         created = _parse_date(note.get("created_at"))
         if created is None or (today - created).days >= STALE_RESEARCH_DAYS:
-            stale_symbols.append(note.get("symbol", f"#{aid}"))
+            asset = db.get_asset(aid) or {}
+            symbol = note.get("symbol", f"#{aid}")
+            stale_labels.append(_name_code(asset.get("name"), symbol))
+            stale_symbols.append(symbol)
 
     if not stale_symbols:
         return []
+    order = sorted(range(len(stale_symbols)), key=lambda i: stale_symbols[i])
     return [
         {
             "id": "errors:stale-research",
@@ -179,7 +199,7 @@ def check_stale_research(db, today: date = None) -> list[dict]:
                 f"{len(stale_symbols)} holding(s) not re-valued in "
                 f"{STALE_RESEARCH_DAYS}+ days"
             ),
-            "detail": ", ".join(sorted(stale_symbols)),
+            "detail": ", ".join(stale_labels[i] for i in order),
             "link_page": "research",
             "context": {"symbols": sorted(stale_symbols)},
         }
@@ -225,7 +245,7 @@ def check_price_alerts(db) -> list[dict]:
                 "id": f"watchlist:{a['symbol']}",
                 "category": "watchlist",
                 "severity": "medium",
-                "title": f"{a['symbol']} dropped into its buy zone",
+                "title": f"{_name_code(a.get('name'), a['symbol'])} dropped into its buy zone",
                 "detail": (
                     f"Price {a['price']} at or below buy-below {a['buy_below']}."
                 ),
@@ -241,7 +261,10 @@ def check_price_alerts(db) -> list[dict]:
                 "id": f"research:{a['symbol']}",
                 "category": "watchlist",
                 "severity": "medium",
-                "title": f"{a['symbol']} crossed a price target ({triggers})",
+                "title": (
+                    f"{_name_code(a.get('name'), a['symbol'])} crossed a "
+                    f"price target ({triggers})"
+                ),
                 "detail": (
                     f"Currently held: {a['quantity']} units, unrealised P&L "
                     f"{a['unrealized_pnl']} ({a['unrealized_pnl_pct']}%)."
