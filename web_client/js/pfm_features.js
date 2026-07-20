@@ -1111,6 +1111,13 @@ function _updatePortfolioModalForType(accountType) {
             : (isEdit ? 'Edit Broker' : 'Add Broker');
     }
     if (siteGroup) siteGroup.style.display = isBank ? 'none' : '';
+    // Bank accounts have no website concept — clear any typed value so a
+    // stale website never rides along in the payload once the field is
+    // hidden (not just visually hidden with leftover data).
+    if (isBank) {
+        const websiteEl = document.getElementById('portfolioWebsite');
+        if (websiteEl) websiteEl.value = '';
+    }
 }
 
 function setupPortfoliosPage() {
@@ -1166,6 +1173,10 @@ function setupPortfoliosPage() {
         if (!id) {
             const typeSel = document.getElementById('portfolioAccountType');
             data.account_type = typeSel ? typeSel.value : 'brokerage';
+            // Defense in depth: bank accounts never carry a website, even if
+            // the clear-on-toggle in _updatePortfolioModalForType was somehow
+            // bypassed and the input still has a stale value.
+            if (data.account_type === 'bank') data.website = null;
         }
         try {
             if (id) {
