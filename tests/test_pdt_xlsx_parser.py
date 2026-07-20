@@ -1,23 +1,17 @@
 """Unit tests for the Portfolio Dividend Tracker XLSX import/export."""
 
-import io
 import os
 import tempfile
 from datetime import date, datetime, time
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 # openpyxl is required — skip all tests gracefully if not installed
 openpyxl = pytest.importorskip("openpyxl")
 
-from portf_manager.parsers.pdt_xlsx_parser import (
-    PDTBooking,
-    PDTDividend,
+from portf_manager.parsers.pdt_xlsx_parser import (  # noqa: E402
     PDTParseResult,
-    PDTTransaction,
-    PDTXLSXExporter,
-    PDTXLSXParser,
     _detect_asset_type,
     _pdt_action_to_tx_type,
     _pdt_exchange,
@@ -253,6 +247,20 @@ class TestDetectAssetType:
 
     def test_stock_without_keyword(self):
         assert _detect_asset_type("Example Corp", "Stock market") == "stock"
+
+    def test_ishares_fund_without_other_etf_keywords(self):
+        """iShares index-tracking funds don't always say ETF/FUND/UCITS/TRUST
+
+        (e.g. "ISHARES CHINA TECH USD ACC") — the ISHARES issuer name itself
+        must be enough to classify as etf, not fall through to stock.
+        """
+        assert _detect_asset_type("ISHARES CHINA TECH USD ACC", "Stock market") == "etf"
+        assert (
+            _detect_asset_type(
+                "ISHARES EMERGING MARKETS INDEX S EUR ACC", "Stock market"
+            )
+            == "etf"
+        )
 
 
 class TestActionMappers:
