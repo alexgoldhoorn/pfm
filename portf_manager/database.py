@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 
 # Database version for migration tracking
-DATABASE_VERSION = 25
+DATABASE_VERSION = 26
 
 
 # black
@@ -613,6 +613,7 @@ class Database:
                 transfer_link_type TEXT CHECK (transfer_link_type IN ('spending', 'booking')),
                 transfer_link_id   INTEGER,
                 source             TEXT,
+                balance            REAL,
                 created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (portfolio_id) REFERENCES portfolios (id) ON DELETE CASCADE
             )
@@ -703,6 +704,8 @@ class Database:
             self._migrate_to_v24(conn)
         if current_version < 25:
             self._migrate_to_v25(conn)
+        if current_version < 26:
+            self._migrate_to_v26(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -1443,6 +1446,7 @@ class Database:
                 transfer_link_type TEXT CHECK (transfer_link_type IN ('spending', 'booking')),
                 transfer_link_id   INTEGER,
                 source             TEXT,
+                balance            REAL,
                 created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (portfolio_id) REFERENCES portfolios (id) ON DELETE CASCADE
             )
@@ -1458,6 +1462,17 @@ class Database:
             )
             """
         )
+        conn.commit()
+
+    def _migrate_to_v26(self, conn: sqlite3.Connection) -> None:
+        """Migrate from v25 to v26 — bank-account balance tracking.
+
+        Adds spending_transactions.balance (nullable), populated from the
+        optional `balance` column in imported bank-statement CSVs, so Net
+        Worth can derive a bank account's current balance from the most
+        recent imported row rather than requiring manual entry.
+        """
+        _add_column_if_missing(conn, "spending_transactions", "balance", "REAL")
         conn.commit()
 
     # ── App settings (persistent key/value) ────────────────────────────────
@@ -2656,6 +2671,7 @@ class Database:
         currency: str = "EUR",
         category: str = "uncategorized",
         source: str = None,
+        balance: float = None,
     ) -> int:
         """Create a spending transaction.
 
@@ -2663,13 +2679,19 @@ class Database:
             amount: Signed amount — negative = money out, positive = money in
                 (bank-statement convention, not the bookings Deposit/Withdrawal
                 text convention).
+            balance: Optional running account balance as of this transaction,
+                from the bank statement's own balance column when present.
+                Used by Net Worth to derive a bank account's current balance
+                from the most recent row that has one — see
+                `get_latest_bank_balance`.
         """
         with self.get_connection() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO spending_transactions
-                    (portfolio_id, date, description, amount, currency, category, source)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (portfolio_id, date, description, amount, currency,
+                     category, source, balance)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     portfolio_id,
@@ -2679,6 +2701,7 @@ class Database:
                     currency.upper(),
                     category,
                     source,
+                    balance,
                 ),
             )
             conn.commit()
@@ -2775,6 +2798,34 @@ class Database:
                 "SELECT * FROM spending_transactions WHERE is_transfer = 0"
             )
             return [dict(row) for row in cursor.fetchall()]
+
+    def get_latest_bank_balance(self, portfolio_id: int) -> Optional[Dict]:
+        """Return the most recent balance-bearing spending row for an account.
+
+        Used by Net Worth to derive a bank account's current balance without
+        requiring manual entry. Ties (multiple same-day rows, as most bank
+        statements produce) are broken by highest id, i.e. the last row
+        inserted for that date — correct as long as a statement's rows are
+        imported in their original chronological order, which the generic
+        bank CSV parser preserves.
+
+        Returns:
+            Dict with `date`, `balance`, `currency`, or None if this
+            portfolio has no spending_transactions row with a non-null
+            balance yet.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT date, balance, currency FROM spending_transactions
+                WHERE portfolio_id = ? AND balance IS NOT NULL
+                ORDER BY date DESC, id DESC
+                LIMIT 1
+                """,
+                (portfolio_id,),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
 
     def delete_spending_transaction(self, spending_id: int) -> bool:
         """Delete a spending transaction by ID (hard delete — this table has
