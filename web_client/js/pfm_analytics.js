@@ -42,6 +42,7 @@ async function loadNetworthPage() {
         if ($('nwDeposits')) $('nwDeposits').innerHTML = eur(d.deposits_eur || 0);
         $('nwLiabilities').innerHTML = eur(d.manual_liabilities_eur);
         $('nwTotal').innerHTML = eur(d.net_worth_eur);
+        _renderBankAccounts(d.bank_accounts || []);
         const card = $('nwTotalCard');
         if (card) card.style.background = d.net_worth_eur >= 0 ? '#0d6efd' : '#dc3545';
         const items = (d.items || []).slice()
@@ -63,7 +64,7 @@ async function loadNetworthPage() {
         _renderDeposits(d.deposits || []);
         const cf = await _loadCashflow();
         _loadActualSpendingComparison();
-        _renderChecklist(d, cf);
+        _renderChecklist(d, cf, d.bank_accounts || []);
     } catch (err) {
         if (body) body.innerHTML = `<tr><td colspan="5" class="text-center text-danger py-3">${err.message}</td></tr>`;
     }
@@ -148,14 +149,17 @@ function computeNetWorthChecklist(items, cashflowItems, deposits, bankAccounts) 
 }
 window.computeNetWorthChecklist = computeNetWorthChecklist;
 
-function _renderChecklist(nwData, cfData) {
+function _renderChecklist(nwData, cfData, bankAccounts) {
     const wrap = document.getElementById('nwChecklistWrap');
     const card = document.getElementById('nwChecklistCard');
     if (!wrap || !card) return;
-    const { checklist, attention } = computeNetWorthChecklist(
-        nwData.items, (cfData && cfData.items) || [], nwData.deposits
+    const { checklist, attention, missingBalanceAccounts, duplicateWarning } = computeNetWorthChecklist(
+        nwData.items, (cfData && cfData.items) || [], nwData.deposits, bankAccounts || []
     );
-    if (!checklist.length && !attention.length) { wrap.style.display = 'none'; return; }
+    if (!checklist.length && !attention.length && !missingBalanceAccounts.length && !duplicateWarning) {
+        wrap.style.display = 'none';
+        return;
+    }
     wrap.style.display = '';
 
     let html = attention.map(a => `
@@ -163,6 +167,15 @@ function _renderChecklist(nwData, cfData) {
             <span><i class="bi bi-exclamation-triangle me-1"></i><strong>${esc(a.name)}</strong> matured ${a.days_overdue} day${a.days_overdue === 1 ? '' : 's'} ago — mark it matured to include the payout in your net worth.</span>
             <button class="btn btn-sm btn-outline-success ms-2" onclick="openMatureDepositModal(${a.id}, 0, '${a.maturity_date}')">Mark matured</button>
         </div>`).join('');
+
+    html += missingBalanceAccounts.map(a => `
+        <div class="alert alert-warning py-2 small mb-2">
+            <i class="bi bi-exclamation-triangle me-1"></i><strong>${esc(a.name)}</strong> has no imported balance yet — it isn't counted in your Net Worth total. Import a bank statement with a balance column on the Spending page, or add a manual cash/current-account entry as a stopgap.
+        </div>`).join('');
+
+    if (duplicateWarning) {
+        html += `<div class="alert alert-warning py-2 small mb-2"><i class="bi bi-exclamation-triangle me-1"></i>${esc(duplicateWarning)}</div>`;
+    }
 
     html += '<ul class="list-unstyled mb-0">' + checklist.map(c => `
         <li class="mb-1">
@@ -172,6 +185,30 @@ function _renderChecklist(nwData, cfData) {
         </li>`).join('') + '</ul>';
 
     card.innerHTML = html;
+}
+
+function _renderBankAccounts(accounts) {
+    const wrap = document.getElementById('nwBankAccountsWrap');
+    const body = document.getElementById('nwBankAccountsBody');
+    if (!wrap || !body) return;
+    if (!accounts.length) { wrap.style.display = 'none'; return; }
+    wrap.style.display = '';
+    body.innerHTML = accounts.map(a => {
+        if (a.balance === null || a.balance === undefined) {
+            return `
+                <tr>
+                    <td class="ps-3">${esc(a.name)}</td>
+                    <td class="text-end text-muted" colspan="3">No balance imported yet</td>
+                </tr>`;
+        }
+        return `
+            <tr>
+                <td class="ps-3">${esc(a.name)}</td>
+                <td class="text-end">${Fmt.num(a.balance, 2, 2)} ${esc(a.currency || '')}</td>
+                <td class="text-end">${Fmt.amt('€' + Fmt.num(a.balance_eur, 0, 0))}</td>
+                <td class="text-muted small">${Fmt.date(a.as_of)}</td>
+            </tr>`;
+    }).join('');
 }
 
 function escapeForAttr(s) {

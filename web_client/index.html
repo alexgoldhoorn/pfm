@@ -2898,6 +2898,22 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                 </div>
                             </div>
                         </div>
+                        <!-- Bank Accounts (derived from imported Spending balances) -->
+                        <div class="col-12 mt-2" id="nwBankAccountsWrap" style="display:none;">
+                            <div class="card">
+                                <div class="card-header fw-semibold d-flex align-items-center justify-content-between">
+                                    <span><i class="bi bi-wallet2 me-2"></i>Bank Accounts
+                                        <span class="ms-1 text-muted" style="cursor:help" title="Balances derived automatically from the most recent imported bank statement for each account tracked on the Spending page — not manually entered. Import a newer statement to refresh."><i class="bi bi-info-circle"></i></span>
+                                    </span>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="table table-hover mb-0">
+                                        <thead><tr><th class="ps-3">Account</th><th class="text-end">Balance</th><th class="text-end">EUR</th><th>As of</th></tr></thead>
+                                        <tbody id="nwBankAccountsBody"></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
                         <!-- Fixed Deposits section -->
                         <div class="col-12 mt-2">
                             <div class="card">
