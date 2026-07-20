@@ -195,8 +195,8 @@ window.PAGE_HELP = {
       <ul class="mb-2">
         <li><strong>Import a statement</strong> (CSV: date, description, amount) via the button top-right, or from the <strong>Import Bank Statement</strong> card on the Import/Export page — both open the same import flow. If any imported rows look like duplicates of what's already saved, a <strong>Skip / Add anyway / Overwrite existing</strong> selector appears so you decide how to handle them before saving. Each row is matched against your saved <strong>category rules</strong> (a keyword in the description, e.g. "MERCADONA" → Groceries); anything left uncategorized can be resolved with the <strong>"Suggest categories (AI)"</strong> button — review and edit before saving. Accepting a suggestion creates a new rule automatically, so future imports for that merchant auto-categorize.</li>
         <li><strong>Transfers</strong> between your own accounts (e.g. checking → savings, or checking → a brokerage account already tracked here) are detected automatically by matching an outflow in one account to an inflow of the same amount within a few days in another — shown separately, not counted as spending. Use "Re-scan transfers" if you import a matching account's statement later.</li>
-        <li>Click a row's category to change it by hand at any time, or delete a row entirely with its row-level delete action.</li>
-        <li>Select multiple rows with the checkbox column to <strong>bulk recategorize or delete</strong> them at once via the action bar that appears above the table.</li>
+        <li>Click a row's category to change it by hand at any time.</li>
+        <li>Select one or more rows with the checkbox column to <strong>bulk recategorize or delete</strong> them via the action bar that appears above the table — there's no single-row delete button, so even one row needs to be checked first.</li>
       </ul>
       <p class="text-muted small mb-0">A read-only summary of the last 30 days also appears on the Net Worth page, next to your manual Monthly Cash Flow entries, for comparison.</p>`
   },
