@@ -510,3 +510,54 @@ def test_delete_spending_transaction_missing(tmp_path):
     client, _ = _make_client(tmp_path)
     r = client.delete("/api/v1/spending/999999", headers=HEADERS)
     assert r.status_code == 404
+
+
+def test_upload_preview_includes_balance(tmp_path):
+    client, _ = _make_client(tmp_path)
+    csv_text = "date,description,amount,balance\n2026-01-05,MERCADONA,-24.50,475.50\n"
+    r = client.post(
+        "/api/v1/spending/upload",
+        data={"account_name": "Example Bank"},
+        files={"file": ("statement.csv", _csv_bytes(csv_text), "text/csv")},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+    assert r.json()["rows"][0]["balance"] == 475.50
+
+
+def test_upload_preview_balance_none_when_absent(tmp_path):
+    client, _ = _make_client(tmp_path)
+    csv_text = "date,description,amount\n2026-01-05,MERCADONA,-24.50\n"
+    r = client.post(
+        "/api/v1/spending/upload",
+        data={"account_name": "Example Bank"},
+        files={"file": ("statement.csv", _csv_bytes(csv_text), "text/csv")},
+        headers=HEADERS,
+    )
+    assert r.json()["rows"][0]["balance"] is None
+
+
+def test_save_persists_balance(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    r = client.post(
+        "/api/v1/spending/save",
+        json={
+            "account_portfolio_id": pid,
+            "rows": [
+                {
+                    "date": "2026-01-05",
+                    "description": "MERCADONA",
+                    "amount": -24.50,
+                    "currency": "EUR",
+                    "category": "Groceries",
+                    "balance": 475.50,
+                },
+            ],
+        },
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+    assert r.json()["saved"] == 1
+    listed = client.get("/api/v1/spending/", headers=HEADERS).json()
+    assert listed[0]["balance"] == 475.50

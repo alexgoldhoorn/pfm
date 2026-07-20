@@ -59,6 +59,7 @@ class PreviewSpendingRow(BaseModel):
     currency: str = "EUR"
     category: str = "uncategorized"
     is_duplicate: bool = False
+    balance: Optional[float] = None
 
 
 class SpendingUploadResponse(BaseModel):
@@ -96,6 +97,7 @@ class SpendingTransactionResponse(BaseModel):
     transfer_link_type: Optional[str] = None
     transfer_link_id: Optional[int] = None
     source: Optional[str] = None
+    balance: Optional[float] = None
 
 
 class CategoryUpdateBody(BaseModel):
@@ -194,6 +196,7 @@ async def upload_bank_statement(
                 currency=r.currency,
                 category=category,
                 is_duplicate=is_dup,
+                balance=r.balance,
             )
         )
 
@@ -293,6 +296,7 @@ async def save_spending_transactions(
                 currency=row.currency,
                 category=row.category,
                 source="generic",
+                balance=row.balance,
             )
             saved += 1
             saved_ids.append(new_id)
