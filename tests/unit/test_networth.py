@@ -131,3 +131,77 @@ def test_cashflow_other_income_is_income(tmp_path):
     assert d["income_eur"] == 500.0
     assert d["expenses_eur"] == 0.0
     assert d["net_monthly_eur"] == 500.0
+
+
+def test_networth_includes_bank_account_balance(tmp_path):
+    client = _make_client(tmp_path)
+    from portf_server.app import app
+    from portf_server.dependencies import get_database
+
+    db = app.dependency_overrides[get_database]()
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_transaction(pid, "2026-01-05", "A", -10.0, balance=100.0)
+    db.create_spending_transaction(pid, "2026-01-10", "B", -20.0, balance=475.50)
+
+    r = client.get("/api/v1/networth/", headers=HEADERS)
+    assert r.status_code == 200
+    d = r.json()
+    assert d["bank_accounts_eur"] == 475.50
+    assert len(d["bank_accounts"]) == 1
+    acct = d["bank_accounts"][0]
+    assert acct["portfolio_id"] == pid
+    assert acct["name"] == "Example Bank"
+    assert acct["balance"] == 475.50
+    assert acct["balance_eur"] == 475.50
+    assert acct["as_of"] == "2026-01-10"
+    assert d["net_worth_eur"] == 475.50
+
+
+def test_networth_excludes_bank_account_with_no_balance(tmp_path):
+    client = _make_client(tmp_path)
+    from portf_server.app import app
+    from portf_server.dependencies import get_database
+
+    db = app.dependency_overrides[get_database]()
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_transaction(pid, "2026-01-05", "No balance column", -10.0)
+
+    r = client.get("/api/v1/networth/", headers=HEADERS)
+    d = r.json()
+    assert d["bank_accounts_eur"] == 0.0
+    assert len(d["bank_accounts"]) == 1
+    acct = d["bank_accounts"][0]
+    assert acct["balance"] is None
+    assert acct["balance_eur"] is None
+    assert d["net_worth_eur"] == 0.0
+
+
+def test_networth_ignores_brokerage_portfolios_for_bank_accounts(tmp_path):
+    client = _make_client(tmp_path)
+    from portf_server.app import app
+    from portf_server.dependencies import get_database
+
+    db = app.dependency_overrides[get_database]()
+    db.create_portfolio("Example Broker", account_type="brokerage")
+
+    r = client.get("/api/v1/networth/", headers=HEADERS)
+    d = r.json()
+    assert d["bank_accounts"] == []
+    assert d["bank_accounts_eur"] == 0.0
+
+
+def test_networth_sums_multiple_bank_accounts(tmp_path):
+    client = _make_client(tmp_path)
+    from portf_server.app import app
+    from portf_server.dependencies import get_database
+
+    db = app.dependency_overrides[get_database]()
+    pid_a = db.create_portfolio("Bank A", account_type="bank")
+    pid_b = db.create_portfolio("Bank B", account_type="bank")
+    db.create_spending_transaction(pid_a, "2026-01-05", "A", -10.0, balance=300.0)
+    db.create_spending_transaction(pid_b, "2026-01-05", "B", -10.0, balance=200.0)
+
+    r = client.get("/api/v1/networth/", headers=HEADERS)
+    d = r.json()
+    assert d["bank_accounts_eur"] == 500.0
+    assert d["net_worth_eur"] == 500.0
