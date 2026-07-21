@@ -782,6 +782,14 @@ function createPageManager() {
                 try { values = await window.apiClient.getPortfolioValues(); } catch (e) { /* values optional */ }
                 const valById = {};
                 (values.portfolios || []).forEach(v => { valById[v.portfolio_id] = v; });
+                // Bank accounts never populate `transactions`, so they're absent from
+                // getPortfolioValues() — their balance comes from Net Worth's derived
+                // bank_accounts list instead (same source as the Net Worth page's card).
+                let bankById = {};
+                try {
+                    const nw = await window.apiClient.getNetworth();
+                    (nw.bank_accounts || []).forEach(b => { bankById[b.portfolio_id] = b; });
+                } catch (e) { /* bank balances optional */ }
 
                 const eur = n => Fmt.amt('€' + Fmt.num(Math.round(n), 0, 0));
                 const pnlCell = v => {
@@ -803,17 +811,23 @@ function createPageManager() {
                 } else {
                     const renderBrokerRow = (p) => {
                         const v = valById[p.id];
+                        const bank = p.account_type === 'bank' ? bankById[p.id] : null;
                         const site = p.website
                             ? ` <a href="${p.website}" target="_blank" rel="noopener" title="${p.website}${p.website_is_default ? ' (suggested)' : ''}" class="text-decoration-none"><i class="bi bi-box-arrow-up-right small ${p.website_is_default ? 'text-muted' : ''}"></i></a>`
                             : '';
                         const activity = `
                             <div class="small"><i class="bi bi-graph-up me-1 text-muted" title="Transactions"></i>${range(p.first_transaction_date, p.last_transaction_date)}</div>
                             <div class="small"><i class="bi bi-cash-stack me-1 text-muted" title="Cash deposits/withdrawals"></i>${range(p.first_booking_date, p.last_booking_date)}</div>`;
+                        const valueCell = p.account_type === 'bank'
+                            ? (bank && bank.balance_eur != null
+                                ? `${eur(bank.balance_eur)}<div class="small text-muted"><i class="bi bi-clock-history me-1"></i>As of ${Fmt.date(bank.as_of)}</div>`
+                                : '<span class="text-muted">No balance imported</span>')
+                            : `${v ? eur(v.value_eur) : '<span class="text-muted">—</span>'}${v && Math.abs(v.cash_eur || 0) >= 1 ? `<div class="small text-muted" title="Cash balance (deposits − withdrawals + sells − buys + dividends)"><i class="bi bi-cash-coin me-1"></i>${eur(v.cash_eur)} cash</div>` : ''}`;
                         return `
                         <tr>
                             <td class="ps-3"><strong>${esc(p.name)}</strong>${site}</td>
                             <td>${p.base_currency || ''}</td>
-                            <td class="text-end">${v ? eur(v.value_eur) : '<span class="text-muted">—</span>'}${v && Math.abs(v.cash_eur || 0) >= 1 ? `<div class="small text-muted" title="Cash balance (deposits − withdrawals + sells − buys + dividends)"><i class="bi bi-cash-coin me-1"></i>${eur(v.cash_eur)} cash</div>` : ''}</td>
+                            <td class="text-end">${valueCell}</td>
                             ${pnlCell(v)}
                             <td>${activity}</td>
                             <td><small class="text-muted">${esc(p.description || '')}</small></td>
@@ -833,8 +847,17 @@ function createPageManager() {
                         </tr>`;
                     };
                     // Merge per-broker EUR values onto the rows so the shared table
-                    // can sort by value_eur / pnl_eur (they live on valByName).
+                    // can sort by value_eur / pnl_eur (they live on valByName). Bank
+                    // rows have no P&L concept; their value_eur comes from bankById
+                    // instead of valById (never populated for bank-type portfolios).
                     this._brokerRows = portfolios.map(p => {
+                        if (p.account_type === 'bank') {
+                            const b = bankById[p.id];
+                            return Object.assign({}, p, {
+                                value_eur: b && b.balance_eur != null ? b.balance_eur : null,
+                                pnl_eur: null,
+                            });
+                        }
                         const v = valById[p.id] || {};
                         return Object.assign({}, p, {
                             value_eur: v.value_eur == null ? null : v.value_eur,
