@@ -126,10 +126,15 @@ so the returned pattern is the clean merchant name only.
   input stays open, no API call (mirrors the existing add-rule form's
   `if (!pattern || !category) return;` guard, just surfaced as a message
   instead of a silent no-op, since here the user already tried to save).
-- A: an empty pattern at Apply time — same as today for a category, no
-  new guard needed; `createSpendingRule` already round-trips whatever
-  string is given, and an empty pattern would just never match anything
-  (harmless, not a crash).
+- A: an empty pattern at Apply time — `_apply_rules()` now explicitly
+  skips blank patterns (a blank pattern is a substring of every string in
+  Python, so leaving it unguarded would make it match everything, not
+  nothing, as originally assumed here). The AI-suggest review panel skips
+  rule creation entirely for a group whose pattern was cleared to blank
+  (the category is still applied to the matching rows); `POST
+  /api/v1/spending/rules` also now rejects a blank pattern/category with
+  400, matching the validation `PUT /api/v1/spending/rules/{id}` already
+  has.
 
 ### Testing
 
