@@ -271,6 +271,49 @@ def test_rescan_transfers(tmp_path):
     assert r.json()["transfers_linked"] == 1
 
 
+def test_rescan_categories_applies_new_rule_to_uncategorized_row(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_transaction(pid, "2026-01-05", "MERCADONA COMPRA", -24.50)
+
+    before = client.get("/api/v1/spending/", headers=HEADERS).json()
+    assert before[0]["category"] == "uncategorized"
+
+    db.create_spending_rule(pattern="MERCADONA", category="Groceries")
+
+    resp = client.post("/api/v1/spending/rescan-categories", headers=HEADERS)
+    assert resp.status_code == 200
+    assert resp.json()["recategorized"] == 1
+
+    after = client.get("/api/v1/spending/", headers=HEADERS).json()
+    assert after[0]["category"] == "Groceries"
+
+
+def test_rescan_categories_does_not_touch_already_categorized_row(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    tx_id = db.create_spending_transaction(
+        pid, "2026-01-05", "MERCADONA COMPRA", -24.50, category="Dining"
+    )
+    db.create_spending_rule(pattern="MERCADONA", category="Groceries")
+
+    resp = client.post("/api/v1/spending/rescan-categories", headers=HEADERS)
+    assert resp.json()["recategorized"] == 0
+
+    rows = client.get("/api/v1/spending/", headers=HEADERS).json()
+    row = next(r for r in rows if r["id"] == tx_id)
+    assert row["category"] == "Dining"
+
+
+def test_rescan_categories_zero_matches(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_transaction(pid, "2026-01-05", "SOME SHOP", -10.0)
+
+    resp = client.post("/api/v1/spending/rescan-categories", headers=HEADERS)
+    assert resp.json()["recategorized"] == 0
+
+
 def test_transfer_to_brokerage_booking(tmp_path):
     client, db = _make_client(tmp_path)
     pid_bank = db.create_portfolio("Bank A", account_type="bank")

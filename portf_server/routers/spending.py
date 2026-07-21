@@ -408,6 +408,27 @@ async def rescan_transfers(
     return {"transfers_linked": linked}
 
 
+@router.post("/rescan-categories", response_model=dict)
+async def rescan_categories(
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Re-apply current spending_rules to every still-uncategorized row.
+
+    Never touches a row that already has a non-"uncategorized" category —
+    covers the case where rules are added/edited after rows were imported.
+    """
+    rules = db.list_spending_rules()
+    uncategorized = db.list_spending_transactions(category="uncategorized")
+    updated = 0
+    for row in uncategorized:
+        category = _apply_rules(row["description"], rules)
+        if category != "uncategorized":
+            db.update_spending_transaction(row["id"], category=category)
+            updated += 1
+    return {"recategorized": updated}
+
+
 @router.get("/rules", response_model=List[SpendingRuleResponse])
 async def list_rules(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
     """List all spending category rules."""
