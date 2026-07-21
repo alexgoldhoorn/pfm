@@ -110,7 +110,9 @@ class PDTParseResult:
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-_ETF_KEYWORDS = re.compile(r"\bETF\b|UCITS|INDEX\s+FUND|FUND\b|TRUST\b", re.IGNORECASE)
+_ETF_KEYWORDS = re.compile(
+    r"\bETF\b|UCITS|INDEX\s+FUND|FUND\b|TRUST\b|\bISHARES\b", re.IGNORECASE
+)
 
 
 def _detect_asset_type(name: str, pdt_type: str) -> str:
