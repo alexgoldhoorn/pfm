@@ -24,6 +24,7 @@ from fastapi import (
 from pydantic import BaseModel
 
 from portf_manager.parsers.generic_bank_csv_parser import parse_generic_bank_csv
+from portf_manager.parsers.aeb43_parser import looks_like_aeb43, parse_aeb43
 from portf_manager.services.transfer_matcher import find_all_transfer_matches
 from portf_manager.llm_client import get_llm_client
 
@@ -163,8 +164,16 @@ async def upload_bank_statement(
 
     file_bytes = await file.read()
     try:
-        content = file_bytes.decode("utf-8-sig")
-        result = parse_generic_bank_csv(content)
+        # AEB43 exports commonly contain raw Latin-1 bytes (accented
+        # characters); fall back when the file isn't valid UTF-8.
+        try:
+            content = file_bytes.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            content = file_bytes.decode("latin-1")
+        if looks_like_aeb43(content):
+            result = parse_aeb43(content)
+        else:
+            result = parse_generic_bank_csv(content)
     except Exception as e:
         logger.exception("Error parsing bank statement")
         raise HTTPException(
