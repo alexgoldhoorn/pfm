@@ -125,10 +125,15 @@ preview rows contain, including `balance`, once accepted.
 - Empty or malformed AEB43 content (e.g. sniff passes but parsing yields no
   `22` records) → same "no rows" preview behavior as an empty CSV today, no
   special-cased error.
-- A line with `.decode("utf-8-sig")` mangling (AEB43 exports are typically
-  Latin-1, not UTF-8) is an existing risk shared with `generic_bank_csv_parser`
-  — not introduced by this change, out of scope to fix here since both real
-  sample files happened to decode acceptably.
+- **Decoding fix (in scope):** both real sample files actually **fail** to
+  decode as `.decode("utf-8-sig")` — verified directly (`UnicodeDecodeError:
+  invalid continuation byte` on both) — because AEB43 exports commonly
+  contain raw Latin-1 bytes for accented characters. `upload_bank_statement`
+  must fall back to `.decode("latin-1")` on `UnicodeDecodeError` before either
+  parser runs, or neither sample file can be uploaded at all. Latin-1 decodes
+  any byte sequence without raising, so this fallback is unconditionally
+  safe as a second attempt. This applies to the shared decode step, so it
+  also benefits (not just doesn't regress) any Latin-1-encoded CSV upload.
 
 ### Testing
 
