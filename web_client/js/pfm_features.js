@@ -4211,6 +4211,15 @@ function dedupSpendingRowsByDescription(rows) {
 }
 window.dedupSpendingRowsByDescription = dedupSpendingRowsByDescription;
 
+// Cap on unique descriptions sent to the LLM per "Suggest categories (AI)"
+// click — a real account's uncategorized backlog can have 1000+ unique
+// descriptions; sending them all in one request risks exceeding
+// portf_web's nginx proxy_read_timeout (200s) with no useful error. One
+// batch per click; the user re-selects and continues manually (see
+// #spSelectAllUncategorized) — no auto-chaining needed since applying a
+// batch's suggestions removes those rows from the uncategorized filter.
+const SP_AI_SUGGEST_BATCH_SIZE = 30;
+
 async function loadSpendingPage() {
     _wireSpendingRuleForm();
     _wireSpendingImportModal();
@@ -4260,6 +4269,17 @@ async function loadSpendingPage() {
                 else alert('Error: ' + err.message);
             }
             rescanCatBtn.disabled = false;
+        });
+    }
+    const selAllUncatBtn = document.getElementById('spSelectAllUncategorized');
+    if (selAllUncatBtn && !selAllUncatBtn.dataset.wired) {
+        selAllUncatBtn.dataset.wired = '1';
+        selAllUncatBtn.addEventListener('click', () => {
+            const catFilter = document.getElementById('spCategoryFilter');
+            if (catFilter) catFilter.value = 'uncategorized';
+            _renderSpendingTable();
+            document.querySelectorAll('#spTxBody .sp-row-check').forEach(cb => { cb.checked = true; });
+            _updateSpBulkBar();
         });
     }
     ['spAccountFilter', 'spCategoryFilter', 'spFromDate', 'spToDate'].forEach(id => {
@@ -4479,7 +4499,8 @@ function _wireSpBulkActions() {
             suggestBtn.disabled = true;
             if (status) { status.className = 'small text-muted px-3 pt-2'; status.textContent = 'Asking AI for category suggestions…'; }
             try {
-                const groups = dedupSpendingRowsByDescription(selectedRows);
+                const allGroups = dedupSpendingRowsByDescription(selectedRows);
+                const groups = allGroups.slice(0, SP_AI_SUGGEST_BATCH_SIZE);
                 const { suggestions } = await window.apiClient.suggestSpendingCategories(
                     groups.map(g => ({
                         date: g.date, description: g.description, amount: g.amount,
@@ -4495,7 +4516,11 @@ function _wireSpBulkActions() {
                         suggestedPattern: byDesc.get(g.description).suggested_pattern,
                     }));
                 _renderSpSuggestReviewPanel();
-                if (status) { status.textContent = `${window._spSuggestGroups.length} suggestion(s) ready for review below.`; }
+                if (status) {
+                    status.textContent = allGroups.length > groups.length
+                        ? `Sent ${groups.length} of ${allGroups.length} unique descriptions in this selection. Apply this batch, then use "Select all uncategorized" again to continue with the rest.`
+                        : `${window._spSuggestGroups.length} suggestion(s) ready for review below.`;
+                }
             } catch (err) {
                 if (status) { status.className = 'small text-danger px-3 pt-2'; status.textContent = err.message; }
             }
