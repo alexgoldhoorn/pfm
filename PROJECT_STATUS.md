@@ -5,7 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-07-20
+Last updated: 2026-07-21
+
+**Recent (v2.5.22):** **AEB43/N43 fixed-width bank statement import.** Spending Tracking's upload endpoint now auto-detects AEB43/Norma 43 ("Cuaderno 43") exports — the Spanish national fixed-width bank-statement standard offered by Caixa Enginyers and Abanca as an alternative to CSV — via a new `aeb43_parser.py`, with zero new UI/API surface (content-sniffed, falls back to the existing generic CSV parser for everything else). Unlike CSV imports, AEB43 exports carry a genuine per-row running balance computed from the file's own opening-balance record. Field layout was reverse-engineered and validated against two independent real bank exports (debit/credit counts, sums, and computed running balance all matched each file's own trailer record to the cent). Upload decoding also gained a Latin-1 fallback for non-UTF-8 statement files, fixing a latent bug that would have rejected both real AEB43 exports outright.
 
 **Recent (v2.5.21):** **Bank-account balances derived automatically into Net Worth.** `spending_transactions.balance` (nullable, db v26) is now persisted from the optional `balance` column in imported bank statements. `net_worth_eur(db)` and `GET /api/v1/networth/` sum each bank-type portfolio's most recent balance-bearing row (via `Database.get_latest_bank_balance`) into the total — mirroring how brokerage positions are already automatic rather than manually re-entered. An account with no balance-bearing import yet is excluded from the total (not zero) and flagged by the setup checklist, which also warns if a manual cash/bank asset and an imported bank balance both exist (possible double-counting). New "Bank Accounts" card on the Net Worth page shows each account's derived balance and as-of date.
 
