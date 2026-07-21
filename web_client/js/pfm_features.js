@@ -4464,6 +4464,114 @@ function _wireSpBulkActions() {
             delBtn.disabled = false;
         });
     }
+    const suggestBtn = document.getElementById('spBulkSuggestBtn');
+    if (suggestBtn && !suggestBtn.dataset.wired) {
+        suggestBtn.dataset.wired = '1';
+        suggestBtn.addEventListener('click', async () => {
+            const ids = _selectedSpendingIds();
+            const allRows = window._spendingAllRows || [];
+            const selectedRows = allRows.filter(r => ids.includes(r.id) && r.category === 'uncategorized');
+            const status = document.getElementById('spBulkStatus');
+            if (!selectedRows.length) {
+                if (status) { status.className = 'small text-muted px-3 pt-2'; status.textContent = 'No uncategorized rows selected.'; }
+                return;
+            }
+            suggestBtn.disabled = true;
+            if (status) { status.className = 'small text-muted px-3 pt-2'; status.textContent = 'Asking AI for category suggestions…'; }
+            try {
+                const groups = dedupSpendingRowsByDescription(selectedRows);
+                const { suggestions } = await window.apiClient.suggestSpendingCategories(
+                    groups.map(g => ({
+                        date: g.date, description: g.description, amount: g.amount,
+                        currency: g.currency, category: g.category,
+                    }))
+                );
+                const byDesc = new Map(suggestions.map(s => [s.description, s]));
+                window._spSuggestGroups = groups
+                    .filter(g => byDesc.has(g.description))
+                    .map(g => ({
+                        ...g,
+                        suggestedCategory: byDesc.get(g.description).category,
+                        suggestedPattern: byDesc.get(g.description).suggested_pattern,
+                    }));
+                _renderSpSuggestReviewPanel();
+                if (status) { status.textContent = `${window._spSuggestGroups.length} suggestion(s) ready for review below.`; }
+            } catch (err) {
+                if (status) { status.className = 'small text-danger px-3 pt-2'; status.textContent = err.message; }
+            }
+            suggestBtn.disabled = false;
+        });
+    }
+}
+
+function _renderSpSuggestReviewPanel() {
+    const panel = document.getElementById('spSuggestReviewPanel');
+    if (!panel) return;
+    const groups = window._spSuggestGroups || [];
+    if (!groups.length) { panel.style.display = 'none'; panel.innerHTML = ''; return; }
+    const categories = [...new Set(['uncategorized', 'Transfer', ...(window._spendingAllRows || []).map(r => r.category)])];
+    panel.style.display = '';
+    panel.innerHTML = `
+        <div class="card">
+            <div class="card-header small fw-semibold">Review AI suggestions</div>
+            <div class="card-body py-2">
+                ${groups.map((g, i) => `
+                    <div class="d-flex align-items-center gap-2 mb-1">
+                        <input type="checkbox" class="form-check-input sp-suggest-check" data-idx="${i}" checked>
+                        <span class="small flex-grow-1">${esc(g.description)} <span class="text-muted">(&times;${g.ids.length})</span></span>
+                        <select class="form-select form-select-sm w-auto sp-suggest-category" data-idx="${i}">
+                            ${categories.map(c => `<option value="${esc(c)}" ${c === g.suggestedCategory ? 'selected' : ''}>${esc(c)}</option>`).join('')}
+                        </select>
+                    </div>`).join('')}
+                <div class="d-flex gap-2 mt-2">
+                    <button class="btn btn-sm btn-primary" id="spSuggestApplyBtn">Apply</button>
+                    <button class="btn btn-sm btn-outline-secondary" id="spSuggestDiscardBtn">Discard</button>
+                </div>
+            </div>
+        </div>`;
+    panel.querySelectorAll('.sp-suggest-category').forEach(sel => {
+        sel.addEventListener('change', () => {
+            window._spSuggestGroups[parseInt(sel.dataset.idx, 10)].suggestedCategory = sel.value;
+        });
+    });
+    document.getElementById('spSuggestApplyBtn').addEventListener('click', _applySpSuggestions);
+    document.getElementById('spSuggestDiscardBtn').addEventListener('click', () => {
+        window._spSuggestGroups = [];
+        panel.style.display = 'none'; panel.innerHTML = '';
+    });
+}
+
+async function _applySpSuggestions() {
+    const panel = document.getElementById('spSuggestReviewPanel');
+    const checks = panel.querySelectorAll('.sp-suggest-check');
+    const accepted = Array.from(checks)
+        .filter(c => c.checked)
+        .map(c => window._spSuggestGroups[parseInt(c.dataset.idx, 10)]);
+    const status = document.getElementById('spBulkStatus');
+    if (!accepted.length) {
+        window._spSuggestGroups = [];
+        panel.style.display = 'none'; panel.innerHTML = '';
+        return;
+    }
+    if (status) { status.className = 'small text-muted px-3 pt-2'; status.textContent = 'Applying…'; }
+    let succeeded = 0, failed = 0;
+    for (const g of accepted) {
+        try { await window.apiClient.createSpendingRule(g.suggestedPattern, g.suggestedCategory); }
+        catch (e) { /* rule creation failing shouldn't block applying the category itself */ }
+        for (const id of g.ids) {
+            try { await window.apiClient.updateSpendingCategory(id, g.suggestedCategory); succeeded++; }
+            catch (e) { failed++; }
+        }
+    }
+    window._spSuggestGroups = [];
+    panel.style.display = 'none'; panel.innerHTML = '';
+    await _refreshSpendingData();
+    if (status) {
+        status.className = failed > 0 ? 'small text-danger px-3 pt-2' : 'small text-success px-3 pt-2';
+        status.textContent = failed > 0
+            ? `Applied to ${succeeded} row(s), ${failed} failed.`
+            : `Applied to ${succeeded} row(s).`;
+    }
 }
 
 window.updateSpendingRowCategory = async function (id, category) {
