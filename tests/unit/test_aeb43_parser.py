@@ -124,3 +124,27 @@ def test_empty_content():
     result = parse_aeb43("")
     assert result.rows == []
     assert result.skipped[0][0] == "file"
+
+
+def test_multiple_complementary_lines_concatenated():
+    content = _crlf(
+        _header(),
+        _movement(clave="1", importe_cents=5000),
+        _concept("TRANSFERENCIA A:", codigo="01"),
+        _concept("Example Person", codigo="02"),
+        _trailer(),
+    )
+    result = parse_aeb43(content)
+    assert result.rows[0].description == "TRANSFERENCIA A: Example Person"
+
+
+def test_trailing_whitespace_trimmed_lines_parse_same_as_full_width():
+    # Real AEB43 exports (e.g. Abanca) omit trailing padding spaces per
+    # line, so movement/complementary records can be shorter than 80 bytes.
+    trimmed_movement = _movement(clave="1", importe_cents=1500)[:74]
+    trimmed_concept = "2301R/ EXAMPLE CHARITY"
+    content = _crlf(_header(), trimmed_movement, trimmed_concept, _trailer())
+    result = parse_aeb43(content)
+    assert len(result.rows) == 1
+    assert result.rows[0].amount == -15.00
+    assert result.rows[0].description == "R/ EXAMPLE CHARITY"
