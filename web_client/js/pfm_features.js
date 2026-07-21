@@ -4187,6 +4187,30 @@ function filterSpendingRows(rows, filters) {
 }
 window.filterSpendingRows = filterSpendingRows;
 
+// Groups selected spending rows by description for AI suggestion review —
+// one representative per unique description, keeping every matching row's
+// id so an accepted suggestion can be applied to all of them at once.
+// Cuts LLM cost/latency: a real account can have the same merchant
+// description repeated dozens of times.
+function dedupSpendingRowsByDescription(rows) {
+    const groups = new Map();
+    (rows || []).forEach(r => {
+        if (!groups.has(r.description)) {
+            groups.set(r.description, {
+                description: r.description,
+                date: r.date,
+                amount: r.amount,
+                currency: r.currency,
+                category: r.category,
+                ids: [],
+            });
+        }
+        groups.get(r.description).ids.push(r.id);
+    });
+    return Array.from(groups.values());
+}
+window.dedupSpendingRowsByDescription = dedupSpendingRowsByDescription;
+
 async function loadSpendingPage() {
     _wireSpendingRuleForm();
     _wireSpendingImportModal();
