@@ -558,3 +558,34 @@ test("filterSpendingRows: does not mutate input", () => {
     filterSpendingRows(rows, { accountId: "1" });
     assert.deepEqual(rows, copy);
 });
+
+test("dedupSpendingRowsByDescription: groups rows sharing a description", () => {
+    const { dedupSpendingRowsByDescription } = loadAppIntoContext();
+    const rows = [
+        { id: 1, description: "MERCADONA", date: "2026-01-05", amount: -10, currency: "EUR", category: "uncategorized" },
+        { id: 2, description: "MERCADONA", date: "2026-01-06", amount: -12, currency: "EUR", category: "uncategorized" },
+        { id: 3, description: "OTHER SHOP", date: "2026-01-07", amount: -5, currency: "EUR", category: "uncategorized" },
+    ];
+    const groups = dedupSpendingRowsByDescription(rows);
+    assert.equal(groups.length, 2);
+    const mercadona = groups.find(g => g.description === "MERCADONA");
+    // spread the vm-realm array into the test realm before comparing
+    assert.deepEqual([...mercadona.ids], [1, 2]);
+    const other = groups.find(g => g.description === "OTHER SHOP");
+    assert.deepEqual([...other.ids], [3]);
+});
+
+test("dedupSpendingRowsByDescription: empty or missing input returns empty array", () => {
+    const { dedupSpendingRowsByDescription } = loadAppIntoContext();
+    assert.deepEqual([...dedupSpendingRowsByDescription([])], []);
+    assert.deepEqual([...dedupSpendingRowsByDescription(undefined)], []);
+});
+
+test("dedupSpendingRowsByDescription: single-row group keeps that row's own fields", () => {
+    const { dedupSpendingRowsByDescription } = loadAppIntoContext();
+    const rows = [{ id: 5, description: "X", date: "2026-02-01", amount: 100, currency: "USD", category: "uncategorized" }];
+    const groups = dedupSpendingRowsByDescription(rows);
+    assert.equal(groups.length, 1);
+    assert.equal(groups[0].currency, "USD");
+    assert.deepEqual([...groups[0].ids], [5]);
+});
