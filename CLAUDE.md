@@ -220,6 +220,8 @@ A portfolio doubles as a broker/account. `GET /api/v1/portfolios/` returns `webs
 
 `POST /api/v1/portfolios/` accepts `account_type: Literal["brokerage", "bank"] = "brokerage"` — pass `"bank"` to create a Spending-tracking account (see Spending Tracking section). `account_type` is **create-only, immutable after creation** — verified across three independent layers: `PortfolioUpdate` (the PUT schema) omits the field entirely, `database.py`'s `update_portfolio()` whitelist excludes it, and the frontend's portfolio-edit form (`pfm_features.js`) only includes `account_type` in the request payload when `!id` (creating), never on an edit submit.
 
+**Brokers page bank balances**: bank-type rows never have investment values (`GET /api/v1/portfolios/values` sources only `transactions`, which bank accounts never populate), so `loadPortfoliosPage()` (`pfm_pages.js`) fetches `GET /api/v1/networth/` alongside the values call and merges its `bank_accounts` list (keyed by `portfolio_id`) into the same "Value (EUR)" column instead — same derived-balance source as the Net Worth page's "Bank Accounts" card, not a separate computation. Shows the balance + "As of {date}" when a balance-bearing import exists, else "No balance imported" (muted). P&L stays "—" for bank rows (no P&L concept). Both fetches are best-effort (wrapped in try/catch) so a slow/failing values or net-worth call doesn't block the broker list from rendering.
+
 ### Price Updates
 Daily cron at **20:00 UTC** via `~/scripts/portf-update-prices.sh`. Manual CLI: `docker exec -e PORTF_API_KEY=... portf_backend_dev python3 -m portf_manager.cli update-prices`
 
