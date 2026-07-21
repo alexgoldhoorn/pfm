@@ -2025,8 +2025,8 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                         </div>
                                     </div>
                                     <div class="mb-2">
-                                        <input type="file" class="form-control form-control-sm" id="ioSpImportFile" accept=".csv">
-                                        <div class="form-text">Columns: date, description, amount (optional: balance, currency). <a href="#" id="ioSpDownloadTemplate">Download template</a></div>
+                                        <input type="file" class="form-control form-control-sm" id="ioSpImportFile" accept=".csv,.q43,.n43,.txt">
+                                        <div class="form-text">CSV columns: date, description, amount (optional: balance, currency). AEB43/N43 fixed-width exports are auto-detected. <a href="#" id="ioSpDownloadTemplate">Download template</a></div>
                                     </div>
                                     <div id="ioSpImportPreview" class="flex-grow-1"></div>
                                     <div class="d-flex gap-2 mt-auto pt-3 flex-wrap">
@@ -2653,9 +2653,9 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                     </div>
                                 </div>
                                 <div class="mb-3">
-                                    <label class="form-label small mb-1">CSV file</label>
-                                    <input type="file" class="form-control form-control-sm" id="spImportFile" accept=".csv">
-                                    <div class="form-text">Columns: date, description, amount (optional: balance, currency). <a href="#" id="spDownloadTemplate">Download template</a></div>
+                                    <label class="form-label small mb-1">Bank statement file</label>
+                                    <input type="file" class="form-control form-control-sm" id="spImportFile" accept=".csv,.q43,.n43,.txt">
+                                    <div class="form-text">CSV columns: date, description, amount (optional: balance, currency). AEB43/N43 fixed-width exports are auto-detected. <a href="#" id="spDownloadTemplate">Download template</a></div>
                                 </div>
                                 <div id="spImportPreview"></div>
                             </div>
