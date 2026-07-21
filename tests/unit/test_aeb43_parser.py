@@ -1,6 +1,6 @@
 """Tests for the AEB43/N43 fixed-width bank statement parser."""
 
-from portf_manager.parsers.aeb43_parser import looks_like_aeb43
+from portf_manager.parsers.aeb43_parser import looks_like_aeb43, parse_aeb43
 
 
 def _header(
@@ -72,3 +72,55 @@ def test_looks_like_aeb43_false_for_csv():
 
 def test_looks_like_aeb43_false_for_empty_content():
     assert looks_like_aeb43("") is False
+
+
+def test_parses_single_debit_movement_with_description():
+    content = _crlf(
+        _header(clave="2", importe_cents=100000),  # opening balance 1000.00
+        _movement(fecha_op="260105", clave="1", importe_cents=2450),
+        _concept("MERCADONA COMPRA"),
+        _trailer(),
+    )
+    result = parse_aeb43(content)
+    assert len(result.rows) == 1
+    row = result.rows[0]
+    assert row.date == "2026-01-05"
+    assert row.description == "MERCADONA COMPRA"
+    assert row.amount == -24.50
+    assert row.currency == "EUR"
+    assert row.balance == 975.50
+
+
+def test_parses_credit_movement():
+    content = _crlf(
+        _header(clave="2", importe_cents=0),
+        _movement(fecha_op="260106", clave="2", importe_cents=210000),
+        _concept("NOMINA EMPRESA SL"),
+        _trailer(),
+    )
+    result = parse_aeb43(content)
+    assert result.rows[0].amount == 2100.00
+    assert result.rows[0].balance == 2100.00
+
+
+def test_negative_opening_balance_seed():
+    content = _crlf(
+        _header(clave="1", importe_cents=50000),  # opening balance -500.00
+        _movement(fecha_op="260101", clave="2", importe_cents=20000),
+        _concept("EXAMPLE DEPOSIT"),
+        _trailer(),
+    )
+    result = parse_aeb43(content)
+    assert result.rows[0].balance == -300.00
+
+
+def test_missing_header_record_returns_skip():
+    result = parse_aeb43("not an aeb43 file\r\n")
+    assert result.rows == []
+    assert result.skipped[0][0] == "file"
+
+
+def test_empty_content():
+    result = parse_aeb43("")
+    assert result.rows == []
+    assert result.skipped[0][0] == "file"
