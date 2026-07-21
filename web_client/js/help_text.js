@@ -30,6 +30,8 @@ window.METRIC_HELP = {
   taxHarvest: "Tax-Loss Harvesting: positions currently at an unrealised loss. Selling them would realise a loss that offsets taxable gains (watch the 2-month wash-sale rule).",
   snapshots: "Snapshots: a daily record of your portfolio's total value and cost, saved by the price cron. Risk and period-return charts are built from these, so history starts when snapshots began.",
   diversification: "Diversification: your holdings grouped by sector, country, currency and asset type (from Yahoo Finance fundamentals). Concentration (HHI) measures how lopsided the mix is.",
+  pnl: "P/L (Profit & Loss): current value minus cost basis, in euros. Unrealised while you still hold the position.",
+  pnlPct: "P/L % (Profit & Loss): current value minus cost basis, as a percentage of cost basis.",
 };
 
 // Per-page help: what's shown, where data comes from, how it's computed.

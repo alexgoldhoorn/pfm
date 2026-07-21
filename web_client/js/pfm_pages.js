@@ -288,6 +288,7 @@ function createPageManager() {
                 const pnlClass = (row.pnl_amount || 0) >= 0 ? 'text-success' : 'text-danger';
                 const typeBadge = { stock: 'bg-primary', etf: 'bg-info', index: 'bg-success', crypto: 'bg-warning text-dark', bond: 'bg-secondary', p2p: 'bg-dark' }[row.asset_type] || 'bg-secondary';
                 const symEsc = (row.symbol || '').replace(/'/g, "\\'");
+                const nameEsc = (row.name || '').replace(/'/g, "\\'");
                 const dash = '<span class="text-muted">—</span>';
                 return `
                     <tr>
@@ -309,7 +310,7 @@ function createPageManager() {
                         <td class="text-center text-nowrap">${assetLinks(row.symbol)}</td>
                         <td class="text-end pe-3">
                             <div class="btn-group btn-group-sm">
-                                <button class="btn btn-outline-primary" title="Research / Valuation" onclick="openResearchModal('${symEsc}')"><i class="bi bi-graph-up"></i></button>
+                                <button class="btn btn-outline-primary" title="Research / Valuation" onclick="openResearchModal('${symEsc}', '${nameEsc}')"><i class="bi bi-graph-up"></i></button>
                             </div>
                         </td>
                     </tr>`;
@@ -330,6 +331,7 @@ function createPageManager() {
                 prefsKey: 'holdings',
             });
             this._assetsST.refresh();
+            initTooltips();
         },
 
         _resolveTickersClick: async function() {
@@ -852,6 +854,7 @@ function createPageManager() {
                         prefsKey: 'portfolios',
                     });
                     this._brokersST.refresh();
+                    initTooltips();
 
                     if (footer && (values.total_value_eur || 0) > 0) {
                         const tp = values.total_pnl_eur;

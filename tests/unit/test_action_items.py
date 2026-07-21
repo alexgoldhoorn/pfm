@@ -89,6 +89,21 @@ class TestPriceUpdateFailures:
         assert len(items) == 1
         assert items[0]["context"]["symbols"] == ["AAPL", "MSFT"]
 
+    def test_detail_shows_asset_name_alongside_symbol(self, test_database):
+        """Users don't recognise raw tickers/ISINs — the name must be shown too."""
+        test_database.create_asset("AAPL", "Apple Inc.", "stock", currency="USD")
+        test_database.record_price_update_run(
+            started_at="2026-07-15T20:00:00",
+            duration_seconds=12.0,
+            updated_count=5,
+            skipped_count=0,
+            error_count=1,
+            error_symbols=["AAPL"],
+            source="cron",
+        )
+        items = check_price_update_failures(test_database)
+        assert "Apple Inc. (AAPL)" in items[0]["detail"]
+
     def test_no_item_when_latest_run_clean(self, test_database):
         test_database.record_price_update_run(
             started_at="2026-07-15T20:00:00",
@@ -109,7 +124,7 @@ class TestStaleResearch:
         _pid, aid = _portfolio_with_transaction(test_database, days_ago=5)
         items = check_stale_research(test_database)
         assert len(items) == 1
-        assert "TestBrokerSYM" in items[0]["detail"]
+        assert "TestBroker Asset (TestBrokerSYM)" in items[0]["detail"]
 
     def test_flags_held_asset_with_old_research(self, test_database):
         _pid, aid = _portfolio_with_transaction(test_database, days_ago=5)
