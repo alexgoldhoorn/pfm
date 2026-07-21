@@ -144,7 +144,6 @@
 
                 <button type="button" class="sidebar-section-toggle" data-sect="portfolio"><span>Portfolio</span><i class="bi bi-chevron-down sect-chevron"></i></button>
                 <div class="sidebar-section-items" data-sect-items="portfolio">
-                    <a class="sidebar-nav-link" href="#" data-page="holdings"><i class="bi bi-wallet2 me-2"></i>Holdings</a>
                     <a class="sidebar-nav-link" href="#" data-page="transactions"><i class="bi bi-arrow-left-right me-2"></i>Transactions</a>
                     <a class="sidebar-nav-link" href="#" data-page="assets"><i class="bi bi-coin me-2"></i>Assets</a>
                     <a class="sidebar-nav-link" href="#" data-page="portfolios"><i class="bi bi-briefcase me-2"></i>Brokers</a>
@@ -209,7 +208,6 @@
 
                 <button type="button" class="sidebar-section-toggle" data-sect="portfolio"><span>Portfolio</span><i class="bi bi-chevron-down sect-chevron"></i></button>
                 <div class="sidebar-section-items" data-sect-items="portfolio">
-                    <a class="sidebar-nav-link" href="#" data-page="holdings"><i class="bi bi-wallet2 me-2"></i>Holdings</a>
                     <a class="sidebar-nav-link" href="#" data-page="transactions"><i class="bi bi-arrow-left-right me-2"></i>Transactions</a>
                     <a class="sidebar-nav-link" href="#" data-page="assets"><i class="bi bi-coin me-2"></i>Assets</a>
                     <a class="sidebar-nav-link" href="#" data-page="portfolios"><i class="bi bi-briefcase me-2"></i>Brokers</a>
@@ -422,7 +420,7 @@
                                                     <th class="ps-3">Name</th>
                                                     <th>Type</th>
                                                     <th class="text-end">Value (EUR)</th>
-                                                    <th class="text-end pe-3" id="dashTopPnlHeader">P&amp;L %</th>
+                                                    <th class="text-end pe-3" id="dashTopPnlHeader" data-bs-toggle="tooltip" title="P/L (Profit &amp; Loss): current value minus cost basis.">P&amp;L %</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -518,16 +516,59 @@
                     <div class="d-flex align-items-center justify-content-between mb-3">
                         <div>
                             <h4 class="mb-0"><i class="bi bi-coin me-2 text-primary"></i>Assets<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('assets')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
-                            <p class="text-muted small mb-0">All tracked securities and funds. Prices update daily from Yahoo Finance.</p>
+                            <p class="text-muted small mb-0">Current positions with cost basis, live price and P&amp;L, plus the full catalogue of tracked securities and funds. Prices update daily from Yahoo Finance; values in EUR.</p>
                         </div>
                         <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addAssetModal">
                             <i class="bi bi-plus-lg me-1"></i>Add Asset
                         </button>
                     </div>
 
-                    <!-- Assets Filter -->
-                    <div class="row g-2 mb-3">
-                        <div class="col-12 col-sm-3">
+                    <!-- Summary Cards -->
+                    <div class="row g-3 mb-4">
+                        <div class="col-12 col-md-4">
+                            <div class="card bg-primary text-white">
+                                <div class="card-body py-3">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <div class="small opacity-75 mb-1">Total Value</div>
+                                            <div class="fs-4 fw-bold" id="holdingsTotalValue">—</div>
+                                        </div>
+                                        <i class="bi bi-cash-stack fs-2 opacity-50"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <div class="card bg-secondary text-white">
+                                <div class="card-body py-3">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <div class="small opacity-75 mb-1">Total Cost</div>
+                                            <div class="fs-4 fw-bold" id="holdingsTotalCost">—</div>
+                                        </div>
+                                        <i class="bi bi-wallet2 fs-2 opacity-50"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-12 col-md-4">
+                            <div class="card text-white" id="holdingsPnlCard">
+                                <div class="card-body py-3">
+                                    <div class="d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <div class="small opacity-75 mb-1" data-bs-toggle="tooltip" title="P/L (Profit &amp; Loss): current value minus cost basis, in euros.">Total P/L</div>
+                                            <div class="fs-4 fw-bold" id="holdingsTotalPnl">—</div>
+                                        </div>
+                                        <i class="bi bi-graph-up-arrow fs-2 opacity-50"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Filters -->
+                    <div class="row g-2 mb-3 align-items-center">
+                        <div class="col-6 col-sm-2">
                             <select class="form-select form-select-sm" id="assetTypeFilter">
                                 <option value="">All Asset Types</option>
                                 <option value="stock">Stock</option>
@@ -536,9 +577,11 @@
                                 <option value="index">Index fund</option>
                                 <option value="crypto">Cryptocurrency</option>
                                 <option value="commodity">Commodity</option>
+                                <option value="mutual_fund">Mutual Fund</option>
+                                <option value="cash">Cash</option>
                             </select>
                         </div>
-                        <div class="col-12 col-sm-3">
+                        <div class="col-6 col-sm-2">
                             <select class="form-select form-select-sm" id="assetPortfolioFilter">
                                 <option value="">All Brokers</option>
                             </select>
@@ -547,14 +590,20 @@
                             <input type="text" class="form-control form-control-sm" id="assetSearchInput" autocomplete="off" placeholder="Search by name, ticker or alias…">
                             <div id="assetSuggest" class="list-group position-absolute w-100 shadow-sm" style="z-index:1050; display:none; max-height:260px; overflow-y:auto;"></div>
                         </div>
-                        <div class="col-6 col-sm-2">
-                            <button class="btn btn-sm btn-outline-secondary w-100" id="refreshAssets" title="Refresh assets list">
-                                <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                        <div class="col-8 col-sm-3">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="assetShowZeroHoldings">
+                                <label class="form-check-label small" for="assetShowZeroHoldings">Show assets with no holding</label>
+                            </div>
+                        </div>
+                        <div class="col-2 col-sm-1">
+                            <button class="btn btn-sm btn-outline-secondary w-100" id="refreshAssets" title="Refresh assets and holdings">
+                                <i class="bi bi-arrow-clockwise"></i>
                             </button>
                         </div>
-                        <div class="col-6 col-sm-1">
+                        <div class="col-2 col-sm-1">
                             <button class="btn btn-sm btn-outline-info w-100" id="resolveTickersBtn" title="Auto-fill missing Yahoo Finance tickers for ISIN-keyed assets via OpenFIGI">
-                                <i class="bi bi-magic me-1"></i>Fill tickers
+                                <i class="bi bi-magic"></i>
                             </button>
                         </div>
                     </div>
@@ -570,20 +619,78 @@
                                             <th data-key="name" data-type="text">Name</th>
                                             <th data-key="asset_type" data-type="text">Type</th>
                                             <th data-key="exchange" data-type="text">Exchange</th>
-                                            <th class="text-end" data-key="current_price" data-type="num">Current Price</th>
                                             <th data-key="currency" data-type="text">Currency</th>
-                                            <th class="pe-3">Actions</th>
+                                            <th class="text-end" data-key="quantity" data-type="num">Quantity</th>
+                                            <th class="text-end" data-key="avg_price" data-type="num">Avg Price</th>
+                                            <th class="text-end" data-key="current_price" data-type="num">Current Price</th>
+                                            <th class="text-end" data-key="total_value_eur" data-type="num">Total Value</th>
+                                            <th class="text-end" data-key="pnl_amount" data-type="num">P/L <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="P/L (Profit &amp; Loss): current value minus cost basis, in euros."></i></th>
+                                            <th class="text-end" data-key="pnl_pct" data-type="num">P/L % <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="P/L %: current value minus cost basis, as a percentage of cost basis."></i></th>
+                                            <th class="text-center">Links</th>
+                                            <th class="text-end pe-3">Research</th>
                                         </tr>
                                     </thead>
                                     <tbody>
                                         <tr>
-                                            <td colspan="7" class="text-center py-4">
+                                            <td colspan="13" class="text-center py-4">
                                                 <div class="spinner-border spinner-border-sm me-2" role="status"></div>
                                                 Loading assets...
                                             </td>
                                         </tr>
                                     </tbody>
                                 </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Rebalancing Card -->
+                    <div class="card mt-4">
+                        <div class="card-header fw-semibold" style="cursor:pointer;" data-bs-toggle="collapse" data-bs-target="#rebalanceBody" aria-expanded="false">
+                            <i class="bi bi-sliders me-2 text-primary"></i>Rebalancing
+                            <i class="bi bi-chevron-down float-end mt-1 small"></i>
+                        </div>
+                        <div class="collapse" id="rebalanceBody">
+                            <div class="card-body">
+                                <div class="row g-4">
+                                    <!-- Target allocation form -->
+                                    <div class="col-12 col-lg-5">
+                                        <h6 class="fw-semibold mb-2"><i class="bi bi-bullseye me-2"></i>Target Allocation</h6>
+                                        <p class="text-muted small mb-2">Set a target percentage for each asset type. Targets should sum to 100%.</p>
+                                        <form id="rebalanceTargetsForm">
+                                            <div id="rebalanceTargetsRows">
+                                                <p class="text-muted small mb-0">Loading…</p>
+                                            </div>
+                                            <div class="d-flex justify-content-between align-items-center mt-2">
+                                                <span class="small">Total: <strong id="rebalanceTargetsTotal">0%</strong></span>
+                                                <button type="submit" class="btn btn-sm btn-primary" id="rebalanceSaveBtn">
+                                                    <i class="bi bi-check-lg me-1"></i>Save Targets
+                                                </button>
+                                            </div>
+                                        </form>
+                                    </div>
+
+                                    <!-- Analysis -->
+                                    <div class="col-12 col-lg-7">
+                                        <h6 class="fw-semibold mb-2"><i class="bi bi-graph-up me-2"></i>Analysis</h6>
+                                        <div class="table-responsive">
+                                            <table class="table table-sm table-hover mb-3" id="rebalanceAnalysisTable">
+                                                <thead>
+                                                    <tr>
+                                                        <th>Type</th>
+                                                        <th class="text-end">Current %</th>
+                                                        <th class="text-end">Target %</th>
+                                                        <th class="text-end">Drift %</th>
+                                                        <th class="text-end">Action</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <tr><td colspan="5" class="text-center text-muted small">Save targets to see analysis.</td></tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                        <div id="rebalanceActions"></div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -613,6 +720,9 @@
                                     <i class="bi bi-file-earmark-spreadsheet me-1"></i><span class="d-none d-md-inline">PDT</span>
                                 </button>
                             </div>
+                            <button class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addCashModal" title="Add a manual deposit or withdrawal">
+                                <i class="bi bi-cash-coin me-1"></i><span class="d-none d-sm-inline">Add Cash</span>
+                            </button>
                             <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addTransactionModal" title="Add new transaction">
                                 <i class="bi bi-plus-lg me-1"></i><span class="d-none d-sm-inline">Add</span>
                             </button>
@@ -689,165 +799,6 @@
                                         </tr>
                                     </tbody>
                                 </table>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Holdings Page -->
-                <div id="holdingsPage" class="page-content" style="display: none;">
-                    <div class="d-flex align-items-center justify-content-between mb-3">
-                        <div>
-                            <h4 class="mb-0"><i class="bi bi-bar-chart-line me-2 text-primary"></i>Holdings<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('holdings')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
-                            <p class="text-muted small mb-0">Current open positions with cost basis, live price, and P&amp;L. All values in EUR.</p>
-                        </div>
-                        <button class="btn btn-sm btn-outline-secondary" id="refreshHoldings" title="Refresh holdings data">
-                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
-                        </button>
-                    </div>
-
-                    <!-- Holdings Summary Cards -->
-                    <div class="row g-3 mb-4">
-                        <div class="col-12 col-md-4">
-                            <div class="card bg-primary text-white">
-                                <div class="card-body py-3">
-                                    <div class="d-flex justify-content-between align-items-center">
-                                        <div>
-                                            <div class="small opacity-75 mb-1">Total Value</div>
-                                            <div class="fs-4 fw-bold" id="holdingsTotalValue">—</div>
-                                        </div>
-                                        <i class="bi bi-cash-stack fs-2 opacity-50"></i>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-12 col-md-4">
-                            <div class="card bg-secondary text-white">
-                                <div class="card-body py-3">
-                                    <div class="d-flex justify-content-between align-items-center">
-                                        <div>
-                                            <div class="small opacity-75 mb-1">Total Cost</div>
-                                            <div class="fs-4 fw-bold" id="holdingsTotalCost">—</div>
-                                        </div>
-                                        <i class="bi bi-wallet2 fs-2 opacity-50"></i>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                        <div class="col-12 col-md-4">
-                            <div class="card text-white" id="holdingsPnlCard">
-                                <div class="card-body py-3">
-                                    <div class="d-flex justify-content-between align-items-center">
-                                        <div>
-                                            <div class="small opacity-75 mb-1">Total P/L</div>
-                                            <div class="fs-4 fw-bold" id="holdingsTotalPnl">—</div>
-                                        </div>
-                                        <i class="bi bi-graph-up-arrow fs-2 opacity-50"></i>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Holdings Filter -->
-                    <div class="row g-2 mb-3">
-                        <div class="col-12 col-sm-3">
-                            <select class="form-select form-select-sm" id="holdingsTypeFilter">
-                                <option value="all">All Asset Types</option>
-                            </select>
-                        </div>
-                        <div class="col-12 col-sm-3">
-                            <select class="form-select form-select-sm" id="holdingsPortfolioFilter">
-                                <option value="">All Brokers</option>
-                            </select>
-                        </div>
-                        <div class="col-12 col-sm-5">
-                            <input type="text" class="form-control form-control-sm" id="holdingsSearchInput" autocomplete="off" placeholder="Search by symbol, ticker or name…">
-                        </div>
-                    </div>
-
-                    <!-- Holdings Table -->
-                    <div class="card">
-                        <div class="card-body p-0">
-                            <div class="table-responsive">
-                                <table class="table table-hover mb-0" id="holdingsTable">
-                                    <thead>
-                                        <tr>
-                                            <th class="ps-3" data-key="symbol" data-type="text">Symbol</th>
-                                            <th data-key="name" data-type="text">Name</th>
-                                            <th data-key="asset_type" data-type="text">Type</th>
-                                            <th data-key="currency" data-type="text">Currency</th>
-                                            <th class="text-end" data-key="quantity" data-type="num">Quantity</th>
-                                            <th class="text-end" data-key="avg_price" data-type="num">Avg Price</th>
-                                            <th class="text-end" data-key="current_price" data-type="num">Current Price</th>
-                                            <th class="text-end" data-key="total_value_eur" data-type="num">Total Value</th>
-                                            <th class="text-end" data-key="pnl_amount" data-type="num">P/L</th>
-                                            <th class="text-end" data-key="pnl_pct" data-type="num">P/L %</th>
-                                            <th class="text-center">Links</th>
-                                            <th class="text-end pe-3">Research</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <tr>
-                                            <td colspan="12" class="text-center py-4">
-                                                <div class="spinner-border spinner-border-sm me-2" role="status"></div>
-                                                Loading holdings...
-                                            </td>
-                                        </tr>
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Rebalancing Card -->
-                    <div class="card mt-4">
-                        <div class="card-header fw-semibold" style="cursor:pointer;" data-bs-toggle="collapse" data-bs-target="#rebalanceBody" aria-expanded="false">
-                            <i class="bi bi-sliders me-2 text-primary"></i>Rebalancing
-                            <i class="bi bi-chevron-down float-end mt-1 small"></i>
-                        </div>
-                        <div class="collapse" id="rebalanceBody">
-                            <div class="card-body">
-                                <div class="row g-4">
-                                    <!-- Target allocation form -->
-                                    <div class="col-12 col-lg-5">
-                                        <h6 class="fw-semibold mb-2"><i class="bi bi-bullseye me-2"></i>Target Allocation</h6>
-                                        <p class="text-muted small mb-2">Set a target percentage for each asset type. Targets should sum to 100%.</p>
-                                        <form id="rebalanceTargetsForm">
-                                            <div id="rebalanceTargetsRows">
-                                                <p class="text-muted small mb-0">Loading…</p>
-                                            </div>
-                                            <div class="d-flex justify-content-between align-items-center mt-2">
-                                                <span class="small">Total: <strong id="rebalanceTargetsTotal">0%</strong></span>
-                                                <button type="submit" class="btn btn-sm btn-primary" id="rebalanceSaveBtn">
-                                                    <i class="bi bi-check-lg me-1"></i>Save Targets
-                                                </button>
-                                            </div>
-                                        </form>
-                                    </div>
-
-                                    <!-- Analysis -->
-                                    <div class="col-12 col-lg-7">
-                                        <h6 class="fw-semibold mb-2"><i class="bi bi-graph-up me-2"></i>Analysis</h6>
-                                        <div class="table-responsive">
-                                            <table class="table table-sm table-hover mb-3" id="rebalanceAnalysisTable">
-                                                <thead>
-                                                    <tr>
-                                                        <th>Type</th>
-                                                        <th class="text-end">Current %</th>
-                                                        <th class="text-end">Target %</th>
-                                                        <th class="text-end">Drift %</th>
-                                                        <th class="text-end">Action</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    <tr><td colspan="5" class="text-center text-muted small">Save targets to see analysis.</td></tr>
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                        <div id="rebalanceActions"></div>
-                                    </div>
-                                </div>
                             </div>
                         </div>
                     </div>
@@ -1323,7 +1274,7 @@
                                             <th class="ps-3" data-key="name" data-type="text">Broker</th>
                                             <th data-key="base_currency" data-type="text">Currency</th>
                                             <th class="text-end" data-key="value_eur" data-type="num">Value (EUR)</th>
-                                            <th class="text-end" data-key="pnl_eur" data-type="num">P&amp;L</th>
+                                            <th class="text-end" data-key="pnl_eur" data-type="num">P&amp;L <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="P/L (Profit &amp; Loss): current value minus cost basis, in euros."></i></th>
                                             <th data-key="last_transaction_date" data-type="date">Activity <span class="text-muted fw-normal small">(first → last)</span></th>
                                             <th data-key="description" data-type="text">Description</th>
                                             <th class="pe-3">Actions</th>
@@ -3044,6 +2995,51 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                 <div class="modal-footer">
                     <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                     <button type="submit" form="addTransactionForm" class="btn btn-primary">Add Transaction</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Cash Modal (manual deposit / withdrawal booking) -->
+    <div class="modal fade" id="addCashModal" tabindex="-1">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title"><i class="bi bi-cash-coin me-2"></i>Add Cash Movement</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <form id="addCashForm">
+                        <div class="mb-3">
+                            <label for="cashDate" class="form-label">Date *</label>
+                            <input type="date" class="form-control" id="cashDate" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="cashAction" class="form-label">Type *</label>
+                            <select class="form-select" id="cashAction">
+                                <option value="Deposit">Deposit</option>
+                                <option value="Withdrawal">Withdrawal</option>
+                            </select>
+                        </div>
+                        <div class="mb-3">
+                            <label for="cashAmount" class="form-label">Amount *</label>
+                            <input type="number" class="form-control" id="cashAmount" min="0.01" step="0.01" required>
+                        </div>
+                        <div class="mb-3">
+                            <label for="cashCurrency" class="form-label">Currency</label>
+                            <input type="text" class="form-control" id="cashCurrency" value="EUR" maxlength="3">
+                        </div>
+                        <div class="mb-3">
+                            <label for="cashPortfolio" class="form-label">Broker / Portfolio</label>
+                            <select class="form-select" id="cashPortfolio">
+                                <option value="">— None —</option>
+                            </select>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" form="addCashForm" class="btn btn-primary">Add Cash</button>
                 </div>
             </div>
         </div>

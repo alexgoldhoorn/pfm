@@ -26,9 +26,6 @@ class IndexaCapitalParseResult:
 class IndexaCapitalCSVParser:
     """Parser for IndexaCapital CSV transaction exports."""
 
-    # Transaction types that should be imported as trades
-    IMPORTABLE_TYPES = {"SUSCRIPCIÓN", "REEMBOLSO"}
-
     def parse_csv_content(self, csv_content: str) -> IndexaCapitalParseResult:
         """
         Parse IndexaCapital CSV content into LLMTransaction objects.
@@ -46,6 +43,9 @@ class IndexaCapitalCSVParser:
         reader = csv.reader(StringIO(csv_content.strip()), delimiter=";")
 
         for row_num, row in enumerate(reader, 1):
+            if row_num == 1:
+                continue  # header row
+
             if len(row) < 9:
                 skipped.append((f"Row {row_num}", f"Insufficient columns: {len(row)}"))
                 continue
@@ -55,23 +55,23 @@ class IndexaCapitalCSVParser:
                 settlement_date = row[1].strip()  # YYYY-MM-DD
                 asset_name = row[2].strip().strip('"')
                 symbol = row[3].strip()  # ISIN
-                tx_type = row[4].strip()
+                tx_type = row[4].strip().strip('"')
                 quantity_str = row[5].strip()
                 total_amount_str = row[6].strip().strip('"')
                 fees_str = row[7].strip().strip('"')
 
-                # Skip non-importable transaction types
-                if tx_type not in self.IMPORTABLE_TYPES:
-                    skipped.append((tx_type, "Non-importable transaction type"))
-                    continue
-
-                # Convert transaction type to standard format
-                if tx_type == "SUSCRIPCIÓN":
+                # Subscriptions/redemptions from an internal fund switch
+                # ("... POR TRASPASO") are economically the same as a plain
+                # SUSCRIPCIÓN/REEMBOLSO — they change the held quantity by
+                # the same Participaciones/Importe fields — so match on
+                # prefix rather than requiring an exact string.
+                if tx_type.startswith("SUSCRIPCIÓN"):
                     standard_tx_type = "buy"
-                elif tx_type == "REEMBOLSO":
+                elif tx_type.startswith("REEMBOLSO"):
                     standard_tx_type = "sell"
                 else:
-                    standard_tx_type = "buy"  # Default fallback
+                    skipped.append((tx_type, "Non-importable transaction type"))
+                    continue
 
                 # Parse quantity (comma as decimal separator)
                 quantity = float(quantity_str.replace(",", "."))

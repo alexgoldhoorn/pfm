@@ -65,14 +65,14 @@ The `from tqdm import tqdm` import on line 1 makes `cli.py`'s module docstring i
 - [ ] **Step 2: Verify the docstring is now live**
 
   ```bash
-  UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run python -c "import portf_manager.cli; print(repr(portf_manager.cli.__doc__[:30]))"
+  UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run python -c "import portf_manager.cli; print(repr(portf_manager.cli.__doc__[:30]))"
   ```
   Expected: `'Command Line Interface for Por'` (not `None`)
 
 - [ ] **Step 3: Run unit tests to confirm no regression**
 
   ```bash
-  UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
+  UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
   ```
   Expected: all tests pass, no new failures.
 
@@ -132,7 +132,7 @@ The `from tqdm import tqdm` import on line 1 makes `cli.py`'s module docstring i
 - [ ] **Step 2: Run the test — expect ImportError (module doesn't exist yet)**
 
   ```bash
-  UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/test_parser_utils.py -v
+  UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/test_parser_utils.py -v
   ```
   Expected: `ImportError: cannot import name 'parse_european_number'`
 
@@ -180,7 +180,7 @@ The `from tqdm import tqdm` import on line 1 makes `cli.py`'s module docstring i
 - [ ] **Step 4: Run the test — expect all pass**
 
   ```bash
-  UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/test_parser_utils.py -v
+  UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/test_parser_utils.py -v
   ```
   Expected: 11 PASSED
 
@@ -209,7 +209,7 @@ The `from tqdm import tqdm` import on line 1 makes `cli.py`'s module docstring i
 - [ ] **Step 7: Run full test suite**
 
   ```bash
-  UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
+  UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
   ```
   Expected: all tests pass.
 
@@ -243,7 +243,7 @@ No router uses these — they all call `get_database()` from `portf_server/depen
 - [ ] **Step 1: Verify no file outside the factory imports these wrappers**
 
   ```bash
-  grep -rn "from portf_manager.database_factory import\|from .database_factory import\|database_factory\." /home/agoldhoorn/repos/pfm/portf_manager/ /home/agoldhoorn/repos/pfm/portf_server/ /home/agoldhoorn/repos/pfm/tests/ | grep -v "get_database\|reset_database_instance\|get_database_adapter" | grep -v ".pyc"
+  grep -rn "from portf_manager.database_factory import\|from .database_factory import\|database_factory\." ~/repos/pfm/portf_manager/ ~/repos/pfm/portf_server/ ~/repos/pfm/tests/ | grep -v "get_database\|reset_database_instance\|get_database_adapter" | grep -v ".pyc"
   ```
   Expected: no output (no caller uses the pass-through names).
 
@@ -303,7 +303,7 @@ No router uses these — they all call `get_database()` from `portf_server/depen
 - [ ] **Step 3: Run full test suite**
 
   ```bash
-  UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
+  UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
   ```
   Expected: all tests pass.
 
@@ -336,7 +336,7 @@ Replace `_position_stats` with a call to `compute_positions`. For `_cost_evoluti
 - [ ] **Step 1: Read the current `_position_stats` callers**
 
   ```bash
-  grep -n "_position_stats\|_cost_evolution" /home/agoldhoorn/repos/pfm/portf_server/routers/research.py
+  grep -n "_position_stats\|_cost_evolution" ~/repos/pfm/portf_server/routers/research.py
   ```
   Note which lines call these functions (expected: ~358, 402, 537 for `_position_stats`; ~some line for `_cost_evolution`).
 
@@ -448,7 +448,7 @@ Replace `_position_stats` with a call to `compute_positions`. For `_cost_evoluti
 - [ ] **Step 4: Run the test suite**
 
   ```bash
-  UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
+  UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
   ```
   Expected: all tests pass.
 
@@ -513,7 +513,7 @@ Replace `_position_stats` with a call to `compute_positions`. For `_cost_evoluti
 
   Remove `import yfinance as yf` from the top of the file if it is no longer used anywhere else in `watchlist.py`. Check with:
   ```bash
-  grep -n "yf\." /home/agoldhoorn/repos/pfm/portf_server/routers/watchlist.py
+  grep -n "yf\." ~/repos/pfm/portf_server/routers/watchlist.py
   ```
   If the only occurrence was that block, remove the import.
 
@@ -547,14 +547,14 @@ Replace `_position_stats` with a call to `compute_positions`. For `_cost_evoluti
 
   Then check whether `import yfinance as yf` is still used anywhere in `portfolio_advisor.py`:
   ```bash
-  grep -n "yf\." /home/agoldhoorn/repos/pfm/portf_manager/services/portfolio_advisor.py
+  grep -n "yf\." ~/repos/pfm/portf_manager/services/portfolio_advisor.py
   ```
   If the only occurrence was in `_fetch`, remove `import yfinance as yf`.
 
 - [ ] **Step 3: Run tests**
 
   ```bash
-  UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
+  UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
   ```
   Expected: all tests pass.
 
@@ -614,7 +614,7 @@ The current `get_llm_client()` factory reads `PORTF_LLM_MODEL` as the override f
 - [ ] **Step 2: Run the failing test**
 
   ```bash
-  UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_llm_client.py -v -k "per_provider or get_llm_info"
+  UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_llm_client.py -v -k "per_provider or get_llm_info"
   ```
   Expected: `ImportError` on `get_llm_info` (not defined yet).
 
@@ -762,14 +762,14 @@ The current `get_llm_client()` factory reads `PORTF_LLM_MODEL` as the override f
 - [ ] **Step 4: Run the tests**
 
   ```bash
-  UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_llm_client.py -v
+  UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_llm_client.py -v
   ```
   Expected: all tests pass including the two new ones.
 
 - [ ] **Step 5: Run full suite**
 
   ```bash
-  UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
+  UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
   ```
   Expected: all tests pass.
 
@@ -845,7 +845,7 @@ The current `get_llm_client()` factory reads `PORTF_LLM_MODEL` as the override f
 - [ ] **Step 2: Run the test — expect ImportError**
 
   ```bash
-  UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_analytics.py -v -k "ttm_enrichment"
+  UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_analytics.py -v -k "ttm_enrichment"
   ```
   Expected: `ImportError: cannot import name 'dividend_ttm_enrichment'`
 
@@ -900,7 +900,7 @@ The current `get_llm_client()` factory reads `PORTF_LLM_MODEL` as the override f
 - [ ] **Step 4: Run the test — expect PASS**
 
   ```bash
-  UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_analytics.py -v -k "ttm_enrichment"
+  UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_analytics.py -v -k "ttm_enrichment"
   ```
   Expected: 2 PASSED
 
@@ -943,7 +943,7 @@ The current `get_llm_client()` factory reads `PORTF_LLM_MODEL` as the override f
 - [ ] **Step 6: Run full test suite**
 
   ```bash
-  UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
+  UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
   ```
   Expected: all tests pass.
 
@@ -966,14 +966,14 @@ The current `get_llm_client()` factory reads `PORTF_LLM_MODEL` as the override f
 After all tasks:
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v 2>&1 | tail -20
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v 2>&1 | tail -20
 ```
 
 Expected: all ~580+ tests pass, 0 failures.
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run black --check portf_manager/ portf_server/
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run flake8 portf_manager/ portf_server/ --max-line-length=88 --extend-ignore=E203,W503,E501
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run black --check portf_manager/ portf_server/
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run flake8 portf_manager/ portf_server/ --max-line-length=88 --extend-ignore=E203,W503,E501
 ```
 
 ---

@@ -158,7 +158,7 @@ class GeminiLLMClient:
         response = self._client.models.generate_content(
             model=self.model_name, contents=prompt
         )
-        if not response.text:
+        if not response.text or not response.text.strip():
             raise RuntimeError("Empty response from Gemini API")
         return response.text
 
@@ -185,7 +185,7 @@ class GeminiLLMClient:
         response = self._client.models.generate_content(
             model=self.model_name, contents=prompt, config=config
         )
-        if not response.text:
+        if not response.text or not response.text.strip():
             raise RuntimeError(
                 "Empty response from Gemini API (search-grounded call) — "
                 "the model may have exhausted its token budget on thinking/search "
