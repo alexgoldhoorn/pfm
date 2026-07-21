@@ -4509,7 +4509,9 @@ function _renderSpSuggestReviewPanel() {
     if (!panel) return;
     const groups = window._spSuggestGroups || [];
     if (!groups.length) { panel.style.display = 'none'; panel.innerHTML = ''; return; }
-    const categories = [...new Set(['uncategorized', 'Transfer', ...(window._spendingAllRows || []).map(r => r.category)])];
+    const categories = [...new Set(['uncategorized', 'Transfer',
+        ...groups.map(g => g.suggestedCategory),
+        ...(window._spendingAllRows || []).map(r => r.category)])];
     panel.style.display = '';
     panel.innerHTML = `
         <div class="card">
@@ -4543,6 +4545,10 @@ function _renderSpSuggestReviewPanel() {
 
 async function _applySpSuggestions() {
     const panel = document.getElementById('spSuggestReviewPanel');
+    const applyBtn = document.getElementById('spSuggestApplyBtn');
+    const discardBtn = document.getElementById('spSuggestDiscardBtn');
+    if (applyBtn) applyBtn.disabled = true;
+    if (discardBtn) discardBtn.disabled = true;
     const checks = panel.querySelectorAll('.sp-suggest-check');
     const accepted = Array.from(checks)
         .filter(c => c.checked)
