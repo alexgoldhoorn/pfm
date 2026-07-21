@@ -443,6 +443,29 @@ def test_rules_crud(tmp_path):
     assert client.get("/api/v1/spending/rules", headers=HEADERS).json() == []
 
 
+def test_create_rule_rejects_blank_pattern(tmp_path):
+    client, _ = _make_client(tmp_path)
+    r = client.post(
+        "/api/v1/spending/rules",
+        json={"pattern": "   ", "category": "Groceries"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 400
+
+
+def test_blank_pattern_rule_does_not_match_everything(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    # Bypass the API's own validation to simulate a pre-existing blank-pattern
+    # row (e.g. from before this fix existed) and confirm the matching
+    # function itself is the defense, not just the API layer.
+    db.create_spending_rule(pattern="", category="Groceries")
+    db.create_spending_transaction(pid, "2026-01-05", "SOME UNRELATED SHOP", -10.0)
+
+    resp = client.post("/api/v1/spending/rescan-categories", headers=HEADERS)
+    assert resp.json()["recategorized"] == 0
+
+
 def test_update_rule_pattern_and_category(tmp_path):
     client, _ = _make_client(tmp_path)
     rule_id = client.post(
@@ -503,6 +526,22 @@ def test_update_rule_blank_pattern_rejected(tmp_path):
     r = client.put(
         f"/api/v1/spending/rules/{rule_id}",
         json={"pattern": "   "},
+        headers=HEADERS,
+    )
+    assert r.status_code == 400
+
+
+def test_update_rule_blank_category_rejected(tmp_path):
+    client, _ = _make_client(tmp_path)
+    rule_id = client.post(
+        "/api/v1/spending/rules",
+        json={"pattern": "MERCADONA", "category": "Groceries"},
+        headers=HEADERS,
+    ).json()["id"]
+
+    r = client.put(
+        f"/api/v1/spending/rules/{rule_id}",
+        json={"category": "   "},
         headers=HEADERS,
     )
     assert r.status_code == 400

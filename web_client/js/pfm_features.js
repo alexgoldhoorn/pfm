@@ -4593,8 +4593,10 @@ async function _applySpSuggestions() {
     if (status) { status.className = 'small text-muted px-3 pt-2'; status.textContent = 'Applying…'; }
     let succeeded = 0, failed = 0;
     for (const g of accepted) {
-        try { await window.apiClient.createSpendingRule(g.suggestedPattern, g.suggestedCategory); }
-        catch (e) { /* rule creation failing shouldn't block applying the category itself */ }
+        if (g.suggestedPattern && g.suggestedPattern.trim()) {
+            try { await window.apiClient.createSpendingRule(g.suggestedPattern.trim(), g.suggestedCategory); }
+            catch (e) { /* rule creation failing shouldn't block applying the category itself */ }
+        }
         for (const id of g.ids) {
             try { await window.apiClient.updateSpendingCategory(id, g.suggestedCategory); succeeded++; }
             catch (e) { failed++; }

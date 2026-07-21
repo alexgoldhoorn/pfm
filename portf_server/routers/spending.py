@@ -132,11 +132,15 @@ def _apply_rules(description: str, rules: List[dict]) -> str:
     """First-match-wins, case-insensitive substring match.
 
     Rules are already ordered by id (oldest = highest priority) by
-    db.list_spending_rules().
+    db.list_spending_rules(). A blank pattern is skipped rather than
+    treated as a match-everything wildcard — "" is a substring of every
+    string in Python, so an unguarded empty pattern would silently
+    recategorize an entire backlog to one category.
     """
     desc_lower = description.lower()
     for rule in rules:
-        if rule["pattern"].lower() in desc_lower:
+        pattern = rule["pattern"].strip()
+        if pattern and pattern.lower() in desc_lower:
             return rule["category"]
     return "uncategorized"
 
@@ -447,10 +451,14 @@ async def create_rule(
     api_key_info: dict = Depends(_auth),
 ):
     """Create a spending category rule."""
-    rule_id = db.create_spending_rule(pattern=body.pattern, category=body.category)
-    return SpendingRuleResponse(
-        id=rule_id, pattern=body.pattern, category=body.category
-    )
+    pattern = body.pattern.strip()
+    category = body.category.strip()
+    if not pattern:
+        raise HTTPException(status_code=400, detail="Pattern cannot be empty")
+    if not category:
+        raise HTTPException(status_code=400, detail="Category cannot be empty")
+    rule_id = db.create_spending_rule(pattern=pattern, category=category)
+    return SpendingRuleResponse(id=rule_id, pattern=pattern, category=category)
 
 
 @router.put("/rules/{rule_id}", response_model=SpendingRuleResponse)
