@@ -242,6 +242,41 @@ class TestPortfolioRouter:
     @pytest.mark.unit
     @pytest.mark.api
     @pytest.mark.asyncio
+    async def test_create_bank_account_portfolio(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        """Test creating a bank-type portfolio via account_type."""
+        response = await async_test_client.post(
+            "/api/v1/portfolios",
+            json={"name": "Example Bank Checking", "account_type": "bank"},
+            headers=auth_headers,
+        )
+        assert response.status_code == status.HTTP_201_CREATED
+        data = response.json()
+        assert data["account_type"] == "bank"
+
+        listed = await async_test_client.get("/api/v1/portfolios", headers=auth_headers)
+        created = next(p for p in listed.json() if p["name"] == "Example Bank Checking")
+        assert created["account_type"] == "bank"
+
+    @pytest.mark.unit
+    @pytest.mark.api
+    @pytest.mark.asyncio
+    async def test_create_portfolio_defaults_to_brokerage(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        """Test that account_type defaults to 'brokerage' when omitted."""
+        response = await async_test_client.post(
+            "/api/v1/portfolios",
+            json={"name": "Example Broker"},
+            headers=auth_headers,
+        )
+        assert response.status_code == status.HTTP_201_CREATED
+        assert response.json()["account_type"] == "brokerage"
+
+    @pytest.mark.unit
+    @pytest.mark.api
+    @pytest.mark.asyncio
     async def test_get_portfolios(self, async_test_client: AsyncClient, auth_headers):
         """Test retrieving portfolios."""
         response = await async_test_client.get(
