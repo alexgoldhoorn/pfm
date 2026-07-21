@@ -10,10 +10,10 @@
 
 ## Global Constraints
 
-- Python target: 3.13. Run tooling with `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run …`
+- Python target: 3.13. Run tooling with `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run …`
 - Black line length 88. Pre-commit runs black + flake8 + autoflake on every commit.
 - Commit messages: conventional commits (`feat:`, `fix:`, `test:`). Co-author line: `Co-Authored-By: Oz <oz-agent@warp.dev>`
-- Run tests with: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v`
+- Run tests with: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v`
 - Run JS tests with: `make test-js` (or `node --test web_client/js/tests/`)
 - After any `web_client/` change: `docker compose build web && docker stop portf_web && WEB_PORT=8080 docker compose up -d web`
 - After any `portf_server/` or `portf_manager/` change: `docker exec portf_backend_dev kill -HUP 1`
@@ -57,7 +57,7 @@ Append to the `TestChatSessions` class in `tests/test_database.py`:
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/test_database.py::TestChatSessions::test_rename_session tests/test_database.py::TestChatSessions::test_rename_nonexistent_session_returns_false -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/test_database.py::TestChatSessions::test_rename_session tests/test_database.py::TestChatSessions::test_rename_nonexistent_session_returns_false -v
 ```
 
 Expected: FAIL with `AttributeError: 'Database' object has no attribute 'rename_chat_session'`
@@ -80,7 +80,7 @@ Add directly after `delete_chat_session` (around line 3265):
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/test_database.py::TestChatSessions::test_rename_session tests/test_database.py::TestChatSessions::test_rename_nonexistent_session_returns_false -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/test_database.py::TestChatSessions::test_rename_session tests/test_database.py::TestChatSessions::test_rename_nonexistent_session_returns_false -v
 ```
 
 Expected: 2 passed
@@ -88,7 +88,7 @@ Expected: 2 passed
 - [ ] **Step 5: Run the full test suite**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
 ```
 
 Expected: all passing (635+ tests)
@@ -155,7 +155,7 @@ Add to `tests/unit/test_chat_sessions.py` inside `TestChatSessionEndpoints`:
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_chat_sessions.py::TestChatSessionEndpoints::test_rename_session tests/unit/test_chat_sessions.py::TestChatSessionEndpoints::test_rename_nonexistent_session_returns_404 -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_chat_sessions.py::TestChatSessionEndpoints::test_rename_session tests/unit/test_chat_sessions.py::TestChatSessionEndpoints::test_rename_nonexistent_session_returns_404 -v
 ```
 
 Expected: FAIL with 405 Method Not Allowed (route not yet registered)
@@ -211,7 +211,7 @@ from datetime import datetime
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_chat_sessions.py -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_chat_sessions.py -v
 ```
 
 Expected: all 7 tests pass (5 existing + 2 new)
@@ -219,7 +219,7 @@ Expected: all 7 tests pass (5 existing + 2 new)
 - [ ] **Step 5: Run the full test suite**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
 ```
 
 Expected: all passing

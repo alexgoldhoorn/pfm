@@ -52,7 +52,7 @@ def test_fixed_deposits_table_exists(tmp_path):
 - [ ] **Step 2: Run test to confirm it fails**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/test_database.py::test_fixed_deposits_table_exists -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/test_database.py::test_fixed_deposits_table_exists -v
 ```
 
 Expected: FAIL — "AssertionError: assert 'fixed_deposits' in ..."
@@ -144,8 +144,8 @@ Then replace each one (there are 3).
 - [ ] **Step 5: Run tests to confirm they pass**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/test_database.py::test_fixed_deposits_table_exists -v
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/test_database.py -v --tb=short 2>&1 | tail -20
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/test_database.py::test_fixed_deposits_table_exists -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/test_database.py -v --tb=short 2>&1 | tail -20
 ```
 
 Expected: all pass.
@@ -239,7 +239,7 @@ def test_get_active_deposits(db):
 - [ ] **Step 2: Run to confirm fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_deposits.py -v 2>&1 | head -30
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_deposits.py -v 2>&1 | head -30
 ```
 
 Expected: FAIL — "AttributeError: 'Database' object has no attribute 'create_fixed_deposit'"
@@ -331,7 +331,7 @@ Add the following block after `delete_manual_asset` (around line 1296):
 - [ ] **Step 4: Run tests to confirm they pass**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_deposits.py -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_deposits.py -v
 ```
 
 Expected: 5 tests pass.
@@ -429,7 +429,7 @@ def test_api_mature_deposit(client):
 - [ ] **Step 2: Run to confirm fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_deposits.py::test_api_create_list_deposit -v 2>&1 | head -20
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_deposits.py::test_api_create_list_deposit -v 2>&1 | head -20
 ```
 
 Expected: FAIL — ImportError or 404.
@@ -639,7 +639,7 @@ app.include_router(
 - [ ] **Step 5: Run API tests**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_deposits.py -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_deposits.py -v
 ```
 
 Expected: all tests pass.
@@ -679,7 +679,7 @@ def test_networth_includes_deposits(client):
 - [ ] **Step 2: Run to confirm fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_deposits.py::test_networth_includes_deposits -v 2>&1 | head -20
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_deposits.py::test_networth_includes_deposits -v 2>&1 | head -20
 ```
 
 Expected: FAIL — `'deposits_eur' not in body`.
@@ -725,7 +725,7 @@ def get_networth(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
 - [ ] **Step 4: Run tests**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_deposits.py -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_deposits.py -v
 ```
 
 Expected: all pass.
@@ -781,7 +781,7 @@ def test_extract_deposits_llm_endpoint(client):
 - [ ] **Step 2: Run to confirm fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_deposits.py::test_extract_deposits_llm_endpoint -v 2>&1 | head -20
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_deposits.py::test_extract_deposits_llm_endpoint -v 2>&1 | head -20
 ```
 
 Expected: FAIL — 404 or AttributeError.
@@ -891,7 +891,7 @@ async def extract_deposits_from_text(
 - [ ] **Step 5: Run all deposit tests**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_deposits.py -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_deposits.py -v
 ```
 
 Expected: all pass.
@@ -899,7 +899,7 @@ Expected: all pass.
 - [ ] **Step 6: Run full test suite**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q 2>&1 | tail -10
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q 2>&1 | tail -10
 ```
 
 Expected: 0 failures.
@@ -962,7 +962,7 @@ In `web_client/js/pfm_core.js`, locate the `deleteManualAsset` method (around li
 - [ ] **Step 2: Verify no syntax errors**
 
 ```bash
-node --check /home/agoldhoorn/repos/pfm/web_client/js/pfm_core.js && echo "OK"
+node --check ~/repos/pfm/web_client/js/pfm_core.js && echo "OK"
 ```
 
 Expected: `OK`
@@ -1110,7 +1110,7 @@ Insert this modal just before the closing `</body>` tag (or alongside the other 
 node --input-type=module <<'EOF'
 import { JSDOM } from 'jsdom';
 import { readFileSync } from 'fs';
-const html = readFileSync('/home/agoldhoorn/repos/pfm/web_client/index.html', 'utf8');
+const html = readFileSync('~/repos/pfm/web_client/index.html', 'utf8');
 const dom = new JSDOM(html);
 const errs = dom.window.document.querySelectorAll('parsererror');
 console.log(errs.length === 0 ? 'HTML OK' : 'ERRORS: ' + errs.length);
@@ -1324,7 +1324,7 @@ window.openMatureDepositModal = function (id, projectedInterest, maturityDate) {
 - [ ] **Step 3: Check JS for syntax errors**
 
 ```bash
-node --check /home/agoldhoorn/repos/pfm/web_client/js/pfm_analytics.js && echo "OK"
+node --check ~/repos/pfm/web_client/js/pfm_analytics.js && echo "OK"
 ```
 
 Expected: `OK`
@@ -1399,7 +1399,7 @@ docker compose build web && docker stop portf_web && docker compose up -d web
 - [ ] **Step 5: Run full test suite one last time**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q 2>&1 | tail -5
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q 2>&1 | tail -5
 ```
 
 Expected: 0 failures.

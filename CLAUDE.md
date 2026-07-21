@@ -54,7 +54,7 @@ Provider-agnostic via `portf_manager/llm_client.py`. Factory `get_llm_client()` 
 
 Override: `PORTF_LLM_PROVIDER=auto|ollama|gemini|openrouter|anthropic`, `PORTF_LLM_MODEL=<model>`.
 
-**Search grounding**: `GeminiLLMClient` and `AnthropicLLMClient` implement `generate_with_search(prompt, symbol) -> str`. Research `generate_valuation_report()` detects via `hasattr(llm, "generate_with_search")`. Returns `{"text": "<llm json>", "sources": [...]}`. Ollama/OpenRouter do NOT support search grounding. `GeminiLLMClient._gemini_search()` raises `RuntimeError` if `response.text` is empty (thinking-token exhaustion or safety block) — same guard as `generate()` — so callers get a clear error instead of `json.loads("")` blowing up downstream with `Expecting value: line 1 column 1 (char 0)`.
+**Search grounding**: `GeminiLLMClient` and `AnthropicLLMClient` implement `generate_with_search(prompt, symbol) -> str`. Research `generate_valuation_report()` detects via `hasattr(llm, "generate_with_search")`. Returns `{"text": "<llm json>", "sources": [...]}`. Ollama/OpenRouter do NOT support search grounding. `GeminiLLMClient._gemini_search()` raises `RuntimeError` if `response.text` is empty **or whitespace-only** (thinking-token exhaustion or safety block) — same guard as `generate()` — so callers get a clear error instead of `json.loads("")` blowing up downstream with `Expecting value: line 1 column 1 (char 0)`. `generate_valuation_report()` (`portf_manager/services/research.py`) also guards the final `json.loads(raw)` directly, in case an empty response reaches it through another path.
 
 **Tool calling (chat agentic loop)**: All 4 providers implement `ToolCapableLLMClient` (protocol in `portf_manager/llm_client.py`):
 - `generate_with_tools(messages, tools) -> ToolResponse` — first pass; returns either `ToolResponse(text=...)` or `ToolResponse(tool_call=ToolCallRequest(name, arguments, call_id))`
@@ -69,7 +69,7 @@ All LLM calls: `LLMClient.generate(prompt) -> str`. `GeminiClient` is a legacy w
 
 ### CSV / File Parsers
 Each broker has a standalone parser returning `LLMTransaction` objects via `ParseResult`. Valid `tx_type`: `buy`, `sell`, `dividend`, `interest`. `LLMTransaction` (in `portf_manager/llm_types.py`) has an optional `asset_type: str = ""` field — when set, `imports.py` uses it instead of defaulting to `"stock"` on save.
-- `indexacapital_csv_parser.py` — semicolon CSV, European numbers, ISINs. Also auto-detects "Movimientos" cash statement → SEPA → deposit/withdrawal bookings; fund subscriptions skipped.
+- `indexacapital_csv_parser.py` — semicolon CSV, European numbers, ISINs. `Tipo` values matched by **prefix**: any `SUSCRIPCIÓN*` (including `SUSCRIPCIÓN POR TRASPASO`, an internal fund-switch) → buy, any `REEMBOLSO*` (including `REEMBOLSO POR TRASPASO`) → sell — do not require an exact string match, IndexaCapital's export uses several suffixed variants. Header row explicitly skipped. Also auto-detects "Movimientos" cash statement → SEPA → deposit/withdrawal bookings; fund subscriptions skipped.
 - `myinvestor_csv_parser.py` — "Movimientos Mi Cuenta": INVEST=deposit; `NAME @ QTY` with Importe<0=buy, >0=dividend; positive no-`@`=dividend lump-sum. No ISIN/fees → buys flagged "review".
 - `myinvestor_paste_parser.py` — MyInvestor statements pasted as text.
 - `mintos_csv_parser.py` — P2P statement. Aggregates interest/withholding **per month** into `interest` transactions vs synthetic `MINTOS` asset. Deposits/withdrawals kept individual → bookings. Large files → nginx `client_max_body_size 25m`.
@@ -100,6 +100,8 @@ Google Sheets API: `UNFORMATTED_VALUE + SERIAL_NUMBER` for reading (dates = floa
 - Brokers: `indexacapital`, `myinvestor`, `mintos`, `coinbase`, `pdt`, `bookings`, `generic`
 - `duplicate_action`: `skip` (default) | `add` | `overwrite`. `force=True` is legacy alias for `add`.
 - `find_duplicate_transaction` is **time-aware**: matches date + time-of-day only when both rows carry one. `find_duplicate_booking` matches date+action+amount+currency+portfolio.
+- `/save` requires a non-blank `date` per transaction (rejected per-row into `errors`, same as any other save failure) — a preview row's date can be blank pending manual fill-in, but it must not reach the DB blank.
+- `/save` also **corrects `asset_type` on an already-existing asset** when the incoming transaction carries a different, non-empty, valid type (e.g. an asset first created `stock` by a heuristic-based import, later re-imported from a parser — like IndexaCapital — that explicitly tags it `etf`). Only ever updates `asset_type`; never touches other asset fields.
 
 ### Export API (`portf_server/routers/exports.py`)
 - `GET /api/v1/export/csv` — all transactions as UTF-8 CSV (Excel BOM); `?portfolio_id=`
@@ -109,7 +111,7 @@ Google Sheets API: `UNFORMATTED_VALUE + SERIAL_NUMBER` for reading (dates = floa
 - Platform logic in `portf_manager/platform_export.py`.
 
 ### Bookings API
-`GET|POST /api/v1/bookings/`, `DELETE /api/v1/bookings/{id}`. Importable via PDT (sheet/XLSX), generic `bookings` CSV, LLM extraction (`POST /api/v1/llm/extract-bookings`), or manual form.
+`GET|POST /api/v1/bookings/`, `DELETE /api/v1/bookings/{id}`. Importable via PDT (sheet/XLSX), generic `bookings` CSV, LLM extraction (`POST /api/v1/llm/extract-bookings`), or manual form — the manual form exists in two places sharing the same `POST` call: the Import/Export page's Bookings tab (`#addBookingForm`) and an "Add Cash" button on the Transactions page (`#addCashModal`/`#addCashForm`, `setupAddCash()` in `pfm_features.js`).
 
 ### Rebalance API
 `GET /api/v1/rebalance/targets`, `PUT /api/v1/rebalance/targets` (`[{asset_type, target_pct}]`), `GET /api/v1/rebalance/analysis`.
@@ -163,6 +165,7 @@ Plain `def`; gathers 6 data bundles via `ThreadPoolExecutor` → LLM prompt → 
 - **Net Worth gaps are deliberately NOT included server-side** — the frontend Action Items page fetches `GET /api/v1/networth/` + `/networth/cashflow` and runs the existing client-only `computeNetWorthChecklist()` against them, merging the result in via `mergeActionItems()` (`pfm_features.js`). Avoids maintaining the same checklist rules in two languages.
 - Web: new "Action Items" nav page (top-level, next to Dashboard). Dismissal via `localStorage["pfmDismissedActionItems"]`, same `{id, dismissed_at}` shape as the Diagnostics Data Quality tab's `pfmDismissedIssues`. Item ids are deterministic per entity (`import:portfolio:{id}`, `dq:duplicates`, `errors:price-update:{run_id}`, `goals:{goal_id}`, ...) so dismissing one doesn't hide a *new* occurrence (e.g. a later failing price-update run has a different `run_id`).
 - `research.py`'s `/alerts/check` endpoint delegates to `compute_price_target_alerts(db)`, a pure function extracted so the Action Items aggregator can reuse the same alert computation without re-triggering `send_alerts_push()` on every page load.
+- Item `title`/`detail` show `"Name (SYMBOL)"` rather than a bare symbol/ISIN where a name is available — `_name_code(name, symbol)` helper in `action_items.py`, applied to price-update failures (looks up each failed symbol's asset), stale research, and both watchlist/price-target alert checks (which already carried `name` in their source dicts but weren't using it). `check_data_quality` stays aggregate-only (no per-asset symbol to attach a name to).
 
 ### LLM API (`portf_server/routers/llm.py`)
 - `POST /api/v1/llm/extract-transactions` | `POST /api/v1/llm/chat`
@@ -210,7 +213,7 @@ Single market-data source for web, MCP, cron:
 Single `index.html` + four JS files (no build step), **must load in order**: `help_text.js` → `pfm_core.js` → `pfm_pages.js` → `pfm_analytics.js` → `pfm_features.js`. They share one global scope.
 
 - `pfm_core.js`: prefs, `Fmt`, `esc`, `AssetSearch`, API + modal managers, `openChatWithContext()`
-- `pfm_pages.js`: page/nav/auth, dashboard, transactions, assets, holdings, help/resources
+- `pfm_pages.js`: page/nav/auth, dashboard, transactions, assets (positions + catalogue merged, see below), help/resources
 - `pfm_analytics.js`: net-worth/dividend/analytics/diversification charts
 - `pfm_features.js`: watchlist, goals, chat, portfolios, import/export, forecast, rebalance, research, settings + `DOMContentLoaded` bootstrap
 
@@ -218,9 +221,13 @@ Single `index.html` + four JS files (no build step), **must load in order**: `he
 
 **Wealth Simulator** (`pfm_features.js`, `setupForecastPage`): entirely client-side, no dedicated backend router — `projectAccount(startAmount, annualRatePct, volatility, years, sigma, monthlyContribution)` models each asset class as GBM plus an optional ordinary-annuity monthly contribution (stocks bucket only, via `fcStocksContribution`); `runProjection(...)` adds deterministic mortgage amortization; `renderChart(projResult, totalStarting, years, goals)` draws the SVG. `computeGoalOverlays(goals, naturalMin, naturalMax, years)` (pure, unit-tested) decides per selected goal whether its target renders as an in-chart dashed line/marker or — when far outside the projection's natural range — an off-chart chip in `#fcGoalChips`, so a large goal (e.g. €1M) can't flatten a much smaller projection.
 
-`window.METRIC_HELP` / `window.PAGE_HELP` in `help_text.js` — tooltip definitions and per-page help modal content. Add entries when adding new pages or non-obvious cards.
+`window.METRIC_HELP` / `window.PAGE_HELP` in `help_text.js` — tooltip definitions and per-page help modal content. Add entries when adding new pages or non-obvious cards. `METRIC_HELP` is a flat `key: "plain string"` map used directly as a `title=` attribute — there's no shared helper function; the convention is inline `data-bs-toggle="tooltip" title="${METRIC_HELP.xxx}"` (optionally on a `<i class="bi bi-info-circle">` icon next to a label). Bootstrap tooltips need explicit init after dynamic rendering — call `initTooltips()` (defined in `pfm_analytics.js`, exposed as `window.initTooltips`) once after any table/card is (re)rendered with new tooltip-bearing elements; static tooltips already in `index.html` are covered by the `initTooltips()` call in `loadDashboardPage()`.
+
+`openResearchModal(symbol, name)` — the modal title renders as `"Name (SYMBOL)"` when a name is passed, else falls back to the bare symbol; callers should pass the asset name when they have it (e.g. the Assets page row).
 
 `makeSortableTable(config)` / `applyTableState(rows, columns, state)` in `pfm_core.js` — shared sortable/filterable tables; per-table state persists in `PREFS.tableState[<page>]`.
+
+**Assets page** (`loadAssetsPage`/`_loadHoldingsAndRender`/`_renderFilteredAssets` in `pfm_pages.js`): merges the old separate Holdings and Assets pages. Defaults to owned positions for the selected portfolio (`GET /api/v1/portfolios/holdings`, unchanged); the "Show assets with no holding" checkbox appends `GET /api/v1/assets/` catalogue entries whose symbol has zero quantity in *any* portfolio — computed via one unfiltered `getHoldings()` call, cached in `this._heldSymbolsGlobal`, independent of the portfolio filter. An asset held in a different, non-selected portfolio is excluded from both halves (not a position for the selected portfolio, not "held nowhere" either) — same as the old Holdings portfolio-filter behavior, nothing new to reconcile. `PREFS.tableState.holdings` is the sort/filter-state key (kept from the old Holdings page, not renamed).
 
 `window.PREFS` → `localStorage['pfmPrefs']`. Format numbers via `Fmt.num()`, dates via `Fmt.date()`. Theme = `data-bs-theme` on `<html>` (Bootstrap 5.3).
 
@@ -275,6 +282,7 @@ When writing tests, invent asset names (e.g. "Example Corp", "Global Bond Fund")
 - **`asset_type` enum**: Pydantic (`portf_server/schemas/assets.py`) AND `models.py` — add new types to both or `/assets` 500s.
 - **`transaction_type`**: `models.py TransactionType` + SQLAlchemy CHECK + `transactions` table rebuild — update all three when adding new types.
 - **MyInvestor CSV**: semicolon-delimited, European numbers (comma=decimal, dot=thousands). No standalone parser — CLI or LLM text import.
+- **File-import preview duplicate detection requires `PreviewTransaction.broker`**: `POST /api/v1/import/upload` has no `portfolio_id` param — `_flag_duplicates()` (imports.py) only knows which portfolio to check against via each row's `broker` field (`db.get_portfolio_by_name(tx.broker)`), same field the `/save` step uses as its portfolio fallback. A parser that omits `broker=` gets `portfolio_id=None` passed into `find_duplicate_transaction`'s `(portfolio_id IS ? OR portfolio_id = ?)` filter, which then only matches other NULL-portfolio rows — since real imported transactions always have a real portfolio_id, **every** row looks new and duplicate detection silently does nothing. Coinbase and IndexaCapital both set `broker=` for this reason; a new broker parser must too.
 
 ## After Every Task — What Needs Restarting
 

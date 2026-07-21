@@ -2696,9 +2696,11 @@ class Database:
         if not asset:
             raise ValueError(f"Asset with symbol '{symbol}' not found")
 
-        # Convert datetime to string for storage if needed
+        # Match SQLite's CURRENT_TIMESTAMP format ("YYYY-MM-DD HH:MM:SS") so
+        # readers like the data-freshness endpoint can parse this column
+        # consistently regardless of insert path.
         fetched_ts_str = (
-            fetched_ts.isoformat()
+            fetched_ts.strftime("%Y-%m-%d %H:%M:%S")
             if isinstance(fetched_ts, datetime)
             else str(fetched_ts)
         )

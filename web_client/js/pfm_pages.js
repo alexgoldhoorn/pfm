@@ -131,7 +131,12 @@ function createPageManager() {
 
         loadAssetsPage: async function() {
             const tableBody = document.querySelector('#assetsPage tbody');
-            if (tableBody) tableBody.innerHTML = '<tr><td colspan="7" class="text-center"><div class="spinner-border spinner-border-sm me-2"></div>Loading…</td></tr>';
+            if (tableBody) tableBody.innerHTML = '<tr><td colspan="13" class="text-center"><div class="spinner-border spinner-border-sm me-2"></div>Loading…</td></tr>';
+            // Force the "held anywhere" set to be recomputed on every full
+            // page load (nav or refresh) — otherwise, once cached with a
+            // specific portfolio filter selected, it never sees holdings
+            // changes from imports/transactions made elsewhere.
+            this._heldSymbolsGlobal = null;
             try {
                 // Populate broker dropdown once
                 const aPortFilter = document.getElementById('assetPortfolioFilter');
@@ -144,12 +149,11 @@ function createPageManager() {
                             opt.textContent = p.name;
                             aPortFilter.appendChild(opt);
                         });
-                        aPortFilter.onchange = () => this._renderFilteredAssets();
+                        aPortFilter.onchange = () => this._loadHoldingsAndRender();
                     } catch (e) { /* non-fatal */ }
                 }
 
                 const assets = await window.apiClient.getAssets();
-
                 this._assetsData = assets;
                 this._assetSuggestions = assets
                     .filter(a => a.symbol)
@@ -161,6 +165,8 @@ function createPageManager() {
                     page.dataset.filtersWired = '1';
                     document.getElementById('assetTypeFilter')
                         ?.addEventListener('change', () => this._renderFilteredAssets());
+                    document.getElementById('assetShowZeroHoldings')
+                        ?.addEventListener('change', () => this._renderFilteredAssets());
                     document.getElementById('refreshAssets')
                         ?.addEventListener('click', () => this.loadAssetsPage());
                     document.getElementById('resolveTickersBtn')
@@ -168,75 +174,164 @@ function createPageManager() {
                     this._setupAssetAutocomplete();
                 }
 
-                await this._renderFilteredAssets();
+                await this._loadHoldingsAndRender();
                 this.hideLoadingSpinners();
             } catch (error) {
                 console.error('Error loading assets page:', error);
-                if (tableBody) tableBody.innerHTML = '<tr><td colspan="7" class="text-center text-danger">Error loading assets.</td></tr>';
+                if (tableBody) tableBody.innerHTML = '<tr><td colspan="13" class="text-center text-danger">Error loading assets.</td></tr>';
                 this.hideLoadingSpinners();
+            }
+        },
+
+        // Fetches holdings for the selected portfolio (or the all-portfolios
+        // aggregate when none is selected), updates the summary cards and the
+        // rebalancing target rows, and — the first time it's needed —
+        // computes the "held anywhere" symbol set the zero-holding toggle
+        // filters against. Delegates to _renderFilteredAssets() for the
+        // actual table render.
+        _loadHoldingsAndRender: async function() {
+            const tableBody = document.querySelector('#assetsPage tbody');
+            const aPortFilter = document.getElementById('assetPortfolioFilter');
+            const selectedPortfolioId = aPortFilter?.value || null;
+
+            try {
+                const data = await window.apiClient.getHoldings(selectedPortfolioId);
+                const { holdings = [], summary = {} } = data;
+                this._ownedHoldings = holdings;
+
+                if (selectedPortfolioId === null) {
+                    // The unfiltered call already is "held anywhere".
+                    this._heldSymbolsGlobal = new Set(holdings.map(h => h.symbol));
+                } else if (!this._heldSymbolsGlobal) {
+                    const all = await window.apiClient.getHoldings(null);
+                    this._heldSymbolsGlobal = new Set((all.holdings || []).map(h => h.symbol));
+                }
+
+                const fmt = (n) => n !== undefined ? parseFloat(n).toLocaleString(Fmt.loc(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+                const el = id => document.getElementById(id);
+                if (el('holdingsTotalValue')) el('holdingsTotalValue').textContent = fmt(summary.total_value);
+                if (el('holdingsTotalCost'))  el('holdingsTotalCost').textContent  = fmt(summary.total_cost);
+
+                const pnl = summary.total_pnl || 0;
+                const pnlPct = summary.total_pnl_pct || 0;
+                const pnlCard = el('holdingsPnlCard');
+                const pnlEl = el('holdingsTotalPnl');
+                if (pnlEl) pnlEl.textContent = `${pnl >= 0 ? '+' : ''}${fmt(pnl)} (${pnlPct >= 0 ? '+' : ''}${fmt(pnlPct)}%)`;
+                if (pnlCard) {
+                    pnlCard.className = `card text-white ${pnl >= 0 ? 'bg-success' : 'bg-danger'}`;
+                }
+
+                setupRebalanceTargets(holdings);
+
+                await this._renderFilteredAssets();
+            } catch (error) {
+                console.error('Error loading holdings:', error);
+                if (tableBody) tableBody.innerHTML = '<tr><td colspan="13" class="text-center text-danger">Error loading holdings.</td></tr>';
             }
         },
 
         _renderFilteredAssets: async function() {
             const tableBody = document.querySelector('#assetsPage tbody');
-            if (!tableBody || !this._assetsData) return;
+            if (!tableBody || !this._assetsData || !this._ownedHoldings) return;
 
-            const typeVal      = document.getElementById('assetTypeFilter')?.value || '';
-            const portfolioVal = document.getElementById('assetPortfolioFilter')?.value || '';
-            const searchVal    = (document.getElementById('assetSearchInput')?.value || '').trim();
-
-            let filtered = this._assetsData;
-            if (typeVal) filtered = filtered.filter(a => a.asset_type === typeVal);
-            if (portfolioVal) {
-                // Filter to assets that have holdings in the selected portfolio
-                try {
-                    const { holdings = [] } = await window.apiClient.getHoldings(portfolioVal);
-                    const symbols = new Set(holdings.map(h => h.symbol));
-                    filtered = filtered.filter(a => symbols.has(a.symbol));
-                } catch (e) { /* show all on error */ }
+            // One-time migration of the pre-tableState "holdingsSort" pref,
+            // must run before the first makeSortableTable() call below seeds
+            // a default.
+            if (!window.PREFS.tableState || !window.PREFS.tableState.holdings) {
+                const legacy = { value: { key: 'total_value_eur', dir: 'desc' }, pnl: { key: 'pnl_amount', dir: 'desc' }, pnlpct: { key: 'pnl_pct', dir: 'desc' }, name: { key: 'name', dir: 'asc' } }[window.PREFS.holdingsSort || 'value'];
+                if (legacy) { if (!window.PREFS.tableState) window.PREFS.tableState = {}; window.PREFS.tableState.holdings = { sort: legacy, filters: {} }; }
             }
+
+            const typeVal   = document.getElementById('assetTypeFilter')?.value || '';
+            const searchVal = (document.getElementById('assetSearchInput')?.value || '').trim();
+            const showZero  = document.getElementById('assetShowZeroHoldings')?.checked || false;
+
+            const assetBySymbol = new Map(this._assetsData.map(a => [a.symbol, a]));
+            const hideBelow = parseFloat(window.PREFS.hideBelowEur) || 0;
+            const hVal = h => parseFloat(h.total_value_eur ?? h.total_value ?? 0) || 0;
+
+            let ownedRows = this._ownedHoldings
+                .filter(h => hideBelow <= 0 || hVal(h) >= hideBelow)
+                .map(h => {
+                    const a = assetBySymbol.get(h.symbol) || {};
+                    return { ...h, exchange: a.exchange || '', auto_price: a.auto_price, id: a.id, owned: true };
+                });
+
+            let unownedRows = [];
+            if (showZero) {
+                const heldAnywhere = this._heldSymbolsGlobal || new Set();
+                unownedRows = this._assetsData
+                    .filter(a => !heldAnywhere.has(a.symbol))
+                    .map(a => ({
+                        ...a, quantity: null, avg_price: null, total_value: null,
+                        total_value_eur: null, pnl_amount: null, pnl_pct: null, owned: false,
+                    }));
+            }
+
+            let combined = ownedRows.concat(unownedRows);
+            if (typeVal) combined = combined.filter(r => r.asset_type === typeVal);
             if (searchVal) {
-                // Smart match using AssetSearch (no result limit — this is a table filter)
                 const matched = new Set(
                     AssetSearch.match(searchVal, this._assetSuggestions || [], this._assetsData.length)
                         .map(s => s.symbol)
                 );
-                // Also let exchange substring through (not in AssetSearch scoring)
                 const sq = searchVal.toLowerCase();
-                filtered = filtered.filter(a =>
-                    matched.has(a.symbol) || (a.exchange || '').toLowerCase().includes(sq)
+                combined = combined.filter(r =>
+                    matched.has(r.symbol) || (r.exchange || '').toLowerCase().includes(sq)
                 );
             }
 
-            this._assetsRows = filtered;
-            const emptyMsg = '<tr><td colspan="7" class="text-center text-muted py-4">No assets match the current filters.</td></tr>';
-            const renderAssetRow = (asset) => `
+            this._assetsRows = combined;
+            const emptyMsg = '<tr><td colspan="13" class="text-center text-muted py-4">No assets match the current filters.</td></tr>';
+            const fmt = (n) => (n !== undefined && n !== null) ? parseFloat(n).toLocaleString(Fmt.loc(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
+            const renderRow = (row) => {
+                const pnlClass = (row.pnl_amount || 0) >= 0 ? 'text-success' : 'text-danger';
+                const typeBadge = { stock: 'bg-primary', etf: 'bg-info', index: 'bg-success', crypto: 'bg-warning text-dark', bond: 'bg-secondary', p2p: 'bg-dark' }[row.asset_type] || 'bg-secondary';
+                const symEsc = (row.symbol || '').replace(/'/g, "\\'");
+                const nameEsc = (row.name || '').replace(/'/g, "\\'");
+                const dash = '<span class="text-muted">—</span>';
+                return `
                     <tr>
-                        <td><strong>${esc(asset.symbol || 'N/A')}</strong></td>
-                        <td>${esc(asset.name || 'N/A')}</td>
-                        <td><span class="badge bg-primary">${asset.asset_type || 'N/A'}</span></td>
-                        <td>${asset.exchange || 'N/A'}</td>
-                        <td>
-                            ${fmtPrice(asset.current_price, asset.currency)}
-                            ${asset.auto_price === false ? '<span class="badge bg-secondary ms-1" title="Manual price — the daily cron will not overwrite it">manual</span>' : ''}
-                            <button class="btn btn-sm btn-link p-0 ms-1 align-baseline" title="Set a manual price" onclick="setAssetPrice(${asset.id}, '${(asset.symbol || '').replace(/'/g, "\\'")}', '${asset.currency || ''}')"><i class="bi bi-pencil-square"></i></button>
+                        <td><strong>${esc(row.symbol || 'N/A')}</strong></td>
+                        <td>${esc(row.name || 'N/A')}</td>
+                        <td><span class="badge ${typeBadge}">${esc((row.asset_type || '').toUpperCase())}</span></td>
+                        <td>${esc(row.exchange || 'N/A')}</td>
+                        <td>${row.currency || ''}</td>
+                        <td class="text-end">${row.owned ? parseFloat(row.quantity).toLocaleString(Fmt.loc(), { maximumFractionDigits: 4 }) : dash}</td>
+                        <td class="text-end">${row.owned ? fmt(row.avg_price) : dash}</td>
+                        <td class="text-end">
+                            ${row.current_price > 0 ? fmt(row.current_price) : dash}
+                            ${row.auto_price === false ? '<span class="badge bg-secondary ms-1" title="Manual price — the daily cron will not overwrite it">manual</span>' : ''}
+                            <button class="btn btn-sm btn-link p-0 ms-1 align-baseline" title="Set a manual price" onclick="setAssetPrice(${row.id}, '${symEsc}', '${row.currency || ''}')"><i class="bi bi-pencil-square"></i></button>
                         </td>
-                        <td>${asset.currency || ''}</td>
-                        <td>${assetLinks(asset.symbol)}</td>
+                        <td class="text-end fw-bold">${row.owned ? fmt(row.total_value) : dash}</td>
+                        <td class="text-end ${row.owned ? pnlClass : ''}">${row.owned ? (row.pnl_amount >= 0 ? '+' : '') + fmt(row.pnl_amount) : dash}</td>
+                        <td class="text-end ${row.owned ? pnlClass : ''}">${row.owned ? (row.pnl_pct >= 0 ? '+' : '') + fmt(row.pnl_pct) + '%' : dash}</td>
+                        <td class="text-center text-nowrap">${assetLinks(row.symbol)}</td>
+                        <td class="text-end pe-3">
+                            <div class="btn-group btn-group-sm">
+                                <button class="btn btn-outline-primary" title="Research / Valuation" onclick="openResearchModal('${symEsc}', '${nameEsc}')"><i class="bi bi-graph-up"></i></button>
+                            </div>
+                        </td>
                     </tr>`;
+            };
             this._assetsST = this._assetsST || makeSortableTable({
-                table: document.querySelector('#assetsPage table'),
+                table: document.getElementById('assetsTable'),
                 columns: [
                     { key: 'symbol', type: 'text' }, { key: 'name', type: 'text' },
                     { key: 'asset_type', type: 'text' }, { key: 'exchange', type: 'text' },
-                    { key: 'current_price', type: 'num' }, { key: 'currency', type: 'text' },
-                    { key: null },
+                    { key: 'currency', type: 'text' },
+                    { key: 'quantity', type: 'num' }, { key: 'avg_price', type: 'num' },
+                    { key: 'current_price', type: 'num' }, { key: 'total_value_eur', type: 'num' },
+                    { key: 'pnl_amount', type: 'num' }, { key: 'pnl_pct', type: 'num' },
+                    { key: null }, { key: null },
                 ],
                 getRows: () => this._assetsRows,
-                renderRows: (rows, tbody) => { tbody.innerHTML = rows.length ? rows.map(renderAssetRow).join('') : emptyMsg; },
-                prefsKey: 'assets',
+                renderRows: (rows, tbody) => { tbody.innerHTML = rows.length ? rows.map(renderRow).join('') : emptyMsg; },
+                prefsKey: 'holdings',
             });
             this._assetsST.refresh();
+            initTooltips();
         },
 
         _resolveTickersClick: async function() {
@@ -674,157 +769,6 @@ function createPageManager() {
             });
         },
 
-        loadHoldingsPage: async function() {
-            const tableBody = document.querySelector('#holdingsTable tbody');
-            if (!tableBody) return;
-
-            // Populate broker dropdown once
-            const hPortFilter = document.getElementById('holdingsPortfolioFilter');
-            if (hPortFilter && hPortFilter.options.length <= 1) {
-                try {
-                    const portfolios = await window.apiClient.getPortfolios();
-                    portfolios.forEach(p => {
-                        const opt = document.createElement('option');
-                        opt.value = p.id;
-                        opt.textContent = p.name;
-                        hPortFilter.appendChild(opt);
-                    });
-                    hPortFilter.onchange = () => {
-                        if (this._holdingsST) { this._holdingsST = null; }
-                        this.loadHoldingsPage();
-                    };
-                } catch (e) { /* non-fatal */ }
-            }
-            const selectedPortfolioId = hPortFilter?.value || null;
-
-            tableBody.innerHTML = '<tr><td colspan="12" class="text-center"><div class="spinner-border spinner-border-sm me-2"></div>Loading...</td></tr>';
-
-            try {
-                const data = await window.apiClient.getHoldings(selectedPortfolioId);
-                const { holdings = [], summary = {} } = data;
-
-                // Update summary cards
-                const fmt = (n) => n !== undefined ? parseFloat(n).toLocaleString(Fmt.loc(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—';
-                const el = id => document.getElementById(id);
-                if (el('holdingsTotalValue')) el('holdingsTotalValue').textContent = fmt(summary.total_value);
-                if (el('holdingsTotalCost'))  el('holdingsTotalCost').textContent  = fmt(summary.total_cost);
-
-                const pnl = summary.total_pnl || 0;
-                const pnlPct = summary.total_pnl_pct || 0;
-                const pnlCard = el('holdingsPnlCard');
-                const pnlEl = el('holdingsTotalPnl');
-                if (pnlEl) pnlEl.textContent = `${pnl >= 0 ? '+' : ''}${fmt(pnl)} (${pnlPct >= 0 ? '+' : ''}${fmt(pnlPct)}%)`;
-                if (pnlCard) {
-                    pnlCard.className = `card text-white ${pnl >= 0 ? 'bg-success' : 'bg-danger'}`;
-                }
-
-                // Apply the user's "hide tiny positions" threshold + sort pref.
-                // Summary cards above stay on the full set; only the table view
-                // is filtered/sorted.
-                const hideBelow = parseFloat(window.PREFS.hideBelowEur) || 0;
-                const hVal = h => parseFloat(h.total_value_eur ?? h.total_value ?? 0) || 0;
-                let view = holdings.slice();
-                if (hideBelow > 0) view = view.filter(h => hVal(h) >= hideBelow);
-                // Seed the default holdings sort from the legacy holdingsSort pref (once).
-                if (!window.PREFS.tableState || !window.PREFS.tableState.holdings) {
-                    const legacy = { value: { key: 'total_value_eur', dir: 'desc' }, pnl: { key: 'pnl_amount', dir: 'desc' }, pnlpct: { key: 'pnl_pct', dir: 'desc' }, name: { key: 'name', dir: 'asc' } }[window.PREFS.holdingsSort || 'value'];
-                    if (legacy) { if (!window.PREFS.tableState) window.PREFS.tableState = {}; window.PREFS.tableState.holdings = { sort: legacy, filters: {} }; }
-                }
-                // Store the hide-tiny set; the search box narrows it (symbol/
-                // ticker/name), then the shared table does type-filter + sort.
-                this._holdingsAll = view;
-                const _applyHoldingsSearch = () => {
-                    const q = (document.getElementById('holdingsSearchInput')?.value || '').trim().toLowerCase();
-                    this._holdingsRows = !q ? this._holdingsAll : this._holdingsAll.filter(h =>
-                        (h.symbol || '').toLowerCase().includes(q) ||
-                        (h.name || '').toLowerCase().includes(q) ||
-                        (h.ticker || '').toLowerCase().includes(q));
-                };
-                _applyHoldingsSearch();   // respect any existing search text on reload
-                const hSearchEl = document.getElementById('holdingsSearchInput');
-                if (hSearchEl && !hSearchEl._bound) {
-                    hSearchEl._bound = true;
-                    hSearchEl.addEventListener('input', () => {
-                        _applyHoldingsSearch();
-                        if (this._holdingsST) this._holdingsST.refresh();
-                    });
-                }
-                const emptyMsg = `<tr><td colspan="12" class="text-center text-muted">${holdings.length ? 'No holdings match the current filter.' : 'No holdings found. Add buy transactions to see your positions here.'}</td></tr>`;
-                const renderHoldingRow = (h) => {
-                    const pnlClass = h.pnl_amount >= 0 ? 'text-success' : 'text-danger';
-                    const typeBadge = { stock: 'bg-primary', etf: 'bg-info', index: 'bg-success', crypto: 'bg-warning text-dark', bond: 'bg-secondary', p2p: 'bg-dark' }[h.asset_type] || 'bg-secondary';
-                    const symEsc = (h.symbol || '').replace(/'/g, "\\'");
-                    return `
-                        <tr>
-                            <td><strong>${esc(h.symbol)}</strong></td>
-                            <td>${esc(h.name)}</td>
-                            <td><span class="badge ${typeBadge}">${esc((h.asset_type || '').toUpperCase())}</span></td>
-                            <td>${esc(h.currency || '')}</td>
-                            <td class="text-end">${parseFloat(h.quantity).toLocaleString(Fmt.loc(), { maximumFractionDigits: 4 })}</td>
-                            <td class="text-end">${fmt(h.avg_price)}</td>
-                            <td class="text-end">${h.current_price > 0 ? fmt(h.current_price) : '<span class="text-muted">—</span>'}</td>
-                            <td class="text-end fw-bold">${fmt(h.total_value)}</td>
-                            <td class="text-end ${pnlClass}">${h.pnl_amount >= 0 ? '+' : ''}${fmt(h.pnl_amount)}</td>
-                            <td class="text-end ${pnlClass}">${h.pnl_pct >= 0 ? '+' : ''}${fmt(h.pnl_pct)}%</td>
-                            <td class="text-center text-nowrap">${assetLinks(h.symbol)}</td>
-                            <td class="text-end pe-3">
-                                <div class="btn-group btn-group-sm">
-                                    <button class="btn btn-outline-primary" title="Research / Valuation" onclick="openResearchModal('${symEsc}')"><i class="bi bi-graph-up"></i></button>
-                                </div>
-                            </td>
-                        </tr>`;
-                };
-                this._holdingsST = this._holdingsST || makeSortableTable({
-                    table: document.getElementById('holdingsTable'),
-                    columns: [
-                        { key: 'symbol', type: 'text' }, { key: 'name', type: 'text' },
-                        { key: 'asset_type', type: 'text' }, { key: 'currency', type: 'text' },
-                        { key: 'quantity', type: 'num' }, { key: 'avg_price', type: 'num' },
-                        { key: 'current_price', type: 'num' }, { key: 'total_value_eur', type: 'num' },
-                        { key: 'pnl_amount', type: 'num' }, { key: 'pnl_pct', type: 'num' },
-                        { key: null }, { key: null },
-                    ],
-                    getRows: () => this._holdingsRows,
-                    renderRows: (rows, tbody) => { tbody.innerHTML = rows.length ? rows.map(renderHoldingRow).join('') : emptyMsg; },
-                    prefsKey: 'holdings',
-                });
-                // Above-table asset-type filter (consistent with the Assets page).
-                // It writes into the table's state.filters, which applyTableState
-                // already honours, so sort + filter persist together.
-                const hTypeSel = document.getElementById('holdingsTypeFilter');
-                if (hTypeSel) {
-                    const types = [...new Set(view
-                        .filter(h => parseFloat(h.quantity || 0) > 0)
-                        .map(h => h.asset_type || 'other'))].sort();
-                    const st = window.PREFS.tableState.holdings;
-                    st.filters = st.filters || {};
-                    const cur = st.filters.asset_type || 'all';
-                    hTypeSel.innerHTML = '<option value="all">All Asset Types</option>' +
-                        types.map(t => `<option value="${esc(t)}">${esc(t.toUpperCase())}</option>`).join('');
-                    hTypeSel.value = [...hTypeSel.options].some(o => o.value === cur) ? cur : 'all';
-                    if (!hTypeSel._bound) {
-                        hTypeSel._bound = true;
-                        hTypeSel.addEventListener('change', () => {
-                            const s = window.PREFS.tableState.holdings;
-                            s.filters = s.filters || {};
-                            s.filters.asset_type = hTypeSel.value;
-                            savePrefs();
-                            this._holdingsST.refresh();
-                        });
-                    }
-                }
-                this._holdingsST.refresh();
-            } catch (error) {
-                console.error('Error loading holdings:', error);
-                tableBody.innerHTML = '<tr><td colspan="12" class="text-center text-danger">Error loading holdings.</td></tr>';
-            }
-
-            // Populate the rebalancing target rows from current holdings' asset types
-            setupRebalanceTargets(data.holdings || []);
-
-            this.hideLoadingSpinners();
-        },
-
         loadPortfoliosPage: async function() {
             const tableBody = document.querySelector('#portfoliosTable tbody');
             const footer = document.getElementById('portfoliosFooter');
@@ -910,6 +854,7 @@ function createPageManager() {
                         prefsKey: 'portfolios',
                     });
                     this._brokersST.refresh();
+                    initTooltips();
 
                     if (footer && (values.total_value_eur || 0) > 0) {
                         const tp = values.total_pnl_eur;

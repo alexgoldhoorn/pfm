@@ -11,8 +11,8 @@
 ## Global Constraints
 
 - Python 3.13, formatted with black (line length 88)
-- Run tests with: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e`
-- Run a single test: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/path/test.py::TestClass::test_name -v`
+- Run tests with: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e`
+- Run a single test: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/path/test.py::TestClass::test_name -v`
 - Pre-push hook runs full unit tests — must pass before any push
 - `DATABASE_VERSION` in `portf_manager/database.py` must be bumped to 24
 - Version assertions in `tests/test_database.py` use `== 23` in 4 places — all must be updated to `== 24`
@@ -104,7 +104,7 @@ class TestChatSessions:
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/test_database.py::TestChatSessions -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/test_database.py::TestChatSessions -v
 ```
 
 Expected: FAIL with `AttributeError: 'Database' object has no attribute 'create_chat_session'`
@@ -224,7 +224,7 @@ Note: `json` is already imported at the top of `database.py`. If not, add `impor
 - [ ] **Step 4: Run tests to verify they pass**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/test_database.py -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/test_database.py -v
 ```
 
 Expected: All `TestChatSessions` tests pass; version assertions now expect 24.
@@ -334,7 +334,7 @@ class TestChatSessionEndpoints:
 - [ ] **Step 2: Run tests to verify they fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_chat_sessions.py -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_chat_sessions.py -v
 ```
 
 Expected: FAIL with 404 (endpoints don't exist yet).
@@ -479,7 +479,7 @@ def get_chat_session_messages(
 - [ ] **Step 6: Run all tests**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_chat_sessions.py tests/test_database.py -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_chat_sessions.py tests/test_database.py -v
 ```
 
 Expected: All passing.
@@ -487,7 +487,7 @@ Expected: All passing.
 - [ ] **Step 7: Run full suite**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -v
 ```
 
 Expected: All passing (or same baseline as before).
@@ -1122,7 +1122,7 @@ Co-Authored-By: Oz <oz-agent@warp.dev>"
 - [ ] **Step 1: Run full test suite**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e
 ```
 
 Expected: All passing.

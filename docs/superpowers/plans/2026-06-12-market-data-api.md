@@ -11,7 +11,7 @@
 **Spec:** `docs/superpowers/specs/2026-06-12-market-data-api-design.md`
 
 **Project rules that apply everywhere:**
-- Run tooling as `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run …` (the `.venv` is root-owned).
+- Run tooling as `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run …` (the `.venv` is root-owned).
 - black formatting (line 88); comments on the line **before** the code; type hints; Google docstrings.
 - Blocking yfinance endpoints are plain `def` (never `async def`).
 - Commit messages: conventional commits + `Co-Authored-By: Oz <oz-agent@warp.dev>`.
@@ -172,7 +172,7 @@ class TestGetQuotes:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_market_service.py -v`
+Run: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_market_service.py -v`
 Expected: FAIL — `ModuleNotFoundError`/`ImportError: cannot import name 'market'`.
 
 - [ ] **Step 3: Implement `portf_manager/market.py`**
@@ -295,7 +295,7 @@ def _quote_from_db(db, symbol: str) -> Optional[dict]:
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_market_service.py -v`
+Run: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_market_service.py -v`
 Expected: all `TestGetQuote`/`TestGetQuotes` tests PASS.
 
 - [ ] **Step 5: Commit**
@@ -370,7 +370,7 @@ class TestQuoteFromDb:
 
 - [ ] **Step 2: Run tests to verify the new ones fail**
 
-Run: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_market_service.py::TestQuoteFromDb -v`
+Run: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_market_service.py::TestQuoteFromDb -v`
 Expected: FAIL — `_quote_from_db` stub returns None, so quotes come back as errors.
 
 - [ ] **Step 3: Replace the `_quote_from_db` stub**
@@ -425,7 +425,7 @@ def _quote_from_db(db, symbol: str) -> Optional[dict]:
 
 - [ ] **Step 4: Run the whole service test file**
 
-Run: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_market_service.py -v`
+Run: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_market_service.py -v`
 Expected: all PASS (Task 1 tests must still pass).
 
 - [ ] **Step 5: Commit**
@@ -489,7 +489,7 @@ works unchanged.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_market_service.py::TestGetFxEur -v`
+Run: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_market_service.py::TestGetFxEur -v`
 Expected: FAIL — `AttributeError: module ... has no attribute 'get_fx_eur'`.
 
 - [ ] **Step 3: Implement `get_fx_eur`**
@@ -534,7 +534,7 @@ def get_fx_eur(db, currency: str, max_age: float = 3600) -> tuple:
 
 - [ ] **Step 4: Run the whole service test file**
 
-Run: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_market_service.py -v`
+Run: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_market_service.py -v`
 Expected: all PASS.
 
 - [ ] **Step 5: Commit**
@@ -589,7 +589,7 @@ class TestGetFundamentals:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_market_service.py::TestGetFundamentals -v`
+Run: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_market_service.py::TestGetFundamentals -v`
 Expected: FAIL — `_fetch_fundamentals_live` / `get_fundamentals` don't exist yet.
 
 - [ ] **Step 3: Extract the raw fetch in `services/research.py`**
@@ -669,7 +669,7 @@ def get_fundamentals(db, symbol: str, max_age: float = 21600) -> dict:
 
 - [ ] **Step 5: Run service tests + the research tests that cover fetch_fundamentals**
 
-Run: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_market_service.py tests/unit/test_research_valuation.py tests/unit/test_rebalance_research.py -v`
+Run: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_market_service.py tests/unit/test_research_valuation.py tests/unit/test_rebalance_research.py -v`
 Expected: all PASS.
 
 - [ ] **Step 6: Commit**
@@ -817,7 +817,7 @@ class TestMarketFundamentals:
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_market_router.py -v`
+Run: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_market_router.py -v`
 Expected: FAIL — 404s (router not registered).
 
 - [ ] **Step 3: Implement `portf_server/routers/market.py`**
@@ -931,7 +931,7 @@ same file — `_PROTECTED` is the existing module-level constant there.)
 
 - [ ] **Step 5: Run router tests + auth-gating tests**
 
-Run: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_market_router.py tests/unit/test_auth_gating.py -v`
+Run: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_market_router.py tests/unit/test_auth_gating.py -v`
 Expected: all PASS.
 
 - [ ] **Step 6: Commit**
@@ -974,7 +974,7 @@ class TestFxDelegation:
 
 - [ ] **Step 2: Run it to verify it fails**
 
-Run: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_market_service.py::TestFxDelegation -v`
+Run: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_market_service.py::TestFxDelegation -v`
 Expected: FAIL — `_get_fx_rate` still does its own kv_cache/yfinance dance, returns a live/seeded rate, not 0.5.
 
 - [ ] **Step 3: Rewrite `portfolios._get_fx_rate`**
@@ -1039,7 +1039,7 @@ service (add `from portf_manager import market` to imports; remove
 
 - [ ] **Step 6: Run the affected suites**
 
-Run: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_market_service.py tests/unit/test_api_routers.py tests/unit/test_rebalance_research.py tests/unit/test_routers_coverage.py tests/unit/test_shared_state.py -v`
+Run: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_market_service.py tests/unit/test_api_routers.py tests/unit/test_rebalance_research.py tests/unit/test_routers_coverage.py tests/unit/test_shared_state.py -v`
 Expected: all PASS (no existing FX test may regress).
 
 - [ ] **Step 7: Commit**
@@ -1083,7 +1083,7 @@ class TestCurrentPriceDelegation:
 
 - [ ] **Step 2: Run it to verify it fails**
 
-Run: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_market_service.py::TestCurrentPriceDelegation -v`
+Run: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_market_service.py::TestCurrentPriceDelegation -v`
 Expected: FAIL — `_current_price` still calls `yf.Ticker(...).fast_info`
 directly (real network call or error, not 42.0).
 
@@ -1128,7 +1128,7 @@ def _fetch_price_cached(db, symbol: str) -> Tuple[Optional[float], Optional[str]
 
 - [ ] **Step 5: Run the affected suites**
 
-Run: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_market_service.py tests/unit/test_rebalance_research.py tests/unit/test_research_valuation.py tests/unit/test_watchlist_goals_risk.py -v`
+Run: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_market_service.py tests/unit/test_rebalance_research.py tests/unit/test_research_valuation.py tests/unit/test_watchlist_goals_risk.py -v`
 Expected: all PASS.
 
 - [ ] **Step 6: Commit**
@@ -1196,7 +1196,7 @@ def quote(symbols: str, max_age: int = 86400) -> str:
 (The server must be running with the new router deployed — if Task 10's
 deploy hasn't happened yet, do the backend HUP from that task first.)
 
-Run: `python3 -c "import sys; sys.path.insert(0, '/home/agoldhoorn/repos/pfm/mcp'); import server; print(server.quote.fn('BTC-EUR', max_age=86400) if hasattr(server.quote, 'fn') else server.quote('BTC-EUR'))"`
+Run: `python3 -c "import sys; sys.path.insert(0, '~/repos/pfm/mcp'); import server; print(server.quote.fn('BTC-EUR', max_age=86400) if hasattr(server.quote, 'fn') else server.quote('BTC-EUR'))"`
 Expected: a `QUOTES:` block with a BTC-EUR price (FastMCP wraps tools; `.fn`
 is the raw function on current versions — whichever attribute exists).
 
@@ -1325,7 +1325,7 @@ repeat the first curl — `source` should flip to `"cache"`.
 
 - [ ] **Step 3: Run the full unit suite**
 
-Run: `UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e`
+Run: `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e`
 Expected: 0 failures (429 passing baseline + the new market tests).
 
 - [ ] **Step 4: Update CLAUDE.md**

@@ -30,6 +30,8 @@ window.METRIC_HELP = {
   taxHarvest: "Tax-Loss Harvesting: positions currently at an unrealised loss. Selling them would realise a loss that offsets taxable gains (watch the 2-month wash-sale rule).",
   snapshots: "Snapshots: a daily record of your portfolio's total value and cost, saved by the price cron. Risk and period-return charts are built from these, so history starts when snapshots began.",
   diversification: "Diversification: your holdings grouped by sector, country, currency and asset type (from Yahoo Finance fundamentals). Concentration (HHI) measures how lopsided the mix is.",
+  pnl: "P/L (Profit & Loss): current value minus cost basis, in euros. Unrealised while you still hold the position.",
+  pnlPct: "P/L % (Profit & Loss): current value minus cost basis, as a percentage of cost basis.",
 };
 
 // Per-page help: what's shown, where data comes from, how it's computed.
@@ -79,18 +81,6 @@ window.PAGE_HELP = {
         <li><strong>Calmar</strong> — CAGR ÷ drawdown. Combines return and worst-case loss in one number.</li>
         <li><strong>Beta</strong> — market sensitivity. Not good or bad by itself; depends on your goals.</li>
       </ul>`
-  },
-  holdings: {
-    title: "Holdings",
-    body: `
-      <p>Your current open positions with cost basis, live price and profit/loss, all in EUR.</p>
-      <ul class="mb-2">
-        <li><strong>Avg Price</strong> is your FIFO cost basis; <strong>Current Price</strong> is the latest Yahoo Finance quote.</li>
-        <li><strong>P/L</strong> is unrealised gain/loss on positions you still hold.</li>
-        <li><strong>Research</strong> opens an LLM-generated fair-value analysis from fundamentals — informational, not advice.</li>
-        <li><strong>Rebalancing</strong> compares your current allocation against your target percentages and suggests buys/sells to close the drift.</li>
-      </ul>
-      <p class="text-muted small mb-0">Prices from Yahoo Finance, refreshed daily at 20:00 UTC; converted to EUR at live FX rates.</p>`
   },
   watchlist: {
     title: "Watchlist",
@@ -153,12 +143,15 @@ window.PAGE_HELP = {
   assets: {
     title: "Assets",
     body: `
-      <p>The catalogue of securities and funds you track.</p>
+      <p>Your current open positions with cost basis, live price and profit/loss, plus the full catalogue of securities and funds you track — all in EUR.</p>
       <ul class="mb-2">
-        <li>Each asset has a symbol, type, exchange and currency.</li>
-        <li><strong>Current Price</strong> comes from Yahoo Finance, refreshed daily at 20:00 UTC.</li>
+        <li>Each asset has a symbol, type, exchange and currency. Assets are created automatically when you import transactions, or added manually here.</li>
+        <li><strong>Avg Price</strong> is your FIFO cost basis; <strong>Current Price</strong> is the latest Yahoo Finance quote, refreshed daily at 20:00 UTC.</li>
+        <li><strong>P/L</strong> is unrealised gain/loss on positions you still hold. Quantity, cost and P/L are blank for assets you don't currently hold — tick <strong>"Show assets with no holding"</strong> to include them in the table.</li>
+        <li><strong>Research</strong> opens an LLM-generated fair-value analysis from fundamentals — informational, not advice.</li>
+        <li><strong>Rebalancing</strong> compares your current allocation against your target percentages and suggests buys/sells to close the drift.</li>
       </ul>
-      <p class="text-muted small mb-0">Assets are created automatically when you import transactions, or added manually here.</p>`
+      <p class="text-muted small mb-0">Prices from Yahoo Finance, refreshed daily at 20:00 UTC; converted to EUR at live FX rates.</p>`
   },
   portfolios: {
     title: "Portfolios",

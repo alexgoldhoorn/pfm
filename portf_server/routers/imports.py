@@ -31,6 +31,7 @@ from fastapi import (
 from pydantic import BaseModel
 
 from portf_manager.currency_utils import normalize_gbx_amounts
+from portf_manager.models import AssetType
 from portf_manager.parsers.indexacapital_csv_parser import parse_indexacapital_csv
 from portf_manager.parsers.coinbase_csv_parser import parse_coinbase_csv
 from portf_manager.parsers.bookings_csv_parser import parse_bookings_csv
@@ -67,6 +68,8 @@ SUPPORTED_BROKERS = [
     "myinvestor_paste",
     "mintos",
 ]
+
+_VALID_ASSET_TYPES = {t.value for t in AssetType}
 
 
 # ---------------------------------------------------------------------------
@@ -229,6 +232,13 @@ def _parse_indexacapital(
             currency=tx.currency or "EUR",
             fees=tx.fees,
             notes=tx.raw_text or "",
+            # Tag with the broker so (1) the save step resolves the "Indexa
+            # Capital" portfolio when the user hasn't explicitly picked one,
+            # and (2) the upload-preview duplicate check (_flag_duplicates)
+            # can resolve the right portfolio_id — without this, existing
+            # rows (which always have a real portfolio_id) never match and
+            # every re-import looks entirely new. Same fix as Coinbase.
+            broker="Indexa Capital",
         )
         for tx in result.importable
     ]
@@ -644,6 +654,8 @@ async def save_imported_transactions(
 
     for tx in body.transactions:
         try:
+            if not tx.date or not tx.date.strip():
+                raise ValueError("date is required")
             symbol = tx.symbol.upper()
 
             # Normalize GBX (pence) → GBP for UK-listed symbols so cost basis
@@ -660,6 +672,17 @@ async def save_imported_transactions(
             )
             if asset:
                 asset_id = asset["id"]
+                # A broker parser can carry a more accurate asset_type than the
+                # one the asset was first created with (e.g. an ISHARES fund
+                # misclassified as "stock" by an earlier heuristic-based import,
+                # later re-imported from IndexaCapital which tags it "etf").
+                # Correct it so filtering by type stays accurate.
+                if (
+                    tx.asset_type
+                    and tx.asset_type != asset.get("asset_type")
+                    and tx.asset_type in _VALID_ASSET_TYPES
+                ):
+                    db.update_asset(asset_id, asset_type=tx.asset_type)
             else:
                 asset_id = db.create_asset(
                     symbol=symbol,
