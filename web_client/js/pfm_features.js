@@ -4618,9 +4618,12 @@ function _renderSpendingRules(rules) {
     if (!body) return;
     body.innerHTML = rules.length ? rules.map(r => `
         <tr>
-            <td class="ps-3">${esc(r.pattern)}</td>
-            <td>${esc(r.category)}</td>
-            <td class="pe-3 text-end"><button class="btn btn-sm btn-outline-danger" onclick="window.deleteSpendingRule(${r.id})"><i class="bi bi-trash"></i></button></td>
+            <td class="ps-3" id="spRulePatternCell${r.id}" data-value="${escapeForAttr(r.pattern)}">${esc(r.pattern)}</td>
+            <td id="spRuleCategoryCell${r.id}" data-value="${escapeForAttr(r.category)}">${esc(r.category)}</td>
+            <td class="pe-3 text-end">
+                <button class="btn btn-sm btn-outline-secondary" onclick="window.editSpendingRule(${r.id})" title="Edit"><i class="bi bi-pencil"></i></button>
+                <button class="btn btn-sm btn-outline-danger" onclick="window.deleteSpendingRule(${r.id})" title="Delete"><i class="bi bi-trash"></i></button>
+            </td>
         </tr>`).join('') : '<tr><td colspan="3" class="text-center text-muted py-2">No rules yet.</td></tr>';
 }
 
@@ -4630,6 +4633,52 @@ window.deleteSpendingRule = async function (id) {
         await window.apiClient.deleteSpendingRule(id);
         await _refreshSpendingData();
     } catch (err) { alert('Error: ' + err.message); }
+};
+
+window.editSpendingRule = function (id) {
+    const patternCell = document.getElementById(`spRulePatternCell${id}`);
+    const categoryCell = document.getElementById(`spRuleCategoryCell${id}`);
+    if (!patternCell || !categoryCell || patternCell.dataset.editing) return;
+    patternCell.dataset.editing = '1';
+    const originalPattern = patternCell.dataset.value;
+    const originalCategory = categoryCell.dataset.value;
+    patternCell.innerHTML = `<input class="form-control form-control-sm" id="spRulePatternInput${id}" value="${escapeForAttr(originalPattern)}">`;
+    categoryCell.innerHTML = `<input class="form-control form-control-sm" id="spRuleCategoryInput${id}" value="${escapeForAttr(originalCategory)}">`;
+    const patternInput = document.getElementById(`spRulePatternInput${id}`);
+    const categoryInput = document.getElementById(`spRuleCategoryInput${id}`);
+    patternInput.focus();
+    patternInput.select();
+
+    let done = false;
+    const finish = async (commit) => {
+        if (done) return;
+        done = true;
+        const newPattern = patternInput.value.trim();
+        const newCategory = categoryInput.value.trim();
+        if (!commit) { await _refreshSpendingData(); return; }
+        if (!newPattern || !newCategory) {
+            alert('Pattern and category cannot be empty.');
+            await _refreshSpendingData();
+            return;
+        }
+        if (newPattern === originalPattern && newCategory === originalCategory) {
+            await _refreshSpendingData();
+            return;
+        }
+        try {
+            await window.apiClient.updateSpendingRule(id, { pattern: newPattern, category: newCategory });
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
+        await _refreshSpendingData();
+    };
+    [patternInput, categoryInput].forEach(inp => {
+        inp.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') finish(true);
+            if (e.key === 'Escape') finish(false);
+        });
+        inp.addEventListener('blur', () => finish(true));
+    });
 };
 
 function _wireSpendingRuleForm() {

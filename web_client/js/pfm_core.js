@@ -1521,6 +1521,22 @@ function createAPIClient() {
             }
             return response.json();
         },
+        async updateSpendingRule(id, payload) {
+            const response = await fetch(this.baseURL + '/api/v1/spending/rules/' + id, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(payload)
+            });
+            if (!response.ok) {
+                let detail = 'Failed to update rule';
+                try {
+                    const body = await response.json();
+                    detail = body.detail || detail;
+                } catch (e) { /* response wasn't JSON, use the generic message */ }
+                throw new Error(detail);
+            }
+            return response.json();
+        },
         async getSpendingSummary(days = 30) {
             const response = await fetch(this.baseURL + '/api/v1/spending/summary?days=' + days, {
                 headers: { 'X-API-Key': this.apiKey }
