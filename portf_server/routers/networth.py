@@ -75,8 +75,59 @@ def _brokerage_value_eur(db) -> float:
     return total
 
 
+def _bank_accounts_eur(db) -> tuple:
+    """EUR total + per-account detail for bank-type portfolios.
+
+    Each account's balance is derived from the most recent imported
+    spending-statement row that has one (see
+    `Database.get_latest_bank_balance`) — mirroring how brokerage value is
+    derived from transactions rather than manually re-entered. An account
+    with no balance-bearing import yet is excluded from the EUR total (not
+    silently counted as zero) and reported with `balance: None` so the
+    frontend's setup checklist can flag it instead.
+
+    Returns:
+        (total_eur, accounts) where accounts is a list of dicts with
+        portfolio_id, name, balance, currency, balance_eur, as_of — the
+        latter four are None for an account with no balance data yet.
+    """
+    bank_portfolios = [
+        p for p in db.get_all_portfolios() if p.get("account_type") == "bank"
+    ]
+    total_eur = 0.0
+    accounts = []
+    for p in bank_portfolios:
+        latest = db.get_latest_bank_balance(p["id"])
+        if latest is None:
+            accounts.append(
+                {
+                    "portfolio_id": p["id"],
+                    "name": p["name"],
+                    "balance": None,
+                    "currency": None,
+                    "balance_eur": None,
+                    "as_of": None,
+                }
+            )
+            continue
+        amt_eur = float(latest["balance"]) * _fx(latest.get("currency", "EUR"))
+        total_eur += amt_eur
+        accounts.append(
+            {
+                "portfolio_id": p["id"],
+                "name": p["name"],
+                "balance": latest["balance"],
+                "currency": latest.get("currency", "EUR"),
+                "balance_eur": round(amt_eur, 2),
+                "as_of": latest["date"],
+            }
+        )
+    return total_eur, accounts
+
+
 def net_worth_eur(db) -> float:
-    """Total net worth = brokerage + manual assets − liabilities + active deposits (EUR).
+    """Total net worth = brokerage + bank accounts + manual assets
+    − liabilities + active deposits (EUR).
 
     Shared with Goals projections (see goals.py) so the two never drift apart.
     """
@@ -93,7 +144,14 @@ def net_worth_eur(db) -> float:
         float(d["principal"]) * _fx(d.get("currency", "EUR"))
         for d in db.get_fixed_deposits(status="active")
     )
-    return _brokerage_value_eur(db) + assets_eur - liabilities_eur + deposits_eur
+    bank_eur, _ = _bank_accounts_eur(db)
+    return (
+        _brokerage_value_eur(db)
+        + bank_eur
+        + assets_eur
+        - liabilities_eur
+        + deposits_eur
+    )
 
 
 @router.get("/")
@@ -117,9 +175,14 @@ def get_networth(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
     )
 
     brokerage = round(_brokerage_value_eur(db), 2)
-    net_worth = round(brokerage + assets_eur - liabilities_eur + deposits_eur, 2)
+    bank_eur, bank_accounts = _bank_accounts_eur(db)
+    net_worth = round(
+        brokerage + bank_eur + assets_eur - liabilities_eur + deposits_eur, 2
+    )
     return {
         "brokerage_eur": brokerage,
+        "bank_accounts_eur": round(bank_eur, 2),
+        "bank_accounts": bank_accounts,
         "manual_assets_eur": round(assets_eur, 2),
         "manual_liabilities_eur": round(liabilities_eur, 2),
         "deposits_eur": round(deposits_eur, 2),

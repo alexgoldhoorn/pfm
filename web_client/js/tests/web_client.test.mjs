@@ -387,6 +387,58 @@ test("computeNetWorthChecklist: flags an active deposit past its maturity date",
     assert.equal(attention[0].days_overdue, 3);
 });
 
+test("computeNetWorthChecklist: flags a bank account with no balance yet", () => {
+    const { computeNetWorthChecklist } = loadAppIntoContext();
+    const bankAccounts = [
+        { portfolio_id: 1, name: "Example Bank", balance: null, currency: null, balance_eur: null, as_of: null },
+    ];
+    const { missingBalanceAccounts } = computeNetWorthChecklist([], [], [], bankAccounts);
+    assert.equal(missingBalanceAccounts.length, 1);
+    assert.equal(missingBalanceAccounts[0].portfolio_id, 1);
+    assert.equal(missingBalanceAccounts[0].name, "Example Bank");
+});
+
+test("computeNetWorthChecklist: no missing-balance accounts when all have a balance", () => {
+    const { computeNetWorthChecklist } = loadAppIntoContext();
+    const bankAccounts = [
+        { portfolio_id: 1, name: "Example Bank", balance: 500.0, currency: "EUR", balance_eur: 500.0, as_of: "2026-01-10" },
+    ];
+    const { missingBalanceAccounts } = computeNetWorthChecklist([], [], [], bankAccounts);
+    assert.equal(missingBalanceAccounts.length, 0);
+});
+
+test("computeNetWorthChecklist: no bank accounts at all → no missing-balance items, no crash", () => {
+    const { computeNetWorthChecklist } = loadAppIntoContext();
+    const { missingBalanceAccounts } = computeNetWorthChecklist([], [], [], []);
+    assert.equal(missingBalanceAccounts.length, 0);
+    const { missingBalanceAccounts: viaUndefined } = computeNetWorthChecklist([], [], []);
+    assert.equal(viaUndefined.length, 0);
+});
+
+test("computeNetWorthChecklist: duplicateWarning null when only one of manual/imported exists", () => {
+    const { computeNetWorthChecklist } = loadAppIntoContext();
+    const manualCashOnly = [{ is_liability: false, category: "current_account", amount: 100 }];
+    const importedOnly = [{ portfolio_id: 1, name: "Bank", balance: 500.0, currency: "EUR", balance_eur: 500.0, as_of: "2026-01-10" }];
+    assert.equal(computeNetWorthChecklist(manualCashOnly, [], [], []).duplicateWarning, null);
+    assert.equal(computeNetWorthChecklist([], [], [], importedOnly).duplicateWarning, null);
+});
+
+test("computeNetWorthChecklist: duplicateWarning set when both manual cash and an imported balance exist", () => {
+    const { computeNetWorthChecklist } = loadAppIntoContext();
+    const items = [{ is_liability: false, category: "savings_account", amount: 100 }];
+    const bankAccounts = [{ portfolio_id: 1, name: "Bank", balance: 500.0, currency: "EUR", balance_eur: 500.0, as_of: "2026-01-10" }];
+    const result = computeNetWorthChecklist(items, [], [], bankAccounts);
+    assert.ok(result.duplicateWarning);
+    assert.equal(typeof result.duplicateWarning, "string");
+});
+
+test("computeNetWorthChecklist: existing checklist/attention shape unaffected by the new params", () => {
+    const { computeNetWorthChecklist } = loadAppIntoContext();
+    const result = computeNetWorthChecklist([], [], []);
+    assert.ok(Array.isArray(result.checklist));
+    assert.ok(Array.isArray(result.attention));
+});
+
 test("computeGoalOverlays: goal within the projection's range gets an on-chart line", () => {
     const { computeGoalOverlays } = loadAppIntoContext();
     const goals = [{ id: 1, name: "Small goal", target_amount_eur: 60000, months_left: 120 }];
@@ -458,4 +510,51 @@ test("mergeActionItems: sorts by severity high -> medium -> low", () => {
     ];
     const merged = mergeActionItems(backend, { checklist: [], attention: [] }, []);
     assert.deepEqual(merged.map(i => i.id), ["high1", "med1", "low1"]);
+});
+
+test("filterSpendingRows: no filters returns all rows", () => {
+    const { filterSpendingRows } = loadAppIntoContext();
+    const rows = [
+        { portfolio_id: 1, category: "Groceries", date: "2026-01-05" },
+        { portfolio_id: 2, category: "Dining", date: "2026-01-06" },
+    ];
+    assert.equal(filterSpendingRows(rows, {}).length, 2);
+});
+
+test("filterSpendingRows: filters by account and category", () => {
+    const { filterSpendingRows } = loadAppIntoContext();
+    const rows = [
+        { portfolio_id: 1, category: "Groceries", date: "2026-01-05" },
+        { portfolio_id: 2, category: "Dining", date: "2026-01-06" },
+    ];
+    const result = filterSpendingRows(rows, { accountId: "1" });
+    assert.equal(result.length, 1);
+    assert.equal(result[0].category, "Groceries");
+
+    const result2 = filterSpendingRows(rows, { category: "Dining" });
+    assert.equal(result2.length, 1);
+    assert.equal(result2[0].portfolio_id, 2);
+});
+
+test("filterSpendingRows: filters by date range", () => {
+    const { filterSpendingRows } = loadAppIntoContext();
+    const rows = [
+        { portfolio_id: 1, category: "Groceries", date: "2026-01-05" },
+        { portfolio_id: 1, category: "Groceries", date: "2026-02-05" },
+    ];
+    const result = filterSpendingRows(rows, { fromDate: "2026-02-01" });
+    assert.equal(result.length, 1);
+    assert.equal(result[0].date, "2026-02-05");
+
+    const result2 = filterSpendingRows(rows, { toDate: "2026-01-31" });
+    assert.equal(result2.length, 1);
+    assert.equal(result2[0].date, "2026-01-05");
+});
+
+test("filterSpendingRows: does not mutate input", () => {
+    const { filterSpendingRows } = loadAppIntoContext();
+    const rows = [{ portfolio_id: 1, category: "Groceries", date: "2026-01-05" }];
+    const copy = JSON.parse(JSON.stringify(rows));
+    filterSpendingRows(rows, { accountId: "1" });
+    assert.deepEqual(rows, copy);
 });

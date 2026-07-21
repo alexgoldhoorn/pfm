@@ -404,7 +404,7 @@ function createNavigationManager() {
     return {
         currentPage: 'dashboard',
         showPage: function(pageName) {
-            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage', 'helpPage', 'versionPage', 'aboutPage', 'resourcesPage', 'networthPage', 'diagnosticsPage', 'actionitemsPage'];
+            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage', 'helpPage', 'versionPage', 'aboutPage', 'resourcesPage', 'networthPage', 'diagnosticsPage', 'actionitemsPage', 'spendingPage'];
             pages.forEach(pageId => {
                 const page = document.getElementById(pageId);
                 if (page) page.style.display = 'none';
@@ -437,7 +437,7 @@ function createNavigationManager() {
                 forecast: 'Wealth Simulator', help: 'Help & Guide',
                 version: "What's New", about: 'About', resources: 'Resources',
                 networth: 'Net Worth', diagnostics: 'Diagnostics',
-                actionitems: 'Action Items',
+                actionitems: 'Action Items', spending: 'Spending',
             };
             const titleEl = document.getElementById('mobilePageTitle');
             if (titleEl) titleEl.textContent = PAGE_TITLES[pageName] || pageName;
@@ -465,6 +465,7 @@ function createNavigationManager() {
                 case 'networth':     if (window.loadNetworthPage) window.loadNetworthPage(); break;
                 case 'diagnostics':  if (window.loadDiagnosticsPage) window.loadDiagnosticsPage(); break;
                 case 'actionitems':  if (window.loadActionItemsPage) window.loadActionItemsPage(); break;
+                case 'spending':     if (window.loadSpendingPage) window.loadSpendingPage(); break;
             }
         },
 
@@ -1044,11 +1045,12 @@ window.openEditTransaction = async function(id) {
     document.getElementById('editTxCurrency').value = tx.currency || '';
     document.getElementById('editTxNotes').value    = tx.description || '';
 
-    // Populate portfolio dropdown
+    // Populate portfolio dropdown (investment transactions only belong to
+    // brokerage accounts — bank accounts never populate `transactions`)
     const sel = document.getElementById('editTxPortfolio');
     sel.innerHTML = '<option value="">— none —</option>';
     const portfolios = await window.apiClient.getPortfolios();
-    portfolios.forEach(p => {
+    portfolios.filter(p => p.account_type !== 'bank').forEach(p => {
         const opt = document.createElement('option');
         opt.value = p.id;
         opt.textContent = p.name;
@@ -1099,6 +1101,30 @@ const KNOWN_BROKERS_HINTS = {
     'xtb':                   { website: 'https://www.xtb.com',                    description: 'European online broker (stocks, ETFs, CFDs).' },
 };
 
+// Reflects the selected/edited account type (brokerage vs bank) onto the
+// Add/Edit Broker modal's title and "Broker website" field — bank accounts
+// have no "known broker" auto-fill concept, so the website field is hidden
+// and the copy switches from "Broker" to the more generic "Account".
+function _updatePortfolioModalForType(accountType) {
+    const isBank   = accountType === 'bank';
+    const isEdit   = !!document.getElementById('portfolioEditId').value;
+    const titleEl  = document.getElementById('portfolioModalTitle');
+    const siteGroup = document.getElementById('portfolioWebsiteGroup');
+    if (titleEl) {
+        titleEl.textContent = isBank
+            ? (isEdit ? 'Edit Account' : 'Add Account')
+            : (isEdit ? 'Edit Broker' : 'Add Broker');
+    }
+    if (siteGroup) siteGroup.style.display = isBank ? 'none' : '';
+    // Bank accounts have no website concept — clear any typed value so a
+    // stale website never rides along in the payload once the field is
+    // hidden (not just visually hidden with leftover data).
+    if (isBank) {
+        const websiteEl = document.getElementById('portfolioWebsite');
+        if (websiteEl) websiteEl.value = '';
+    }
+}
+
 function setupPortfoliosPage() {
     const addBtn = document.getElementById('addPortfolioBtn');
     const form   = document.getElementById('portfolioForm');
@@ -1121,13 +1147,22 @@ function setupPortfoliosPage() {
         if (site && !site.value) site.value = hint.website;
     });
 
+    const typeSelEl = document.getElementById('portfolioAccountType');
+    typeSelEl && typeSelEl.addEventListener('change', () => {
+        _updatePortfolioModalForType(typeSelEl.value);
+    });
+
     addBtn.addEventListener('click', () => {
-        document.getElementById('portfolioModalTitle').textContent = 'Add Broker';
         document.getElementById('portfolioEditId').value = '';
         document.getElementById('portfolioName').value = '';
         document.getElementById('portfolioCurrency').value = 'EUR';
         document.getElementById('portfolioDescription').value = '';
         document.getElementById('portfolioWebsite').value = '';
+        const typeSel = document.getElementById('portfolioAccountType');
+        if (typeSel) { typeSel.value = 'brokerage'; typeSel.disabled = false; }
+        const typeHint = document.getElementById('portfolioAccountTypeHint');
+        if (typeHint) typeHint.textContent = '';
+        _updatePortfolioModalForType('brokerage');
         bsModal.show();
     });
 
@@ -1140,6 +1175,14 @@ function setupPortfoliosPage() {
             description: document.getElementById('portfolioDescription').value.trim() || null,
             website: document.getElementById('portfolioWebsite').value.trim() || null,
         };
+        if (!id) {
+            const typeSel = document.getElementById('portfolioAccountType');
+            data.account_type = typeSel ? typeSel.value : 'brokerage';
+            // Defense in depth: bank accounts never carry a website, even if
+            // the clear-on-toggle in _updatePortfolioModalForType was somehow
+            // bypassed and the input still has a stale value.
+            if (data.account_type === 'bank') data.website = null;
+        }
         try {
             if (id) {
                 await window.apiClient.updatePortfolio(parseInt(id), data);
@@ -1170,13 +1213,18 @@ window.setAssetPrice = async function(id, symbol, currency) {
     }
 };
 
-window.editPortfolio = function(id, name, currency, description, website) {
-    document.getElementById('portfolioModalTitle').textContent = 'Edit Broker';
+window.editPortfolio = function(id, name, currency, description, website, accountType) {
     document.getElementById('portfolioEditId').value           = id;
     document.getElementById('portfolioName').value             = name;
     document.getElementById('portfolioCurrency').value         = currency;
     document.getElementById('portfolioDescription').value      = description === 'null' ? '' : (description || '');
     document.getElementById('portfolioWebsite').value          = website === 'null' ? '' : (website || '');
+    const resolvedType = (accountType === 'null' || !accountType) ? 'brokerage' : accountType;
+    const typeSel = document.getElementById('portfolioAccountType');
+    if (typeSel) { typeSel.value = resolvedType; typeSel.disabled = true; }
+    const typeHint = document.getElementById('portfolioAccountTypeHint');
+    if (typeHint) typeHint.textContent = "Account type can't be changed after creation.";
+    _updatePortfolioModalForType(resolvedType);
     bootstrap.Modal.getOrCreateInstance(document.getElementById('portfolioModal')).show();
 };
 
@@ -1268,10 +1316,13 @@ function setupImportExportPage() {
     let _filePortfolios = [];
 
     // Populate portfolio dropdown and keep a local copy for broker auto-matching.
+    // Imported broker CSVs carry investment transactions — exclude bank
+    // accounts so they can never become an import target (transactions never
+    // belong to a bank-type portfolio).
     (async () => {
         if (ioFilePortfolio && ioFilePortfolio.options.length <= 1) {
             try {
-                _filePortfolios = await window.apiClient.getPortfolios();
+                _filePortfolios = (await window.apiClient.getPortfolios()).filter(p => p.account_type !== 'bank');
                 _filePortfolios.forEach(p => {
                     const opt = document.createElement('option');
                     opt.value = p.id; opt.textContent = p.name;
@@ -1404,11 +1455,12 @@ function setupImportExportPage() {
     const textPreview    = document.getElementById('ioTextPreview');
     if (!textarea) return;
 
-    // Populate portfolio dropdown asynchronously
+    // Populate portfolio dropdown asynchronously — AI-extracted rows are
+    // investment transactions, so exclude bank accounts as import targets.
     (async () => {
         if (ioTextPortfolio && ioTextPortfolio.options.length <= 1) {
             try {
-                const portfolios = await window.apiClient.getPortfolios();
+                const portfolios = (await window.apiClient.getPortfolios()).filter(p => p.account_type !== 'bank');
                 portfolios.forEach(p => {
                     const opt = document.createElement('option');
                     opt.value = p.id; opt.textContent = p.name;
@@ -1551,12 +1603,54 @@ function setupImportExportPage() {
         }
     });
 
+    // --- Bank Statement import (reuses Spending page logic with different element ids) ---
+    const ioSpAccountSelect = document.getElementById('ioSpImportAccountSelect');
+    if (ioSpAccountSelect && ioSpAccountSelect.options.length <= 1) {
+        (async () => {
+            try {
+                const portfolios = await window.apiClient.getPortfolios();
+                portfolios.filter(p => p.account_type === 'bank').forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p.id; opt.textContent = p.name;
+                    ioSpAccountSelect.appendChild(opt);
+                });
+            } catch (e) { /* silent */ }
+        })();
+    }
+    _wireSpendingImportModal({
+        parseBtn: 'ioSpParseBtn', suggestBtn: 'ioSpSuggestBtn', saveBtn: 'ioSpSaveBtn',
+        preview: 'ioSpImportPreview', status: 'ioSpImportStatus', templateLink: 'ioSpDownloadTemplate',
+        accountSelect: 'ioSpImportAccountSelect', accountName: 'ioSpImportAccountName',
+        fileInput: 'ioSpImportFile', dupSelectId: 'ioSpDuplicateAction',
+        onSaved: async () => { if (window.loadSpendingPage) await _refreshSpendingDataIfLoaded(); },
+    });
+
     // --- Export section ---
     const ioCsvBtn = document.getElementById('ioExportCsvBtn');
     const ioPdtBtn = document.getElementById('ioExportPdtBtn');
+    const ioCsvPortfolios = document.getElementById('ioExportCsvPortfolios');
+    if (ioCsvPortfolios && ioCsvPortfolios.options.length === 0) {
+        (async () => {
+            try {
+                // Investment-transaction CSV export — bank accounts have no
+                // transactions, so selecting one would silently export nothing.
+                const portfolios = (await window.apiClient.getPortfolios()).filter(p => p.account_type !== 'bank');
+                portfolios.forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p.id; opt.textContent = p.name;
+                    ioCsvPortfolios.appendChild(opt);
+                });
+            } catch (e) { /* silent */ }
+        })();
+    }
     if (ioCsvBtn) ioCsvBtn.addEventListener('click', async () => {
         try {
-            await window.apiClient.downloadBlob(window.apiClient.baseURL + '/api/v1/export/csv', 'transactions.csv');
+            const selectedIds = ioCsvPortfolios
+                ? Array.from(ioCsvPortfolios.selectedOptions).map(o => o.value)
+                : [];
+            const qs = selectedIds.map(id => `portfolio_id=${encodeURIComponent(id)}`).join('&');
+            const url = window.apiClient.baseURL + '/api/v1/export/csv' + (qs ? '?' + qs : '');
+            await window.apiClient.downloadBlob(url, 'transactions.csv');
         } catch (err) { alert('Export error: ' + err.message); }
     });
     if (ioPdtBtn) ioPdtBtn.addEventListener('click', async () => {
@@ -1626,7 +1720,9 @@ function setupImportExportPage() {
         if (!platformExportBtn) return;
 
         try {
-            const portfolios = await window.apiClient.getPortfolios();
+            // Yahoo Finance / Simply Wall St exports are transactions/positions
+            // only — bank accounts hold neither, so exclude them here too.
+            const portfolios = (await window.apiClient.getPortfolios()).filter(p => p.account_type !== 'bank');
             portfolios.forEach(p => {
                 const opt = document.createElement('option');
                 opt.value = p.id;
@@ -1713,7 +1809,11 @@ function setupImportExportPage() {
     if (addBookingPortfolio && addBookingPortfolio.options.length <= 1) {
         (async () => {
             try {
-                const portfolios = await window.apiClient.getPortfolios();
+                // Bookings are brokerage cash-flow entries (deposits/withdrawals
+                // into an investment account, consumed by IRR and transfer
+                // matching as "brokerage Deposit"); bank-account cash movements
+                // are tracked separately via Spending's bank-statement import.
+                const portfolios = (await window.apiClient.getPortfolios()).filter(p => p.account_type !== 'bank');
                 portfolios.forEach(p => {
                     const opt = document.createElement('option');
                     opt.value = p.id; opt.textContent = p.name;
@@ -1793,6 +1893,16 @@ function setupImportExportPage() {
 
     setupImportExportTabs();
     window.loadImportExportPage = () => setupImportExportTabs();
+}
+
+// The Import/Export page's Bank Statement card can save spending rows before
+// the Spending page has ever been visited (window._spendingAllRows unset) —
+// only refresh Spending's own cached data if it's actually been loaded once,
+// to avoid touching DOM elements that don't exist yet.
+async function _refreshSpendingDataIfLoaded() {
+    if (typeof window._spendingAllRows !== 'undefined') {
+        await _refreshSpendingData();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2936,7 +3046,9 @@ function setupAddTransaction() {
             });
         } catch (e) { /* ignore */ }
         try {
-            const pfs = await window.apiClient.getPortfolios();
+            // Manually-added rows are investment transactions — exclude
+            // bank accounts as a target portfolio.
+            const pfs = (await window.apiClient.getPortfolios()).filter(p => p.account_type !== 'bank');
             (pfs || []).forEach(p => {
                 const o = document.createElement('option');
                 o.value = p.id; o.textContent = p.name;
@@ -3769,11 +3881,15 @@ function setupSettings() {
         $('setRowsPerPage').value = PREFS.rowsPerPage;
         $('setHoldingsSort').value = PREFS.holdingsSort || 'value';
         $('setHideBelowEur').value = PREFS.hideBelowEur || 0;
-        // Populate the broker select from the user's portfolios (by name)
+        // Populate the broker select from the user's portfolios (by name).
+        // This preference preselects the portfolio in the Add Transaction and
+        // Add Booking forms (via selectDefaultBroker()), both investment
+        // write-paths — exclude bank accounts so a bank account can never
+        // become the default target there.
         (async () => {
             try {
                 const sel = $('setDefaultBroker');
-                const pfs = await window.apiClient.getPortfolios();
+                const pfs = (await window.apiClient.getPortfolios()).filter(p => p.account_type !== 'bank');
                 sel.innerHTML = '<option value="">— none —</option>' +
                     (pfs || []).map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');
                 sel.value = PREFS.defaultBroker || '';
@@ -4055,3 +4171,453 @@ document.addEventListener('DOMContentLoaded', function() {
         window.authManager.showLoginModal();
     }
 });
+
+// ---------------------------------------------------------------------------
+// Spending Page
+// ---------------------------------------------------------------------------
+
+function filterSpendingRows(rows, filters) {
+    const { accountId, category, fromDate, toDate } = filters || {};
+    return (rows || []).filter(r =>
+        (!accountId || String(r.portfolio_id) === String(accountId)) &&
+        (!category || r.category === category) &&
+        (!fromDate || r.date >= fromDate) &&
+        (!toDate || r.date <= toDate)
+    );
+}
+window.filterSpendingRows = filterSpendingRows;
+
+async function loadSpendingPage() {
+    _wireSpendingRuleForm();
+    _wireSpendingImportModal();
+    const rescanBtn = document.getElementById('spRescanTransfers');
+    if (rescanBtn && !rescanBtn.dataset.wired) {
+        rescanBtn.dataset.wired = '1';
+        rescanBtn.addEventListener('click', async () => {
+            rescanBtn.disabled = true;
+            const status = document.getElementById('spRescanStatus');
+            if (status) { status.className = 'small text-muted mb-2'; status.textContent = 'Scanning…'; }
+            try {
+                const result = await window.apiClient.rescanTransfers();
+                const n = (result && result.transfers_linked) || 0;
+                await _refreshSpendingData();
+                if (status) {
+                    status.className = n > 0 ? 'small text-success mb-2' : 'small text-muted mb-2';
+                    status.textContent = n > 0
+                        ? `Found and linked ${n} transfer${n === 1 ? '' : 's'}.`
+                        : 'No new transfers found.';
+                }
+            } catch (err) {
+                if (status) { status.className = 'small text-danger mb-2'; status.textContent = 'Error: ' + err.message; }
+                else alert('Error: ' + err.message);
+            }
+            rescanBtn.disabled = false;
+        });
+    }
+    ['spAccountFilter', 'spCategoryFilter', 'spFromDate', 'spToDate'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el && !el.dataset.wired) {
+            el.dataset.wired = '1';
+            el.addEventListener('change', () => _renderSpendingTable());
+        }
+    });
+    await _refreshSpendingData();
+}
+window.loadSpendingPage = loadSpendingPage;
+
+async function _refreshSpendingData() {
+    try {
+        const [summary, portfolios, txs, rules] = await Promise.all([
+            window.apiClient.getSpendingSummary(30),
+            window.apiClient.getPortfolios(),
+            window.apiClient.getSpendingTransactions(),
+            window.apiClient.getSpendingRules(),
+        ]);
+        const eur = v => Fmt.amt('€' + Fmt.num(v, 0, 0));
+        const el = id => document.getElementById(id);
+        if (el('spSpent')) el('spSpent').innerHTML = eur(summary.spent_eur);
+        if (el('spIncome')) el('spIncome').innerHTML = eur(summary.income_eur);
+        if (el('spTransferred')) el('spTransferred').innerHTML = eur(summary.transferred_eur);
+
+        window._spendingAllRows = txs;
+        const bankAccounts = (portfolios || []).filter(p => p.account_type === 'bank');
+        _populateSpendingAccountFilters(bankAccounts);
+        _renderSpendingCategoryChart(summary.by_category_eur || {});
+        _renderSpendingTable();
+        _renderSpendingRules(rules);
+    } catch (err) {
+        const body = document.getElementById('spTxBody');
+        if (body) body.innerHTML = `<tr><td colspan="6" class="text-center text-danger py-3">${esc(err.message)}</td></tr>`;
+    }
+}
+
+function _populateSpendingAccountFilters(bankAccounts) {
+    const filterSel = document.getElementById('spAccountFilter');
+    const importSel = document.getElementById('spImportAccountSelect');
+    const opts = bankAccounts.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+    if (filterSel) filterSel.innerHTML = '<option value="">All accounts</option>' + opts;
+    if (importSel) importSel.innerHTML = '<option value="">— New account —</option>' + opts;
+}
+
+function _renderSpendingCategoryChart(byCategoryEur) {
+    const wrap = document.getElementById('spCategoryChart');
+    if (!wrap) return;
+    const entries = Object.entries(byCategoryEur).sort((a, b) => b[1] - a[1]);
+    if (!entries.length) {
+        wrap.innerHTML = '<div class="text-muted small">No categorized spending yet.</div>';
+        return;
+    }
+    const max = Math.max(...entries.map(e => e[1]));
+    wrap.innerHTML = entries.map(([cat, amt]) => `
+        <div class="d-flex align-items-center mb-1">
+            <div class="small text-muted" style="width:140px;">${esc(cat)}</div>
+            <div class="flex-grow-1 bg-light rounded" style="height:18px;">
+                <div class="bg-danger rounded" style="height:18px;width:${Math.max(2, amt / max * 100)}%;"></div>
+            </div>
+            <div class="small ms-2" style="width:80px;text-align:right;">€${Fmt.num(amt, 0, 0)}</div>
+        </div>`).join('');
+}
+
+function _renderSpendingTable() {
+    const rows = window._spendingAllRows || [];
+    const filtered = filterSpendingRows(rows, {
+        accountId: document.getElementById('spAccountFilter')?.value,
+        category: document.getElementById('spCategoryFilter')?.value,
+        fromDate: document.getElementById('spFromDate')?.value,
+        toDate: document.getElementById('spToDate')?.value,
+    });
+
+    const catSel = document.getElementById('spCategoryFilter');
+    if (catSel && !catSel.dataset.populated) {
+        catSel.dataset.populated = '1';
+        const cats = [...new Set(rows.map(r => r.category))].sort();
+        catSel.innerHTML = '<option value="">All categories</option>' +
+            cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+    }
+
+    window._spTable = window._spTable || makeSortableTable({
+        table: document.querySelector('#spendingPage table'),
+        columns: [
+            { key: null }, { key: 'date', type: 'date' }, { key: 'portfolio_name', type: 'text' },
+            { key: 'description', type: 'text' }, { key: 'category', type: 'text' },
+            { key: 'amount', type: 'num' }, { key: null },
+        ],
+        getRows: () => window._spFilteredRows || [],
+        renderRows: (sorted, tbody) => {
+            const categories = [...new Set(['uncategorized', 'Transfer', ...rows.map(r => r.category)])];
+            tbody.innerHTML = sorted.length ? sorted.map(r => `
+                <tr>
+                    <td class="ps-3"><input type="checkbox" class="form-check-input sp-row-check" data-id="${r.id}"></td>
+                    <td>${Fmt.date(r.date)}</td>
+                    <td>${esc(r.portfolio_name || '')}</td>
+                    <td>${esc(r.description)}</td>
+                    <td>
+                        <select class="form-select form-select-sm d-inline-block" style="width:auto;" onchange="window.updateSpendingRowCategory(${r.id}, this.value)">
+                            ${categories.map(c => `<option value="${esc(c)}" ${c === r.category ? 'selected' : ''}>${esc(c)}</option>`).join('')}
+                        </select>
+                        ${r.is_transfer ? '<span class="badge bg-info ms-1">Transfer</span>' : ''}
+                    </td>
+                    <td class="text-end ${r.amount < 0 ? 'text-danger' : 'text-success'}">${Fmt.num(r.amount, 2, 2)} ${r.currency || ''}</td>
+                    <td class="pe-3"></td>
+                </tr>`).join('') : '<tr><td colspan="7" class="text-center text-muted py-3">No transactions match the current filters.</td></tr>';
+            _populateSpBulkCategorySelect(categories);
+            _updateSpBulkBar();
+        },
+        prefsKey: 'spending',
+    });
+    window._spFilteredRows = filtered;
+    window._spTable.refresh();
+    _wireSpBulkActions();
+}
+
+function _populateSpBulkCategorySelect(categories) {
+    const sel = document.getElementById('spBulkCategorySelect');
+    if (!sel) return;
+    sel.innerHTML = categories.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+}
+
+function _selectedSpendingIds() {
+    return Array.from(document.querySelectorAll('#spTxBody .sp-row-check:checked'))
+        .map(cb => parseInt(cb.dataset.id, 10));
+}
+
+function _updateSpBulkBar() {
+    const ids = _selectedSpendingIds();
+    const bar = document.getElementById('spBulkBar');
+    const count = document.getElementById('spSelectedCount');
+    if (count) count.textContent = String(ids.length);
+    if (bar) bar.style.display = ids.length > 0 ? '' : 'none';
+    const selectAll = document.getElementById('spSelectAll');
+    const rowChecks = document.querySelectorAll('#spTxBody .sp-row-check');
+    if (selectAll) selectAll.checked = rowChecks.length > 0 && ids.length === rowChecks.length;
+}
+
+function _wireSpBulkActions() {
+    document.querySelectorAll('#spTxBody .sp-row-check').forEach(cb => {
+        cb.addEventListener('change', _updateSpBulkBar);
+    });
+    const selectAll = document.getElementById('spSelectAll');
+    if (selectAll && !selectAll.dataset.wired) {
+        selectAll.dataset.wired = '1';
+        selectAll.addEventListener('change', () => {
+            document.querySelectorAll('#spTxBody .sp-row-check').forEach(cb => { cb.checked = selectAll.checked; });
+            _updateSpBulkBar();
+        });
+    }
+    const recatBtn = document.getElementById('spBulkRecategorizeBtn');
+    if (recatBtn && !recatBtn.dataset.wired) {
+        recatBtn.dataset.wired = '1';
+        recatBtn.addEventListener('click', async () => {
+            const ids = _selectedSpendingIds();
+            const category = document.getElementById('spBulkCategorySelect')?.value;
+            if (!ids.length || !category) return;
+            recatBtn.disabled = true;
+            let succeeded = 0, failed = 0;
+            for (const id of ids) {
+                try {
+                    await window.apiClient.updateSpendingCategory(id, category);
+                    succeeded++;
+                } catch (err) { failed++; }
+            }
+            await _refreshSpendingData();
+            const status = document.getElementById('spBulkStatus');
+            if (status) {
+                status.className = failed > 0 ? 'small text-danger px-3 pt-2' : 'small text-success px-3 pt-2';
+                status.textContent = failed > 0
+                    ? `Recategorized ${succeeded} of ${ids.length} (${failed} failed).`
+                    : `Recategorized ${succeeded} of ${ids.length}.`;
+            }
+            recatBtn.disabled = false;
+        });
+    }
+    const delBtn = document.getElementById('spBulkDeleteBtn');
+    if (delBtn && !delBtn.dataset.wired) {
+        delBtn.dataset.wired = '1';
+        delBtn.addEventListener('click', async () => {
+            const ids = _selectedSpendingIds();
+            if (!ids.length) return;
+            if (!confirm(`Delete ${ids.length} transaction(s)? This cannot be undone.`)) return;
+            delBtn.disabled = true;
+            let succeeded = 0, failed = 0;
+            for (const id of ids) {
+                try {
+                    await window.apiClient.deleteSpendingTransaction(id);
+                    succeeded++;
+                } catch (err) { failed++; }
+            }
+            await _refreshSpendingData();
+            const status = document.getElementById('spBulkStatus');
+            if (status) {
+                status.className = failed > 0 ? 'small text-danger px-3 pt-2' : 'small text-success px-3 pt-2';
+                status.textContent = failed > 0
+                    ? `Deleted ${succeeded} of ${ids.length} (${failed} failed).`
+                    : `Deleted ${succeeded} of ${ids.length}.`;
+            }
+            delBtn.disabled = false;
+        });
+    }
+}
+
+window.updateSpendingRowCategory = async function (id, category) {
+    try {
+        await window.apiClient.updateSpendingCategory(id, category);
+        const row = (window._spendingAllRows || []).find(r => r.id === id);
+        if (row) row.category = category;
+    } catch (err) { alert('Error: ' + err.message); }
+};
+
+function _renderSpendingRules(rules) {
+    const body = document.getElementById('spRulesBody');
+    if (!body) return;
+    body.innerHTML = rules.length ? rules.map(r => `
+        <tr>
+            <td class="ps-3">${esc(r.pattern)}</td>
+            <td>${esc(r.category)}</td>
+            <td class="pe-3 text-end"><button class="btn btn-sm btn-outline-danger" onclick="window.deleteSpendingRule(${r.id})"><i class="bi bi-trash"></i></button></td>
+        </tr>`).join('') : '<tr><td colspan="3" class="text-center text-muted py-2">No rules yet.</td></tr>';
+}
+
+window.deleteSpendingRule = async function (id) {
+    if (!confirm('Delete this rule?')) return;
+    try {
+        await window.apiClient.deleteSpendingRule(id);
+        await _refreshSpendingData();
+    } catch (err) { alert('Error: ' + err.message); }
+};
+
+function _wireSpendingRuleForm() {
+    const form = document.getElementById('spRuleAddForm');
+    if (form && !form.dataset.wired) {
+        form.dataset.wired = '1';
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const pattern = document.getElementById('spRulePattern').value.trim();
+            const category = document.getElementById('spRuleCategory').value.trim();
+            if (!pattern || !category) return;
+            try {
+                await window.apiClient.createSpendingRule(pattern, category);
+                form.reset();
+                await _refreshSpendingData();
+            } catch (err) { alert('Error: ' + err.message); }
+        });
+    }
+}
+
+// `ids` lets the same import-modal logic drive both the Spending page's own
+// modal (default ids below, unchanged behavior) and the Import/Export page's
+// Bank Statement card (its own id set + onSaved callback, see
+// setupImportExportPage).
+function _wireSpendingImportModal(ids) {
+    ids = ids || {
+        parseBtn: 'spParseBtn', suggestBtn: 'spSuggestBtn', saveBtn: 'spSaveBtn',
+        preview: 'spImportPreview', status: 'spImportStatus', templateLink: 'spDownloadTemplate',
+        accountSelect: 'spImportAccountSelect', accountName: 'spImportAccountName',
+        dupSelectId: 'spDuplicateAction', onSaved: () => _refreshSpendingData(),
+    };
+    const parseBtn = document.getElementById(ids.parseBtn);
+    const suggestBtn = document.getElementById(ids.suggestBtn);
+    const saveBtn = document.getElementById(ids.saveBtn);
+    const preview = document.getElementById(ids.preview);
+    const status = document.getElementById(ids.status);
+    const templateLink = document.getElementById(ids.templateLink);
+    if (templateLink && !templateLink.dataset.wired) {
+        templateLink.dataset.wired = '1';
+        templateLink.addEventListener('click', (e) => { e.preventDefault(); downloadGenericBankTemplate(); });
+    }
+    if (parseBtn && !parseBtn.dataset.wired) {
+        parseBtn.dataset.wired = '1';
+        parseBtn.addEventListener('click', async () => {
+            const fileInput = document.getElementById(ids.fileInput || 'spImportFile');
+            const file = fileInput.files[0];
+            if (!file) { status.textContent = 'Choose a file first.'; return; }
+            const accountId = document.getElementById(ids.accountSelect).value || null;
+            const accountName = document.getElementById(ids.accountName).value.trim() || null;
+            status.textContent = 'Parsing…';
+            try {
+                const result = await window.apiClient.uploadBankStatement(file, accountId, accountName);
+                window._spImportPreview = result;
+                _renderSpImportPreview(result, ids);
+                status.textContent = `${result.rows.length} row(s) parsed, ${result.duplicate_count} duplicate(s), ${result.skipped_count} skipped.`;
+                suggestBtn.style.display = result.rows.some(r => r.category === 'uncategorized') ? 'inline-block' : 'none';
+                saveBtn.style.display = 'inline-block';
+            } catch (err) { status.textContent = err.message; }
+        });
+    }
+    if (suggestBtn && !suggestBtn.dataset.wired) {
+        suggestBtn.dataset.wired = '1';
+        suggestBtn.addEventListener('click', async () => {
+            const preview_ = window._spImportPreview;
+            if (!preview_) return;
+            const uncategorized = preview_.rows.filter(r => r.category === 'uncategorized');
+            status.textContent = 'Asking AI for category suggestions…';
+            try {
+                const { suggestions } = await window.apiClient.suggestSpendingCategories(uncategorized);
+                const byDesc = new Map(suggestions.map(s => [s.description, s]));
+                preview_.rows.forEach(r => {
+                    const s = byDesc.get(r.description);
+                    if (s && r.category === 'uncategorized') {
+                        r.category = s.category;
+                        r._suggestedPattern = s.suggested_pattern;
+                        r._aiSuggested = true;
+                    }
+                });
+                _renderSpImportPreview(preview_, ids);
+                status.textContent = 'Suggestions applied — review and edit before saving.';
+            } catch (err) { status.textContent = err.message; }
+        });
+    }
+    if (saveBtn && !saveBtn.dataset.wired) {
+        saveBtn.dataset.wired = '1';
+        saveBtn.addEventListener('click', async () => {
+            const preview_ = window._spImportPreview;
+            if (!preview_) return;
+            status.textContent = 'Saving…';
+            try {
+                // AI-accepted suggestions become permanent rules so future imports auto-match.
+                const newRules = preview_.rows.filter(r => r._aiSuggested && r._suggestedPattern);
+                for (const r of newRules) {
+                    await window.apiClient.createSpendingRule(r._suggestedPattern, r.category);
+                }
+                const result = await window.apiClient.saveSpendingTransactions(
+                    preview_.account_portfolio_id, preview_.rows, _spDupAction(ids.dupSelectId)
+                );
+                status.textContent = `Saved ${result.saved}, ${result.duplicates_skipped} duplicate(s) skipped, ${result.transfers_linked} transfer(s) linked.`;
+                preview.innerHTML = '';
+                saveBtn.style.display = 'none';
+                suggestBtn.style.display = 'none';
+                await ids.onSaved();
+            } catch (err) { status.textContent = err.message; }
+        });
+    }
+}
+
+// Shown above the spending import preview when some rows already exist in
+// the DB, mirroring the investment-import `_dupControl` pattern (pfm_core.js)
+// for consistency. The rendered <select id="{dupSelectId}"> value is read by
+// the save handler via _spDupAction(dupSelectId). dupSelectId defaults to
+// the original Spending-page control id.
+function _spDupControl(rows, dupSelectId) {
+    dupSelectId = dupSelectId || 'spDuplicateAction';
+    const dupCount = (rows || []).filter(r => r.is_duplicate).length;
+    if (dupCount === 0) return '';
+    return `
+        <div class="alert alert-warning py-2 small d-flex flex-wrap align-items-center gap-2 mb-2">
+            <span><i class="bi bi-exclamation-triangle me-1"></i><strong>${dupCount}</strong> row(s) already exist (marked <span class="badge bg-warning text-dark">dup</span> below).</span>
+            <label class="ms-auto mb-0 d-flex align-items-center">On duplicates:
+                <select id="${dupSelectId}" class="form-select form-select-sm d-inline-block w-auto ms-1">
+                    <option value="skip">Skip duplicates</option>
+                    <option value="add">Add anyway</option>
+                    <option value="overwrite">Overwrite existing</option>
+                </select>
+            </label>
+        </div>`;
+}
+
+// Reads the current duplicate_action choice from the import modal. Defaults
+// to 'skip' (safe default, matching prior hard-coded behavior) when the
+// control isn't rendered — i.e. no duplicates were found in the preview.
+// dupSelectId defaults to the original Spending-page control id.
+function _spDupAction(dupSelectId) {
+    const el = document.getElementById(dupSelectId || 'spDuplicateAction');
+    return el ? el.value : 'skip';
+}
+
+// ids defaults to the original Spending-page preview/dup-select ids.
+function _renderSpImportPreview(result, ids) {
+    ids = ids || { preview: 'spImportPreview', dupSelectId: 'spDuplicateAction' };
+    const preview = document.getElementById(ids.preview);
+    if (!preview) return;
+    preview.innerHTML = `
+        ${_spDupControl(result.rows, ids.dupSelectId)}
+        <div class="table-responsive" style="max-height:300px;">
+            <table class="table table-sm">
+                <thead><tr><th>Date</th><th>Description</th><th>Amount</th><th>Category</th></tr></thead>
+                <tbody>
+                    ${result.rows.map(r => `
+                        <tr class="${r.is_duplicate ? 'table-warning' : ''}">
+                            <td>${esc(r.date)}</td>
+                            <td>${esc(r.description)}</td>
+                            <td class="text-end">${Fmt.num(r.amount, 2, 2)} ${esc(r.currency)}</td>
+                            <td>${esc(r.category)}${r.is_duplicate ? ' <span class="badge bg-warning text-dark">dup</span>' : ''}</td>
+                        </tr>`).join('')}
+                </tbody>
+            </table>
+        </div>`;
+}
+
+// Generates and downloads the generic bank-statement CSV import template.
+function downloadGenericBankTemplate() {
+    const csv = [
+        'date,description,amount,currency',
+        '2026-01-05,MERCADONA COMPRA,-24.50,EUR',
+        '2026-01-06,NOMINA EMPRESA SL,2100.00,EUR',
+        '2026-01-10,TRASPASO A AHORRO,-500.00,EUR',
+    ].join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'generic_bank_import_template.csv';
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+window.downloadGenericBankTemplate = downloadGenericBankTemplate;

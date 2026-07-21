@@ -159,6 +159,7 @@ window.PAGE_HELP = {
       <p>Broker and account groups used to organise your transactions.</p>
       <ul class="mb-2">
         <li>Each import automatically creates a matching portfolio if one does not exist.</li>
+        <li>You can also create an account directly here with the <strong>Add Portfolio</strong> button — pick <strong>Brokerage</strong> for an investment account, or <strong>Bank</strong> to set up a checking/savings account for use with <strong>Spending</strong> tracking before importing anything. The account type can't be changed later, so choose carefully at creation time.</li>
         <li>Filter transactions and analytics by portfolio elsewhere in the app.</li>
       </ul>`
   },
@@ -168,6 +169,7 @@ window.PAGE_HELP = {
       <p>Bring data in and out, manage cash bookings, back up your database and sync with Google Sheets.</p>
       <ul class="mb-2">
         <li><strong>File import</strong> supports IndexaCapital, MyInvestor, Mintos, Coinbase CSV and PDT XLSX; <strong>text import</strong> uses AI extraction for any broker statement.</li>
+        <li><strong>Import Bank Statement</strong> lets you bring in a bank/checking account CSV from this page too — the same import flow as the <strong>Spending</strong> page, just accessible here alongside your other imports.</li>
         <li><strong>Bookings</strong> are cash deposits and withdrawals (no asset).</li>
         <li><strong>Backup</strong>: <em>Download DB backup</em> saves a full SQLite snapshot of your data. <em>Restore DB backup</em> replaces the live database from a .db or .db.gz file — a pre-restore snapshot is auto-saved if <code>PFM_BACKUP_DIR</code> is set.</li>
         <li><strong>Google Sheets sync</strong> pulls from / pushes to a spreadsheet in PDT format shared with the service account.</li>
@@ -184,8 +186,21 @@ window.PAGE_HELP = {
         <li>The <strong>Setup checklist</strong> card flags common gaps — home value, bank accounts, income, mortgage/loan payments, other recurring expenses — and overdue-but-still-active deposits; the "Run setup wizard" button walks through filling them in one at a time.</li>
         <li><strong>Monthly Cash Flow</strong> tracks rough recurring income (salary, other) vs expenses (mortgage payment, loan, rest) for your own reference — it does not currently feed Goals or Forecast projections.</li>
         <li>FIRE goals project from total net worth, not just the brokerage value.</li>
+        <li>If you import bank statements on the <strong>Spending</strong> page, an "Actual" comparison appears here for the last 30 days — read-only, doesn't change the manual figures above.</li>
       </ul>
       <p class="text-muted small mb-0">All amounts converted to EUR at live FX rates.</p>`
+  },
+  spending: {
+    title: "Spending",
+    body: `
+      <p>Categorized day-to-day spending imported from your bank/checking accounts — separate from the investment transactions tracked elsewhere in the app.</p>
+      <ul class="mb-2">
+        <li><strong>Import a statement</strong> (CSV: date, description, amount) via the button top-right, or from the <strong>Import Bank Statement</strong> card on the Import/Export page — both open the same import flow. If any imported rows look like duplicates of what's already saved, a <strong>Skip / Add anyway / Overwrite existing</strong> selector appears so you decide how to handle them before saving. Each row is matched against your saved <strong>category rules</strong> (a keyword in the description, e.g. "MERCADONA" → Groceries); anything left uncategorized can be resolved with the <strong>"Suggest categories (AI)"</strong> button — review and edit before saving. Accepting a suggestion creates a new rule automatically, so future imports for that merchant auto-categorize.</li>
+        <li><strong>Transfers</strong> between your own accounts (e.g. checking → savings, or checking → a brokerage account already tracked here) are detected automatically by matching an outflow in one account to an inflow of the same amount within a few days in another — shown separately, not counted as spending. Use "Re-scan transfers" if you import a matching account's statement later.</li>
+        <li>Click a row's category to change it by hand at any time.</li>
+        <li>Select one or more rows with the checkbox column to <strong>bulk recategorize or delete</strong> them via the action bar that appears above the table — there's no single-row delete button, so even one row needs to be checked first.</li>
+      </ul>
+      <p class="text-muted small mb-0">A read-only summary of the last 30 days also appears on the Net Worth page, next to your manual Monthly Cash Flow entries, for comparison.</p>`
   },
   stressTest: {
     title: "Stress Testing — Methodology",
