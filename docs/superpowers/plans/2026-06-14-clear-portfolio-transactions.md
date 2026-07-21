@@ -126,7 +126,7 @@ class TestPortfolioTransactionsClear:
 - [ ] **Step 2: Run tests to confirm they fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_api_routers.py::TestPortfolioTransactionsClear -v 2>&1 | tail -20
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_api_routers.py::TestPortfolioTransactionsClear -v 2>&1 | tail -20
 ```
 
 Expected: `FAILED` — endpoint does not exist yet.
@@ -153,7 +153,7 @@ async def clear_portfolio_transactions(
 - [ ] **Step 4: Run tests to confirm they pass**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_api_routers.py::TestPortfolioTransactionsClear -v 2>&1 | tail -20
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_api_routers.py::TestPortfolioTransactionsClear -v 2>&1 | tail -20
 ```
 
 Expected: 3 passed.
@@ -161,7 +161,7 @@ Expected: 3 passed.
 - [ ] **Step 5: Run full unit suite to check for regressions**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q 2>&1 | tail -10
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q 2>&1 | tail -10
 ```
 
 Expected: all passing, none failing.
@@ -282,7 +282,7 @@ class TestSystemRestore:
 - [ ] **Step 2: Run tests to confirm they fail**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_api_routers.py::TestSystemRestore -v 2>&1 | tail -20
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_api_routers.py::TestSystemRestore -v 2>&1 | tail -20
 ```
 
 Expected: `FAILED` — router not registered yet.
@@ -470,7 +470,7 @@ app.include_router(system.router)
 - [ ] **Step 5: Run tests to confirm they pass**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/unit/test_api_routers.py::TestSystemRestore -v 2>&1 | tail -20
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/unit/test_api_routers.py::TestSystemRestore -v 2>&1 | tail -20
 ```
 
 Expected: 4 passed.
@@ -478,7 +478,7 @@ Expected: 4 passed.
 - [ ] **Step 6: Run full unit suite**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q 2>&1 | tail -10
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q 2>&1 | tail -10
 ```
 
 Expected: all passing.
@@ -501,7 +501,7 @@ Co-Authored-By: Oz <oz-agent@warp.dev>"
 
 - [ ] **Step 1: Add backup vars to `.env.local`**
 
-Open `/home/agoldhoorn/repos/pfm/.env.local` and add this block (near the bottom, before any trailing comments):
+Open `~/repos/pfm/.env.local` and add this block (near the bottom, before any trailing comments):
 
 ```bash
 # ---------------------------------------------------------------------------
@@ -510,7 +510,7 @@ Open `/home/agoldhoorn/repos/pfm/.env.local` and add this block (near the bottom
 # Backups are gzip-compressed SQLite snapshots. PFM_BACKUP_DIR is also read
 # by POST /api/v1/system/restore to save a pre-restore snapshot automatically.
 # ---------------------------------------------------------------------------
-PFM_BACKUP_DIR=/home/agoldhoorn/backups/pfm
+PFM_BACKUP_DIR=~/backups/pfm
 PFM_BACKUP_KEEP=30
 ```
 
@@ -840,7 +840,7 @@ docker compose build web && docker stop portf_web && docker compose up -d web
 - [ ] **Step 3: Run full test suite one final time**
 
 ```bash
-UV_PROJECT_ENVIRONMENT=/home/agoldhoorn/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q 2>&1 | tail -10
+UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q 2>&1 | tail -10
 ```
 
 Expected: all passing.

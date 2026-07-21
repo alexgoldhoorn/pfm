@@ -118,6 +118,26 @@ class TestGeminiSearchCapable:
             with pytest.raises(RuntimeError, match="Empty response from Gemini"):
                 client._gemini_search("test prompt")
 
+    def test_gemini_search_raises_on_whitespace_only_response(self):
+        """response.text can be whitespace-only (e.g. "\\n") when the model
+
+        exhausts its thinking budget without a final answer. `if not response.text`
+        doesn't catch this since a non-empty whitespace string is truthy — it must
+        also be stripped before the check, or a whitespace response silently passes
+        through to json.loads() downstream and fails with a cryptic error.
+        """
+        client = self._make_client()
+
+        mock_response = MagicMock()
+        mock_response.text = "\n"
+        mock_response.candidates = []
+
+        client._client.models.generate_content.return_value = mock_response
+
+        with patch("google.genai.types"):
+            with pytest.raises(RuntimeError, match="Empty response from Gemini"):
+                client._gemini_search("test prompt")
+
     def test_gemini_search_handles_missing_grounding_metadata(self):
         client = self._make_client()
 
