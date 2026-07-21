@@ -148,3 +148,48 @@ def test_trailing_whitespace_trimmed_lines_parse_same_as_full_width():
     assert len(result.rows) == 1
     assert result.rows[0].amount == -15.00
     assert result.rows[0].description == "R/ EXAMPLE CHARITY"
+
+
+def test_mapped_currency_code_translated():
+    content = _crlf(
+        _header(divisa="840"),
+        _movement(clave="2", importe_cents=1000),
+        _concept("USD DEPOSIT"),
+        _trailer(),
+    )
+    result = parse_aeb43(content)
+    assert result.rows[0].currency == "USD"
+
+
+def test_unknown_currency_code_falls_back_to_eur():
+    content = _crlf(
+        _header(divisa="999"),
+        _movement(clave="2", importe_cents=1000),
+        _concept("UNKNOWN CCY"),
+        _trailer(),
+    )
+    result = parse_aeb43(content)
+    assert result.rows[0].currency == "EUR"
+
+
+def test_invalid_debit_credit_flag_skipped():
+    bad_movement = _movement(clave="9", importe_cents=1000)
+    content = _crlf(_header(), bad_movement, _concept("BAD FLAG"), _trailer())
+    result = parse_aeb43(content)
+    assert result.rows == []
+    assert any("debit/credit" in reason.lower() for _, reason in result.skipped)
+
+
+def test_zero_amount_movement_skipped_but_running_balance_unaffected():
+    content = _crlf(
+        _header(clave="2", importe_cents=100000),
+        _movement(fecha_op="260101", clave="2", importe_cents=0),
+        _concept("APERTURA CUENTA"),
+        _movement(fecha_op="260102", clave="1", importe_cents=2000),
+        _concept("EXAMPLE PAYMENT"),
+        _trailer(),
+    )
+    result = parse_aeb43(content)
+    assert len(result.rows) == 1
+    assert result.rows[0].description == "EXAMPLE PAYMENT"
+    assert result.rows[0].balance == 980.00
