@@ -424,8 +424,8 @@ async def rescan_categories(
     for row in uncategorized:
         category = _apply_rules(row["description"], rules)
         if category != "uncategorized":
-            db.update_spending_transaction(row["id"], category=category)
-            updated += 1
+            if db.update_spending_transaction(row["id"], category=category):
+                updated += 1
     return {"recategorized": updated}
 
 
