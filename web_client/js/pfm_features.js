@@ -4546,6 +4546,7 @@ function _renderSpSuggestReviewPanel() {
                     <div class="d-flex align-items-center gap-2 mb-1">
                         <input type="checkbox" class="form-check-input sp-suggest-check" data-idx="${i}" checked>
                         <span class="small flex-grow-1">${esc(g.description)} <span class="text-muted">(&times;${g.ids.length})</span></span>
+                        <input type="text" class="form-control form-control-sm sp-suggest-pattern" style="max-width:160px;" data-idx="${i}" value="${escapeForAttr(g.suggestedPattern)}" title="Rule pattern (matches as a substring)">
                         <select class="form-select form-select-sm w-auto sp-suggest-category" data-idx="${i}">
                             ${categories.map(c => `<option value="${esc(c)}" ${c === g.suggestedCategory ? 'selected' : ''}>${esc(c)}</option>`).join('')}
                         </select>
@@ -4556,6 +4557,11 @@ function _renderSpSuggestReviewPanel() {
                 </div>
             </div>
         </div>`;
+    panel.querySelectorAll('.sp-suggest-pattern').forEach(inp => {
+        inp.addEventListener('input', () => {
+            window._spSuggestGroups[parseInt(inp.dataset.idx, 10)].suggestedPattern = inp.value;
+        });
+    });
     panel.querySelectorAll('.sp-suggest-category').forEach(sel => {
         sel.addEventListener('change', () => {
             window._spSuggestGroups[parseInt(sel.dataset.idx, 10)].suggestedCategory = sel.value;
