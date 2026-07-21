@@ -561,3 +561,70 @@ def test_save_persists_balance(tmp_path):
     assert r.json()["saved"] == 1
     listed = client.get("/api/v1/spending/", headers=HEADERS).json()
     assert listed[0]["balance"] == 475.50
+
+
+def _aeb43_bytes(
+    description: str, amount_cents: int, clave: str = "1", balance_cents: int = 100000
+) -> bytes:
+    """Build a minimal single-movement AEB43 file, encoded as Latin-1 bytes
+    (real AEB43 exports are commonly Latin-1, not UTF-8)."""
+    header = (
+        "11"
+        + "1234"
+        + "0001"
+        + "0000000001"
+        + "260101"
+        + "260101"
+        + "2"
+        + str(balance_cents).zfill(14)
+        + "978"
+        + "0"
+        + "TEST".ljust(29)
+    )
+    movement = (
+        "22"
+        + "    "
+        + "0000"
+        + "260105"
+        + "260105"
+        + "00"
+        + "000"
+        + clave
+        + str(amount_cents).zfill(14)
+        + "0".zfill(8)
+        + "0".zfill(12)
+        + "0".zfill(18)
+    )
+    concept = "23" + "01" + description.ljust(76)[:76]
+    trailer = "33" + " " * 78
+    text = "\r\n".join([header, movement, concept, trailer]) + "\r\n"
+    return text.encode("latin-1")
+
+
+def test_upload_detects_aeb43_and_computes_balance(tmp_path):
+    client, _ = _make_client(tmp_path)
+    file_bytes = _aeb43_bytes("MERCADONA COMPRA", 2450, clave="1", balance_cents=100000)
+    r = client.post(
+        "/api/v1/spending/upload",
+        data={"account_name": "Example Bank"},
+        files={"file": ("statement.n43", io.BytesIO(file_bytes), "text/plain")},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+    d = r.json()
+    assert len(d["rows"]) == 1
+    assert d["rows"][0]["amount"] == -24.50
+    assert d["rows"][0]["balance"] == 975.50
+
+
+def test_upload_aeb43_latin1_bytes_decoded_without_error(tmp_path):
+    client, _ = _make_client(tmp_path)
+    file_bytes = _aeb43_bytes("TRANSFERENCIA A: José González", 5000, clave="1")
+    r = client.post(
+        "/api/v1/spending/upload",
+        data={"account_name": "Example Bank"},
+        files={"file": ("statement.n43", io.BytesIO(file_bytes), "text/plain")},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+    assert r.json()["rows"][0]["description"] == "TRANSFERENCIA A: José González"
