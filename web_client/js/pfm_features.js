@@ -4214,6 +4214,30 @@ async function loadSpendingPage() {
             rescanBtn.disabled = false;
         });
     }
+    const rescanCatBtn = document.getElementById('spRescanCategories');
+    if (rescanCatBtn && !rescanCatBtn.dataset.wired) {
+        rescanCatBtn.dataset.wired = '1';
+        rescanCatBtn.addEventListener('click', async () => {
+            rescanCatBtn.disabled = true;
+            const status = document.getElementById('spRescanStatus');
+            if (status) { status.className = 'small text-muted mb-2'; status.textContent = 'Rescanning…'; }
+            try {
+                const result = await window.apiClient.rescanCategories();
+                const n = (result && result.recategorized) || 0;
+                await _refreshSpendingData();
+                if (status) {
+                    status.className = n > 0 ? 'small text-success mb-2' : 'small text-muted mb-2';
+                    status.textContent = n > 0
+                        ? `Recategorized ${n} row${n === 1 ? '' : 's'}.`
+                        : 'No new matches found.';
+                }
+            } catch (err) {
+                if (status) { status.className = 'small text-danger mb-2'; status.textContent = 'Error: ' + err.message; }
+                else alert('Error: ' + err.message);
+            }
+            rescanCatBtn.disabled = false;
+        });
+    }
     ['spAccountFilter', 'spCategoryFilter', 'spFromDate', 'spToDate'].forEach(id => {
         const el = document.getElementById(id);
         if (el && !el.dataset.wired) {
