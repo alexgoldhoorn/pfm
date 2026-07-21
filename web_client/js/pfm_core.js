@@ -1461,6 +1461,21 @@ function createAPIClient() {
             }
             return response.json();
         },
+        async rescanCategories() {
+            const response = await fetch(this.baseURL + '/api/v1/spending/rescan-categories', {
+                method: 'POST',
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) {
+                let detail = 'Failed to rescan categories';
+                try {
+                    const body = await response.json();
+                    detail = body.detail || detail;
+                } catch (e) { /* response wasn't JSON, use the generic message */ }
+                throw new Error(detail);
+            }
+            return response.json();
+        },
         async getSpendingRules() {
             const response = await fetch(this.baseURL + '/api/v1/spending/rules', {
                 headers: { 'X-API-Key': this.apiKey }
