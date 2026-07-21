@@ -116,6 +116,11 @@ class SpendingRuleResponse(BaseModel):
     category: str
 
 
+class SpendingRuleUpdateBody(BaseModel):
+    pattern: Optional[str] = None
+    category: Optional[str] = None
+
+
 class SpendingSummaryResponse(BaseModel):
     spent_eur: float
     income_eur: float
@@ -446,6 +451,35 @@ async def create_rule(
     return SpendingRuleResponse(
         id=rule_id, pattern=body.pattern, category=body.category
     )
+
+
+@router.put("/rules/{rule_id}", response_model=SpendingRuleResponse)
+async def update_rule(
+    rule_id: int,
+    body: SpendingRuleUpdateBody,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Edit an existing spending category rule's pattern and/or category."""
+    update_kwargs = {}
+    if body.pattern is not None:
+        pattern = body.pattern.strip()
+        if not pattern:
+            raise HTTPException(status_code=400, detail="Pattern cannot be empty")
+        update_kwargs["pattern"] = pattern
+    if body.category is not None:
+        category = body.category.strip()
+        if not category:
+            raise HTTPException(status_code=400, detail="Category cannot be empty")
+        update_kwargs["category"] = category
+    if not update_kwargs:
+        raise HTTPException(
+            status_code=400, detail="Provide at least one of pattern or category"
+        )
+    if not db.update_spending_rule(rule_id, **update_kwargs):
+        raise HTTPException(status_code=404, detail="Rule not found")
+    updated = db.get_spending_rule(rule_id)
+    return SpendingRuleResponse(**updated)
 
 
 @router.delete("/rules/{rule_id}", response_model=dict)

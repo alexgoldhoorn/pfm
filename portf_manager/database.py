@@ -2890,6 +2890,30 @@ class Database:
             cursor = conn.execute("SELECT * FROM spending_rules ORDER BY id")
             return [dict(row) for row in cursor.fetchall()]
 
+    def get_spending_rule(self, rule_id: int) -> Optional[Dict]:
+        """Get a spending category rule by ID."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM spending_rules WHERE id = ?", (rule_id,)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def update_spending_rule(self, rule_id: int, **kwargs) -> bool:
+        """Update a spending rule's pattern and/or category."""
+        valid_fields = {"pattern", "category"}
+        update_fields = {k: v for k, v in kwargs.items() if k in valid_fields}
+        if not update_fields:
+            return False
+        with self.get_connection() as conn:
+            set_clause = ", ".join(f"{field} = ?" for field in update_fields)
+            values = list(update_fields.values()) + [rule_id]
+            cursor = conn.execute(
+                f"UPDATE spending_rules SET {set_clause} WHERE id = ?", values
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
     def delete_spending_rule(self, rule_id: int) -> bool:
         """Delete a spending rule by ID."""
         with self.get_connection() as conn:
