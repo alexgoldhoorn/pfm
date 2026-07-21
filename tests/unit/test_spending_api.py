@@ -746,3 +746,12 @@ def test_upload_aeb43_latin1_bytes_decoded_without_error(tmp_path):
     )
     assert r.status_code == 200
     assert r.json()["rows"][0]["description"] == "TRANSFERENCIA A: José González"
+
+
+def test_suggest_prompt_instructs_stripping_transaction_noise():
+    from portf_server.routers.spending import _build_suggest_prompt
+
+    prompt = _build_suggest_prompt(["767002813178EXAMPLE MERCHANT\\CITY\\ES0000000019"])
+    assert "card/transaction-reference" in prompt
+    assert "location+date+reference" in prompt
+    assert "767002813178EXAMPLE MERCHANT\\CITY\\ES0000000019" in prompt

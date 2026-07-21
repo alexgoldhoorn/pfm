@@ -563,6 +563,13 @@ Also suggest a short "pattern" — a distinctive substring of the description
 the same category. Keep it as short as possible while still being specific
 to this merchant (avoid matching unrelated transactions).
 
+Real bank descriptions often carry noise around the merchant name: a leading
+numeric card/transaction-reference number (e.g. "767002813178EXAMPLE
+MERCHANT...") and/or a trailing location+date+reference code (e.g.
+"...\\CITY\\ES0000000019"). Ignore that noise — the pattern must be just the
+clean merchant name (e.g. "EXAMPLE MERCHANT"), never the numeric prefix or
+the trailing location/date/reference suffix.
+
 Return ONLY a JSON array, one object per description, in the same order:
 [{{"description": "...", "category": "...", "suggested_pattern": "..."}}]
 
