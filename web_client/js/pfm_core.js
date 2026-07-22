@@ -1134,13 +1134,16 @@ function fmtPrice(amount, currency) {
     return currency ? `${n} ${currency}` : n;
 }
 
-// Build Yahoo Finance + Wall Street Journal quote links for a symbol
+// Build Yahoo Finance quote link + Simply Wall St lookup link for a symbol.
+// Simply Wall St has no ticker-only deep link (its asset URLs need a
+// country/sector/exchange/company-name slug we don't store), so this routes
+// through a Google site-search instead of guessing a URL that would 404.
 function assetLinks(symbol) {
     if (!symbol) return '';
     const s = encodeURIComponent(symbol);
     return `
       <a href="https://finance.yahoo.com/quote/${s}" target="_blank" rel="noopener" class="text-decoration-none me-1" title="View on Yahoo Finance"><i class="bi bi-graph-up"></i></a>
-      <a href="https://www.wsj.com/market-data/quotes/${s}" target="_blank" rel="noopener" class="text-decoration-none" title="View on Wall Street Journal"><i class="bi bi-newspaper"></i></a>`;
+      <a href="https://www.google.com/search?q=${s}+site:simplywall.st" target="_blank" rel="noopener" class="text-decoration-none" title="Search for this asset on Simply Wall St"><i class="bi bi-search"></i></a>`;
 }
 
 // ---------------------------------------------------------------------------
