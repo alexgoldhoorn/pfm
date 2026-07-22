@@ -158,6 +158,32 @@ def test_update_category_missing_row(tmp_path):
     assert r.status_code == 404
 
 
+def test_update_category_blank_rejected(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    tx_id = db.create_spending_transaction(pid, "2026-01-05", "Desc", -10.0)
+    r = client.put(
+        f"/api/v1/spending/{tx_id}", json={"category": "   "}, headers=HEADERS
+    )
+    assert r.status_code == 400
+    unchanged = db.get_spending_transaction(tx_id)
+    assert unchanged["category"] != ""
+
+
+def test_update_category_trims_whitespace(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    tx_id = db.create_spending_transaction(pid, "2026-01-05", "Desc", -10.0)
+    r = client.put(
+        f"/api/v1/spending/{tx_id}",
+        json={"category": "  Groceries  "},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+    assert r.json()["category"] == "Groceries"
+    assert db.get_spending_transaction(tx_id)["category"] == "Groceries"
+
+
 def test_update_category_clears_transfer_flag(tmp_path):
     client, db = _make_client(tmp_path)
     pid_a = db.create_portfolio("Bank A", account_type="bank")

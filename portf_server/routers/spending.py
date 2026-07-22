@@ -381,14 +381,18 @@ async def update_spending_category(
     if not existing:
         raise HTTPException(status_code=404, detail="Spending transaction not found")
 
-    update_kwargs = {"category": body.category}
-    if body.category != "Transfer" and existing.get("is_transfer"):
+    category = body.category.strip()
+    if not category:
+        raise HTTPException(status_code=400, detail="Category cannot be empty")
+
+    update_kwargs = {"category": category}
+    if category != "Transfer" and existing.get("is_transfer"):
         update_kwargs["is_transfer"] = False
         update_kwargs["transfer_link_type"] = None
         update_kwargs["transfer_link_id"] = None
 
     db.update_spending_transaction(spending_id, **update_kwargs)
-    return {"id": spending_id, "category": body.category}
+    return {"id": spending_id, "category": category}
 
 
 @router.delete("/{spending_id}", response_model=dict)
