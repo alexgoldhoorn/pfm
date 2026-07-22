@@ -4211,6 +4211,7 @@ const SP_AI_SUGGEST_BATCH_SIZE = 30;
 
 async function loadSpendingPage() {
     _wireSpendingRuleForm();
+    _wireSpCategoryAddForm();
     _wireSpendingImportModal();
     const rescanBtn = document.getElementById('spRescanTransfers');
     if (rescanBtn && !rescanBtn.dataset.wired) {
@@ -4327,6 +4328,7 @@ async function _refreshSpendingData() {
         _populateSpendingAccountFilters(bankAccounts);
         _renderSpendingCategoryChart(summary.by_category_eur || {});
         _renderSpendingRules(rules);
+        _renderCategoriesList(categories);
     } catch (err) {
         const body = document.getElementById('spTxBody');
         if (body) body.innerHTML = `<tr><td colspan="6" class="text-center text-danger py-3">${esc(err.message)}</td></tr>`;
@@ -4795,6 +4797,50 @@ function _renderSpendingRules(rules) {
         </tr>`).join('') : '<tr><td colspan="3" class="text-center text-muted py-2">No rules yet.</td></tr>';
 }
 
+function _renderCategoriesList(categories) {
+    const wrap = document.getElementById('spCategoriesList');
+    if (!wrap) return;
+    wrap.innerHTML = categories.length ? categories.map((cat, i) => `
+        <div class="list-group-item d-flex align-items-center justify-content-between">
+            <span id="spCategoryNameCell${i}" data-value="${escapeForAttr(cat)}">${esc(cat)}</span>
+            <button class="btn btn-sm btn-outline-secondary" onclick="window.editSpendingCategory(${i})" title="Edit"><i class="bi bi-pencil"></i></button>
+        </div>`).join('') : '<div class="list-group-item text-center text-muted py-2">No categories yet.</div>';
+    window._spCategoriesListData = categories;
+}
+
+window.editSpendingCategory = function (idx) {
+    const cell = document.getElementById(`spCategoryNameCell${idx}`);
+    if (!cell || cell.dataset.editing) return;
+    cell.dataset.editing = '1';
+    const originalName = cell.dataset.value;
+    cell.outerHTML = `<input class="form-control form-control-sm" style="max-width:220px;" id="spCategoryNameCell${idx}" value="${escapeForAttr(originalName)}">`;
+    const input = document.getElementById(`spCategoryNameCell${idx}`);
+    input.focus();
+    input.select();
+
+    let done = false;
+    const finish = async (commit) => {
+        if (done) return;
+        done = true;
+        const newName = input.value.trim();
+        if (!commit || !newName || newName === originalName) {
+            await _refreshSpendingData();
+            return;
+        }
+        try {
+            await window.apiClient.renameSpendingCategory(originalName, newName);
+        } catch (err) {
+            alert('Error: ' + err.message);
+        }
+        await _refreshSpendingData();
+    };
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') finish(true);
+        if (e.key === 'Escape') finish(false);
+    });
+    input.addEventListener('blur', () => finish(true));
+};
+
 window.deleteSpendingRule = async function (id) {
     if (!confirm('Delete this rule?')) return;
     try {
@@ -4874,6 +4920,28 @@ function _wireSpendingRuleForm() {
                         ? `Rule added. Applied to ${rescanned} existing uncategorized row${rescanned === 1 ? '' : 's'}.`
                         : 'Rule added.';
                 }
+            } catch (err) {
+                if (status) { status.className = 'small text-danger mt-2'; status.textContent = 'Error: ' + err.message; }
+                else alert('Error: ' + err.message);
+            }
+        });
+    }
+}
+
+function _wireSpCategoryAddForm() {
+    const form = document.getElementById('spCategoryAddForm');
+    if (form && !form.dataset.wired) {
+        form.dataset.wired = '1';
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const name = document.getElementById('spCategoryNameInput').value.trim();
+            if (!name) return;
+            const status = document.getElementById('spCategoryAddStatus');
+            try {
+                await window.apiClient.createSpendingCategory(name);
+                form.reset();
+                await _refreshSpendingData();
+                if (status) { status.className = 'small text-success mt-2'; status.textContent = 'Category added.'; }
             } catch (err) {
                 if (status) { status.className = 'small text-danger mt-2'; status.textContent = 'Error: ' + err.message; }
                 else alert('Error: ' + err.message);
