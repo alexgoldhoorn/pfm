@@ -4372,7 +4372,8 @@ function _renderSpendingTable() {
         ],
         getRows: () => window._spFilteredRows || [],
         renderRows: (sorted, tbody) => {
-            const categories = [...new Set(['uncategorized', 'Transfer', ...rows.map(r => r.category)])];
+            const categories = _allSpendingCategories(rows);
+            _populateSpCategoryDatalist(categories);
             tbody.innerHTML = sorted.length ? sorted.map(r => `
                 <tr>
                     <td class="ps-3"><input type="checkbox" class="form-check-input sp-row-check" data-id="${r.id}"></td>
@@ -4380,15 +4381,12 @@ function _renderSpendingTable() {
                     <td>${esc(r.portfolio_name || '')}</td>
                     <td>${esc(r.description)}</td>
                     <td>
-                        <select class="form-select form-select-sm d-inline-block" style="width:auto;" onchange="window.updateSpendingRowCategory(${r.id}, this.value)">
-                            ${categories.map(c => `<option value="${esc(c)}" ${c === r.category ? 'selected' : ''}>${esc(c)}</option>`).join('')}
-                        </select>
+                        <input type="text" list="spCategoryList" class="form-control form-control-sm d-inline-block" style="width:auto;" value="${esc(r.category)}" onchange="window.updateSpendingRowCategory(${r.id}, this.value)">
                         ${r.is_transfer ? '<span class="badge bg-info ms-1">Transfer</span>' : ''}
                     </td>
                     <td class="text-end ${r.amount < 0 ? 'text-danger' : 'text-success'}">${Fmt.num(r.amount, 2, 2)} ${r.currency || ''}</td>
                     <td class="pe-3"></td>
                 </tr>`).join('') : '<tr><td colspan="7" class="text-center text-muted py-3">No transactions match the current filters.</td></tr>';
-            _populateSpBulkCategorySelect(categories);
             _updateSpBulkBar();
         },
         prefsKey: 'spending',
@@ -4409,11 +4407,6 @@ function _populateSpCategoryDatalist(categories) {
     list.innerHTML = categories.map(c => `<option value="${esc(c)}">`).join('');
 }
 
-function _populateSpBulkCategorySelect(categories) {
-    const sel = document.getElementById('spBulkCategorySelect');
-    if (!sel) return;
-    sel.innerHTML = categories.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
-}
 
 function _selectedSpendingIds() {
     return Array.from(document.querySelectorAll('#spTxBody .sp-row-check:checked'))
@@ -4625,11 +4618,19 @@ async function _applySpSuggestions() {
 }
 
 window.updateSpendingRowCategory = async function (id, category) {
+    const trimmed = category.trim();
+    const row = (window._spendingAllRows || []).find(r => r.id === id);
+    if (!trimmed || (row && trimmed === row.category)) {
+        await _refreshSpendingData();
+        return;
+    }
     try {
-        await window.apiClient.updateSpendingCategory(id, category);
-        const row = (window._spendingAllRows || []).find(r => r.id === id);
-        if (row) row.category = category;
-    } catch (err) { alert('Error: ' + err.message); }
+        await window.apiClient.updateSpendingCategory(id, trimmed);
+        if (row) row.category = trimmed;
+    } catch (err) {
+        alert('Error: ' + err.message);
+        await _refreshSpendingData();
+    }
 };
 
 function _renderSpendingRules(rules) {
