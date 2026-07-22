@@ -4176,17 +4176,6 @@ document.addEventListener('DOMContentLoaded', function() {
 // Spending Page
 // ---------------------------------------------------------------------------
 
-function filterSpendingRows(rows, filters) {
-    const { accountId, category, fromDate, toDate } = filters || {};
-    return (rows || []).filter(r =>
-        (!accountId || String(r.portfolio_id) === String(accountId)) &&
-        (!category || r.category === category) &&
-        (!fromDate || r.date >= fromDate) &&
-        (!toDate || r.date <= toDate)
-    );
-}
-window.filterSpendingRows = filterSpendingRows;
-
 // Groups selected spending rows by description for AI suggestion review —
 // one representative per unique description, keeping every matching row's
 // id so an accepted suggestion can be applied to all of them at once.
@@ -4274,10 +4263,11 @@ async function loadSpendingPage() {
     const selAllUncatBtn = document.getElementById('spSelectAllUncategorized');
     if (selAllUncatBtn && !selAllUncatBtn.dataset.wired) {
         selAllUncatBtn.dataset.wired = '1';
-        selAllUncatBtn.addEventListener('click', () => {
+        selAllUncatBtn.addEventListener('click', async () => {
             const catFilter = document.getElementById('spCategoryFilter');
             if (catFilter) catFilter.value = 'uncategorized';
-            _renderSpendingTable();
+            window._spTxState.page = 0;
+            await _fetchAndRenderSpendingTable();
             document.querySelectorAll('#spTxBody .sp-row-check').forEach(cb => { cb.checked = true; });
             _updateSpBulkBar();
         });
@@ -4286,19 +4276,24 @@ async function loadSpendingPage() {
         const el = document.getElementById(id);
         if (el && !el.dataset.wired) {
             el.dataset.wired = '1';
-            el.addEventListener('change', () => _renderSpendingTable());
+            el.addEventListener('change', () => {
+                window._spTxState.page = 0;
+                _fetchAndRenderSpendingTable();
+            });
         }
     });
+    _wireSpendingTablePagination();
     await _refreshSpendingData();
+    await _fetchAndRenderSpendingTable();
 }
 window.loadSpendingPage = loadSpendingPage;
 
 async function _refreshSpendingData() {
     try {
-        const [summary, portfolios, txs, rules] = await Promise.all([
+        const [summary, portfolios, categories, rules] = await Promise.all([
             window.apiClient.getSpendingSummary(30),
             window.apiClient.getPortfolios(),
-            window.apiClient.getSpendingTransactions(),
+            window.apiClient.getSpendingCategories(),
             window.apiClient.getSpendingRules(),
         ]);
         const eur = v => Fmt.amt('€' + Fmt.num(v, 0, 0));
@@ -4307,11 +4302,10 @@ async function _refreshSpendingData() {
         if (el('spIncome')) el('spIncome').innerHTML = eur(summary.income_eur);
         if (el('spTransferred')) el('spTransferred').innerHTML = eur(summary.transferred_eur);
 
-        window._spendingAllRows = txs;
+        window._spendingAllCategories = categories;
         const bankAccounts = (portfolios || []).filter(p => p.account_type === 'bank');
         _populateSpendingAccountFilters(bankAccounts);
         _renderSpendingCategoryChart(summary.by_category_eur || {});
-        _renderSpendingTable();
         _renderSpendingRules(rules);
     } catch (err) {
         const body = document.getElementById('spTxBody');
@@ -4346,59 +4340,136 @@ function _renderSpendingCategoryChart(byCategoryEur) {
         </div>`).join('');
 }
 
-function _renderSpendingTable() {
-    const rows = window._spendingAllRows || [];
-    const filtered = filterSpendingRows(rows, {
-        accountId: document.getElementById('spAccountFilter')?.value,
-        category: document.getElementById('spCategoryFilter')?.value,
-        fromDate: document.getElementById('spFromDate')?.value,
-        toDate: document.getElementById('spToDate')?.value,
-    });
+window._spTxState = window._spTxState || { page: 0, pageSize: 50, sortBy: 'date', sortDir: 'desc' };
+
+async function _fetchAndRenderSpendingTable() {
+    const st = window._spTxState;
+    const params = {
+        limit: st.pageSize,
+        offset: st.page * st.pageSize,
+        sort_by: st.sortBy,
+        sort_dir: st.sortDir,
+    };
+    const accountId = document.getElementById('spAccountFilter')?.value;
+    const category = document.getElementById('spCategoryFilter')?.value;
+    const fromDate = document.getElementById('spFromDate')?.value;
+    const toDate = document.getElementById('spToDate')?.value;
+    if (accountId) params.portfolio_id = accountId;
+    if (category) params.category = category;
+    if (fromDate) params.start_date = fromDate;
+    if (toDate) params.end_date = toDate;
+
+    const tbody = document.getElementById('spTxBody');
+    let result;
+    try {
+        result = await window.apiClient.getSpendingTransactions(params);
+    } catch (err) {
+        if (tbody) tbody.innerHTML = `<tr><td colspan="7" class="text-center text-danger py-3">${esc(err.message)}</td></tr>`;
+        return;
+    }
+    const rows = result.items || [];
+    window._spendingAllRows = rows;
 
     const catSel = document.getElementById('spCategoryFilter');
     if (catSel && !catSel.dataset.populated) {
         catSel.dataset.populated = '1';
-        const cats = [...new Set(rows.map(r => r.category))].sort();
+        const cats = _allSpendingCategories();
         catSel.innerHTML = '<option value="">All categories</option>' +
             cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
     }
+    _populateSpCategoryDatalist(_allSpendingCategories());
 
-    window._spTable = window._spTable || makeSortableTable({
-        table: document.querySelector('#spendingPage table'),
-        columns: [
-            { key: null }, { key: 'date', type: 'date' }, { key: 'portfolio_name', type: 'text' },
-            { key: 'description', type: 'text' }, { key: 'category', type: 'text' },
-            { key: 'amount', type: 'num' }, { key: null },
-        ],
-        getRows: () => window._spFilteredRows || [],
-        renderRows: (sorted, tbody) => {
-            const categories = _allSpendingCategories(rows);
-            _populateSpCategoryDatalist(categories);
-            tbody.innerHTML = sorted.length ? sorted.map(r => `
-                <tr>
-                    <td class="ps-3"><input type="checkbox" class="form-check-input sp-row-check" data-id="${r.id}"></td>
-                    <td>${Fmt.date(r.date)}</td>
-                    <td>${esc(r.portfolio_name || '')}</td>
-                    <td>${esc(r.description)}</td>
-                    <td>
-                        <input type="text" list="spCategoryList" class="form-control form-control-sm d-inline-block" style="width:auto;" value="${esc(r.category)}" onchange="window.updateSpendingRowCategory(${r.id}, this.value)">
-                        ${r.is_transfer ? '<span class="badge bg-info ms-1">Transfer</span>' : ''}
-                    </td>
-                    <td class="text-end ${r.amount < 0 ? 'text-danger' : 'text-success'}">${Fmt.num(r.amount, 2, 2)} ${r.currency || ''}</td>
-                    <td class="pe-3"></td>
-                </tr>`).join('') : '<tr><td colspan="7" class="text-center text-muted py-3">No transactions match the current filters.</td></tr>';
-            _updateSpBulkBar();
-        },
-        prefsKey: 'spending',
+    if (tbody) {
+        tbody.innerHTML = rows.length ? rows.map(r => `
+            <tr>
+                <td class="ps-3"><input type="checkbox" class="form-check-input sp-row-check" data-id="${r.id}"></td>
+                <td>${Fmt.date(r.date)}</td>
+                <td>${esc(r.portfolio_name || '')}</td>
+                <td>${esc(r.description)}</td>
+                <td>
+                    ${esc(r.category)}
+                    ${r.is_transfer ? '<span class="badge bg-info ms-1">Transfer</span>' : ''}
+                </td>
+                <td class="text-end ${r.amount < 0 ? 'text-danger' : 'text-success'}">${Fmt.num(r.amount, 2, 2)} ${r.currency || ''}</td>
+                <td class="pe-3"></td>
+            </tr>`).join('') : '<tr><td colspan="7" class="text-center text-muted py-3">No transactions match the current filters.</td></tr>';
+    }
+    _updateSpBulkBar();
+
+    const total = result.total || 0;
+    const pageCount = Math.max(1, Math.ceil(total / st.pageSize));
+    const pageInfo = document.getElementById('spTxPageInfo');
+    if (pageInfo) pageInfo.textContent = `Page ${st.page + 1} of ${pageCount} (${total} total)`;
+    const prevBtn = document.getElementById('spTxPrevPage');
+    const nextBtn = document.getElementById('spTxNextPage');
+    if (prevBtn) prevBtn.disabled = st.page <= 0;
+    if (nextBtn) nextBtn.disabled = st.page >= pageCount - 1;
+
+    document.querySelectorAll('#spendingPage th[data-key]').forEach(th => {
+        const arrow = th.querySelector('.pfm-sort-arrow') || (() => {
+            const s = document.createElement('span');
+            s.className = 'pfm-sort-arrow ms-1';
+            th.appendChild(s);
+            return s;
+        })();
+        arrow.textContent = th.dataset.key === st.sortBy ? (st.sortDir === 'asc' ? '▲' : '▼') : '';
     });
-    window._spFilteredRows = filtered;
-    window._spTable.refresh();
+
     _wireSpBulkActions();
 }
 
-function _allSpendingCategories(rows, extra) {
+function _wireSpendingTablePagination() {
+    const table = document.querySelector('#spPaneTransactions table');
+    if (table && !table.dataset.sortWired) {
+        table.dataset.sortWired = '1';
+        table.querySelectorAll('th[data-key]').forEach(th => {
+            th.style.cursor = 'pointer';
+            th.addEventListener('click', () => {
+                const key = th.dataset.key;
+                const st = window._spTxState;
+                if (st.sortBy === key) {
+                    st.sortDir = st.sortDir === 'asc' ? 'desc' : 'asc';
+                } else {
+                    st.sortBy = key;
+                    st.sortDir = key === 'description' || key === 'category' || key === 'portfolio_name' ? 'asc' : 'desc';
+                }
+                st.page = 0;
+                _fetchAndRenderSpendingTable();
+            });
+        });
+    }
+    const prevBtn = document.getElementById('spTxPrevPage');
+    if (prevBtn && !prevBtn.dataset.wired) {
+        prevBtn.dataset.wired = '1';
+        prevBtn.addEventListener('click', () => {
+            if (window._spTxState.page > 0) {
+                window._spTxState.page -= 1;
+                _fetchAndRenderSpendingTable();
+            }
+        });
+    }
+    const nextBtn = document.getElementById('spTxNextPage');
+    if (nextBtn && !nextBtn.dataset.wired) {
+        nextBtn.dataset.wired = '1';
+        nextBtn.addEventListener('click', () => {
+            window._spTxState.page += 1;
+            _fetchAndRenderSpendingTable();
+        });
+    }
+    const pageSizeSel = document.getElementById('spTxPageSize');
+    if (pageSizeSel && !pageSizeSel.dataset.wired) {
+        pageSizeSel.dataset.wired = '1';
+        pageSizeSel.addEventListener('change', () => {
+            window._spTxState.pageSize = parseInt(pageSizeSel.value, 10);
+            window._spTxState.page = 0;
+            _fetchAndRenderSpendingTable();
+        });
+    }
+}
+
+function _allSpendingCategories(extra) {
     return [...new Set(['uncategorized', 'Transfer',
-        ...rows.map(r => r.category), ...(extra || [])])].sort();
+        ...(window._spendingAllCategories || []), ...(extra || [])])].sort();
 }
 
 function _populateSpCategoryDatalist(categories) {
@@ -4564,8 +4635,7 @@ function _renderSpSuggestReviewPanel() {
     if (!panel) return;
     const groups = window._spSuggestGroups || [];
     if (!groups.length) { panel.style.display = 'none'; panel.innerHTML = ''; return; }
-    const categories = _allSpendingCategories(
-        window._spendingAllRows || [], groups.map(g => g.suggestedCategory));
+    const categories = _allSpendingCategories(groups.map(g => g.suggestedCategory));
     _populateSpCategoryDatalist(categories);
     panel.style.display = '';
     panel.innerHTML = `
@@ -4658,22 +4728,6 @@ async function _applySpSuggestions() {
             : `Applied to ${succeeded} row(s).`) + rescanNote;
     }
 }
-
-window.updateSpendingRowCategory = async function (id, category) {
-    const trimmed = category.trim();
-    const row = (window._spendingAllRows || []).find(r => r.id === id);
-    if (!trimmed || (row && trimmed === row.category)) {
-        await _refreshSpendingData();
-        return;
-    }
-    try {
-        await window.apiClient.updateSpendingCategory(id, trimmed);
-        if (row) row.category = trimmed;
-    } catch (err) {
-        alert('Error: ' + err.message);
-        await _refreshSpendingData();
-    }
-};
 
 function _renderSpendingRules(rules) {
     const body = document.getElementById('spRulesBody');
