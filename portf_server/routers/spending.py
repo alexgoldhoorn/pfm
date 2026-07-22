@@ -461,6 +461,11 @@ async def create_rule(
         raise HTTPException(status_code=400, detail="Pattern cannot be empty")
     if not category:
         raise HTTPException(status_code=400, detail="Category cannot be empty")
+    if db.find_duplicate_spending_rule(pattern, category):
+        raise HTTPException(
+            status_code=409,
+            detail=f"A rule with pattern '{pattern}' and category '{category}' already exists",
+        )
     rule_id = db.create_spending_rule(pattern=pattern, category=category)
     return SpendingRuleResponse(id=rule_id, pattern=pattern, category=category)
 
