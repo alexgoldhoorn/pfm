@@ -68,11 +68,34 @@ const Fmt = {
 };
 window.Fmt = Fmt;
 
+// The `lang` attribute above is a Firefox-only nudge: Chromium renders
+// type="date" inputs using the browser's own UI locale and ignores the
+// element's `lang` entirely (verified — en-GB/en-US/en-CA all rendered
+// mm/dd/yyyy under an en-US Chromium locale), so PREFS.dateFormat has no
+// effect there. Since Chromium's native text can't be overridden from the
+// page, pair any date input with a `[data-date-hint]` sibling that always
+// confirms the selected date in PREFS.dateFormat.
+function updateDateHint(input) {
+    const hint = input.nextElementSibling;
+    if (!hint || !hint.hasAttribute('data-date-hint')) return;
+    hint.textContent = input.value ? `= ${Fmt.date(input.value)}` : '';
+}
+function updateAllDateHints(root) {
+    (root || document).querySelectorAll('input[type="date"]').forEach(updateDateHint);
+}
+document.addEventListener('input', e => {
+    if (e.target.matches && e.target.matches('input[type="date"]')) updateDateHint(e.target);
+});
+// Modals often set a date's `.value` from JS (defaults, edit-populate) before
+// showing, which doesn't fire an 'input' event — catch those on modal show.
+document.addEventListener('shown.bs.modal', e => updateAllDateHints(e.target));
+
 // Keep every native date input (including ones rendered later into import
 // previews, chat cards, modals, etc.) in sync with PREFS.dateFormat.
 function applyDateInputLocale(root) {
     const lang = Fmt.dateInputLang();
     (root || document).querySelectorAll('input[type="date"]').forEach(el => { el.lang = lang; });
+    updateAllDateHints(root);
 }
 window.applyDateInputLocale = applyDateInputLocale;
 applyDateInputLocale(); // static form inputs already in the DOM
@@ -81,7 +104,7 @@ if (document.body && typeof MutationObserver !== 'undefined') {
         for (const m of muts) {
             m.addedNodes.forEach(n => {
                 if (n.nodeType !== 1) return;
-                if (n.matches && n.matches('input[type="date"]')) n.lang = Fmt.dateInputLang();
+                if (n.matches && n.matches('input[type="date"]')) { n.lang = Fmt.dateInputLang(); updateDateHint(n); }
                 else if (n.querySelectorAll) applyDateInputLocale(n);
             });
         }
