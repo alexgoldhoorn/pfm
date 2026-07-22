@@ -4441,7 +4441,7 @@ function _wireSpBulkActions() {
         recatBtn.dataset.wired = '1';
         recatBtn.addEventListener('click', async () => {
             const ids = _selectedSpendingIds();
-            const category = document.getElementById('spBulkCategorySelect')?.value;
+            const category = document.getElementById('spBulkCategorySelect')?.value.trim();
             if (!ids.length || !category) return;
             recatBtn.disabled = true;
             let succeeded = 0, failed = 0;
