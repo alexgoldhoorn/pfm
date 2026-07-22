@@ -589,3 +589,23 @@ test("dedupSpendingRowsByDescription: single-row group keeps that row's own fiel
     assert.equal(groups[0].currency, "USD");
     assert.deepEqual([...groups[0].ids], [5]);
 });
+
+test('_allSpendingCategories includes uncategorized, Transfer, and row categories, deduplicated and sorted', () => {
+    const { _allSpendingCategories } = loadAppIntoContext();
+    const rows = [{ category: 'Groceries' }, { category: 'Transport' }, { category: 'Groceries' }];
+    const result = _allSpendingCategories(rows);
+    assert.deepStrictEqual([...result], ['Groceries', 'Transfer', 'Transport', 'uncategorized']);
+});
+
+test('_allSpendingCategories merges in extra categories', () => {
+    const { _allSpendingCategories } = loadAppIntoContext();
+    const rows = [{ category: 'Groceries' }];
+    const result = _allSpendingCategories(rows, ['Kids', 'Groceries']);
+    assert.deepStrictEqual([...result], ['Groceries', 'Kids', 'Transfer', 'uncategorized']);
+});
+
+test('_allSpendingCategories handles empty rows and no extra', () => {
+    const { _allSpendingCategories } = loadAppIntoContext();
+    const result = _allSpendingCategories([]);
+    assert.deepStrictEqual([...result], ['Transfer', 'uncategorized']);
+});

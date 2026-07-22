@@ -4398,6 +4398,17 @@ function _renderSpendingTable() {
     _wireSpBulkActions();
 }
 
+function _allSpendingCategories(rows, extra) {
+    return [...new Set(['uncategorized', 'Transfer',
+        ...rows.map(r => r.category), ...(extra || [])])].sort();
+}
+
+function _populateSpCategoryDatalist(categories) {
+    const list = document.getElementById('spCategoryList');
+    if (!list) return;
+    list.innerHTML = categories.map(c => `<option value="${esc(c)}">`).join('');
+}
+
 function _populateSpBulkCategorySelect(categories) {
     const sel = document.getElementById('spBulkCategorySelect');
     if (!sel) return;
