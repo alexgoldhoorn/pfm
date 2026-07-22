@@ -512,53 +512,6 @@ test("mergeActionItems: sorts by severity high -> medium -> low", () => {
     assert.deepEqual(merged.map(i => i.id), ["high1", "med1", "low1"]);
 });
 
-test("filterSpendingRows: no filters returns all rows", () => {
-    const { filterSpendingRows } = loadAppIntoContext();
-    const rows = [
-        { portfolio_id: 1, category: "Groceries", date: "2026-01-05" },
-        { portfolio_id: 2, category: "Dining", date: "2026-01-06" },
-    ];
-    assert.equal(filterSpendingRows(rows, {}).length, 2);
-});
-
-test("filterSpendingRows: filters by account and category", () => {
-    const { filterSpendingRows } = loadAppIntoContext();
-    const rows = [
-        { portfolio_id: 1, category: "Groceries", date: "2026-01-05" },
-        { portfolio_id: 2, category: "Dining", date: "2026-01-06" },
-    ];
-    const result = filterSpendingRows(rows, { accountId: "1" });
-    assert.equal(result.length, 1);
-    assert.equal(result[0].category, "Groceries");
-
-    const result2 = filterSpendingRows(rows, { category: "Dining" });
-    assert.equal(result2.length, 1);
-    assert.equal(result2[0].portfolio_id, 2);
-});
-
-test("filterSpendingRows: filters by date range", () => {
-    const { filterSpendingRows } = loadAppIntoContext();
-    const rows = [
-        { portfolio_id: 1, category: "Groceries", date: "2026-01-05" },
-        { portfolio_id: 1, category: "Groceries", date: "2026-02-05" },
-    ];
-    const result = filterSpendingRows(rows, { fromDate: "2026-02-01" });
-    assert.equal(result.length, 1);
-    assert.equal(result[0].date, "2026-02-05");
-
-    const result2 = filterSpendingRows(rows, { toDate: "2026-01-31" });
-    assert.equal(result2.length, 1);
-    assert.equal(result2[0].date, "2026-01-05");
-});
-
-test("filterSpendingRows: does not mutate input", () => {
-    const { filterSpendingRows } = loadAppIntoContext();
-    const rows = [{ portfolio_id: 1, category: "Groceries", date: "2026-01-05" }];
-    const copy = JSON.parse(JSON.stringify(rows));
-    filterSpendingRows(rows, { accountId: "1" });
-    assert.deepEqual(rows, copy);
-});
-
 test("dedupSpendingRowsByDescription: groups rows sharing a description", () => {
     const { dedupSpendingRowsByDescription } = loadAppIntoContext();
     const rows = [
@@ -590,23 +543,23 @@ test("dedupSpendingRowsByDescription: single-row group keeps that row's own fiel
     assert.deepEqual([...groups[0].ids], [5]);
 });
 
-test('_allSpendingCategories includes uncategorized, Transfer, and row categories, deduplicated and sorted', () => {
-    const { _allSpendingCategories } = loadAppIntoContext();
-    const rows = [{ category: 'Groceries' }, { category: 'Transport' }, { category: 'Groceries' }];
-    const result = _allSpendingCategories(rows);
+test('_allSpendingCategories includes uncategorized, Transfer, and configured categories, deduplicated and sorted', () => {
+    const ctx = loadAppIntoContext();
+    ctx.window._spendingAllCategories = ['Groceries', 'Transport', 'Groceries'];
+    const result = ctx._allSpendingCategories();
     assert.deepStrictEqual([...result], ['Groceries', 'Transfer', 'Transport', 'uncategorized']);
 });
 
 test('_allSpendingCategories merges in extra categories', () => {
-    const { _allSpendingCategories } = loadAppIntoContext();
-    const rows = [{ category: 'Groceries' }];
-    const result = _allSpendingCategories(rows, ['Kids', 'Groceries']);
+    const ctx = loadAppIntoContext();
+    ctx.window._spendingAllCategories = ['Groceries'];
+    const result = ctx._allSpendingCategories(['Kids', 'Groceries']);
     assert.deepStrictEqual([...result], ['Groceries', 'Kids', 'Transfer', 'uncategorized']);
 });
 
-test('_allSpendingCategories handles empty rows and no extra', () => {
+test('_allSpendingCategories handles no configured categories and no extra', () => {
     const { _allSpendingCategories } = loadAppIntoContext();
-    const result = _allSpendingCategories([]);
+    const result = _allSpendingCategories();
     assert.deepStrictEqual([...result], ['Transfer', 'uncategorized']);
 });
 
