@@ -1294,3 +1294,13 @@ class TestSpendingCategories:
         # new_name's existing registry row is untouched, not duplicated.
         cats = self.db.list_spending_categories()
         assert cats.count("Food") == 1
+
+    def test_rename_spending_category_to_same_name_is_a_noop(self):
+        self.db.create_spending_category("Vacation")
+
+        result = self.db.rename_spending_category("Vacation", "Vacation")
+        assert result == {"transactions_updated": 0, "rules_updated": 0}
+
+        # The category must still be registered -- a self-rename is a
+        # no-op, not a delete.
+        assert self.db.find_spending_category_by_name("Vacation") is not None
