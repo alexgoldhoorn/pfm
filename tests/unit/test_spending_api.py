@@ -479,6 +479,70 @@ def test_create_rule_rejects_blank_pattern(tmp_path):
     assert r.status_code == 400
 
 
+def test_create_rule_rejects_exact_duplicate(tmp_path):
+    client, _ = _make_client(tmp_path)
+    client.post(
+        "/api/v1/spending/rules",
+        json={"pattern": "MERCADONA", "category": "Groceries"},
+        headers=HEADERS,
+    )
+    r = client.post(
+        "/api/v1/spending/rules",
+        json={"pattern": "MERCADONA", "category": "Groceries"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 409
+    assert len(client.get("/api/v1/spending/rules", headers=HEADERS).json()) == 1
+
+
+def test_create_rule_rejects_duplicate_case_insensitive_pattern(tmp_path):
+    client, _ = _make_client(tmp_path)
+    client.post(
+        "/api/v1/spending/rules",
+        json={"pattern": "MERCADONA", "category": "Groceries"},
+        headers=HEADERS,
+    )
+    r = client.post(
+        "/api/v1/spending/rules",
+        json={"pattern": "mercadona", "category": "Groceries"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 409
+    assert len(client.get("/api/v1/spending/rules", headers=HEADERS).json()) == 1
+
+
+def test_create_rule_allows_same_pattern_different_category(tmp_path):
+    client, _ = _make_client(tmp_path)
+    client.post(
+        "/api/v1/spending/rules",
+        json={"pattern": "MERCADONA", "category": "Groceries"},
+        headers=HEADERS,
+    )
+    r = client.post(
+        "/api/v1/spending/rules",
+        json={"pattern": "MERCADONA", "category": "Food"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 201
+    assert len(client.get("/api/v1/spending/rules", headers=HEADERS).json()) == 2
+
+
+def test_create_rule_allows_different_pattern_same_category(tmp_path):
+    client, _ = _make_client(tmp_path)
+    client.post(
+        "/api/v1/spending/rules",
+        json={"pattern": "MERCADONA", "category": "Groceries"},
+        headers=HEADERS,
+    )
+    r = client.post(
+        "/api/v1/spending/rules",
+        json={"pattern": "CARREFOUR", "category": "Groceries"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 201
+    assert len(client.get("/api/v1/spending/rules", headers=HEADERS).json()) == 2
+
+
 def test_blank_pattern_rule_does_not_match_everything(tmp_path):
     client, db = _make_client(tmp_path)
     pid = db.create_portfolio("Example Bank", account_type="bank")

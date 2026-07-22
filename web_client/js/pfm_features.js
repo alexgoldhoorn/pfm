@@ -4576,6 +4576,10 @@ function _renderSpSuggestReviewPanel() {
     });
 }
 
+function _ruleDedupKey(pattern, category) {
+    return JSON.stringify([pattern.trim().toLowerCase(), category]);
+}
+
 async function _applySpSuggestions() {
     const panel = document.getElementById('spSuggestReviewPanel');
     const applyBtn = document.getElementById('spSuggestApplyBtn');
@@ -4594,10 +4598,16 @@ async function _applySpSuggestions() {
     }
     if (status) { status.className = 'small text-muted px-3 pt-2'; status.textContent = 'Applying…'; }
     let succeeded = 0, failed = 0;
+    const createdRuleKeys = new Set();
     for (const g of accepted) {
-        if (g.suggestedPattern && g.suggestedPattern.trim()) {
-            try { await window.apiClient.createSpendingRule(g.suggestedPattern.trim(), g.suggestedCategory); }
-            catch (e) { /* rule creation failing shouldn't block applying the category itself */ }
+        const pattern = (g.suggestedPattern || '').trim();
+        if (pattern) {
+            const key = _ruleDedupKey(pattern, g.suggestedCategory);
+            if (!createdRuleKeys.has(key)) {
+                createdRuleKeys.add(key);
+                try { await window.apiClient.createSpendingRule(pattern, g.suggestedCategory); }
+                catch (e) { /* rule creation failing shouldn't block applying the category itself */ }
+            }
         }
         for (const id of g.ids) {
             try { await window.apiClient.updateSpendingCategory(id, g.suggestedCategory); succeeded++; }

@@ -609,3 +609,18 @@ test('_allSpendingCategories handles empty rows and no extra', () => {
     const result = _allSpendingCategories([]);
     assert.deepStrictEqual([...result], ['Transfer', 'uncategorized']);
 });
+
+test('_ruleDedupKey treats different-case/whitespace patterns with the same category as equal', () => {
+    const { _ruleDedupKey } = loadAppIntoContext();
+    assert.equal(_ruleDedupKey('MERCADONA', 'Groceries'), _ruleDedupKey(' mercadona ', 'Groceries'));
+});
+
+test('_ruleDedupKey treats the same pattern with a different category as distinct', () => {
+    const { _ruleDedupKey } = loadAppIntoContext();
+    assert.notEqual(_ruleDedupKey('MERCADONA', 'Groceries'), _ruleDedupKey('MERCADONA', 'Food'));
+});
+
+test('_ruleDedupKey treats a different pattern with the same category as distinct', () => {
+    const { _ruleDedupKey } = loadAppIntoContext();
+    assert.notEqual(_ruleDedupKey('MERCADONA', 'Groceries'), _ruleDedupKey('CARREFOUR', 'Groceries'));
+});

@@ -2884,6 +2884,18 @@ class Database:
             conn.commit()
             return cursor.lastrowid
 
+    def find_duplicate_spending_rule(
+        self, pattern: str, category: str
+    ) -> Optional[Dict]:
+        """Find an existing rule with the same pattern (case-insensitive) and category."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM spending_rules WHERE LOWER(pattern) = LOWER(?) AND category = ?",
+                (pattern, category),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
     def list_spending_rules(self) -> List[Dict]:
         """List all spending rules, oldest (highest priority) first."""
         with self.get_connection() as conn:
