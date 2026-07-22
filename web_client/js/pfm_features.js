@@ -4283,6 +4283,26 @@ async function loadSpendingPage() {
         }
     });
     _wireSpendingTablePagination();
+    const showAllBtn = document.getElementById('spCategoryChartShowAll');
+    if (showAllBtn && !showAllBtn.dataset.wired) {
+        showAllBtn.dataset.wired = '1';
+        showAllBtn.addEventListener('click', () => {
+            window._spCategoryChartShowAll = !window._spCategoryChartShowAll;
+            showAllBtn.textContent = window._spCategoryChartShowAll ? 'Show top 8' : 'Show all';
+            _renderSpendingCategoryChart(window._spCategoryChartData || {});
+        });
+    }
+    const categoriesTabBtn = document.getElementById('spTabBtnCategories');
+    if (categoriesTabBtn && !categoriesTabBtn.dataset.wired) {
+        categoriesTabBtn.dataset.wired = '1';
+        // A Chart.js chart built while its canvas sits inside a
+        // display:none tab-pane renders at zero size — re-render (no
+        // re-fetch, the data's already in memory) once the pane is
+        // actually visible and the canvas has real dimensions.
+        categoriesTabBtn.addEventListener('shown.bs.tab', () => {
+            _renderSpendingCategoryChart(window._spCategoryChartData || {});
+        });
+    }
     await _refreshSpendingData();
     await _fetchAndRenderSpendingTable();
 }
@@ -4321,23 +4341,55 @@ function _populateSpendingAccountFilters(bankAccounts) {
     if (importSel) importSel.innerHTML = '<option value="">— New account —</option>' + opts;
 }
 
+let _spCategoryChartInstance = null;
+
 function _renderSpendingCategoryChart(byCategoryEur) {
-    const wrap = document.getElementById('spCategoryChart');
-    if (!wrap) return;
-    const entries = Object.entries(byCategoryEur).sort((a, b) => b[1] - a[1]);
-    if (!entries.length) {
-        wrap.innerHTML = '<div class="text-muted small">No categorized spending yet.</div>';
-        return;
+    window._spCategoryChartData = byCategoryEur || {};
+    const canvas = document.getElementById('spCategoryChartCanvas');
+    if (!canvas) return;
+    const showAll = !!window._spCategoryChartShowAll;
+    let entries = Object.entries(window._spCategoryChartData).sort((a, b) => b[1] - a[1]);
+    if (!showAll) entries = entries.slice(0, 8);
+
+    if (_spCategoryChartInstance) {
+        _spCategoryChartInstance.destroy();
+        _spCategoryChartInstance = null;
     }
-    const max = Math.max(...entries.map(e => e[1]));
-    wrap.innerHTML = entries.map(([cat, amt]) => `
-        <div class="d-flex align-items-center mb-1">
-            <div class="small text-muted" style="width:140px;">${esc(cat)}</div>
-            <div class="flex-grow-1 bg-light rounded" style="height:18px;">
-                <div class="bg-danger rounded" style="height:18px;width:${Math.max(2, amt / max * 100)}%;"></div>
-            </div>
-            <div class="small ms-2" style="width:80px;text-align:right;">€${Fmt.num(amt, 0, 0)}</div>
-        </div>`).join('');
+    if (!entries.length) return;
+
+    const labels = entries.map(([cat]) => cat);
+    const values = entries.map(([, amt]) => amt);
+    _spCategoryChartInstance = new Chart(canvas, {
+        type: 'bar',
+        data: {
+            labels: labels,
+            datasets: [{
+                label: 'Spent (30d, EUR)',
+                data: values,
+                backgroundColor: 'rgba(220,53,69,0.7)',
+                borderColor: 'rgba(220,53,69,1)',
+                borderWidth: 1,
+            }]
+        },
+        options: {
+            indexAxis: 'y',
+            responsive: true,
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label(item) { return ` €${Fmt.num(item.raw, 0, 0)}`; }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    title: { display: true, text: 'EUR (30d)' },
+                    ticks: { callback: v => '€' + v }
+                }
+            }
+        }
+    });
 }
 
 window._spTxState = window._spTxState || { page: 0, pageSize: 50, sortBy: 'date', sortDir: 'desc' };
