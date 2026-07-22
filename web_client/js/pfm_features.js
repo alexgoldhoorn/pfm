@@ -4538,9 +4538,9 @@ function _renderSpSuggestReviewPanel() {
     if (!panel) return;
     const groups = window._spSuggestGroups || [];
     if (!groups.length) { panel.style.display = 'none'; panel.innerHTML = ''; return; }
-    const categories = [...new Set(['uncategorized', 'Transfer',
-        ...groups.map(g => g.suggestedCategory),
-        ...(window._spendingAllRows || []).map(r => r.category)])];
+    const categories = _allSpendingCategories(
+        window._spendingAllRows || [], groups.map(g => g.suggestedCategory));
+    _populateSpCategoryDatalist(categories);
     panel.style.display = '';
     panel.innerHTML = `
         <div class="card">
@@ -4551,9 +4551,7 @@ function _renderSpSuggestReviewPanel() {
                         <input type="checkbox" class="form-check-input sp-suggest-check" data-idx="${i}" checked>
                         <span class="small flex-grow-1">${esc(g.description)} <span class="text-muted">(&times;${g.ids.length})</span></span>
                         <input type="text" class="form-control form-control-sm sp-suggest-pattern" style="max-width:160px;" data-idx="${i}" value="${escapeForAttr(g.suggestedPattern)}" title="Rule pattern (matches as a substring)">
-                        <select class="form-select form-select-sm w-auto sp-suggest-category" data-idx="${i}">
-                            ${categories.map(c => `<option value="${esc(c)}" ${c === g.suggestedCategory ? 'selected' : ''}>${esc(c)}</option>`).join('')}
-                        </select>
+                        <input type="text" list="spCategoryList" class="form-control form-control-sm w-auto sp-suggest-category" data-idx="${i}" value="${escapeForAttr(g.suggestedCategory)}">
                     </div>`).join('')}
                 <div class="d-flex gap-2 mt-2">
                     <button class="btn btn-sm btn-primary" id="spSuggestApplyBtn">Apply</button>
@@ -4566,9 +4564,9 @@ function _renderSpSuggestReviewPanel() {
             window._spSuggestGroups[parseInt(inp.dataset.idx, 10)].suggestedPattern = inp.value;
         });
     });
-    panel.querySelectorAll('.sp-suggest-category').forEach(sel => {
-        sel.addEventListener('change', () => {
-            window._spSuggestGroups[parseInt(sel.dataset.idx, 10)].suggestedCategory = sel.value;
+    panel.querySelectorAll('.sp-suggest-category').forEach(inp => {
+        inp.addEventListener('input', () => {
+            window._spSuggestGroups[parseInt(inp.dataset.idx, 10)].suggestedCategory = inp.value;
         });
     });
     document.getElementById('spSuggestApplyBtn').addEventListener('click', _applySpSuggestions);
