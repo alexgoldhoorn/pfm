@@ -121,6 +121,14 @@ class SpendingRuleUpdateBody(BaseModel):
     category: Optional[str] = None
 
 
+class SpendingCategoryBody(BaseModel):
+    name: str
+
+
+class SpendingCategoryRenameBody(BaseModel):
+    new_name: str
+
+
 class SpendingSummaryResponse(BaseModel):
     spent_eur: float
     income_eur: float
@@ -517,6 +525,49 @@ async def delete_rule(
     if not db.delete_spending_rule(rule_id):
         raise HTTPException(status_code=404, detail="Rule not found")
     return {"deleted": True, "id": rule_id}
+
+
+@router.get("/categories", response_model=List[str])
+async def list_categories(
+    db=Depends(get_database), api_key_info: dict = Depends(_auth)
+):
+    """List every known spending category (used + explicitly registered, deduplicated)."""
+    return db.list_spending_categories()
+
+
+@router.post("/categories", response_model=dict, status_code=201)
+async def create_category(
+    body: SpendingCategoryBody,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Register a new, initially-unused spending category."""
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Name cannot be empty")
+    if db.find_spending_category_by_name(name):
+        raise HTTPException(status_code=409, detail=f"Category '{name}' already exists")
+    category_id = db.create_spending_category(name)
+    return {"id": category_id, "name": name}
+
+
+@router.put("/categories/{old_name}", response_model=dict)
+async def rename_category(
+    old_name: str,
+    body: SpendingCategoryRenameBody,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Rename a category everywhere it's used (transactions, rules, registry)."""
+    new_name = body.new_name.strip()
+    if not new_name:
+        raise HTTPException(status_code=400, detail="Name cannot be empty")
+    if new_name == old_name:
+        raise HTTPException(
+            status_code=400, detail="New name is the same as the current name"
+        )
+    result = db.rename_spending_category(old_name, new_name)
+    return {"old_name": old_name, "new_name": new_name, **result}
 
 
 @router.get("/summary", response_model=SpendingSummaryResponse)
