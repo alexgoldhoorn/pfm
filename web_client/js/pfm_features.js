@@ -4616,12 +4616,20 @@ async function _applySpSuggestions() {
     }
     window._spSuggestGroups = [];
     panel.style.display = 'none'; panel.innerHTML = '';
+    let rescanned = 0;
+    if (createdRuleKeys.size > 0) {
+        try {
+            const result = await window.apiClient.rescanCategories();
+            rescanned = (result && result.recategorized) || 0;
+        } catch (e) { /* rescan failing shouldn't block reporting the apply result */ }
+    }
     await _refreshSpendingData();
     if (status) {
         status.className = failed > 0 ? 'small text-danger px-3 pt-2' : 'small text-success px-3 pt-2';
-        status.textContent = failed > 0
+        const rescanNote = rescanned > 0 ? ` Rescan matched ${rescanned} more row${rescanned === 1 ? '' : 's'}.` : '';
+        status.textContent = (failed > 0
             ? `Applied to ${succeeded} row(s), ${failed} failed.`
-            : `Applied to ${succeeded} row(s).`;
+            : `Applied to ${succeeded} row(s).`) + rescanNote;
     }
 }
 
