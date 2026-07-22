@@ -2572,70 +2572,116 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         </div>
                     </div>
 
-                    <div class="card mb-3">
-                        <div class="card-header fw-semibold">Spending by category</div>
-                        <div class="card-body">
-                            <div id="spCategoryChart"><div class="text-muted small">Loading…</div></div>
-                        </div>
-                    </div>
-
-                    <div class="card mb-3">
-                        <div class="card-header fw-semibold d-flex align-items-center justify-content-between">
-                            <span>Transactions</span>
-                            <button class="btn btn-sm btn-outline-secondary" id="spSelectAllUncategorized" title="Filter to uncategorized rows and select them all"><i class="bi bi-check2-square me-1"></i>Select all uncategorized</button>
-                        </div>
-                        <div id="spBulkBar" class="card-body py-2 border-bottom bg-light-subtle" style="display:none;">
-                            <div class="d-flex flex-wrap align-items-center gap-2">
-                                <span class="small text-muted"><span id="spSelectedCount">0</span> selected</span>
-                                <input type="text" list="spCategoryList" class="form-control form-control-sm w-auto" id="spBulkCategorySelect" placeholder="Category">
-                                <button class="btn btn-sm btn-outline-primary" id="spBulkRecategorizeBtn">Set category</button>
-                                <button class="btn btn-sm btn-outline-info" id="spBulkSuggestBtn"><i class="bi bi-magic me-1"></i>Suggest categories (AI)</button>
-                                <button class="btn btn-sm btn-outline-secondary" id="spBulkApplyRulesBtn" title="Re-apply category rules to selected rows that are still uncategorized"><i class="bi bi-tags me-1"></i>Apply rules to selected</button>
-                                <button class="btn btn-sm btn-outline-danger ms-auto" id="spBulkDeleteBtn"><i class="bi bi-trash me-1"></i>Delete selected</button>
+                    <ul class="nav nav-tabs mb-3" id="spTabs">
+                        <li class="nav-item">
+                            <button type="button" class="nav-link active" data-bs-toggle="tab" data-bs-target="#spPaneTransactions" id="spTabBtnTransactions"><i class="bi bi-list-ul me-1"></i>Transactions</button>
+                        </li>
+                        <li class="nav-item">
+                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#spPaneCategories" id="spTabBtnCategories"><i class="bi bi-tags me-1"></i>Categories</button>
+                        </li>
+                        <li class="nav-item">
+                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#spPaneRules" id="spTabBtnRules"><i class="bi bi-signpost-split me-1"></i>Rules</button>
+                        </li>
+                    </ul>
+                    <div class="tab-content">
+                        <div class="tab-pane fade show active" id="spPaneTransactions">
+                            <div class="card">
+                                <div class="card-header fw-semibold d-flex align-items-center justify-content-between">
+                                    <span>Transactions</span>
+                                    <button class="btn btn-sm btn-outline-secondary" id="spSelectAllUncategorized" title="Filter to uncategorized rows and select them all"><i class="bi bi-check2-square me-1"></i>Select all uncategorized</button>
+                                </div>
+                                <div id="spBulkBar" class="card-body py-2 border-bottom bg-light-subtle" style="display:none;">
+                                    <div class="d-flex flex-wrap align-items-center gap-2">
+                                        <span class="small text-muted"><span id="spSelectedCount">0</span> selected</span>
+                                        <input type="text" list="spCategoryList" class="form-control form-control-sm w-auto" id="spBulkCategorySelect" placeholder="Category">
+                                        <button class="btn btn-sm btn-outline-primary" id="spBulkRecategorizeBtn">Set category</button>
+                                        <button class="btn btn-sm btn-outline-info" id="spBulkSuggestBtn"><i class="bi bi-magic me-1"></i>Suggest categories (AI)</button>
+                                        <button class="btn btn-sm btn-outline-secondary" id="spBulkApplyRulesBtn" title="Re-apply category rules to selected rows that are still uncategorized"><i class="bi bi-tags me-1"></i>Apply rules to selected</button>
+                                        <button class="btn btn-sm btn-outline-danger ms-auto" id="spBulkDeleteBtn"><i class="bi bi-trash me-1"></i>Delete selected</button>
+                                    </div>
+                                </div>
+                                <div id="spBulkStatus" class="small text-muted px-3 pt-2"></div>
+                                <div id="spSuggestReviewPanel" class="px-3 pb-2" style="display:none;"></div>
+                                <datalist id="spCategoryList"></datalist>
+                                <div class="table-responsive">
+                                    <table class="table table-hover mb-0">
+                                        <thead><tr>
+                                            <th class="ps-3" style="width:2.5rem;"><input type="checkbox" class="form-check-input" id="spSelectAll"></th>
+                                            <th data-key="date">Date</th>
+                                            <th data-key="portfolio_name">Account</th>
+                                            <th data-key="description">Description</th>
+                                            <th data-key="category">Category</th>
+                                            <th class="text-end" data-key="amount">Amount</th>
+                                            <th class="pe-3"></th>
+                                        </tr></thead>
+                                        <tbody id="spTxBody"><tr><td colspan="7" class="text-center text-muted py-3">No transactions yet. Import a bank statement to get started.</td></tr></tbody>
+                                    </table>
+                                </div>
+                                <div id="spTxPagination" class="card-body py-2 border-top d-flex align-items-center gap-2">
+                                    <button class="btn btn-sm btn-outline-secondary" id="spTxPrevPage">Previous</button>
+                                    <span class="small text-muted" id="spTxPageInfo">Page 1</span>
+                                    <button class="btn btn-sm btn-outline-secondary" id="spTxNextPage">Next</button>
+                                    <select class="form-select form-select-sm w-auto ms-auto" id="spTxPageSize">
+                                        <option value="25">25 / page</option>
+                                        <option value="50" selected>50 / page</option>
+                                        <option value="100">100 / page</option>
+                                    </select>
+                                </div>
                             </div>
                         </div>
-                        <div id="spBulkStatus" class="small text-muted px-3 pt-2"></div>
-                        <div id="spSuggestReviewPanel" class="px-3 pb-2" style="display:none;"></div>
-                        <datalist id="spCategoryList"></datalist>
-                        <div class="table-responsive">
-                            <table class="table table-hover mb-0">
-                                <thead><tr>
-                                    <th class="ps-3" style="width:2.5rem;"><input type="checkbox" class="form-check-input" id="spSelectAll"></th>
-                                    <th data-key="date" data-type="date">Date</th>
-                                    <th data-key="portfolio_name" data-type="text">Account</th>
-                                    <th data-key="description" data-type="text">Description</th>
-                                    <th data-key="category" data-type="text">Category</th>
-                                    <th class="text-end" data-key="amount" data-type="num">Amount</th>
-                                    <th class="pe-3"></th>
-                                </tr></thead>
-                                <tbody id="spTxBody"><tr><td colspan="7" class="text-center text-muted py-3">No transactions yet. Import a bank statement to get started.</td></tr></tbody>
-                            </table>
+                        <div class="tab-pane fade" id="spPaneCategories">
+                            <div class="card mb-3">
+                                <div class="card-header fw-semibold d-flex align-items-center justify-content-between">
+                                    <span>Spending by category</span>
+                                    <button class="btn btn-sm btn-outline-secondary" id="spCategoryChartShowAll">Show all</button>
+                                </div>
+                                <div class="card-body">
+                                    <canvas id="spCategoryChartCanvas" height="80"></canvas>
+                                </div>
+                            </div>
+                            <div class="card">
+                                <div class="card-header fw-semibold">All categories</div>
+                                <div id="spCategoriesList" class="list-group list-group-flush"></div>
+                                <div class="card-body border-top">
+                                    <form id="spCategoryAddForm" class="row g-2 align-items-end">
+                                        <div class="col-8 col-sm-9">
+                                            <label class="form-label small mb-1">New category name</label>
+                                            <input class="form-control form-control-sm" id="spCategoryNameInput" placeholder="e.g. Vacation" required>
+                                        </div>
+                                        <div class="col-4 col-sm-3">
+                                            <button type="submit" class="btn btn-sm btn-primary w-100"><i class="bi bi-plus-lg me-1"></i>Add</button>
+                                        </div>
+                                    </form>
+                                    <div id="spCategoryAddStatus" class="small text-muted mt-2"></div>
+                                </div>
+                            </div>
                         </div>
-                    </div>
-
-                    <div class="card">
-                        <div class="card-header fw-semibold">Category rules</div>
-                        <div class="table-responsive">
-                            <table class="table table-sm mb-0">
-                                <thead><tr><th class="ps-3">Pattern</th><th>Category</th><th class="pe-3"></th></tr></thead>
-                                <tbody id="spRulesBody"><tr><td colspan="3" class="text-center text-muted py-2">No rules yet.</td></tr></tbody>
-                            </table>
-                        </div>
-                        <div class="card-body border-top">
-                            <form id="spRuleAddForm" class="row g-2 align-items-end">
-                                <div class="col-6 col-sm-5">
-                                    <label class="form-label small mb-1">Pattern (matches description)</label>
-                                    <input class="form-control form-control-sm" id="spRulePattern" placeholder="e.g. MERCADONA" required>
+                        <div class="tab-pane fade" id="spPaneRules">
+                            <div class="card">
+                                <div class="card-header fw-semibold">Category rules</div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm mb-0">
+                                        <thead><tr><th class="ps-3">Pattern</th><th>Category</th><th class="pe-3"></th></tr></thead>
+                                        <tbody id="spRulesBody"><tr><td colspan="3" class="text-center text-muted py-2">No rules yet.</td></tr></tbody>
+                                    </table>
                                 </div>
-                                <div class="col-6 col-sm-5">
-                                    <label class="form-label small mb-1">Category</label>
-                                    <input class="form-control form-control-sm" id="spRuleCategory" placeholder="e.g. Groceries" required>
+                                <div class="card-body border-top">
+                                    <form id="spRuleAddForm" class="row g-2 align-items-end">
+                                        <div class="col-6 col-sm-5">
+                                            <label class="form-label small mb-1">Pattern (matches description)</label>
+                                            <input class="form-control form-control-sm" id="spRulePattern" placeholder="e.g. MERCADONA" required>
+                                        </div>
+                                        <div class="col-6 col-sm-5">
+                                            <label class="form-label small mb-1">Category</label>
+                                            <input class="form-control form-control-sm" id="spRuleCategory" placeholder="e.g. Groceries" required>
+                                        </div>
+                                        <div class="col-12 col-sm-2">
+                                            <button type="submit" class="btn btn-sm btn-primary w-100"><i class="bi bi-plus-lg me-1"></i>Add</button>
+                                        </div>
+                                    </form>
+                                    <div id="spRuleStatus" class="small text-muted mt-2"></div>
                                 </div>
-                                <div class="col-12 col-sm-2">
-                                    <button type="submit" class="btn btn-sm btn-primary w-100"><i class="bi bi-plus-lg me-1"></i>Add</button>
-                                </div>
-                            </form>
-                            <div id="spRuleStatus" class="small text-muted mt-2"></div>
+                            </div>
                         </div>
                     </div>
                 </div>
