@@ -2761,6 +2761,44 @@ class Database:
             row = cursor.fetchone()
             return dict(row) if row else None
 
+    _SPENDING_SORT_COLUMNS = {
+        "date": "s.date",
+        "portfolio_name": "p.name",
+        "description": "s.description",
+        "category": "s.category",
+        "amount": "s.amount",
+    }
+    _SPENDING_SORT_DIRS = {"asc": "ASC", "desc": "DESC"}
+
+    def _spending_where_clause(
+        self,
+        portfolio_id: int = None,
+        category: str = None,
+        start_date: str = None,
+        end_date: str = None,
+        is_transfer: bool = None,
+    ):
+        """Shared WHERE-clause builder for list/count spending transactions."""
+        conditions = []
+        params: List = []
+        if portfolio_id is not None:
+            conditions.append("s.portfolio_id = ?")
+            params.append(portfolio_id)
+        if category is not None:
+            conditions.append("s.category = ?")
+            params.append(category)
+        if start_date is not None:
+            conditions.append("s.date >= ?")
+            params.append(start_date)
+        if end_date is not None:
+            conditions.append("s.date <= ?")
+            params.append(end_date)
+        if is_transfer is not None:
+            conditions.append("s.is_transfer = ?")
+            params.append(1 if is_transfer else 0)
+        clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+        return clause, params
+
     def list_spending_transactions(
         self,
         portfolio_id: int = None,
@@ -2768,36 +2806,59 @@ class Database:
         start_date: str = None,
         end_date: str = None,
         is_transfer: bool = None,
+        limit: int = None,
+        offset: int = None,
+        sort_by: str = None,
+        sort_dir: str = None,
     ) -> List[Dict]:
-        """List spending transactions with optional filters, newest first."""
+        """List spending transactions with optional filters.
+
+        Newest-first (`ORDER BY s.date DESC, s.id DESC`) unless `sort_by`
+        is given, in which case that fixed ordering is replaced by
+        `sort_by`/`sort_dir` (both mapped through a whitelist to real SQL
+        column/direction tokens — never interpolated from the caller
+        directly). `limit`/`offset` are appended as bound params when
+        `limit` is given; omitted entirely (unbounded, today's behavior)
+        when it isn't.
+        """
         with self.get_connection() as conn:
-            query = """
-                SELECT s.*, p.name AS portfolio_name
-                FROM spending_transactions s
-                LEFT JOIN portfolios p ON s.portfolio_id = p.id
-            """
-            conditions = []
-            params: List = []
-            if portfolio_id is not None:
-                conditions.append("s.portfolio_id = ?")
-                params.append(portfolio_id)
-            if category is not None:
-                conditions.append("s.category = ?")
-                params.append(category)
-            if start_date is not None:
-                conditions.append("s.date >= ?")
-                params.append(start_date)
-            if end_date is not None:
-                conditions.append("s.date <= ?")
-                params.append(end_date)
-            if is_transfer is not None:
-                conditions.append("s.is_transfer = ?")
-                params.append(1 if is_transfer else 0)
-            if conditions:
-                query += " WHERE " + " AND ".join(conditions)
-            query += " ORDER BY s.date DESC, s.id DESC"
+            where_clause, params = self._spending_where_clause(
+                portfolio_id, category, start_date, end_date, is_transfer
+            )
+            query = (
+                "SELECT s.*, p.name AS portfolio_name FROM spending_transactions s "
+                "LEFT JOIN portfolios p ON s.portfolio_id = p.id" + where_clause
+            )
+            if sort_by is not None:
+                column = self._SPENDING_SORT_COLUMNS[sort_by]
+                direction = self._SPENDING_SORT_DIRS[sort_dir or "desc"]
+                query += f" ORDER BY {column} {direction}"
+            else:
+                query += " ORDER BY s.date DESC, s.id DESC"
+            if limit is not None:
+                query += " LIMIT ? OFFSET ?"
+                params = params + [limit, offset or 0]
             cursor = conn.execute(query, params)
             return [dict(row) for row in cursor.fetchall()]
+
+    def count_spending_transactions(
+        self,
+        portfolio_id: int = None,
+        category: str = None,
+        start_date: str = None,
+        end_date: str = None,
+        is_transfer: bool = None,
+    ) -> int:
+        """Count spending transactions matching the same filters as
+        list_spending_transactions (no JOIN needed — sort/portfolio_name
+        are irrelevant to a count)."""
+        with self.get_connection() as conn:
+            where_clause, params = self._spending_where_clause(
+                portfolio_id, category, start_date, end_date, is_transfer
+            )
+            query = "SELECT COUNT(*) FROM spending_transactions s" + where_clause
+            cursor = conn.execute(query, params)
+            return cursor.fetchone()[0]
 
     def get_spending_transaction(self, spending_id: int) -> Optional[Dict]:
         """Get a spending transaction by ID."""

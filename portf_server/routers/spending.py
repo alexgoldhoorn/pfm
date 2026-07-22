@@ -17,6 +17,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Query,
     Request,
     UploadFile,
     status,
@@ -99,6 +100,11 @@ class SpendingTransactionResponse(BaseModel):
     transfer_link_id: Optional[int] = None
     source: Optional[str] = None
     balance: Optional[float] = None
+
+
+class SpendingTransactionListResponse(BaseModel):
+    items: List[SpendingTransactionResponse]
+    total: int
 
 
 class CategoryUpdateBody(BaseModel):
@@ -341,28 +347,59 @@ async def save_spending_transactions(
     )
 
 
-@router.get("/", response_model=List[SpendingTransactionResponse])
+_SPENDING_SORT_BY_VALUES = {
+    "date",
+    "portfolio_name",
+    "description",
+    "category",
+    "amount",
+}
+_SPENDING_SORT_DIR_VALUES = {"asc", "desc"}
+
+
+@router.get("/", response_model=SpendingTransactionListResponse)
 async def list_spending(
     portfolio_id: Optional[int] = None,
     category: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     is_transfer: Optional[bool] = None,
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    sort_by: str = "date",
+    sort_dir: str = "desc",
     db=Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
-    """List spending transactions with optional filters."""
-    rows = db.list_spending_transactions(
+    """List spending transactions with optional filters, paginated and sorted."""
+    if sort_by not in _SPENDING_SORT_BY_VALUES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"sort_by must be one of {sorted(_SPENDING_SORT_BY_VALUES)}",
+        )
+    if sort_dir not in _SPENDING_SORT_DIR_VALUES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"sort_dir must be one of {sorted(_SPENDING_SORT_DIR_VALUES)}",
+        )
+    filters = dict(
         portfolio_id=portfolio_id,
         category=category,
         start_date=start_date,
         end_date=end_date,
         is_transfer=is_transfer,
     )
-    return [
-        SpendingTransactionResponse(**{**r, "is_transfer": bool(r["is_transfer"])})
-        for r in rows
-    ]
+    rows = db.list_spending_transactions(
+        limit=limit, offset=offset, sort_by=sort_by, sort_dir=sort_dir, **filters
+    )
+    total = db.count_spending_transactions(**filters)
+    return SpendingTransactionListResponse(
+        items=[
+            SpendingTransactionResponse(**{**r, "is_transfer": bool(r["is_transfer"])})
+            for r in rows
+        ],
+        total=total,
+    )
 
 
 @router.put("/{spending_id}", response_model=dict)
