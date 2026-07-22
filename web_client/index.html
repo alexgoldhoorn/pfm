@@ -2590,6 +2590,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                 <input type="text" list="spCategoryList" class="form-control form-control-sm w-auto" id="spBulkCategorySelect" placeholder="Category">
                                 <button class="btn btn-sm btn-outline-primary" id="spBulkRecategorizeBtn">Set category</button>
                                 <button class="btn btn-sm btn-outline-info" id="spBulkSuggestBtn"><i class="bi bi-magic me-1"></i>Suggest categories (AI)</button>
+                                <button class="btn btn-sm btn-outline-secondary" id="spBulkApplyRulesBtn" title="Re-apply category rules to selected rows that are still uncategorized"><i class="bi bi-tags me-1"></i>Apply rules to selected</button>
                                 <button class="btn btn-sm btn-outline-danger ms-auto" id="spBulkDeleteBtn"><i class="bi bi-trash me-1"></i>Delete selected</button>
                             </div>
                         </div>
@@ -2634,6 +2635,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                     <button type="submit" class="btn btn-sm btn-primary w-100"><i class="bi bi-plus-lg me-1"></i>Add</button>
                                 </div>
                             </form>
+                            <div id="spRuleStatus" class="small text-muted mt-2"></div>
                         </div>
                     </div>
                 </div>

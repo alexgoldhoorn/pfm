@@ -340,6 +340,60 @@ def test_rescan_categories_zero_matches(tmp_path):
     assert resp.json()["recategorized"] == 0
 
 
+def test_rescan_categories_scoped_to_ids(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    id_a = db.create_spending_transaction(pid, "2026-01-05", "MERCADONA COMPRA", -24.50)
+    id_b = db.create_spending_transaction(
+        pid, "2026-01-06", "MERCADONA COMPRA 2", -10.0
+    )
+    db.create_spending_rule(pattern="MERCADONA", category="Groceries")
+
+    resp = client.post(
+        "/api/v1/spending/rescan-categories",
+        json={"ids": [id_a]},
+        headers=HEADERS,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["recategorized"] == 1
+
+    rows = {r["id"]: r for r in client.get("/api/v1/spending/", headers=HEADERS).json()}
+    assert rows[id_a]["category"] == "Groceries"
+    assert rows[id_b]["category"] == "uncategorized"
+
+
+def test_rescan_categories_ids_scope_never_touches_already_categorized(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    tx_id = db.create_spending_transaction(
+        pid, "2026-01-05", "MERCADONA COMPRA", -24.50, category="Dining"
+    )
+    db.create_spending_rule(pattern="MERCADONA", category="Groceries")
+
+    resp = client.post(
+        "/api/v1/spending/rescan-categories",
+        json={"ids": [tx_id]},
+        headers=HEADERS,
+    )
+    assert resp.json()["recategorized"] == 0
+    row = client.get("/api/v1/spending/", headers=HEADERS).json()[0]
+    assert row["category"] == "Dining"
+
+
+def test_rescan_categories_empty_body_behaves_like_no_body(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_transaction(pid, "2026-01-05", "MERCADONA COMPRA", -24.50)
+    db.create_spending_rule(pattern="MERCADONA", category="Groceries")
+
+    resp = client.post(
+        "/api/v1/spending/rescan-categories",
+        json={},
+        headers=HEADERS,
+    )
+    assert resp.json()["recategorized"] == 1
+
+
 def test_transfer_to_brokerage_booking(tmp_path):
     client, db = _make_client(tmp_path)
     pid_bank = db.create_portfolio("Bank A", account_type="bank")

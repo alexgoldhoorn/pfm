@@ -1487,10 +1487,11 @@ function createAPIClient() {
             }
             return response.json();
         },
-        async rescanCategories() {
+        async rescanCategories(ids) {
             const response = await fetch(this.baseURL + '/api/v1/spending/rescan-categories', {
                 method: 'POST',
-                headers: { 'X-API-Key': this.apiKey }
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(ids ? { ids } : {})
             });
             if (!response.ok) {
                 let detail = 'Failed to rescan categories';

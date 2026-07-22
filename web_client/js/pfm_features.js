@@ -4462,6 +4462,32 @@ function _wireSpBulkActions() {
             recatBtn.disabled = false;
         });
     }
+    const applyRulesBtn = document.getElementById('spBulkApplyRulesBtn');
+    if (applyRulesBtn && !applyRulesBtn.dataset.wired) {
+        applyRulesBtn.dataset.wired = '1';
+        applyRulesBtn.addEventListener('click', async () => {
+            const ids = _selectedSpendingIds();
+            if (!ids.length) return;
+            applyRulesBtn.disabled = true;
+            const status = document.getElementById('spBulkStatus');
+            if (status) { status.className = 'small text-muted px-3 pt-2'; status.textContent = 'Applying rules…'; }
+            try {
+                const result = await window.apiClient.rescanCategories(ids);
+                const n = (result && result.recategorized) || 0;
+                await _refreshSpendingData();
+                if (status) {
+                    status.className = n > 0 ? 'small text-success px-3 pt-2' : 'small text-muted px-3 pt-2';
+                    status.textContent = n > 0
+                        ? `Applied rules to ${n} of ${ids.length} selected row(s).`
+                        : 'No selected rows matched a rule.';
+                }
+            } catch (err) {
+                if (status) { status.className = 'small text-danger px-3 pt-2'; status.textContent = 'Error: ' + err.message; }
+                else alert('Error: ' + err.message);
+            }
+            applyRulesBtn.disabled = false;
+        });
+    }
     const delBtn = document.getElementById('spBulkDeleteBtn');
     if (delBtn && !delBtn.dataset.wired) {
         delBtn.dataset.wired = '1';
@@ -4726,11 +4752,26 @@ function _wireSpendingRuleForm() {
             const pattern = document.getElementById('spRulePattern').value.trim();
             const category = document.getElementById('spRuleCategory').value.trim();
             if (!pattern || !category) return;
+            const status = document.getElementById('spRuleStatus');
             try {
                 await window.apiClient.createSpendingRule(pattern, category);
                 form.reset();
+                let rescanned = 0;
+                try {
+                    const result = await window.apiClient.rescanCategories();
+                    rescanned = (result && result.recategorized) || 0;
+                } catch (e2) { /* rescan failing shouldn't block reporting the rule was added */ }
                 await _refreshSpendingData();
-            } catch (err) { alert('Error: ' + err.message); }
+                if (status) {
+                    status.className = 'small text-success mt-2';
+                    status.textContent = rescanned > 0
+                        ? `Rule added. Applied to ${rescanned} existing uncategorized row${rescanned === 1 ? '' : 's'}.`
+                        : 'Rule added.';
+                }
+            } catch (err) {
+                if (status) { status.className = 'small text-danger mt-2'; status.textContent = 'Error: ' + err.message; }
+                else alert('Error: ' + err.message);
+            }
         });
     }
 }
