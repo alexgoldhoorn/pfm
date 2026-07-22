@@ -5,7 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-07-21
+Last updated: 2026-07-22
+
+**Recent (v2.5.27):** **Free-text category entry with autocomplete.** Category entry throughout the Spending page (the main transactions table's per-row field, the bulk-recategorize field, and the AI-suggest review panel) is now a free-text `<input list="spCategoryList">` backed by one shared `<datalist>` of existing categories, instead of a fixed `<select>` dropdown restricted to categories that already exist — a brand-new category no longer requires going through the separate Add Rule form first. `PUT /api/v1/spending/{id}` now also rejects a blank/whitespace-only category with a 400 (previously accepted it silently).
 
 **Recent (v2.5.26):** **Rule editing + AI-suggest pattern refinement.** The Spending page's Rules list now supports edit-in-place (pencil icon per row) to change an existing rule's pattern or category; previously only supported add/delete. The AI-suggest review panel (`#spSuggestReviewPanel`) now has an editable pattern field per suggestion, allowing LLM-extracted patterns to be corrected before they become permanent rules. The suggestion prompt was also improved to explicitly strip leading card/transaction-reference numbers and trailing location+date+reference-code noise from real bank descriptions before extracting merchant names — this addressed a production issue where every transaction's raw description was unique even for repeat visits to the same merchant (validated against Abanca exports).
 
