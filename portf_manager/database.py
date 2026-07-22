@@ -2964,6 +2964,10 @@ class Database:
         new_name's row as-is; (2) old_name is registered — rename its row;
         (3) neither is registered (purely usage-derived) — insert new_name.
         """
+        # Self-rename is a no-op: don't touch the database.
+        if old_name == new_name:
+            return {"transactions_updated": 0, "rules_updated": 0}
+
         with self.get_connection() as conn:
             c1 = conn.execute(
                 "UPDATE spending_transactions SET category = ? WHERE category = ?",
