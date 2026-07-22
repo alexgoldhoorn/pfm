@@ -83,7 +83,7 @@ def test_save_and_list(tmp_path):
     assert d["saved"] == 1
     assert d["duplicates_skipped"] == 0
 
-    listed = client.get("/api/v1/spending/", headers=HEADERS).json()
+    listed = client.get("/api/v1/spending/", headers=HEADERS).json()["items"]
     assert len(listed) == 1
     assert listed[0]["description"] == "MERCADONA"
 
@@ -111,7 +111,7 @@ def test_save_skips_duplicates_by_default(tmp_path):
     d2 = r2.json()
     assert d2["saved"] == 0
     assert d2["duplicates_skipped"] == 1
-    assert len(client.get("/api/v1/spending/", headers=HEADERS).json()) == 1
+    assert len(client.get("/api/v1/spending/", headers=HEADERS).json()["items"]) == 1
 
 
 def test_save_add_duplicate_anyway(tmp_path):
@@ -135,7 +135,7 @@ def test_save_add_duplicate_anyway(tmp_path):
         headers=HEADERS,
     )
     assert r2.json()["saved"] == 1
-    assert len(client.get("/api/v1/spending/", headers=HEADERS).json()) == 2
+    assert len(client.get("/api/v1/spending/", headers=HEADERS).json()["items"]) == 2
 
 
 def test_update_category(tmp_path):
@@ -147,7 +147,7 @@ def test_update_category(tmp_path):
     )
     assert r.status_code == 200
     assert (
-        client.get("/api/v1/spending/", headers=HEADERS).json()[0]["category"]
+        client.get("/api/v1/spending/", headers=HEADERS).json()["items"][0]["category"]
         == "Transport"
     )
 
@@ -281,7 +281,7 @@ def test_save_auto_links_transfer_between_two_accounts(tmp_path):
     )
     assert r.json()["transfers_linked"] == 1
 
-    rows = client.get("/api/v1/spending/", headers=HEADERS).json()
+    rows = client.get("/api/v1/spending/", headers=HEADERS).json()["items"]
     assert all(row["is_transfer"] for row in rows)
     assert all(row["category"] == "Transfer" for row in rows)
 
@@ -302,7 +302,7 @@ def test_rescan_categories_applies_new_rule_to_uncategorized_row(tmp_path):
     pid = db.create_portfolio("Example Bank", account_type="bank")
     db.create_spending_transaction(pid, "2026-01-05", "MERCADONA COMPRA", -24.50)
 
-    before = client.get("/api/v1/spending/", headers=HEADERS).json()
+    before = client.get("/api/v1/spending/", headers=HEADERS).json()["items"]
     assert before[0]["category"] == "uncategorized"
 
     db.create_spending_rule(pattern="MERCADONA", category="Groceries")
@@ -311,7 +311,7 @@ def test_rescan_categories_applies_new_rule_to_uncategorized_row(tmp_path):
     assert resp.status_code == 200
     assert resp.json()["recategorized"] == 1
 
-    after = client.get("/api/v1/spending/", headers=HEADERS).json()
+    after = client.get("/api/v1/spending/", headers=HEADERS).json()["items"]
     assert after[0]["category"] == "Groceries"
 
 
@@ -326,7 +326,7 @@ def test_rescan_categories_does_not_touch_already_categorized_row(tmp_path):
     resp = client.post("/api/v1/spending/rescan-categories", headers=HEADERS)
     assert resp.json()["recategorized"] == 0
 
-    rows = client.get("/api/v1/spending/", headers=HEADERS).json()
+    rows = client.get("/api/v1/spending/", headers=HEADERS).json()["items"]
     row = next(r for r in rows if r["id"] == tx_id)
     assert row["category"] == "Dining"
 
@@ -357,7 +357,10 @@ def test_rescan_categories_scoped_to_ids(tmp_path):
     assert resp.status_code == 200
     assert resp.json()["recategorized"] == 1
 
-    rows = {r["id"]: r for r in client.get("/api/v1/spending/", headers=HEADERS).json()}
+    rows = {
+        r["id"]: r
+        for r in client.get("/api/v1/spending/", headers=HEADERS).json()["items"]
+    }
     assert rows[id_a]["category"] == "Groceries"
     assert rows[id_b]["category"] == "uncategorized"
 
@@ -376,7 +379,7 @@ def test_rescan_categories_ids_scope_never_touches_already_categorized(tmp_path)
         headers=HEADERS,
     )
     assert resp.json()["recategorized"] == 0
-    row = client.get("/api/v1/spending/", headers=HEADERS).json()[0]
+    row = client.get("/api/v1/spending/", headers=HEADERS).json()["items"][0]
     assert row["category"] == "Dining"
 
 
@@ -423,7 +426,7 @@ def test_transfer_to_brokerage_booking(tmp_path):
         headers=HEADERS,
     )
     assert r.json()["transfers_linked"] == 1
-    row = client.get("/api/v1/spending/", headers=HEADERS).json()[0]
+    row = client.get("/api/v1/spending/", headers=HEADERS).json()["items"][0]
     assert row["is_transfer"] is True
     assert row["transfer_link_type"] == "booking"
 
@@ -489,7 +492,7 @@ def test_booking_not_reused_across_separate_save_calls(tmp_path):
     # already-linked booking.
     assert r2.json()["transfers_linked"] == 0
 
-    rows = client.get("/api/v1/spending/", headers=HEADERS).json()
+    rows = client.get("/api/v1/spending/", headers=HEADERS).json()["items"]
     linked_to_booking = [
         row
         for row in rows
@@ -804,7 +807,7 @@ def test_delete_spending_transaction(tmp_path):
     r = client.delete(f"/api/v1/spending/{tx_id}", headers=HEADERS)
     assert r.status_code == 200
     assert r.json() == {"deleted": True, "id": tx_id}
-    assert client.get("/api/v1/spending/", headers=HEADERS).json() == []
+    assert client.get("/api/v1/spending/", headers=HEADERS).json()["items"] == []
 
 
 def test_delete_spending_transaction_missing(tmp_path):
@@ -860,7 +863,7 @@ def test_save_persists_balance(tmp_path):
     )
     assert r.status_code == 200
     assert r.json()["saved"] == 1
-    listed = client.get("/api/v1/spending/", headers=HEADERS).json()
+    listed = client.get("/api/v1/spending/", headers=HEADERS).json()["items"]
     assert listed[0]["balance"] == 475.50
 
 
@@ -1043,3 +1046,73 @@ def test_rename_category_merges_into_existing_name(tmp_path):
         headers=HEADERS,
     )
     assert r.status_code == 200
+
+
+def test_list_spending_pagination_shape_and_total(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    for i in range(5):
+        db.create_spending_transaction(pid, f"2026-01-{i + 1:02d}", f"Desc {i}", -10.0)
+
+    r = client.get("/api/v1/spending/?limit=2&offset=0", headers=HEADERS)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 5
+    assert len(body["items"]) == 2
+
+
+def test_list_spending_pagination_offset_advances(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    for i in range(5):
+        db.create_spending_transaction(pid, f"2026-01-{i + 1:02d}", f"Desc {i}", -10.0)
+
+    page1 = client.get(
+        "/api/v1/spending/?limit=2&offset=0&sort_by=date&sort_dir=asc", headers=HEADERS
+    ).json()
+    page2 = client.get(
+        "/api/v1/spending/?limit=2&offset=2&sort_by=date&sort_dir=asc", headers=HEADERS
+    ).json()
+    ids1 = {r["id"] for r in page1["items"]}
+    ids2 = {r["id"] for r in page2["items"]}
+    assert ids1.isdisjoint(ids2)
+
+
+def test_list_spending_sort_by_amount_asc(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_transaction(pid, "2026-01-01", "Big", -100.0)
+    db.create_spending_transaction(pid, "2026-01-02", "Small", -5.0)
+
+    r = client.get(
+        "/api/v1/spending/?limit=10&offset=0&sort_by=amount&sort_dir=asc",
+        headers=HEADERS,
+    )
+    items = r.json()["items"]
+    assert [i["description"] for i in items] == ["Big", "Small"]
+
+
+def test_list_spending_total_respects_filters(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_transaction(pid, "2026-01-01", "A", -10.0, category="Groceries")
+    db.create_spending_transaction(pid, "2026-01-02", "B", -10.0, category="Dining")
+
+    r = client.get(
+        "/api/v1/spending/?limit=10&offset=0&category=Groceries", headers=HEADERS
+    )
+    body = r.json()
+    assert body["total"] == 1
+    assert len(body["items"]) == 1
+
+
+def test_list_spending_invalid_sort_by_rejected(tmp_path):
+    client, _ = _make_client(tmp_path)
+    r = client.get("/api/v1/spending/?sort_by=not_a_column", headers=HEADERS)
+    assert r.status_code == 400
+
+
+def test_list_spending_invalid_limit_rejected(tmp_path):
+    client, _ = _make_client(tmp_path)
+    r = client.get("/api/v1/spending/?limit=0", headers=HEADERS)
+    assert r.status_code == 422  # FastAPI Query validation
