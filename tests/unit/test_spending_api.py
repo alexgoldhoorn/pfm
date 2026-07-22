@@ -938,3 +938,108 @@ def test_suggest_prompt_instructs_stripping_transaction_noise():
     assert "card/transaction-reference" in prompt
     assert "location+date+reference" in prompt
     assert "767002813178EXAMPLE MERCHANT\\CITY\\ES0000000019" in prompt
+
+
+def test_list_categories_includes_used_and_registered(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_transaction(
+        pid, "2026-01-05", "Desc", -10.0, category="Groceries"
+    )
+    db.create_spending_category("Vacation")
+
+    r = client.get("/api/v1/spending/categories", headers=HEADERS)
+    assert r.status_code == 200
+    body = r.json()
+    assert "Groceries" in body
+    assert "Vacation" in body
+
+
+def test_create_category(tmp_path):
+    client, _ = _make_client(tmp_path)
+    r = client.post(
+        "/api/v1/spending/categories", json={"name": "Vacation"}, headers=HEADERS
+    )
+    assert r.status_code == 201
+    assert r.json()["name"] == "Vacation"
+
+    listed = client.get("/api/v1/spending/categories", headers=HEADERS).json()
+    assert "Vacation" in listed
+
+
+def test_create_category_rejects_blank_name(tmp_path):
+    client, _ = _make_client(tmp_path)
+    r = client.post(
+        "/api/v1/spending/categories", json={"name": "   "}, headers=HEADERS
+    )
+    assert r.status_code == 400
+
+
+def test_create_category_rejects_exact_duplicate(tmp_path):
+    client, _ = _make_client(tmp_path)
+    client.post(
+        "/api/v1/spending/categories", json={"name": "Vacation"}, headers=HEADERS
+    )
+    r = client.post(
+        "/api/v1/spending/categories", json={"name": "Vacation"}, headers=HEADERS
+    )
+    assert r.status_code == 409
+
+
+def test_rename_category_cascades_to_transactions_and_rules(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    tx_id = db.create_spending_transaction(
+        pid, "2026-01-05", "Desc", -10.0, category="Groceries"
+    )
+    db.create_spending_rule(pattern="MERCADONA", category="Groceries")
+
+    r = client.put(
+        "/api/v1/spending/categories/Groceries",
+        json={"new_name": "Food"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["transactions_updated"] == 1
+    assert body["rules_updated"] == 1
+
+    assert db.get_spending_transaction(tx_id)["category"] == "Food"
+
+
+def test_rename_category_rejects_blank_new_name(tmp_path):
+    client, db = _make_client(tmp_path)
+    db.create_spending_category("Groceries")
+    r = client.put(
+        "/api/v1/spending/categories/Groceries",
+        json={"new_name": "   "},
+        headers=HEADERS,
+    )
+    assert r.status_code == 400
+
+
+def test_rename_category_rejects_same_name(tmp_path):
+    client, db = _make_client(tmp_path)
+    db.create_spending_category("Groceries")
+    r = client.put(
+        "/api/v1/spending/categories/Groceries",
+        json={"new_name": "Groceries"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 400
+
+
+def test_rename_category_merges_into_existing_name(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_transaction(
+        pid, "2026-01-05", "Desc", -10.0, category="Groceries"
+    )
+    db.create_spending_category("Food")
+
+    r = client.put(
+        "/api/v1/spending/categories/Groceries",
+        json={"new_name": "Food"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
