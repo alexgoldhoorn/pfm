@@ -50,7 +50,7 @@ class TestDatabase:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             result = cursor.fetchone()
-            assert result[0] == 26  # Current schema version
+            assert result[0] == 27  # Current schema version
 
     def test_v18_assets_have_ticker_column(self):
         """v18 adds the nullable ticker alias column to assets."""
@@ -998,7 +998,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 26
+            assert version == 27
 
             # Assert columns exist
             for table in ["entities", "portfolios", "transactions"]:
@@ -1028,7 +1028,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 26
+            assert version == 27
 
             # Check all tables exist
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -1099,7 +1099,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 26
+            assert version == 27
 
             # Check new tables exist
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -1206,3 +1206,91 @@ class TestChatSessions:
         db = Database(str(tmp_path / "t.db"))
         result = db.rename_chat_session("missing", "Whatever")
         assert result is False
+
+
+class TestSpendingCategories:
+    """v27 — spending_categories registry + CRUD/rename."""
+
+    def setup_method(self):
+        self.db_path = tempfile.mktemp(suffix=".db")
+        self.db = Database(self.db_path)
+
+    def teardown_method(self):
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+    def test_list_spending_categories_unions_transactions_rules_and_registry(self):
+        pid = self.db.create_portfolio("Bank", account_type="bank")
+        self.db.create_spending_transaction(
+            pid, "2026-01-05", "Desc", -10.0, category="Groceries"
+        )
+        self.db.create_spending_rule(pattern="NETFLIX", category="Subscriptions")
+        self.db.create_spending_category("Vacation")
+
+        cats = self.db.list_spending_categories()
+        assert "Groceries" in cats
+        assert "Subscriptions" in cats
+        assert "Vacation" in cats
+        assert len(cats) == len(set(cats))  # deduplicated
+
+    def test_create_spending_category_returns_new_id(self):
+        cat_id = self.db.create_spending_category("Vacation")
+        assert isinstance(cat_id, int)
+        assert cat_id > 0
+
+    def test_find_spending_category_by_name(self):
+        self.db.create_spending_category("Vacation")
+        found = self.db.find_spending_category_by_name("Vacation")
+        assert found is not None
+        assert found["name"] == "Vacation"
+        assert self.db.find_spending_category_by_name("Nonexistent") is None
+
+    def test_rename_spending_category_updates_transactions_and_rules(self):
+        pid = self.db.create_portfolio("Bank", account_type="bank")
+        tx_id = self.db.create_spending_transaction(
+            pid, "2026-01-05", "Desc", -10.0, category="Groceries"
+        )
+        rule_id = self.db.create_spending_rule(
+            pattern="MERCADONA", category="Groceries"
+        )
+
+        result = self.db.rename_spending_category("Groceries", "Food")
+        assert result == {"transactions_updated": 1, "rules_updated": 1}
+
+        assert self.db.get_spending_transaction(tx_id)["category"] == "Food"
+        assert self.db.get_spending_rule(rule_id)["category"] == "Food"
+
+    def test_rename_spending_category_registers_previously_unregistered_name(self):
+        pid = self.db.create_portfolio("Bank", account_type="bank")
+        self.db.create_spending_transaction(
+            pid, "2026-01-05", "Desc", -10.0, category="Groceries"
+        )
+
+        self.db.rename_spending_category("Groceries", "Food")
+
+        assert self.db.find_spending_category_by_name("Food") is not None
+        assert self.db.find_spending_category_by_name("Groceries") is None
+
+    def test_rename_spending_category_renames_existing_registry_row(self):
+        self.db.create_spending_category("Groceries")
+
+        self.db.rename_spending_category("Groceries", "Food")
+
+        assert self.db.find_spending_category_by_name("Food") is not None
+        assert self.db.find_spending_category_by_name("Groceries") is None
+
+    def test_rename_spending_category_merges_into_existing_name_without_error(self):
+        pid = self.db.create_portfolio("Bank", account_type="bank")
+        tx_id = self.db.create_spending_transaction(
+            pid, "2026-01-05", "Desc", -10.0, category="Groceries"
+        )
+        self.db.create_spending_category("Food")  # target already registered
+
+        result = self.db.rename_spending_category("Groceries", "Food")
+        assert result == {"transactions_updated": 1, "rules_updated": 0}
+
+        assert self.db.get_spending_transaction(tx_id)["category"] == "Food"
+        # Merge case: old_name's registry row (none here) is a no-op delete;
+        # new_name's existing registry row is untouched, not duplicated.
+        cats = self.db.list_spending_categories()
+        assert cats.count("Food") == 1

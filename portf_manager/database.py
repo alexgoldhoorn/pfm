@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 
 # Database version for migration tracking
-DATABASE_VERSION = 26
+DATABASE_VERSION = 27
 
 
 # black
@@ -634,6 +634,21 @@ class Database:
             """
         )
 
+        # A lightweight name registry for spending categories, decoupled from
+        # spending_transactions/spending_rules (which keep storing category
+        # as a free string, unchanged) — lets a category exist (freshly
+        # created, or renamed away from) even with zero transactions/rules
+        # currently using it. See _migrate_to_v27.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS spending_categories (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                name       TEXT NOT NULL UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
         # Create triggers for updated_at timestamps
         for table in [
             "entities",
@@ -706,6 +721,8 @@ class Database:
             self._migrate_to_v25(conn)
         if current_version < 26:
             self._migrate_to_v26(conn)
+        if current_version < 27:
+            self._migrate_to_v27(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -1473,6 +1490,26 @@ class Database:
         recent imported row rather than requiring manual entry.
         """
         _add_column_if_missing(conn, "spending_transactions", "balance", "REAL")
+        conn.commit()
+
+    def _migrate_to_v27(self, conn: sqlite3.Connection) -> None:
+        """Migrate from v26 to v27 — spending category registry.
+
+        A lightweight name registry for spending categories, decoupled from
+        spending_transactions/spending_rules (which keep storing category
+        as a free string, unchanged) — lets a category exist (freshly
+        created, or renamed away from) even with zero transactions/rules
+        currently using it.
+        """
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS spending_categories (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                name       TEXT NOT NULL UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
         conn.commit()
 
     # ── App settings (persistent key/value) ────────────────────────────────
@@ -2883,6 +2920,78 @@ class Database:
             )
             conn.commit()
             return cursor.lastrowid
+
+    def list_spending_categories(self) -> List[str]:
+        """List every known spending category — used on a transaction or
+        rule, or explicitly registered — deduplicated and sorted."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT category AS name FROM spending_transactions
+                UNION
+                SELECT category AS name FROM spending_rules
+                UNION
+                SELECT name FROM spending_categories
+                ORDER BY name
+                """
+            )
+            return [row["name"] for row in cursor.fetchall()]
+
+    def create_spending_category(self, name: str) -> int:
+        """Register a new, initially-unused spending category."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "INSERT INTO spending_categories (name) VALUES (?)", (name,)
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def find_spending_category_by_name(self, name: str) -> Optional[Dict]:
+        """Find a registered category by exact name match."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT * FROM spending_categories WHERE name = ?", (name,)
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def rename_spending_category(self, old_name: str, new_name: str) -> Dict[str, int]:
+        """Rename a category everywhere it's used (transactions, rules, registry).
+
+        Three mutually exclusive registry-upsert cases, checked in order:
+        (1) new_name is already registered (merge case — consolidating a
+        near-duplicate) — delete old_name's registry row if present, leave
+        new_name's row as-is; (2) old_name is registered — rename its row;
+        (3) neither is registered (purely usage-derived) — insert new_name.
+        """
+        with self.get_connection() as conn:
+            c1 = conn.execute(
+                "UPDATE spending_transactions SET category = ? WHERE category = ?",
+                (new_name, old_name),
+            )
+            c2 = conn.execute(
+                "UPDATE spending_rules SET category = ? WHERE category = ?",
+                (new_name, old_name),
+            )
+            if self.find_spending_category_by_name(new_name):
+                conn.execute(
+                    "DELETE FROM spending_categories WHERE name = ?", (old_name,)
+                )
+            else:
+                updated = conn.execute(
+                    "UPDATE spending_categories SET name = ? WHERE name = ?",
+                    (new_name, old_name),
+                )
+                if updated.rowcount == 0:
+                    conn.execute(
+                        "INSERT INTO spending_categories (name) VALUES (?)",
+                        (new_name,),
+                    )
+            conn.commit()
+            return {
+                "transactions_updated": c1.rowcount,
+                "rules_updated": c2.rowcount,
+            }
 
     def find_duplicate_spending_rule(
         self, pattern: str, category: str
