@@ -1517,6 +1517,48 @@ function createAPIClient() {
             }
             return response.json();
         },
+        async getSpendingCategories() {
+            const response = await fetch(this.baseURL + '/api/v1/spending/categories', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) throw new Error('Failed to load categories');
+            return response.json();
+        },
+        async createSpendingCategory(name) {
+            const response = await fetch(this.baseURL + '/api/v1/spending/categories', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify({ name })
+            });
+            if (!response.ok) {
+                let detail = 'Failed to create category';
+                try {
+                    const body = await response.json();
+                    detail = body.detail || detail;
+                } catch (e) { /* response wasn't JSON, use the generic message */ }
+                throw new Error(detail);
+            }
+            return response.json();
+        },
+        async renameSpendingCategory(oldName, newName) {
+            const response = await fetch(
+                this.baseURL + '/api/v1/spending/categories/' + encodeURIComponent(oldName),
+                {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                    body: JSON.stringify({ new_name: newName })
+                }
+            );
+            if (!response.ok) {
+                let detail = 'Failed to rename category';
+                try {
+                    const body = await response.json();
+                    detail = body.detail || detail;
+                } catch (e) { /* response wasn't JSON, use the generic message */ }
+                throw new Error(detail);
+            }
+            return response.json();
+        },
         async createSpendingRule(pattern, category) {
             const response = await fetch(this.baseURL + '/api/v1/spending/rules', {
                 method: 'POST',
