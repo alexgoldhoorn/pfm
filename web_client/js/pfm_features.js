@@ -4305,7 +4305,6 @@ async function loadSpendingPage() {
         });
     }
     await _refreshSpendingData();
-    await _fetchAndRenderSpendingTable();
 }
 window.loadSpendingPage = loadSpendingPage;
 
