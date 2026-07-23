@@ -462,23 +462,22 @@
                         </div>
                     </div>
 
-                    <!-- Row 3: Simulator CTA + Recent Transactions -->
-                    <div class="row g-3">
-                        <!-- Simulate Future Wealth CTA -->
+                    <!-- Row 3: Wealth Simulator preview + Recent Transactions -->
+                    <div class="row g-3 mb-4">
+                        <!-- Wealth Simulator live preview -->
                         <div class="col-12 col-md-4">
                             <div class="card border-primary h-100">
-                                <div class="card-body d-flex flex-column justify-content-between">
-                                    <div>
-                                        <h5 class="card-title text-primary">
-                                            <i class="bi bi-graph-up-arrow me-2"></i>Wealth Simulator
-                                        </h5>
-                                        <p class="card-text text-muted small">
-                                            Project your portfolio growth over time using Geometric Brownian Motion.
-                                            Your current portfolio value is pre-filled automatically.
-                                        </p>
+                                <div class="card-body d-flex flex-column">
+                                    <h5 class="card-title text-primary mb-2">
+                                        <i class="bi bi-graph-up-arrow me-2"></i>Wealth Simulator
+                                    </h5>
+                                    <div id="dashForecastArea" class="flex-grow-1 d-flex flex-column justify-content-center">
+                                        <div class="text-muted small text-center">
+                                            <div class="spinner-border spinner-border-sm mb-1" role="status"></div><br>Loading…
+                                        </div>
                                     </div>
-                                    <button class="btn btn-primary mt-3" onclick="window.navigationManager.showPage('forecast')">
-                                        Simulate Future Wealth <i class="bi bi-arrow-right ms-1"></i>
+                                    <button class="btn btn-outline-primary btn-sm mt-2" onclick="window.navigationManager.showPage('forecast')">
+                                        Customize <i class="bi bi-arrow-right ms-1"></i>
                                     </button>
                                 </div>
                             </div>
