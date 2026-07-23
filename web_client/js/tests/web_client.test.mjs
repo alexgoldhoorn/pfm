@@ -464,6 +464,42 @@ test("computeGoalOverlays: target year beyond the slider's years is not marked o
     assert.equal(o.onChartYear, false);
 });
 
+test("projectAccount/runProjection are exposed at module scope (not trapped in setupForecastPage's closure)", () => {
+    const w = loadAppIntoContext();
+    assert.equal(typeof w.projectAccount, "function");
+    assert.equal(typeof w.runProjection, "function");
+});
+
+test("projectAccount: zero rate and zero volatility leaves the mean flat with no band spread", () => {
+    const { projectAccount } = loadAppIntoContext();
+    const p = projectAccount(1000, 0, 0, 3, 1.96, 0)[3];
+    assert.equal(p.year, 3);
+    assert.equal(p.mean, 1000);
+    assert.equal(p.high, 1000);
+    assert.equal(p.low, 1000);
+});
+
+test("projectAccount: monthly contribution compounds as an ordinary annuity at zero rate", () => {
+    const { projectAccount } = loadAppIntoContext();
+    const points = projectAccount(0, 0, 0, 2, 1.96, 100);
+    assert.equal(points[1].mean, 1200);
+    assert.equal(points[2].mean, 2400);
+});
+
+test("runProjection: mortgage paid off in exactly the expected year at 0% interest", () => {
+    const { runProjection } = loadAppIntoContext();
+    const proj = runProjection(0, 0, 0, 0, 0, 0, 12000, 0, 1000, 5, 1.96, 0, 0);
+    assert.equal(proj.mortgagePaidOffYear, 1);
+    assert.equal(proj.totalInterestPaid, 0);
+});
+
+test("runProjection: mortgage not paid off within the window keeps a running balance", () => {
+    const { runProjection } = loadAppIntoContext();
+    const proj = runProjection(0, 0, 0, 0, 0, 0, 100000, 0, 100, 5, 1.96, 0, 0);
+    assert.equal(proj.mortgagePaidOffYear, null);
+    assert.equal(proj.data[5].mortgage, 94000);
+});
+
 test("mergeActionItems: combines backend items with open net-worth checklist items", () => {
     const { mergeActionItems } = loadAppIntoContext();
     const backend = [
