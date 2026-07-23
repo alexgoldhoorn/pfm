@@ -2652,14 +2652,22 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                             <div class="card mb-3">
                                 <div class="card-header fw-semibold d-flex align-items-center justify-content-between">
                                     <span>Spending by category</span>
-                                    <button class="btn btn-sm btn-outline-secondary" id="spCategoryChartShowAll">Show all</button>
+                                    <div class="d-flex gap-2">
+                                        <button class="btn btn-sm btn-outline-secondary" id="spCategoryChartTypeToggle">Pie chart</button>
+                                        <button class="btn btn-sm btn-outline-secondary" id="spCategoryChartShowAll">Show all</button>
+                                    </div>
                                 </div>
                                 <div class="card-body">
-                                    <canvas id="spCategoryChartCanvas" height="80"></canvas>
+                                    <div style="position: relative; height: 320px;">
+                                        <canvas id="spCategoryChartCanvas"></canvas>
+                                    </div>
                                 </div>
                             </div>
                             <div class="card">
-                                <div class="card-header fw-semibold">All categories</div>
+                                <div class="card-header fw-semibold d-flex align-items-center justify-content-between">
+                                    <span>All categories</span>
+                                    <button class="btn btn-sm btn-outline-secondary" id="spCategoriesSortToggle" title="Toggle sort order"><i class="bi bi-sort-alpha-down"></i></button>
+                                </div>
                                 <div id="spCategoriesList" class="list-group list-group-flush"></div>
                                 <div class="card-body border-top">
                                     <form id="spCategoryAddForm" class="row g-2 align-items-end">
@@ -2680,7 +2688,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                 <div class="card-header fw-semibold">Category rules</div>
                                 <div class="table-responsive">
                                     <table class="table table-sm mb-0">
-                                        <thead><tr><th class="ps-3">Pattern</th><th>Category</th><th class="pe-3"></th></tr></thead>
+                                        <thead><tr><th class="ps-3" data-key="pattern">Pattern</th><th data-key="category">Category</th><th class="pe-3"></th></tr></thead>
                                         <tbody id="spRulesBody"><tr><td colspan="3" class="text-center text-muted py-2">No rules yet.</td></tr></tbody>
                                     </table>
                                 </div>

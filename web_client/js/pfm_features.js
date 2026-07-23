@@ -4355,6 +4355,17 @@ async function loadSpendingPage() {
             _renderSpendingCategoryChart(window._spCategoryChartData || {});
         });
     }
+    const chartTypeBtn = document.getElementById('spCategoryChartTypeToggle');
+    if (chartTypeBtn && !chartTypeBtn.dataset.wired) {
+        chartTypeBtn.dataset.wired = '1';
+        chartTypeBtn.addEventListener('click', () => {
+            window._spCategoryChartType = (window._spCategoryChartType === 'pie') ? 'bar' : 'pie';
+            chartTypeBtn.textContent = window._spCategoryChartType === 'pie' ? 'Bar chart' : 'Pie chart';
+            _renderSpendingCategoryChart(window._spCategoryChartData || {});
+        });
+    }
+    _wireSpendingRulesSort();
+    _wireCategoriesSortToggle();
     await _refreshSpendingData();
 }
 window.loadSpendingPage = loadSpendingPage;
@@ -4395,6 +4406,9 @@ function _populateSpendingAccountFilters(bankAccounts) {
 }
 
 let _spCategoryChartInstance = null;
+// Shared palette for pie slices -- same colors as the Dashboard's
+// "Allocation by Type" donut, for visual consistency across the app.
+const SP_CATEGORY_CHART_COLORS = ['#2563eb', '#16a34a', '#f59e0b', '#dc2626', '#7c3aed', '#64748b'];
 
 function _renderSpendingCategoryChart(byCategoryEur) {
     window._spCategoryChartData = byCategoryEur || {};
@@ -4412,37 +4426,69 @@ function _renderSpendingCategoryChart(byCategoryEur) {
 
     const labels = entries.map(([cat]) => cat);
     const values = entries.map(([, amt]) => amt);
-    _spCategoryChartInstance = new Chart(canvas, {
-        type: 'bar',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: 'Spent (30d, EUR)',
-                data: values,
-                backgroundColor: 'rgba(220,53,69,0.7)',
-                borderColor: 'rgba(220,53,69,1)',
-                borderWidth: 1,
-            }]
-        },
-        options: {
-            indexAxis: 'y',
-            responsive: true,
-            plugins: {
-                legend: { display: false },
-                tooltip: {
-                    callbacks: {
-                        label(item) { return ` €${Fmt.num(item.raw, 0, 0)}`; }
+    const chartType = window._spCategoryChartType || 'bar';
+
+    if (chartType === 'pie') {
+        _spCategoryChartInstance = new Chart(canvas, {
+            type: 'pie',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: values,
+                    backgroundColor: labels.map((_, i) => SP_CATEGORY_CHART_COLORS[i % SP_CATEGORY_CHART_COLORS.length]),
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: true, position: 'right' },
+                    tooltip: {
+                        callbacks: {
+                            label(item) {
+                                const total = values.reduce((s, v) => s + v, 0);
+                                const pct = total > 0 ? (item.raw / total * 100).toFixed(1) : '0.0';
+                                return ` ${item.label}: €${Fmt.num(item.raw, 0, 0)} (${pct}%)`;
+                            }
+                        }
                     }
                 }
+            }
+        });
+    } else {
+        _spCategoryChartInstance = new Chart(canvas, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Spent (30d, EUR)',
+                    data: values,
+                    backgroundColor: 'rgba(220,53,69,0.7)',
+                    borderColor: 'rgba(220,53,69,1)',
+                    borderWidth: 1,
+                }]
             },
-            scales: {
-                x: {
-                    title: { display: true, text: 'EUR (30d)' },
-                    ticks: { callback: v => '€' + v }
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label(item) { return ` €${Fmt.num(item.raw, 0, 0)}`; }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        title: { display: true, text: 'EUR (30d)' },
+                        ticks: { callback: v => '€' + v }
+                    }
                 }
             }
-        }
-    });
+        });
+    }
 }
 
 window._spTxState = window._spTxState || { page: 0, pageSize: 50, sortBy: 'date', sortDir: 'desc' };
@@ -4881,10 +4927,18 @@ async function _applySpSuggestions() {
     }
 }
 
+window._spRulesSortState = window._spRulesSortState || { key: null, dir: 'asc' };
+
 function _renderSpendingRules(rules) {
+    window._spRulesData = rules;
+    const st = window._spRulesSortState;
+    const sorted = st.key ? [...rules].sort((a, b) => {
+        const cmp = String(a[st.key]).toLowerCase().localeCompare(String(b[st.key]).toLowerCase());
+        return st.dir === 'asc' ? cmp : -cmp;
+    }) : rules;
     const body = document.getElementById('spRulesBody');
     if (!body) return;
-    body.innerHTML = rules.length ? rules.map(r => `
+    body.innerHTML = sorted.length ? sorted.map(r => `
         <tr>
             <td class="ps-3" id="spRulePatternCell${r.id}" data-value="${escapeForAttr(r.pattern)}">${esc(r.pattern)}</td>
             <td id="spRuleCategoryCell${r.id}" data-value="${escapeForAttr(r.category)}">${esc(r.category)}</td>
@@ -4893,17 +4947,63 @@ function _renderSpendingRules(rules) {
                 <button class="btn btn-sm btn-outline-danger" onclick="window.deleteSpendingRule(${r.id})" title="Delete"><i class="bi bi-trash"></i></button>
             </td>
         </tr>`).join('') : '<tr><td colspan="3" class="text-center text-muted py-2">No rules yet.</td></tr>';
+    document.querySelectorAll('#spPaneRules th[data-key]').forEach(th => {
+        const arrow = th.querySelector('.pfm-sort-arrow') || (() => {
+            const s = document.createElement('span');
+            s.className = 'pfm-sort-arrow ms-1';
+            th.appendChild(s);
+            return s;
+        })();
+        arrow.textContent = th.dataset.key === st.key ? (st.dir === 'asc' ? '▲' : '▼') : '';
+    });
 }
 
+function _wireSpendingRulesSort() {
+    const rulesTable = document.querySelector('#spPaneRules table');
+    if (rulesTable && !rulesTable.dataset.sortWired) {
+        rulesTable.dataset.sortWired = '1';
+        rulesTable.querySelectorAll('th[data-key]').forEach(th => {
+            th.style.cursor = 'pointer';
+            th.addEventListener('click', () => {
+                const key = th.dataset.key;
+                const st = window._spRulesSortState;
+                st.dir = (st.key === key && st.dir === 'asc') ? 'desc' : 'asc';
+                st.key = key;
+                _renderSpendingRules(window._spRulesData || []);
+            });
+        });
+    }
+}
+
+window._spCategoriesSortDir = window._spCategoriesSortDir || 'asc';
+
 function _renderCategoriesList(categories) {
+    window._spCategoriesListData = categories;
+    const dir = window._spCategoriesSortDir;
+    const sorted = [...categories].sort((a, b) => {
+        const cmp = a.toLowerCase().localeCompare(b.toLowerCase());
+        return dir === 'asc' ? cmp : -cmp;
+    });
     const wrap = document.getElementById('spCategoriesList');
     if (!wrap) return;
-    wrap.innerHTML = categories.length ? categories.map((cat, i) => `
+    wrap.innerHTML = sorted.length ? sorted.map((cat, i) => `
         <div class="list-group-item d-flex align-items-center justify-content-between">
             <span id="spCategoryNameCell${i}" data-value="${escapeForAttr(cat)}">${esc(cat)}</span>
             <button class="btn btn-sm btn-outline-secondary" onclick="window.editSpendingCategory(${i})" title="Edit"><i class="bi bi-pencil"></i></button>
         </div>`).join('') : '<div class="list-group-item text-center text-muted py-2">No categories yet.</div>';
-    window._spCategoriesListData = categories;
+}
+
+function _wireCategoriesSortToggle() {
+    const catSortBtn = document.getElementById('spCategoriesSortToggle');
+    if (catSortBtn && !catSortBtn.dataset.wired) {
+        catSortBtn.dataset.wired = '1';
+        catSortBtn.addEventListener('click', () => {
+            window._spCategoriesSortDir = window._spCategoriesSortDir === 'asc' ? 'desc' : 'asc';
+            const icon = catSortBtn.querySelector('i');
+            if (icon) icon.className = window._spCategoriesSortDir === 'asc' ? 'bi bi-sort-alpha-down' : 'bi bi-sort-alpha-up';
+            _renderCategoriesList(window._spCategoriesListData || []);
+        });
+    }
 }
 
 window.editSpendingCategory = function (idx) {
