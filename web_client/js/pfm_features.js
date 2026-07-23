@@ -4404,10 +4404,37 @@ function setSpendingPeriodDays(days) {
 window.getSpendingPeriodDays = getSpendingPeriodDays;
 window.setSpendingPeriodDays = setSpendingPeriodDays;
 
+// Updates the three summary cards' label text to reflect the selected
+// period (e.g. "Spent (90d)") — kept as a plain day count for every
+// option, no special-casing 365 to "1y", for consistency and simplicity.
+function _updateSpSummaryLabels(days) {
+    const el = id => document.getElementById(id);
+    if (el('spSpentLabel')) el('spSpentLabel').textContent = `Spent (${days}d)`;
+    if (el('spIncomeLabel')) el('spIncomeLabel').textContent = `Income (${days}d)`;
+    if (el('spTransferredLabel')) el('spTransferredLabel').textContent = `Moved to other accounts (${days}d)`;
+}
+
 async function loadSpendingPage() {
     _wireSpendingRuleForm();
     _wireSpCategoryAddForm();
     _wireSpendingImportModal();
+    const periodSel = document.getElementById('spSummaryPeriod');
+    if (periodSel) {
+        // Reflect the persisted choice immediately, before the first
+        // _refreshSpendingData() call below, so a returning user sees their
+        // last-picked period rather than a flash of the 30-day default.
+        periodSel.value = String(getSpendingPeriodDays());
+        _updateSpSummaryLabels(getSpendingPeriodDays());
+        if (!periodSel.dataset.wired) {
+            periodSel.dataset.wired = '1';
+            periodSel.addEventListener('change', () => {
+                const days = parseInt(periodSel.value, 10);
+                setSpendingPeriodDays(days);
+                _updateSpSummaryLabels(days);
+                _refreshSpendingData();
+            });
+        }
+    }
     const rescanBtn = document.getElementById('spRescanTransfers');
     if (rescanBtn && !rescanBtn.dataset.wired) {
         rescanBtn.dataset.wired = '1';
@@ -4568,7 +4595,7 @@ window.loadSpendingPage = loadSpendingPage;
 async function _refreshSpendingData() {
     try {
         const [summary, portfolios, categories, rules] = await Promise.all([
-            window.apiClient.getSpendingSummary(30),
+            window.apiClient.getSpendingSummary(getSpendingPeriodDays()),
             window.apiClient.getPortfolios(),
             window.apiClient.getSpendingCategories(),
             window.apiClient.getSpendingRules(),

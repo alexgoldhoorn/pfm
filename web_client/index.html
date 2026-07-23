@@ -2563,7 +2563,16 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                             <h4 class="mb-0"><i class="bi bi-wallet2 me-2 text-primary"></i>Spending<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('spending')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
                             <p class="text-muted small mb-0">Categorized bank-account spending, income, and transfers between your own accounts.</p>
                         </div>
-                        <div class="d-flex gap-2">
+                        <div class="d-flex gap-2 align-items-center">
+                            <div class="d-flex align-items-center gap-1">
+                                <label class="small text-muted mb-0" for="spSummaryPeriod">Period</label>
+                                <select class="form-select form-select-sm" id="spSummaryPeriod" style="width:auto;">
+                                    <option value="7">Last 7 days</option>
+                                    <option value="30" selected>Last 30 days</option>
+                                    <option value="90">Last 90 days</option>
+                                    <option value="365">Last 365 days</option>
+                                </select>
+                            </div>
                             <button class="btn btn-sm btn-outline-secondary" id="spRescanTransfers" title="Re-scan for transfers"><i class="bi bi-arrow-repeat"></i> Re-scan transfers</button>
                             <button class="btn btn-sm btn-outline-secondary" id="spRescanCategories" title="Re-apply category rules to uncategorized rows"><i class="bi bi-tags"></i> Rescan categories</button>
                             <button class="btn btn-sm btn-primary" data-bs-toggle="modal" data-bs-target="#spImportModal"><i class="bi bi-upload me-1"></i>Import statement</button>
@@ -2575,7 +2584,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         <div class="col-6 col-md-3">
                             <div class="card h-100 border-danger">
                                 <div class="card-body py-2">
-                                    <div class="small text-muted mb-1">Spent (30d)</div>
+                                    <div class="small text-muted mb-1" id="spSpentLabel">Spent (30d)</div>
                                     <div class="fs-6 fw-bold text-danger" id="spSpent">—</div>
                                 </div>
                             </div>
@@ -2583,7 +2592,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         <div class="col-6 col-md-3">
                             <div class="card h-100 border-success">
                                 <div class="card-body py-2">
-                                    <div class="small text-muted mb-1">Income (30d)</div>
+                                    <div class="small text-muted mb-1" id="spIncomeLabel">Income (30d)</div>
                                     <div class="fs-6 fw-bold text-success" id="spIncome">—</div>
                                 </div>
                             </div>
@@ -2591,7 +2600,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         <div class="col-12 col-md-6">
                             <div class="card h-100">
                                 <div class="card-body py-2">
-                                    <div class="small text-muted mb-1">Moved to other accounts (30d)</div>
+                                    <div class="small text-muted mb-1" id="spTransferredLabel">Moved to other accounts (30d)</div>
                                     <div class="fs-6 fw-bold" id="spTransferred">—</div>
                                 </div>
                             </div>
