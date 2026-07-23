@@ -4741,17 +4741,55 @@ function renderDashboardTopCategories(byCategoryEur) {
     }).join('');
 }
 
-async function loadDashboardTopCategories() {
-    const area = document.getElementById('dashTopCategoriesArea');
+// Compact Spent/Income/Transferred row above the category bars — same
+// summary object as the bars below, so one fetch drives both.
+function renderDashboardSpendingStats(summary) {
+    const area = document.getElementById('dashSpendingStatsArea');
     if (!area) return;
+    const eur = v => Fmt.amt('€' + Fmt.num(v, 0, 0));
+    area.innerHTML = `
+        <div>
+            <div class="small text-muted">Spent</div>
+            <div class="fw-bold text-danger">${eur(summary.spent_eur)}</div>
+        </div>
+        <div>
+            <div class="small text-muted">Income</div>
+            <div class="fw-bold text-success">${eur(summary.income_eur)}</div>
+        </div>
+        <div>
+            <div class="small text-muted">Transferred</div>
+            <div class="fw-bold">${eur(summary.transferred_eur)}</div>
+        </div>
+    `;
+}
+
+async function loadDashboardSpending() {
+    const statsArea = document.getElementById('dashSpendingStatsArea');
+    const catArea = document.getElementById('dashTopCategoriesArea');
+    if (!statsArea && !catArea) return;
+
+    const periodSel = document.getElementById('dashSpendingPeriod');
+    if (periodSel) {
+        periodSel.value = String(getSpendingPeriodDays());
+        if (!periodSel.dataset.wired) {
+            periodSel.dataset.wired = '1';
+            periodSel.addEventListener('change', () => {
+                setSpendingPeriodDays(parseInt(periodSel.value, 10));
+                loadDashboardSpending();
+            });
+        }
+    }
+
     try {
-        const summary = await window.apiClient.getSpendingSummary(30);
+        const summary = await window.apiClient.getSpendingSummary(getSpendingPeriodDays());
+        renderDashboardSpendingStats(summary);
         renderDashboardTopCategories(summary.by_category_eur || {});
     } catch (e) {
-        area.innerHTML = '<p class="text-danger small mb-0 text-center py-3">Could not load spending data.</p>';
+        if (statsArea) statsArea.innerHTML = '<p class="text-danger small mb-0">Could not load spending data.</p>';
+        if (catArea) catArea.innerHTML = '';
     }
 }
-window.loadDashboardTopCategories = loadDashboardTopCategories;
+window.loadDashboardSpending = loadDashboardSpending;
 
 window._spTxState = window._spTxState || { page: 0, pageSize: 50, sortBy: 'date', sortDir: 'desc' };
 
