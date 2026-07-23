@@ -217,28 +217,33 @@ function renderDashboardBankAccounts(accounts) {
     const tbody = document.querySelector('#dashBankAccountsTable tbody');
     if (!tbody) return;
     if (!accounts.length) {
-        tbody.innerHTML = `<tr><td colspan="3" class="text-center text-muted py-3">
+        tbody.innerHTML = `<tr><td colspan="2" class="text-center text-muted py-3">
             No bank accounts yet — add one on the
             <a href="#" onclick="window.navigationManager.showPage('networth'); return false;">Net Worth</a> page.
         </td></tr>`;
         return;
     }
     const total = accounts.reduce((s, a) => s + (parseFloat(a.balance_eur) || 0), 0);
+    // One "Balance" column: a EUR-denominated account just shows its EUR
+    // figure (no redundant native-currency duplicate); a foreign-currency
+    // account shows both, since the native amount is genuinely different info.
     const rows = accounts.map(a => {
         if (a.balance === null || a.balance === undefined) {
-            return `<tr><td class="ps-3">${esc(a.name)}</td><td class="text-end text-muted" colspan="2">No balance imported yet</td></tr>`;
+            return `<tr><td class="ps-3">${esc(a.name)}</td><td class="text-end text-muted pe-3">No balance imported yet</td></tr>`;
         }
+        const isEur = !a.currency || a.currency === 'EUR';
+        const balanceCell = isEur
+            ? Fmt.amt('€' + Fmt.num(a.balance_eur, 0, 0))
+            : `${Fmt.num(a.balance, 2, 2)} ${esc(a.currency)} <span class="text-muted">(≈ ${Fmt.amt('€' + Fmt.num(a.balance_eur, 0, 0))})</span>`;
         return `
             <tr>
                 <td class="ps-3">${esc(a.name)}</td>
-                <td class="text-end">${Fmt.num(a.balance, 2, 2)} ${esc(a.currency || '')}</td>
-                <td class="text-end pe-3">${Fmt.amt('€' + Fmt.num(a.balance_eur, 0, 0))}</td>
+                <td class="text-end pe-3">${balanceCell}</td>
             </tr>`;
     }).join('');
     tbody.innerHTML = rows + `
         <tr class="table-light fw-semibold">
             <td class="ps-3">Total</td>
-            <td></td>
             <td class="text-end pe-3">${Fmt.amt('€' + Fmt.num(total, 0, 0))}</td>
         </tr>`;
 }
@@ -250,7 +255,7 @@ async function loadDashboardBankAccounts() {
         const nw = await window.apiClient.getNetworth();
         renderDashboardBankAccounts(nw.bank_accounts || []);
     } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="3" class="text-center text-danger py-3">Could not load bank accounts.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="2" class="text-center text-danger py-3">Could not load bank accounts.</td></tr>';
     }
 }
 window.loadDashboardBankAccounts = loadDashboardBankAccounts;
