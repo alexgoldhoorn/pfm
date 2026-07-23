@@ -4329,6 +4329,7 @@ async function _refreshSpendingData() {
         _renderSpendingCategoryChart(summary.by_category_eur || {});
         _renderSpendingRules(rules);
         _renderCategoriesList(categories);
+        await _fetchAndRenderSpendingTable();
     } catch (err) {
         const body = document.getElementById('spTxBody');
         if (body) body.innerHTML = `<tr><td colspan="6" class="text-center text-danger py-3">${esc(err.message)}</td></tr>`;
