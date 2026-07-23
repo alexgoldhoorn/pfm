@@ -2739,6 +2739,112 @@ function setupForecastPage() {
 }
 
 // ---------------------------------------------------------------------------
+// Dashboard: Wealth Simulator live preview card
+// ---------------------------------------------------------------------------
+
+// Compact SVG projection chart for the Dashboard card — mean net-worth line
+// + confidence band only, no goal overlays or mortgage-payoff annotations
+// (those stay exclusive to the full Wealth Simulator page).
+function renderDashboardForecastChart(container, data, years) {
+    const W = container.clientWidth || 240;
+    const H = 130;
+    const PAD = { top: 22, right: 14, bottom: 18, left: 14 };
+    const innerW = W - PAD.left - PAD.right;
+    const innerH = H - PAD.top - PAD.bottom;
+
+    const allVals = data.flatMap(p => [p.netWorthHigh, p.netWorthLow]);
+    const maxVal = Math.max(...allVals, 0);
+    const minVal = Math.min(...allVals, 0);
+    const range = (maxVal - minVal) || 1;
+
+    const xScale = t => PAD.left + (t / years) * innerW;
+    const yScale = v => PAD.top + innerH - ((v - minVal) / range) * innerH;
+    const pathD = key => data.map((p, i) =>
+        (i === 0 ? 'M' : 'L') + xScale(p.year).toFixed(1) + ',' + yScale(p[key]).toFixed(1)
+    ).join(' ');
+
+    const bandPath = pathD('netWorthHigh') + ' '
+        + data.slice().reverse().map(p =>
+            'L' + xScale(p.year).toFixed(1) + ',' + yScale(p.netWorthLow).toFixed(1)
+        ).join(' ') + ' Z';
+
+    const startVal = data[0].netWorth;
+    const endVal = data[years].netWorth;
+    const fmtCompact = v => {
+        const n = Math.round(v);
+        if (Math.abs(n) >= 1000000) return '€' + (n / 1000000).toFixed(1) + 'M';
+        if (Math.abs(n) >= 1000) return '€' + (n / 1000).toFixed(0) + 'k';
+        return '€' + n;
+    };
+
+    container.innerHTML = `
+        <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;display:block;">
+            <defs>
+                <linearGradient id="dashFcBandGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stop-color="#93c5fd" stop-opacity="0.35"/>
+                    <stop offset="100%" stop-color="#93c5fd" stop-opacity="0.05"/>
+                </linearGradient>
+            </defs>
+            <path d="${bandPath}" fill="url(#dashFcBandGrad)" stroke="none"/>
+            <path d="${pathD('netWorth')}" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="${xScale(0).toFixed(1)}" cy="${yScale(startVal).toFixed(1)}" r="3.5" fill="#64748b"/>
+            <circle cx="${xScale(years).toFixed(1)}" cy="${yScale(endVal).toFixed(1)}" r="4" fill="#2563eb" stroke="white" stroke-width="1.5"/>
+            <text x="${xScale(0).toFixed(1)}" y="${(PAD.top - 8).toFixed(1)}" font-size="10" fill="#64748b">Now: ${fmtCompact(startVal)}</text>
+            <text x="${xScale(years).toFixed(1)}" y="${(PAD.top - 8).toFixed(1)}" text-anchor="end" font-size="10" fill="#2563eb" font-weight="bold">${fmtCompact(endVal)} in ${years}y</text>
+        </svg>
+    `;
+}
+
+// Defaults mirror the Forecast page's hardcoded HTML input values
+// (index.html #fcCashRate etc.) so a user who has never opened that page
+// sees the same assumptions here as they would there.
+const DASH_FORECAST_DEFAULTS = {
+    cashAmount: '0', cashRate: '1.5', stocksRate: '8.0', stocksVol: '16',
+    stocksContribution: '0', bondsAmount: '0', bondsRate: '4.0',
+    mortgagePrincipal: '0', mortgageRate: '3.5', monthlyPayment: '0',
+    years: '30', confidence: '1.96',
+};
+
+// stocksTotalValue: current holdings total (already fetched for the KPI
+// cards) — always live, never read from pfmForecastConfig.
+function loadDashboardForecastPreview(stocksTotalValue) {
+    const area = document.getElementById('dashForecastArea');
+    if (!area) return;
+    const cfg = Object.assign({}, DASH_FORECAST_DEFAULTS, loadForecastConfig() || {});
+
+    const cashAmt    = parseFloat(cfg.cashAmount)    || 0;
+    const cashRate   = parseFloat(cfg.cashRate)      || 0;
+    const stocksAmt  = parseFloat(stocksTotalValue)  || 0;
+    const stocksRate = parseFloat(cfg.stocksRate)    || 0;
+    const stocksVol  = (parseFloat(cfg.stocksVol) || 16) / 100;
+    const stocksContribution = parseFloat(cfg.stocksContribution) || 0;
+    const bondsAmt   = parseFloat(cfg.bondsAmount)   || 0;
+    const bondsRate  = parseFloat(cfg.bondsRate)     || 0;
+    const mortPrincipal = parseFloat(cfg.mortgagePrincipal) || 0;
+    const mortRate      = parseFloat(cfg.mortgageRate)      || 0;
+    const mortPayment   = parseFloat(cfg.monthlyPayment)    || 0;
+    const years  = parseInt(cfg.years, 10) || 30;
+    const sigma  = parseFloat(cfg.confidence) || 1.96;
+
+    const totalStarting = cashAmt + stocksAmt + bondsAmt;
+    if (totalStarting <= 0) {
+        area.innerHTML = `
+            <p class="card-text text-muted small mb-0">
+                Project your portfolio growth over time using Geometric Brownian Motion.
+                Your current portfolio value is pre-filled automatically.
+            </p>`;
+        return;
+    }
+
+    const proj = runProjection(
+        cashAmt, cashRate, stocksAmt, stocksRate, bondsAmt, bondsRate,
+        mortPrincipal, mortRate, mortPayment, years, sigma, stocksVol, stocksContribution
+    );
+    renderDashboardForecastChart(area, proj.data, years);
+}
+window.loadDashboardForecastPreview = loadDashboardForecastPreview;
+
+// ---------------------------------------------------------------------------
 // Rebalancing (Holdings page)
 // ---------------------------------------------------------------------------
 
