@@ -252,7 +252,7 @@ Single market-data source for web, MCP, cron:
 `compute_positions(transactions, key=...)` — single source of truth. Processes **chronologically**. Stock splits: `split` tx stores ratio in `quantity` (2-for-1=2.0; reverse=0.1), scales held quantity, cost unchanged. All holdings/analytics endpoints delegate to it.
 
 ## Web Client (`web_client/`)
-Single `index.html` + four JS files (no build step), **must load in order**: `help_text.js` → `pfm_core.js` → `pfm_pages.js` → `pfm_analytics.js` → `pfm_features.js`. They share one global scope.
+Single `index.html` + five JS files (no build step), **must load in order**: `help_text.js` → `pfm_core.js` → `pfm_pages.js` → `pfm_analytics.js` → `pfm_features.js`. They share one global scope.
 
 - `pfm_core.js`: prefs, `Fmt`, `esc`, `AssetSearch`, API + modal managers, `openChatWithContext()`
 - `pfm_pages.js`: page/nav/auth, dashboard, transactions, assets (positions + catalogue merged, see below), help/resources

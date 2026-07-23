@@ -408,7 +408,8 @@ function createPageManager() {
             // Wealth Simulator live preview + Bank Accounts + Top Spending
             // Categories — independent, non-blocking (a failure in any one
             // must not blank the rest of the dashboard).
-            if (window.loadDashboardForecastPreview) window.loadDashboardForecastPreview(totalValue);
+            try { if (window.loadDashboardForecastPreview) window.loadDashboardForecastPreview(totalValue); }
+            catch (e) { console.error('Forecast preview failed:', e); }
             if (window.loadDashboardBankAccounts) window.loadDashboardBankAccounts();
             if (window.loadDashboardTopCategories) window.loadDashboardTopCategories();
 

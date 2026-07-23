@@ -2823,7 +2823,7 @@ function loadDashboardForecastPreview(stocksTotalValue) {
     const mortPrincipal = parseFloat(cfg.mortgagePrincipal) || 0;
     const mortRate      = parseFloat(cfg.mortgageRate)      || 0;
     const mortPayment   = parseFloat(cfg.monthlyPayment)    || 0;
-    const years  = parseInt(cfg.years, 10) || 30;
+    const years  = Math.max(1, parseInt(cfg.years, 10) || 30);
     const sigma  = parseFloat(cfg.confidence) || 1.96;
 
     const totalStarting = cashAmt + stocksAmt + bondsAmt;
@@ -4674,6 +4674,7 @@ function renderDashboardTopCategories(byCategoryEur) {
     }
     const maxVal = entries[0][1];
     area.innerHTML = entries.map(([cat, amt]) => {
+        // pct clamps to 0 for a zero/negative net category (e.g. a refund-heavy month) rather than a negative or NaN width
         const pct = maxVal > 0 ? Math.round((amt / maxVal) * 100) : 0;
         return `
             <div class="mb-2">
