@@ -4661,6 +4661,45 @@ function _renderSpendingCategoryChart(byCategoryEur) {
     }
 }
 
+// Dashboard-only: top-5 categories as a compact bar list (no Chart.js, kept
+// consistent with the Dashboard's hand-rolled SVG donut rather than pulling
+// in the heavier chart widget used on the Spending page).
+function renderDashboardTopCategories(byCategoryEur) {
+    const area = document.getElementById('dashTopCategoriesArea');
+    if (!area) return;
+    const entries = Object.entries(byCategoryEur || {}).sort((a, b) => b[1] - a[1]).slice(0, 5);
+    if (!entries.length) {
+        area.innerHTML = '<p class="text-muted small mb-0 text-center py-3">No spending imported yet.</p>';
+        return;
+    }
+    const maxVal = entries[0][1];
+    area.innerHTML = entries.map(([cat, amt]) => {
+        const pct = maxVal > 0 ? Math.round((amt / maxVal) * 100) : 0;
+        return `
+            <div class="mb-2">
+                <div class="d-flex justify-content-between small mb-1">
+                    <span>${esc(cat)}</span>
+                    <span class="text-muted">${Fmt.amt('€' + Fmt.num(amt, 0, 0))}</span>
+                </div>
+                <div class="progress" style="height:6px;">
+                    <div class="progress-bar bg-danger" role="progressbar" style="width:${pct}%"></div>
+                </div>
+            </div>`;
+    }).join('');
+}
+
+async function loadDashboardTopCategories() {
+    const area = document.getElementById('dashTopCategoriesArea');
+    if (!area) return;
+    try {
+        const summary = await window.apiClient.getSpendingSummary(30);
+        renderDashboardTopCategories(summary.by_category_eur || {});
+    } catch (e) {
+        area.innerHTML = '<p class="text-danger small mb-0 text-center py-3">Could not load spending data.</p>';
+    }
+}
+window.loadDashboardTopCategories = loadDashboardTopCategories;
+
 window._spTxState = window._spTxState || { page: 0, pageSize: 50, sortBy: 'date', sortDir: 'desc' };
 
 // window._spCategoryFilterSelected: null = no filter ("All categories" --
