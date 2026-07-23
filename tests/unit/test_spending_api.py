@@ -1116,3 +1116,84 @@ def test_list_spending_invalid_limit_rejected(tmp_path):
     client, _ = _make_client(tmp_path)
     r = client.get("/api/v1/spending/?limit=0", headers=HEADERS)
     assert r.status_code == 422  # FastAPI Query validation
+
+
+def test_list_spending_categories_multi_filter(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_transaction(pid, "2026-01-01", "A", -10.0, category="Groceries")
+    db.create_spending_transaction(pid, "2026-01-02", "B", -10.0, category="Dining")
+    db.create_spending_transaction(pid, "2026-01-03", "C", -10.0, category="Housing")
+
+    r = client.get(
+        "/api/v1/spending/?categories=Groceries&categories=Dining", headers=HEADERS
+    )
+    body = r.json()
+    assert body["total"] == 2
+    cats = {i["category"] for i in body["items"]}
+    assert cats == {"Groceries", "Dining"}
+
+
+def test_list_spending_categories_omitted_means_unfiltered(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_transaction(pid, "2026-01-01", "A", -10.0, category="Groceries")
+
+    r = client.get("/api/v1/spending/", headers=HEADERS)
+    assert r.json()["total"] == 1
+
+
+def test_list_spending_amount_sign_negative(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_transaction(pid, "2026-01-01", "Expense", -10.0)
+    db.create_spending_transaction(pid, "2026-01-02", "Income", 20.0)
+
+    r = client.get("/api/v1/spending/?amount_sign=negative", headers=HEADERS)
+    body = r.json()
+    assert body["total"] == 1
+    assert body["items"][0]["description"] == "Expense"
+
+
+def test_list_spending_amount_sign_positive(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_transaction(pid, "2026-01-01", "Expense", -10.0)
+    db.create_spending_transaction(pid, "2026-01-02", "Income", 20.0)
+
+    r = client.get("/api/v1/spending/?amount_sign=positive", headers=HEADERS)
+    body = r.json()
+    assert body["total"] == 1
+    assert body["items"][0]["description"] == "Income"
+
+
+def test_list_spending_invalid_amount_sign_rejected(tmp_path):
+    client, _ = _make_client(tmp_path)
+    r = client.get("/api/v1/spending/?amount_sign=sideways", headers=HEADERS)
+    assert r.status_code == 400
+
+
+def test_list_spending_min_abs_amount(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_transaction(pid, "2026-01-01", "Small", -5.0)
+    db.create_spending_transaction(pid, "2026-01-02", "Big", -100.0)
+
+    r = client.get("/api/v1/spending/?min_abs_amount=50", headers=HEADERS)
+    body = r.json()
+    assert body["total"] == 1
+    assert body["items"][0]["description"] == "Big"
+
+
+def test_list_spending_min_abs_amount_and_sign_combine(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_transaction(pid, "2026-01-01", "BigExpense", -100.0)
+    db.create_spending_transaction(pid, "2026-01-02", "BigIncome", 100.0)
+
+    r = client.get(
+        "/api/v1/spending/?amount_sign=negative&min_abs_amount=50", headers=HEADERS
+    )
+    body = r.json()
+    assert body["total"] == 1
+    assert body["items"][0]["description"] == "BigExpense"

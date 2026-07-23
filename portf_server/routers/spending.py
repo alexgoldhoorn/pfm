@@ -355,15 +355,19 @@ _SPENDING_SORT_BY_VALUES = {
     "amount",
 }
 _SPENDING_SORT_DIR_VALUES = {"asc", "desc"}
+_SPENDING_AMOUNT_SIGN_VALUES = {"positive", "negative"}
 
 
 @router.get("/", response_model=SpendingTransactionListResponse)
 async def list_spending(
     portfolio_id: Optional[int] = None,
     category: Optional[str] = None,
+    categories: Optional[List[str]] = Query(default=None),
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     is_transfer: Optional[bool] = None,
+    amount_sign: Optional[str] = None,
+    min_abs_amount: Optional[float] = Query(default=None, ge=0),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     sort_by: str = "date",
@@ -371,7 +375,16 @@ async def list_spending(
     db=Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
-    """List spending transactions with optional filters, paginated and sorted."""
+    """List spending transactions with optional filters, paginated and sorted.
+
+    `categories` is a repeatable query param (`?categories=A&categories=B`)
+    matched with SQL `IN`; omit it entirely for no category filter (an
+    empty/absent list means unfiltered, not "match nothing"). `amount_sign`
+    filters to negative-only ("negative", i.e. expenses) or positive-only
+    ("positive", i.e. income); `min_abs_amount` additionally requires
+    `ABS(amount) >= min_abs_amount`, so it composes naturally with either
+    sign or neither.
+    """
     if sort_by not in _SPENDING_SORT_BY_VALUES:
         raise HTTPException(
             status_code=400,
@@ -382,12 +395,20 @@ async def list_spending(
             status_code=400,
             detail=f"sort_dir must be one of {sorted(_SPENDING_SORT_DIR_VALUES)}",
         )
+    if amount_sign is not None and amount_sign not in _SPENDING_AMOUNT_SIGN_VALUES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"amount_sign must be one of {sorted(_SPENDING_AMOUNT_SIGN_VALUES)}",
+        )
     filters = dict(
         portfolio_id=portfolio_id,
         category=category,
+        categories=categories,
         start_date=start_date,
         end_date=end_date,
         is_transfer=is_transfer,
+        amount_sign=amount_sign,
+        min_abs_amount=min_abs_amount,
     )
     rows = db.list_spending_transactions(
         limit=limit, offset=offset, sort_by=sort_by, sort_dir=sort_dir, **filters

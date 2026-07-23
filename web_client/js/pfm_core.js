@@ -1449,7 +1449,17 @@ function createAPIClient() {
             return response.json();
         },
         async getSpendingTransactions(params = {}) {
-            const qs = new URLSearchParams(params).toString();
+            // Array values (e.g. categories: ['A', 'B']) must become repeated
+            // query params (?categories=A&categories=B) for FastAPI's
+            // List[str] params -- URLSearchParams(plainObject) would instead
+            // stringify the array as one comma-joined value.
+            const qsParams = new URLSearchParams();
+            Object.entries(params).forEach(([key, value]) => {
+                if (value === undefined || value === null || value === '') return;
+                if (Array.isArray(value)) value.forEach(v => qsParams.append(key, v));
+                else qsParams.append(key, value);
+            });
+            const qs = qsParams.toString();
             const response = await fetch(this.baseURL + '/api/v1/spending/' + (qs ? '?' + qs : ''), {
                 headers: { 'X-API-Key': this.apiKey }
             });
