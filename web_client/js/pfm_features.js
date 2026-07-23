@@ -4265,15 +4265,14 @@ async function loadSpendingPage() {
     if (selAllUncatBtn && !selAllUncatBtn.dataset.wired) {
         selAllUncatBtn.dataset.wired = '1';
         selAllUncatBtn.addEventListener('click', async () => {
-            const catFilter = document.getElementById('spCategoryFilter');
-            if (catFilter) catFilter.value = 'uncategorized';
+            window._spCategoryFilterSelected = new Set(['uncategorized']);
             window._spTxState.page = 0;
             await _fetchAndRenderSpendingTable();
             document.querySelectorAll('#spTxBody .sp-row-check').forEach(cb => { cb.checked = true; });
             _updateSpBulkBar();
         });
     }
-    ['spAccountFilter', 'spCategoryFilter', 'spFromDate', 'spToDate'].forEach(id => {
+    ['spAccountFilter', 'spFromDate', 'spToDate'].forEach(id => {
         const el = document.getElementById(id);
         if (el && !el.dataset.wired) {
             el.dataset.wired = '1';
@@ -4283,6 +4282,58 @@ async function loadSpendingPage() {
             });
         }
     });
+    const catFilterMenu = document.getElementById('spCategoryFilterMenu');
+    if (catFilterMenu && !catFilterMenu.dataset.wired) {
+        catFilterMenu.dataset.wired = '1';
+        catFilterMenu.addEventListener('change', (e) => {
+            if (e.target.matches && e.target.matches('.sp-category-filter-cb')) _onCategoryFilterCheckboxChange();
+        });
+        // Keep the dropdown open while interacting with checkboxes inside it.
+        catFilterMenu.addEventListener('click', (e) => e.stopPropagation());
+    }
+    const catFilterSelectAllBtn = document.getElementById('spCategoryFilterSelectAll');
+    if (catFilterSelectAllBtn && !catFilterSelectAllBtn.dataset.wired) {
+        catFilterSelectAllBtn.dataset.wired = '1';
+        catFilterSelectAllBtn.addEventListener('click', () => {
+            window._spCategoryFilterSelected = null;
+            window._spTxState.page = 0;
+            _fetchAndRenderSpendingTable();
+        });
+    }
+    const catFilterSelectNoneBtn = document.getElementById('spCategoryFilterSelectNone');
+    if (catFilterSelectNoneBtn && !catFilterSelectNoneBtn.dataset.wired) {
+        catFilterSelectNoneBtn.dataset.wired = '1';
+        catFilterSelectNoneBtn.addEventListener('click', () => {
+            window._spCategoryFilterSelected = new Set();
+            window._spTxState.page = 0;
+            _fetchAndRenderSpendingTable();
+        });
+    }
+    const amountSignNegBtn = document.getElementById('spAmountSignNegative');
+    const amountSignPosBtn = document.getElementById('spAmountSignPositive');
+    const setAmountSign = (sign) => {
+        window._spAmountSign = (window._spAmountSign === sign) ? null : sign;
+        if (amountSignNegBtn) amountSignNegBtn.classList.toggle('active', window._spAmountSign === 'negative');
+        if (amountSignPosBtn) amountSignPosBtn.classList.toggle('active', window._spAmountSign === 'positive');
+        window._spTxState.page = 0;
+        _fetchAndRenderSpendingTable();
+    };
+    if (amountSignNegBtn && !amountSignNegBtn.dataset.wired) {
+        amountSignNegBtn.dataset.wired = '1';
+        amountSignNegBtn.addEventListener('click', () => setAmountSign('negative'));
+    }
+    if (amountSignPosBtn && !amountSignPosBtn.dataset.wired) {
+        amountSignPosBtn.dataset.wired = '1';
+        amountSignPosBtn.addEventListener('click', () => setAmountSign('positive'));
+    }
+    const minAbsAmountInput = document.getElementById('spMinAbsAmount');
+    if (minAbsAmountInput && !minAbsAmountInput.dataset.wired) {
+        minAbsAmountInput.dataset.wired = '1';
+        minAbsAmountInput.addEventListener('change', () => {
+            window._spTxState.page = 0;
+            _fetchAndRenderSpendingTable();
+        });
+    }
     _wireSpendingTablePagination();
     const showAllBtn = document.getElementById('spCategoryChartShowAll');
     if (showAllBtn && !showAllBtn.dataset.wired) {
@@ -4396,8 +4447,63 @@ function _renderSpendingCategoryChart(byCategoryEur) {
 
 window._spTxState = window._spTxState || { page: 0, pageSize: 50, sortBy: 'date', sortDir: 'desc' };
 
+// window._spCategoryFilterSelected: null = no filter ("All categories" --
+// every checkbox checked); a Set = the exact checked subset, including an
+// empty Set for "Select none" (definitionally zero matches, handled without
+// a network call below rather than sent to the server as a filter).
+function _renderCategoryFilterOptions(categories) {
+    const wrap = document.getElementById('spCategoryFilterOptions');
+    if (!wrap) return;
+    const selected = window._spCategoryFilterSelected;
+    wrap.innerHTML = categories.map((c, i) => `
+        <div class="form-check">
+            <input class="form-check-input sp-category-filter-cb" type="checkbox" value="${esc(c)}" id="spCatFilterCb${i}" ${(!selected || selected.has(c)) ? 'checked' : ''}>
+            <label class="form-check-label small" for="spCatFilterCb${i}">${esc(c)}</label>
+        </div>`).join('');
+    _updateCategoryFilterButtonLabel();
+}
+
+function _updateCategoryFilterButtonLabel() {
+    const btn = document.getElementById('spCategoryFilterBtn');
+    if (!btn) return;
+    const selected = window._spCategoryFilterSelected;
+    if (!selected) btn.textContent = 'All categories';
+    else if (selected.size === 0) btn.textContent = 'No categories';
+    else if (selected.size === 1) btn.textContent = [...selected][0];
+    else btn.textContent = `${selected.size} categories`;
+}
+
+function _onCategoryFilterCheckboxChange() {
+    const boxes = document.querySelectorAll('.sp-category-filter-cb');
+    const checked = Array.from(boxes).filter(cb => cb.checked).map(cb => cb.value);
+    window._spCategoryFilterSelected = (checked.length === boxes.length) ? null : new Set(checked);
+    _updateCategoryFilterButtonLabel();
+    window._spTxState.page = 0;
+    _fetchAndRenderSpendingTable();
+}
+
 async function _fetchAndRenderSpendingTable() {
     const st = window._spTxState;
+    const cats = _allSpendingCategories();
+    _renderCategoryFilterOptions(cats);
+    _populateSpCategoryDatalist(cats);
+
+    const tbody = document.getElementById('spTxBody');
+    const selected = window._spCategoryFilterSelected;
+    if (selected && selected.size === 0) {
+        // "Select none" -- zero matches by definition, no need to ask the server.
+        window._spendingAllRows = [];
+        if (tbody) tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">No transactions match the current filters.</td></tr>';
+        const pageInfo0 = document.getElementById('spTxPageInfo');
+        if (pageInfo0) pageInfo0.textContent = 'Page 1 of 1 (0 total)';
+        const prevBtn0 = document.getElementById('spTxPrevPage');
+        const nextBtn0 = document.getElementById('spTxNextPage');
+        if (prevBtn0) prevBtn0.disabled = true;
+        if (nextBtn0) nextBtn0.disabled = true;
+        _updateSpBulkBar();
+        return;
+    }
+
     const params = {
         limit: st.pageSize,
         offset: st.page * st.pageSize,
@@ -4405,15 +4511,16 @@ async function _fetchAndRenderSpendingTable() {
         sort_dir: st.sortDir,
     };
     const accountId = document.getElementById('spAccountFilter')?.value;
-    const category = document.getElementById('spCategoryFilter')?.value;
     const fromDate = document.getElementById('spFromDate')?.value;
     const toDate = document.getElementById('spToDate')?.value;
     if (accountId) params.portfolio_id = accountId;
-    if (category) params.category = category;
     if (fromDate) params.start_date = fromDate;
     if (toDate) params.end_date = toDate;
+    if (selected && selected.size > 0) params.categories = [...selected];
+    if (window._spAmountSign) params.amount_sign = window._spAmountSign;
+    const minAbsAmount = document.getElementById('spMinAbsAmount')?.value;
+    if (minAbsAmount) params.min_abs_amount = minAbsAmount;
 
-    const tbody = document.getElementById('spTxBody');
     let result;
     try {
         result = await window.apiClient.getSpendingTransactions(params);
@@ -4423,15 +4530,6 @@ async function _fetchAndRenderSpendingTable() {
     }
     const rows = result.items || [];
     window._spendingAllRows = rows;
-
-    const catSel = document.getElementById('spCategoryFilter');
-    if (catSel && !catSel.dataset.populated) {
-        catSel.dataset.populated = '1';
-        const cats = _allSpendingCategories();
-        catSel.innerHTML = '<option value="">All categories</option>' +
-            cats.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
-    }
-    _populateSpCategoryDatalist(_allSpendingCategories());
 
     if (tbody) {
         tbody.innerHTML = rows.length ? rows.map(r => `

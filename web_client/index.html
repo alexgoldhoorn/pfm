@@ -2558,7 +2558,16 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                 </div>
                                 <div class="col-6 col-md-3">
                                     <label class="form-label small mb-1">Category</label>
-                                    <select class="form-select form-select-sm" id="spCategoryFilter"><option value="">All categories</option></select>
+                                    <div class="dropdown">
+                                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle w-100 text-start" type="button" id="spCategoryFilterBtn" data-bs-toggle="dropdown" aria-expanded="false">All categories</button>
+                                        <div class="dropdown-menu p-2" id="spCategoryFilterMenu" style="max-height:280px;overflow-y:auto;min-width:220px;">
+                                            <div class="d-flex gap-2 mb-2">
+                                                <button type="button" class="btn btn-sm btn-link p-0" id="spCategoryFilterSelectAll">Select all</button>
+                                                <button type="button" class="btn btn-sm btn-link p-0" id="spCategoryFilterSelectNone">Select none</button>
+                                            </div>
+                                            <div id="spCategoryFilterOptions"></div>
+                                        </div>
+                                    </div>
                                 </div>
                                 <div class="col-6 col-md-3">
                                     <label class="form-label small mb-1">From</label>
@@ -2569,6 +2578,14 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                     <label class="form-label small mb-1">To</label>
                                     <input type="date" class="form-control form-control-sm" id="spToDate">
                                     <div class="form-text" data-date-hint></div>
+                                </div>
+                                <div class="col-6 col-md-3">
+                                    <label class="form-label small mb-1">Amount</label>
+                                    <div class="d-flex gap-1">
+                                        <button type="button" class="btn btn-sm btn-outline-danger" id="spAmountSignNegative" title="Expenses only">&minus;</button>
+                                        <button type="button" class="btn btn-sm btn-outline-success" id="spAmountSignPositive" title="Income only">+</button>
+                                        <input type="number" min="0" step="0.01" class="form-control form-control-sm" id="spMinAbsAmount" placeholder="&ge; amount">
+                                    </div>
                                 </div>
                             </div>
                         </div>

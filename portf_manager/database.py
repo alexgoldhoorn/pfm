@@ -2774,11 +2774,21 @@ class Database:
         self,
         portfolio_id: int = None,
         category: str = None,
+        categories: List[str] = None,
         start_date: str = None,
         end_date: str = None,
         is_transfer: bool = None,
+        amount_sign: str = None,
+        min_abs_amount: float = None,
     ):
-        """Shared WHERE-clause builder for list/count spending transactions."""
+        """Shared WHERE-clause builder for list/count spending transactions.
+
+        `category` (exact match) and `categories` (IN-list match) are
+        independent filters that both AND into the clause if both are
+        given — in practice only one is ever passed by a given caller.
+        `amount_sign` is `"negative"`/`"positive"`/`None`, mapped to a
+        literal comparison, never interpolated from the caller directly.
+        """
         conditions = []
         params: List = []
         if portfolio_id is not None:
@@ -2787,6 +2797,10 @@ class Database:
         if category is not None:
             conditions.append("s.category = ?")
             params.append(category)
+        if categories:
+            placeholders = ", ".join("?" for _ in categories)
+            conditions.append(f"s.category IN ({placeholders})")
+            params.extend(categories)
         if start_date is not None:
             conditions.append("s.date >= ?")
             params.append(start_date)
@@ -2796,6 +2810,13 @@ class Database:
         if is_transfer is not None:
             conditions.append("s.is_transfer = ?")
             params.append(1 if is_transfer else 0)
+        if amount_sign == "negative":
+            conditions.append("s.amount < 0")
+        elif amount_sign == "positive":
+            conditions.append("s.amount > 0")
+        if min_abs_amount is not None:
+            conditions.append("ABS(s.amount) >= ?")
+            params.append(min_abs_amount)
         clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
         return clause, params
 
@@ -2803,9 +2824,12 @@ class Database:
         self,
         portfolio_id: int = None,
         category: str = None,
+        categories: List[str] = None,
         start_date: str = None,
         end_date: str = None,
         is_transfer: bool = None,
+        amount_sign: str = None,
+        min_abs_amount: float = None,
         limit: int = None,
         offset: int = None,
         sort_by: str = None,
@@ -2823,7 +2847,14 @@ class Database:
         """
         with self.get_connection() as conn:
             where_clause, params = self._spending_where_clause(
-                portfolio_id, category, start_date, end_date, is_transfer
+                portfolio_id,
+                category,
+                categories,
+                start_date,
+                end_date,
+                is_transfer,
+                amount_sign,
+                min_abs_amount,
             )
             query = (
                 "SELECT s.*, p.name AS portfolio_name FROM spending_transactions s "
@@ -2845,16 +2876,26 @@ class Database:
         self,
         portfolio_id: int = None,
         category: str = None,
+        categories: List[str] = None,
         start_date: str = None,
         end_date: str = None,
         is_transfer: bool = None,
+        amount_sign: str = None,
+        min_abs_amount: float = None,
     ) -> int:
         """Count spending transactions matching the same filters as
         list_spending_transactions (no JOIN needed — sort/portfolio_name
         are irrelevant to a count)."""
         with self.get_connection() as conn:
             where_clause, params = self._spending_where_clause(
-                portfolio_id, category, start_date, end_date, is_transfer
+                portfolio_id,
+                category,
+                categories,
+                start_date,
+                end_date,
+                is_transfer,
+                amount_sign,
+                min_abs_amount,
             )
             query = "SELECT COUNT(*) FROM spending_transactions s" + where_clause
             cursor = conn.execute(query, params)
