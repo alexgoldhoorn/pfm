@@ -2232,6 +2232,28 @@ function runProjection(cashAmt, cashRate, stocksAmt, stocksRate, bondsAmt, bonds
 }
 window.runProjection = runProjection;
 
+const FORECAST_CONFIG_KEY = 'pfmForecastConfig';
+
+// Persists everything the Wealth Simulator's Run button used *except* the
+// stocks amount, which always tracks live holdings (loadStartValue()) rather
+// than a stale saved figure — read back both by the Forecast page itself
+// (prefill on load) and by the Dashboard's live preview card.
+function saveForecastConfig(cfg) {
+    try {
+        localStorage.setItem(FORECAST_CONFIG_KEY, JSON.stringify(cfg));
+    } catch (e) { /* localStorage unavailable (private mode / quota) — skip persistence */ }
+}
+function loadForecastConfig() {
+    try {
+        const raw = localStorage.getItem(FORECAST_CONFIG_KEY);
+        return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+        return null;
+    }
+}
+window.saveForecastConfig = saveForecastConfig;
+window.loadForecastConfig = loadForecastConfig;
+
 function setupForecastPage() {
     // DOM refs - asset allocation inputs
     const cashAmountInput   = document.getElementById('fcCashAmount');
@@ -2267,6 +2289,29 @@ function setupForecastPage() {
     const totalLiquidBadge = document.getElementById('fcTotalLiquidBadge');
 
     if (!runBtn) return;
+
+    // Prefill from last-used settings (localStorage) — everything except the
+    // stocks amount, which always tracks live holdings via loadStartValue().
+    // A first-ever visit (nothing saved yet) leaves the HTML's hardcoded
+    // default values untouched.
+    const savedForecastConfig = loadForecastConfig();
+    if (savedForecastConfig) {
+        if (savedForecastConfig.cashAmount != null) cashAmountInput.value = savedForecastConfig.cashAmount;
+        if (savedForecastConfig.cashRate != null) cashRateInput.value = savedForecastConfig.cashRate;
+        if (savedForecastConfig.stocksRate != null) stocksRateInput.value = savedForecastConfig.stocksRate;
+        if (savedForecastConfig.stocksVol != null && stocksVolInput) stocksVolInput.value = savedForecastConfig.stocksVol;
+        if (savedForecastConfig.stocksContribution != null && stocksContributionInput) stocksContributionInput.value = savedForecastConfig.stocksContribution;
+        if (savedForecastConfig.bondsAmount != null) bondsAmountInput.value = savedForecastConfig.bondsAmount;
+        if (savedForecastConfig.bondsRate != null) bondsRateInput.value = savedForecastConfig.bondsRate;
+        if (savedForecastConfig.mortgagePrincipal != null) mortgagePrincipalInput.value = savedForecastConfig.mortgagePrincipal;
+        if (savedForecastConfig.mortgageRate != null) mortgageRateInput.value = savedForecastConfig.mortgageRate;
+        if (savedForecastConfig.monthlyPayment != null) monthlyPaymentInput.value = savedForecastConfig.monthlyPayment;
+        if (savedForecastConfig.years != null) yearsSlider.value = savedForecastConfig.years;
+        if (savedForecastConfig.confidence != null) confSelect.value = savedForecastConfig.confidence;
+        if (yearsDisplay) yearsDisplay.textContent = yearsSlider.value;
+        updateTotalLiquidBadge();
+        updateMortgageNote();
+    }
 
     // Compact EUR formatter - uses abbreviated thousands/millions for chart labels
     function fmtEur(val) {
@@ -2543,6 +2588,21 @@ function setupForecastPage() {
         const sigma         = parseFloat(confSelect.value)             || 1.96;
         const stocksVol     = stocksVolInput ? (parseFloat(stocksVolInput.value) || 16) / 100 : null;
         const stocksContribution = stocksContributionInput ? (parseFloat(stocksContributionInput.value) || 0) : 0;
+
+        saveForecastConfig({
+            cashAmount: cashAmountInput.value,
+            cashRate: cashRateInput.value,
+            stocksRate: stocksRateInput.value,
+            stocksVol: stocksVolInput ? stocksVolInput.value : '16',
+            stocksContribution: stocksContributionInput ? stocksContributionInput.value : '0',
+            bondsAmount: bondsAmountInput.value,
+            bondsRate: bondsRateInput.value,
+            mortgagePrincipal: mortgagePrincipalInput.value,
+            mortgageRate: mortgageRateInput.value,
+            monthlyPayment: monthlyPaymentInput.value,
+            years: yearsSlider.value,
+            confidence: confSelect.value,
+        });
 
         const proj = runProjection(
             cashAmt, cashRate, stocksAmt, stocksRate, bondsAmt, bondsRate,
