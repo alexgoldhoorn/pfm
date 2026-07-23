@@ -2149,6 +2149,89 @@ function computeGoalOverlays(goals, naturalMin, naturalMax, years) {
 }
 window.computeGoalOverlays = computeGoalOverlays;
 
+// Per-asset GBM projection, with an optional monthly contribution added
+// as an ordinary annuity (annual compounding, deposits at each year-end
+// — the same order of approximation as the rest of this model).
+// Returns array[0..years] of { year, mean, high, low }
+// Module-scope (not trapped in setupForecastPage's closure) so the
+// Dashboard's Wealth Simulator preview card can reuse it without duplicating
+// the math — see loadDashboardForecastPreview().
+function projectAccount(startAmount, annualRatePct, volatility, years, sigma, monthlyContribution) {
+    const r = annualRatePct / 100;
+    const contribution = monthlyContribution || 0;
+    const points = [];
+    for (let i = 0; i <= years; i++) {
+        const grown = startAmount * Math.pow(1 + r, i);
+        const contributed = contribution <= 0 ? 0
+            : r > 0 ? contribution * 12 * ((Math.pow(1 + r, i) - 1) / r)
+            : contribution * 12 * i;
+        const mean = grown + contributed;
+        const totalVol = volatility * Math.sqrt(i || 0.5);
+        points.push({
+            year: i,
+            mean: Math.max(0, mean),
+            high: Math.max(0, mean * Math.exp(sigma * totalVol)),
+            low:  Math.max(0, mean * Math.exp(-sigma * totalVol))
+        });
+    }
+    return points;
+}
+window.projectAccount = projectAccount;
+
+// Full projection: assets + mortgage amortization + net worth.
+// Returns { data[], mortgagePaidOffYear, totalInterestPaid }
+function runProjection(cashAmt, cashRate, stocksAmt, stocksRate, bondsAmt, bondsRate,
+                       mortgagePrincipal, mortgageRate, monthlyPayment, years, sigma, stocksVol,
+                       stocksMonthlyContribution) {
+    const VOLATILITY = { cash: 0.01, bonds: 0.06, stocks: 0.16 };
+
+    const cashProj   = projectAccount(cashAmt,   cashRate,   VOLATILITY.cash,   years, sigma);
+    const stocksProj = projectAccount(stocksAmt, stocksRate, (stocksVol != null ? stocksVol : VOLATILITY.stocks), years, sigma, stocksMonthlyContribution);
+    const bondsProj  = projectAccount(bondsAmt,  bondsRate,  VOLATILITY.bonds,  years, sigma);
+
+    let currentMortgage     = mortgagePrincipal;
+    const mRate             = mortgageRate / 100 / 12;
+    let mortgagePaidOffYear = null;
+    let totalInterestPaid   = 0;
+
+    const data = [];
+
+    for (let i = 0; i <= years; i++) {
+        // Month-by-month amortization for year i
+        if (i > 0 && currentMortgage > 0) {
+            for (let m = 0; m < 12; m++) {
+                if (currentMortgage <= 0) break;
+                const interest = currentMortgage * mRate;
+                totalInterestPaid += interest;
+                const principal = monthlyPayment - interest;
+                currentMortgage -= principal;
+            }
+            if (currentMortgage < 0) currentMortgage = 0;
+            if (currentMortgage === 0 && mortgagePaidOffYear === null) {
+                mortgagePaidOffYear = i;
+            }
+        }
+
+        const assetMean = cashProj[i].mean + stocksProj[i].mean + bondsProj[i].mean;
+        const assetHigh = cashProj[i].high + stocksProj[i].high + bondsProj[i].high;
+        const assetLow  = cashProj[i].low  + stocksProj[i].low  + bondsProj[i].low;
+
+        data.push({
+            year:          i,
+            assets:        assetMean,
+            assetsHigh:    assetHigh,
+            assetsLow:     assetLow,
+            mortgage:      currentMortgage,
+            netWorth:      assetMean - currentMortgage,
+            netWorthHigh:  assetHigh - currentMortgage,
+            netWorthLow:   assetLow  - currentMortgage
+        });
+    }
+
+    return { data, mortgagePaidOffYear, totalInterestPaid };
+}
+window.runProjection = runProjection;
+
 function setupForecastPage() {
     // DOM refs - asset allocation inputs
     const cashAmountInput   = document.getElementById('fcCashAmount');
@@ -2265,85 +2348,6 @@ function setupForecastPage() {
             mortgageMinNote.textContent = 'Leave at 0 if no mortgage.';
         }
     }
-
-    // Per-asset GBM projection, with an optional monthly contribution added
-    // as an ordinary annuity (annual compounding, deposits at each year-end
-    // — the same order of approximation as the rest of this model).
-    // Returns array[0..years] of { year, mean, high, low }
-    function projectAccount(startAmount, annualRatePct, volatility, years, sigma, monthlyContribution) {
-        const r = annualRatePct / 100;
-        const contribution = monthlyContribution || 0;
-        const points = [];
-        for (let i = 0; i <= years; i++) {
-            const grown = startAmount * Math.pow(1 + r, i);
-            const contributed = contribution <= 0 ? 0
-                : r > 0 ? contribution * 12 * ((Math.pow(1 + r, i) - 1) / r)
-                : contribution * 12 * i;
-            const mean = grown + contributed;
-            const totalVol = volatility * Math.sqrt(i || 0.5);
-            points.push({
-                year: i,
-                mean: Math.max(0, mean),
-                high: Math.max(0, mean * Math.exp(sigma * totalVol)),
-                low:  Math.max(0, mean * Math.exp(-sigma * totalVol))
-            });
-        }
-        return points;
-    }
-
-    // Full projection: assets + mortgage amortization + net worth.
-    // Returns { data[], mortgagePaidOffYear, totalInterestPaid }
-    function runProjection(cashAmt, cashRate, stocksAmt, stocksRate, bondsAmt, bondsRate,
-                           mortgagePrincipal, mortgageRate, monthlyPayment, years, sigma, stocksVol,
-                           stocksMonthlyContribution) {
-        const VOLATILITY = { cash: 0.01, bonds: 0.06, stocks: 0.16 };
-
-        const cashProj   = projectAccount(cashAmt,   cashRate,   VOLATILITY.cash,   years, sigma);
-        const stocksProj = projectAccount(stocksAmt, stocksRate, (stocksVol != null ? stocksVol : VOLATILITY.stocks), years, sigma, stocksMonthlyContribution);
-        const bondsProj  = projectAccount(bondsAmt,  bondsRate,  VOLATILITY.bonds,  years, sigma);
-
-        let currentMortgage     = mortgagePrincipal;
-        const mRate             = mortgageRate / 100 / 12;
-        let mortgagePaidOffYear = null;
-        let totalInterestPaid   = 0;
-
-        const data = [];
-
-        for (let i = 0; i <= years; i++) {
-            // Month-by-month amortization for year i
-            if (i > 0 && currentMortgage > 0) {
-                for (let m = 0; m < 12; m++) {
-                    if (currentMortgage <= 0) break;
-                    const interest = currentMortgage * mRate;
-                    totalInterestPaid += interest;
-                    const principal = monthlyPayment - interest;
-                    currentMortgage -= principal;
-                }
-                if (currentMortgage < 0) currentMortgage = 0;
-                if (currentMortgage === 0 && mortgagePaidOffYear === null) {
-                    mortgagePaidOffYear = i;
-                }
-            }
-
-            const assetMean = cashProj[i].mean + stocksProj[i].mean + bondsProj[i].mean;
-            const assetHigh = cashProj[i].high + stocksProj[i].high + bondsProj[i].high;
-            const assetLow  = cashProj[i].low  + stocksProj[i].low  + bondsProj[i].low;
-
-            data.push({
-                year:          i,
-                assets:        assetMean,
-                assetsHigh:    assetHigh,
-                assetsLow:     assetLow,
-                mortgage:      currentMortgage,
-                netWorth:      assetMean - currentMortgage,
-                netWorthHigh:  assetHigh - currentMortgage,
-                netWorthLow:   assetLow  - currentMortgage
-            });
-        }
-
-        return { data, mortgagePaidOffYear, totalInterestPaid };
-    }
-
     // SVG chart rendering
     function renderChart(projResult, totalStarting, years, goals) {
         const { data, mortgagePaidOffYear } = projResult;
