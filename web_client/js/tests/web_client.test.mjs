@@ -613,3 +613,30 @@ test('_ruleDedupKey treats a different pattern with the same category as distinc
     const { _ruleDedupKey } = loadAppIntoContext();
     assert.notEqual(_ruleDedupKey('MERCADONA', 'Groceries'), _ruleDedupKey('CARREFOUR', 'Groceries'));
 });
+
+test("getSpendingPeriodDays: defaults to 30 when nothing is saved", () => {
+    const { getSpendingPeriodDays } = loadAppIntoContext();
+    assert.equal(getSpendingPeriodDays(), 30);
+});
+
+test("getSpendingPeriodDays/setSpendingPeriodDays: round-trips a valid value", () => {
+    const w = loadAppIntoContext();
+    w.setSpendingPeriodDays(90);
+    assert.equal(w.getSpendingPeriodDays(), 90);
+});
+
+test("getSpendingPeriodDays: falls back to 30 for a corrupted/invalid stored value", () => {
+    const w = loadAppIntoContext();
+    w.localStorage.setItem('pfmSpendingSummaryDays', 'not-a-number');
+    assert.equal(w.getSpendingPeriodDays(), 30);
+    w.localStorage.setItem('pfmSpendingSummaryDays', '999');
+    assert.equal(w.getSpendingPeriodDays(), 30);
+});
+
+test("setSpendingPeriodDays: persists across a fresh getSpendingPeriodDays call for every allowed value", () => {
+    const w = loadAppIntoContext();
+    [7, 30, 90, 365].forEach(days => {
+        w.setSpendingPeriodDays(days);
+        assert.equal(w.getSpendingPeriodDays(), days);
+    });
+});

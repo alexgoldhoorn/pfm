@@ -4379,6 +4379,31 @@ window.dedupSpendingRowsByDescription = dedupSpendingRowsByDescription;
 // batch's suggestions removes those rows from the uncategorized filter.
 const SP_AI_SUGGEST_BATCH_SIZE = 30;
 
+const SPENDING_PERIOD_KEY = 'pfmSpendingSummaryDays';
+const SPENDING_PERIOD_ALLOWED = [7, 30, 90, 365];
+const SPENDING_PERIOD_DEFAULT = 30;
+
+// Single source of truth for "which period is the Spent/Income/Transferred
+// summary showing" — read by both the Spending page's own selector and the
+// Dashboard's merged Spending card, so picking a period on either page is
+// reflected on the other the next time it loads (see loadDashboardSpending()
+// in the Dashboard section below).
+function getSpendingPeriodDays() {
+    try {
+        const raw = parseInt(localStorage.getItem(SPENDING_PERIOD_KEY), 10);
+        return SPENDING_PERIOD_ALLOWED.includes(raw) ? raw : SPENDING_PERIOD_DEFAULT;
+    } catch (e) {
+        return SPENDING_PERIOD_DEFAULT;
+    }
+}
+function setSpendingPeriodDays(days) {
+    try {
+        localStorage.setItem(SPENDING_PERIOD_KEY, String(days));
+    } catch (e) { /* localStorage unavailable (private mode / quota) — skip persistence */ }
+}
+window.getSpendingPeriodDays = getSpendingPeriodDays;
+window.setSpendingPeriodDays = setSpendingPeriodDays;
+
 async function loadSpendingPage() {
     _wireSpendingRuleForm();
     _wireSpCategoryAddForm();
