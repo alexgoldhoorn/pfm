@@ -211,6 +211,50 @@ function _renderBankAccounts(accounts) {
     }).join('');
 }
 
+// Dashboard-only: same bank_accounts source as the Net Worth page's card
+// above, rendered into the Dashboard's own compact table instead.
+function renderDashboardBankAccounts(accounts) {
+    const tbody = document.querySelector('#dashBankAccountsTable tbody');
+    if (!tbody) return;
+    if (!accounts.length) {
+        tbody.innerHTML = `<tr><td colspan="3" class="text-center text-muted py-3">
+            No bank accounts yet — add one on the
+            <a href="#" onclick="window.navigationManager.showPage('networth'); return false;">Net Worth</a> page.
+        </td></tr>`;
+        return;
+    }
+    const total = accounts.reduce((s, a) => s + (parseFloat(a.balance_eur) || 0), 0);
+    const rows = accounts.map(a => {
+        if (a.balance === null || a.balance === undefined) {
+            return `<tr><td class="ps-3">${esc(a.name)}</td><td class="text-end text-muted" colspan="2">No balance imported yet</td></tr>`;
+        }
+        return `
+            <tr>
+                <td class="ps-3">${esc(a.name)}</td>
+                <td class="text-end">${Fmt.num(a.balance, 2, 2)} ${esc(a.currency || '')}</td>
+                <td class="text-end pe-3">${Fmt.amt('€' + Fmt.num(a.balance_eur, 0, 0))}</td>
+            </tr>`;
+    }).join('');
+    tbody.innerHTML = rows + `
+        <tr class="table-light fw-semibold">
+            <td class="ps-3">Total</td>
+            <td></td>
+            <td class="text-end pe-3">${Fmt.amt('€' + Fmt.num(total, 0, 0))}</td>
+        </tr>`;
+}
+
+async function loadDashboardBankAccounts() {
+    const tbody = document.querySelector('#dashBankAccountsTable tbody');
+    if (!tbody) return;
+    try {
+        const nw = await window.apiClient.getNetworth();
+        renderDashboardBankAccounts(nw.bank_accounts || []);
+    } catch (e) {
+        tbody.innerHTML = '<tr><td colspan="3" class="text-center text-danger py-3">Could not load bank accounts.</td></tr>';
+    }
+}
+window.loadDashboardBankAccounts = loadDashboardBankAccounts;
+
 function escapeForAttr(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }

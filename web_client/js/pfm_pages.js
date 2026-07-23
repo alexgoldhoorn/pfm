@@ -405,9 +405,11 @@ function createPageManager() {
             const totalPnlPct = parseFloat(summary.total_pnl_pct || 0);
             const openPositions = holdings.filter(h => parseFloat(h.quantity || 0) > 0).length;
 
-            // Wealth Simulator live preview — independent, non-blocking (a
-            // failure here must not blank the rest of the dashboard).
+            // Wealth Simulator live preview + Bank Accounts — independent,
+            // non-blocking (a failure in either must not blank the rest of
+            // the dashboard).
             if (window.loadDashboardForecastPreview) window.loadDashboardForecastPreview(totalValue);
+            if (window.loadDashboardBankAccounts) window.loadDashboardBankAccounts();
 
             if (el('totalValue'))    el('totalValue').textContent    = fmtEur(totalValue);
             if (el('dashTotalCost')) el('dashTotalCost').textContent = fmtEur(totalCost);
