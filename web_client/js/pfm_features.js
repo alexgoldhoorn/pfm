@@ -5245,6 +5245,14 @@ async function _applySpSuggestions() {
         panel.style.display = 'none'; panel.innerHTML = '';
         return;
     }
+    const flagged = accepted
+        .map(g => ({ typed: g.suggestedCategory, matches: _findSimilarCategories(g.suggestedCategory, window._spendingAllCategories || []) }))
+        .filter(f => f.matches.length);
+    if (flagged.length && !confirm(
+        `${flagged.length} suggested categor${flagged.length > 1 ? 'ies are' : 'y is'} similar to an existing one:\n` +
+        flagged.map(f => `"${f.typed}" ↔ "${f.matches[0]}"`).join('\n') +
+        '\n\nApply anyway?'
+    )) return;
     if (status) { status.className = 'small text-muted px-3 pt-2'; status.textContent = 'Applying…'; }
     let succeeded = 0, failed = 0;
     const createdRuleKeys = new Set();
