@@ -5016,6 +5016,14 @@ window._findSimilarCategories = _findSimilarCategories;
 window._findDuplicatePairs = _findDuplicatePairs;
 window.SP_CATEGORY_SIMILARITY_THRESHOLD = SP_CATEGORY_SIMILARITY_THRESHOLD;
 
+function _warnIfSimilarCategory(candidate, excludeName) {
+    const existing = (window._spendingAllCategories || []).filter(c => c !== excludeName);
+    const matches = _findSimilarCategories(candidate, existing);
+    if (!matches.length) return true;
+    return confirm(`"${candidate}" is similar to existing categor${matches.length > 1 ? 'ies' : 'y'} ${matches.map(m => `"${m}"`).join(', ')}. Create it as a new, separate category anyway?`);
+}
+window._warnIfSimilarCategory = _warnIfSimilarCategory;
+
 function _populateSpCategoryDatalist(categories) {
     const list = document.getElementById('spCategoryList');
     if (!list) return;
@@ -5058,6 +5066,7 @@ function _wireSpBulkActions() {
             const ids = _selectedSpendingIds();
             const category = document.getElementById('spBulkCategorySelect')?.value.trim();
             if (!ids.length || !category) return;
+            if (!_warnIfSimilarCategory(category)) return;
             recatBtn.disabled = true;
             let succeeded = 0, failed = 0;
             for (const id of ids) {
@@ -5371,6 +5380,10 @@ window.editSpendingCategory = function (idx) {
             await _refreshSpendingData();
             return;
         }
+        if (!_warnIfSimilarCategory(newName, originalName)) {
+            await _refreshSpendingData();
+            return;
+        }
         try {
             await window.apiClient.renameSpendingCategory(originalName, newName);
         } catch (err) {
@@ -5448,6 +5461,7 @@ function _wireSpendingRuleForm() {
             const pattern = document.getElementById('spRulePattern').value.trim();
             const category = document.getElementById('spRuleCategory').value.trim();
             if (!pattern || !category) return;
+            if (!_warnIfSimilarCategory(category)) return;
             const status = document.getElementById('spRuleStatus');
             try {
                 await window.apiClient.createSpendingRule(pattern, category);
@@ -5480,6 +5494,7 @@ function _wireSpCategoryAddForm() {
             e.preventDefault();
             const name = document.getElementById('spCategoryNameInput').value.trim();
             if (!name) return;
+            if (!_warnIfSimilarCategory(name)) return;
             const status = document.getElementById('spCategoryAddStatus');
             try {
                 await window.apiClient.createSpendingCategory(name);
