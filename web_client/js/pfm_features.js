@@ -4612,6 +4612,7 @@ async function _refreshSpendingData() {
         _renderSpendingCategoryChart(summary.by_category_eur || {});
         _renderSpendingRules(rules);
         _renderCategoriesList(categories);
+        _renderPossibleDuplicates(categories);
         await _fetchAndRenderSpendingTable();
     } catch (err) {
         const body = document.getElementById('spTxBody');
@@ -5355,6 +5356,37 @@ function _renderCategoriesList(categories) {
             <button class="btn btn-sm btn-outline-secondary" onclick="window.editSpendingCategory(${i})" title="Edit"><i class="bi bi-pencil"></i></button>
         </div>`).join('') : '<div class="list-group-item text-center text-muted py-2">No categories yet.</div>';
 }
+
+function _renderPossibleDuplicates(categories) {
+    const card = document.getElementById('spDuplicatesCard');
+    const list = document.getElementById('spDuplicatesList');
+    if (!card || !list) return;
+    const pairs = _findDuplicatePairs(categories);
+    window._spDuplicatePairs = pairs;
+    card.style.display = pairs.length ? '' : 'none';
+    list.innerHTML = pairs.map(([a, b], i) => `
+        <div class="list-group-item d-flex align-items-center justify-content-between">
+            <span class="small">"${esc(a)}" &harr; "${esc(b)}"</span>
+            <div class="d-flex gap-2">
+                <button class="btn btn-sm btn-outline-secondary" onclick="window.mergeSpendingCategories(${i}, 0)">Merge into "${esc(a)}"</button>
+                <button class="btn btn-sm btn-outline-secondary" onclick="window.mergeSpendingCategories(${i}, 1)">Merge into "${esc(b)}"</button>
+            </div>
+        </div>`).join('');
+}
+
+window.mergeSpendingCategories = async function (pairIndex, keepIdx) {
+    const pair = (window._spDuplicatePairs || [])[pairIndex];
+    if (!pair) return;
+    const winner = pair[keepIdx];
+    const loser = pair[1 - keepIdx];
+    if (!confirm(`Merge "${loser}" into "${winner}"? This moves every transaction and rule using "${loser}" to "${winner}".`)) return;
+    try {
+        await window.apiClient.renameSpendingCategory(loser, winner);
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+    await _refreshSpendingData();
+};
 
 function _wireCategoriesSortToggle() {
     const catSortBtn = document.getElementById('spCategoriesSortToggle');
