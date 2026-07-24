@@ -402,8 +402,24 @@ class SpendingCategoryBody(BaseModel):
     category_id = db.create_spending_category(name, parent_id=parent["id"])
 ```
 
-`create_spending_category` (~line 3042) gains a `parent_id: int`
-parameter, included in the `INSERT`.
+`create_spending_category` (~line 3042) gains an *optional*
+`parent_id: Optional[int] = None` parameter — optional specifically so
+the 7 existing call sites across `tests/test_database.py` and
+`tests/unit/test_spending_api.py` that call it with just a name keep
+working unchanged; the "a parent is required" rule is enforced one layer
+up, by `create_category`'s 400 check above, not by the DB method itself:
+
+```python
+def create_spending_category(self, name: str, parent_id: Optional[int] = None) -> int:
+    """Register a new, initially-unused spending category."""
+    with self.get_connection() as conn:
+        cursor = conn.execute(
+            "INSERT INTO spending_categories (name, parent_id) VALUES (?, ?)",
+            (name, parent_id),
+        )
+        conn.commit()
+        return cursor.lastrowid
+```
 
 ### E) Tree query endpoint + chart rollup
 
