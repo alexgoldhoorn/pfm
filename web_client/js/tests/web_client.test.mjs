@@ -640,3 +640,46 @@ test("setSpendingPeriodDays: persists across a fresh getSpendingPeriodDays call 
         assert.equal(w.getSpendingPeriodDays(), days);
     });
 });
+
+test('_categorySimilarity: identical strings (case/whitespace-insensitive) score 1', () => {
+    const ctx = loadAppIntoContext();
+    assert.equal(ctx._categorySimilarity('Groceries', 'Groceries'), 1);
+    assert.equal(ctx._categorySimilarity('Groceries', '  groceries  '), 1);
+});
+
+test('_categorySimilarity: near-duplicate pair scores above threshold, distinct pair below', () => {
+    const ctx = loadAppIntoContext();
+    assert.ok(ctx._categorySimilarity('Subscription', 'Subscriptions') >= ctx.SP_CATEGORY_SIMILARITY_THRESHOLD);
+    assert.ok(ctx._categorySimilarity('Groceries', 'Insurance') < ctx.SP_CATEGORY_SIMILARITY_THRESHOLD);
+});
+
+test('_categorySimilarity: empty string never scores 1 against a non-empty string', () => {
+    const ctx = loadAppIntoContext();
+    assert.equal(ctx._categorySimilarity('', 'Groceries'), 0);
+    assert.equal(ctx._categorySimilarity('Groceries', ''), 0);
+});
+
+test('_findSimilarCategories: excludes an exact match by default, includes it when excludeExact is false', () => {
+    const ctx = loadAppIntoContext();
+    const existing = ['Subscription', 'Groceries', 'Insurance'];
+    assert.deepEqual([...ctx._findSimilarCategories('Subscription', existing)], []);
+    assert.deepEqual([...ctx._findSimilarCategories('Subscriptions', existing)], ['Subscription']);
+    assert.deepEqual([...ctx._findSimilarCategories('Subscription', existing, false)], ['Subscription']);
+});
+
+test('_findSimilarCategories: no matches when nothing is close', () => {
+    const ctx = loadAppIntoContext();
+    assert.deepEqual([...ctx._findSimilarCategories('Vacation', ['Groceries', 'Insurance'])], []);
+});
+
+test('_findDuplicatePairs: returns pairs scoring above threshold, each pair once', () => {
+    const ctx = loadAppIntoContext();
+    const pairs = ctx._findDuplicatePairs(['Subscription', 'Subscriptions', 'Groceries']);
+    assert.equal(pairs.length, 1);
+    assert.deepEqual([...pairs[0]], ['Subscription', 'Subscriptions']);
+});
+
+test('_findDuplicatePairs: empty list when no category is close to another', () => {
+    const ctx = loadAppIntoContext();
+    assert.deepEqual([...ctx._findDuplicatePairs(['Groceries', 'Insurance', 'Vacation'])], []);
+});

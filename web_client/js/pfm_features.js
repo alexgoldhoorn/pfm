@@ -4970,6 +4970,52 @@ function _allSpendingCategories(extra) {
         ...(window._spendingAllCategories || []), ...(extra || [])])].sort();
 }
 
+function _levenshteinDistance(a, b) {
+    const m = a.length, n = b.length;
+    const dp = Array.from({ length: m + 1 }, (_, i) => [i, ...Array(n).fill(0)]);
+    for (let j = 0; j <= n; j++) dp[0][j] = j;
+    for (let i = 1; i <= m; i++) {
+        for (let j = 1; j <= n; j++) {
+            dp[i][j] = a[i - 1] === b[j - 1]
+                ? dp[i - 1][j - 1]
+                : 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1]);
+        }
+    }
+    return dp[m][n];
+}
+
+function _categorySimilarity(a, b) {
+    const la = a.trim().toLowerCase(), lb = b.trim().toLowerCase();
+    if (la === lb) return 1;
+    if (!la.length || !lb.length) return 0;
+    return 1 - _levenshteinDistance(la, lb) / Math.max(la.length, lb.length);
+}
+
+const SP_CATEGORY_SIMILARITY_THRESHOLD = 0.75;
+
+function _findSimilarCategories(candidate, existing, excludeExact = true) {
+    return existing.filter(c => {
+        const score = _categorySimilarity(candidate, c);
+        return excludeExact ? (score >= SP_CATEGORY_SIMILARITY_THRESHOLD && score < 1) : score >= SP_CATEGORY_SIMILARITY_THRESHOLD;
+    });
+}
+
+function _findDuplicatePairs(categories) {
+    const pairs = [];
+    for (let i = 0; i < categories.length; i++) {
+        for (let j = i + 1; j < categories.length; j++) {
+            const score = _categorySimilarity(categories[i], categories[j]);
+            if (score >= SP_CATEGORY_SIMILARITY_THRESHOLD) pairs.push([categories[i], categories[j]]);
+        }
+    }
+    return pairs;
+}
+
+window._categorySimilarity = _categorySimilarity;
+window._findSimilarCategories = _findSimilarCategories;
+window._findDuplicatePairs = _findDuplicatePairs;
+window.SP_CATEGORY_SIMILARITY_THRESHOLD = SP_CATEGORY_SIMILARITY_THRESHOLD;
+
 function _populateSpCategoryDatalist(categories) {
     const list = document.getElementById('spCategoryList');
     if (!list) return;
