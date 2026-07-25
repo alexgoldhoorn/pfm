@@ -129,6 +129,11 @@ class SpendingRuleUpdateBody(BaseModel):
 
 class SpendingCategoryBody(BaseModel):
     name: str
+    parent_name: str
+
+
+class SpendingCategoryReparentBody(BaseModel):
+    new_parent_name: str
 
 
 class SpendingCategoryRenameBody(BaseModel):
@@ -631,7 +636,12 @@ async def create_category(
         raise HTTPException(status_code=400, detail="Name cannot be empty")
     if db.find_spending_category_by_name(name):
         raise HTTPException(status_code=409, detail=f"Category '{name}' already exists")
-    category_id = db.create_spending_category(name)
+    parent = db.find_spending_category_by_name(body.parent_name.strip())
+    if not parent:
+        raise HTTPException(
+            status_code=400, detail=f"Parent category '{body.parent_name}' not found"
+        )
+    category_id = db.create_spending_category(name, parent_id=parent["id"])
     return {"id": category_id, "name": name}
 
 
@@ -652,6 +662,29 @@ async def rename_category(
         )
     result = db.rename_spending_category(old_name, new_name)
     return {"old_name": old_name, "new_name": new_name, **result}
+
+
+@router.get("/categories/tree", response_model=List[dict])
+async def list_categories_tree(
+    db=Depends(get_database), api_key_info: dict = Depends(_auth)
+):
+    """Every category with its tree position, for building paths/indented views."""
+    return db.list_spending_categories_tree()
+
+
+@router.put("/categories/{name}/parent", response_model=dict)
+async def reparent_category(
+    name: str,
+    body: SpendingCategoryReparentBody,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Move a category under a different parent."""
+    try:
+        db.reparent_spending_category(name, body.new_parent_name)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"name": name, "new_parent_name": body.new_parent_name}
 
 
 @router.get("/summary", response_model=SpendingSummaryResponse)

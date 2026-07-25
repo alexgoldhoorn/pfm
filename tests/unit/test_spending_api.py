@@ -961,7 +961,9 @@ def test_list_categories_includes_used_and_registered(tmp_path):
 def test_create_category(tmp_path):
     client, _ = _make_client(tmp_path)
     r = client.post(
-        "/api/v1/spending/categories", json={"name": "Vacation"}, headers=HEADERS
+        "/api/v1/spending/categories",
+        json={"name": "Vacation", "parent_name": "Spend"},
+        headers=HEADERS,
     )
     assert r.status_code == 201
     assert r.json()["name"] == "Vacation"
@@ -973,7 +975,9 @@ def test_create_category(tmp_path):
 def test_create_category_rejects_blank_name(tmp_path):
     client, _ = _make_client(tmp_path)
     r = client.post(
-        "/api/v1/spending/categories", json={"name": "   "}, headers=HEADERS
+        "/api/v1/spending/categories",
+        json={"name": "   ", "parent_name": "Spend"},
+        headers=HEADERS,
     )
     assert r.status_code == 400
 
@@ -981,10 +985,14 @@ def test_create_category_rejects_blank_name(tmp_path):
 def test_create_category_rejects_exact_duplicate(tmp_path):
     client, _ = _make_client(tmp_path)
     client.post(
-        "/api/v1/spending/categories", json={"name": "Vacation"}, headers=HEADERS
+        "/api/v1/spending/categories",
+        json={"name": "Vacation", "parent_name": "Spend"},
+        headers=HEADERS,
     )
     r = client.post(
-        "/api/v1/spending/categories", json={"name": "Vacation"}, headers=HEADERS
+        "/api/v1/spending/categories",
+        json={"name": "Vacation", "parent_name": "Spend"},
+        headers=HEADERS,
     )
     assert r.status_code == 409
 
@@ -1327,3 +1335,63 @@ def test_save_falls_back_to_uncategorized_on_sign_mismatch(tmp_path):
     assert r.json()["saved"] == 1
     rows = client.get("/api/v1/spending/", headers=HEADERS).json()["items"]
     assert rows[0]["category"] == "uncategorized"
+
+
+def test_create_category_rejects_unknown_parent(tmp_path):
+    client, _ = _make_client(tmp_path)
+    r = client.post(
+        "/api/v1/spending/categories",
+        json={"name": "Vacation", "parent_name": "Nonexistent"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 400
+
+
+def test_list_categories_tree_shape(tmp_path):
+    client, db = _make_client(tmp_path)
+    r = client.get("/api/v1/spending/categories/tree", headers=HEADERS)
+    assert r.status_code == 200
+    body = r.json()
+    names = {c["name"] for c in body}
+    assert "Income" in names
+    assert "Spend" in names
+    income = next(c for c in body if c["name"] == "Income")
+    assert income["parent_name"] is None
+    assert income["is_root"] == 1
+
+
+def test_reparent_category_moves_node(tmp_path):
+    # Uses single-word names to avoid space-encoding ambiguity in the raw
+    # URL path string built by TestClient -- URL-encoding a category name
+    # containing a space is the frontend's job (encodeURIComponent, see
+    # apiClient.reparentSpendingCategory), not what this test is checking.
+    client, db = _make_client(tmp_path)
+    client.post(
+        "/api/v1/spending/categories",
+        json={"name": "Insurance", "parent_name": "Spend"},
+        headers=HEADERS,
+    )
+    client.post(
+        "/api/v1/spending/categories",
+        json={"name": "CarInsurance", "parent_name": "Spend"},
+        headers=HEADERS,
+    )
+    r = client.put(
+        "/api/v1/spending/categories/CarInsurance/parent",
+        json={"new_parent_name": "Insurance"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+    tree = client.get("/api/v1/spending/categories/tree", headers=HEADERS).json()
+    car = next(c for c in tree if c["name"] == "CarInsurance")
+    assert car["parent_name"] == "Insurance"
+
+
+def test_reparent_category_rejects_root(tmp_path):
+    client, _ = _make_client(tmp_path)
+    r = client.put(
+        "/api/v1/spending/categories/Spend/parent",
+        json={"new_parent_name": "Income"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 400
