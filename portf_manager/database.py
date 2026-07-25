@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 
 # Database version for migration tracking
-DATABASE_VERSION = 27
+DATABASE_VERSION = 28
 
 
 # black
@@ -644,9 +644,14 @@ class Database:
             CREATE TABLE IF NOT EXISTS spending_categories (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
                 name       TEXT NOT NULL UNIQUE,
+                parent_id  INTEGER REFERENCES spending_categories(id),
+                is_root    INTEGER NOT NULL DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """
+        )
+        conn.execute(
+            "INSERT INTO spending_categories (name, parent_id, is_root) VALUES ('Income', NULL, 1), ('Spend', NULL, 1)"
         )
 
         # Create triggers for updated_at timestamps
@@ -723,6 +728,8 @@ class Database:
             self._migrate_to_v26(conn)
         if current_version < 27:
             self._migrate_to_v27(conn)
+        if current_version < 28:
+            self._migrate_to_v28(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -1510,6 +1517,78 @@ class Database:
             )
             """
         )
+        conn.commit()
+
+    def _migrate_to_v28(self, conn: sqlite3.Connection) -> None:
+        """Migrate from v27 to v28 — category tree (Income/Spend roots + parent_id).
+
+        Every category known today (used on a transaction, used on a rule, or
+        explicitly registered) is auto-filed as a direct child of Income or
+        Spend, based on the majority sign of its own past transactions (no
+        transactions -> defaults to Spend). No deeper nesting is guessed.
+        "uncategorized" and "Transfer" are never added to the tree.
+        """
+        conn.execute(
+            "ALTER TABLE spending_categories ADD COLUMN parent_id INTEGER REFERENCES spending_categories(id)"
+        )
+        conn.execute(
+            "ALTER TABLE spending_categories ADD COLUMN is_root INTEGER NOT NULL DEFAULT 0"
+        )
+
+        def _get_or_create_root(name: str) -> int:
+            # A pre-existing category already named "Income"/"Spend" (created
+            # via phase 1's free-text Add Category before this migration ever
+            # ran) would violate the UNIQUE(name) constraint on a plain
+            # INSERT -- promote it to a root in place instead.
+            row = conn.execute(
+                "SELECT id FROM spending_categories WHERE name = ?", (name,)
+            ).fetchone()
+            if row:
+                conn.execute(
+                    "UPDATE spending_categories SET parent_id = NULL, is_root = 1 WHERE id = ?",
+                    (row[0],),
+                )
+                return row[0]
+            return conn.execute(
+                "INSERT INTO spending_categories (name, parent_id, is_root) VALUES (?, NULL, 1)",
+                (name,),
+            ).lastrowid
+
+        income_id = _get_or_create_root("Income")
+        spend_id = _get_or_create_root("Spend")
+
+        names = [
+            row[0]
+            for row in conn.execute(
+                """
+                SELECT category FROM spending_transactions
+                UNION SELECT category FROM spending_rules
+                UNION SELECT name FROM spending_categories WHERE is_root = 0
+                """
+            ).fetchall()
+            if row[0] not in ("uncategorized", "Transfer")
+        ]
+        for name in names:
+            row = conn.execute(
+                "SELECT SUM(CASE WHEN amount < 0 THEN 1 ELSE 0 END) AS neg, COUNT(*) AS total "
+                "FROM spending_transactions WHERE category = ?",
+                (name,),
+            ).fetchone()
+            is_spend = row[1] == 0 or row[0] >= (row[1] - row[0])
+            parent_id = spend_id if is_spend else income_id
+            existing = conn.execute(
+                "SELECT id FROM spending_categories WHERE name = ?", (name,)
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    "UPDATE spending_categories SET parent_id = ? WHERE id = ?",
+                    (parent_id, existing[0]),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO spending_categories (name, parent_id) VALUES (?, ?)",
+                    (name, parent_id),
+                )
         conn.commit()
 
     # ── App settings (persistent key/value) ────────────────────────────────

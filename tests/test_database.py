@@ -50,7 +50,7 @@ class TestDatabase:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             result = cursor.fetchone()
-            assert result[0] == 27  # Current schema version
+            assert result[0] == 28  # Current schema version
 
     def test_v18_assets_have_ticker_column(self):
         """v18 adds the nullable ticker alias column to assets."""
@@ -998,7 +998,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 27
+            assert version == 28
 
             # Assert columns exist
             for table in ["entities", "portfolios", "transactions"]:
@@ -1028,7 +1028,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 27
+            assert version == 28
 
             # Check all tables exist
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -1099,7 +1099,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 27
+            assert version == 28
 
             # Check new tables exist
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -1304,3 +1304,118 @@ class TestSpendingCategories:
         # The category must still be registered -- a self-rename is a
         # no-op, not a delete.
         assert self.db.find_spending_category_by_name("Vacation") is not None
+
+    def test_migration_seeds_income_and_spend_roots(self):
+        # setup_method already created self.db via a fresh init, which runs
+        # _create_all_tables (not the migration path) -- roots must exist
+        # either way.
+        cats = self.db.list_spending_categories_tree()
+        income = next(c for c in cats if c["name"] == "Income")
+        spend = next(c for c in cats if c["name"] == "Spend")
+        assert income["is_root"] == 1
+        assert income["parent_id"] is None
+        assert spend["is_root"] == 1
+        assert spend["parent_id"] is None
+
+    def _build_v27_database(self, db_path, extra_sql=()):
+        """Hand-build a v27-shaped database on disk: the pre-parent_id/is_root
+        spending tables, stamped at schema version 27 (so constructing a real
+        Database() against this file triggers _run_migrations automatically,
+        exercising the actual upgrade path rather than invoking a migration
+        method directly)."""
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            """
+            CREATE TABLE database_version (
+                version INTEGER PRIMARY KEY, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute("INSERT INTO database_version (version) VALUES (27)")
+        conn.execute(
+            """
+            CREATE TABLE portfolios (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, account_type TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE spending_transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, portfolio_id INTEGER,
+                date TEXT, description TEXT, amount REAL, currency TEXT DEFAULT 'EUR',
+                category TEXT DEFAULT 'uncategorized', is_transfer INTEGER DEFAULT 0,
+                transfer_link_type TEXT, transfer_link_id INTEGER, source TEXT, balance REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE spending_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, pattern TEXT, category TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE spending_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        for sql in extra_sql:
+            conn.execute(sql)
+        conn.commit()
+        conn.close()
+
+    def test_migrate_to_v28_direct(self):
+        db_path = tempfile.mktemp(suffix=".db")
+        try:
+            self._build_v27_database(
+                db_path,
+                extra_sql=[
+                    "INSERT INTO spending_transactions (portfolio_id, date, description, amount, category) VALUES (1, '2026-01-05', 'D', -10.0, 'Groceries')",
+                    "INSERT INTO spending_transactions (portfolio_id, date, description, amount, category) VALUES (1, '2026-01-06', 'D', -5.0, 'Groceries')",
+                    "INSERT INTO spending_rules (pattern, category) VALUES ('NETFLIX', 'Subscriptions')",
+                    "INSERT INTO spending_transactions (portfolio_id, date, description, amount, category) VALUES (1, '2026-01-07', 'D', 500.0, 'Salary')",
+                ],
+            )
+
+            # Constructing Database() on an existing version-27 file triggers
+            # _run_migrations automatically (27 < DATABASE_VERSION), which is
+            # what actually runs _migrate_to_v28 -- this exercises the real
+            # upgrade path an existing user's database goes through.
+            db = Database(db_path)
+
+            assert db.get_spending_category_root("Groceries") == "Spend"
+            assert (
+                db.get_spending_category_root("Subscriptions") == "Spend"
+            )  # rule-only, no transactions -> defaults to Spend
+            assert db.get_spending_category_root("Salary") == "Income"
+            assert db.get_spending_category_root("uncategorized") is None
+        finally:
+            if os.path.exists(db_path):
+                os.remove(db_path)
+
+    def test_migrate_to_v28_promotes_preexisting_income_named_category(self):
+        db_path = tempfile.mktemp(suffix=".db")
+        try:
+            # A user already created a category literally named "Income"
+            # before this migration ever ran.
+            self._build_v27_database(
+                db_path,
+                extra_sql=["INSERT INTO spending_categories (name) VALUES ('Income')"],
+            )
+
+            db = Database(db_path)
+
+            tree = db.list_spending_categories_tree()
+            income_rows = [c for c in tree if c["name"] == "Income"]
+            assert len(income_rows) == 1  # promoted in place, not duplicated
+            assert income_rows[0]["is_root"] == 1
+        finally:
+            if os.path.exists(db_path):
+                os.remove(db_path)
