@@ -3126,14 +3126,96 @@ class Database:
             )
             return [row["name"] for row in cursor.fetchall()]
 
-    def create_spending_category(self, name: str) -> int:
+    def create_spending_category(
+        self, name: str, parent_id: Optional[int] = None
+    ) -> int:
         """Register a new, initially-unused spending category."""
         with self.get_connection() as conn:
             cursor = conn.execute(
-                "INSERT INTO spending_categories (name) VALUES (?)", (name,)
+                "INSERT INTO spending_categories (name, parent_id) VALUES (?, ?)",
+                (name, parent_id),
             )
             conn.commit()
             return cursor.lastrowid
+
+    def get_spending_category_root(self, name: str) -> Optional[str]:
+        """Walk parent_id up to the root and return 'Income'/'Spend', or
+        None if name isn't in the tree (uncategorized/Transfer/unknown)."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT id, parent_id, is_root FROM spending_categories WHERE name = ?",
+                (name,),
+            ).fetchone()
+            if not row:
+                return None
+            while not row["is_root"]:
+                if row["parent_id"] is None:
+                    return None
+                row = conn.execute(
+                    "SELECT id, parent_id, is_root FROM spending_categories WHERE id = ?",
+                    (row["parent_id"],),
+                ).fetchone()
+            return conn.execute(
+                "SELECT name FROM spending_categories WHERE id = ?", (row["id"],)
+            ).fetchone()["name"]
+
+    def list_spending_categories_tree(self) -> List[Dict]:
+        """Every category with its tree position: id, name, parent_id,
+        parent_name (None for roots), is_root."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT c.id, c.name, c.parent_id, p.name AS parent_name, c.is_root
+                FROM spending_categories c
+                LEFT JOIN spending_categories p ON c.parent_id = p.id
+                ORDER BY c.name
+                """
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def reparent_spending_category(self, name: str, new_parent_name: str) -> None:
+        # NOTE: get_connection()'s context manager catches any Exception
+        # raised inside the `with` block, rolls back, and re-raises it as a
+        # DatabaseError -- so a ValueError raised mid-block would arrive at
+        # the caller as a DatabaseError, not a ValueError. To honor this
+        # method's documented "raises ValueError on any failure" contract,
+        # validation failures are recorded in `error` and only raised after
+        # the `with` block has exited cleanly.
+        error = None
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT id, is_root FROM spending_categories WHERE name = ?", (name,)
+            ).fetchone()
+            if not row:
+                error = f"Category '{name}' not found"
+            elif row["is_root"]:
+                error = f"'{name}' is a root category and cannot be reparented"
+            else:
+                parent = conn.execute(
+                    "SELECT id FROM spending_categories WHERE name = ?",
+                    (new_parent_name,),
+                ).fetchone()
+                if not parent:
+                    error = f"Category '{new_parent_name}' not found"
+                else:
+                    cursor_id = parent["id"]
+                    while cursor_id is not None:
+                        if cursor_id == row["id"]:
+                            error = "That would make a category its own ancestor"
+                            break
+                        next_row = conn.execute(
+                            "SELECT parent_id FROM spending_categories WHERE id = ?",
+                            (cursor_id,),
+                        ).fetchone()
+                        cursor_id = next_row["parent_id"] if next_row else None
+                    if error is None:
+                        conn.execute(
+                            "UPDATE spending_categories SET parent_id = ? WHERE id = ?",
+                            (parent["id"], row["id"]),
+                        )
+                        conn.commit()
+        if error is not None:
+            raise ValueError(error)
 
     def find_spending_category_by_name(self, name: str) -> Optional[Dict]:
         """Find a registered category by exact name match."""
@@ -3167,6 +3249,17 @@ class Database:
                 (new_name, old_name),
             )
             if self.find_spending_category_by_name(new_name):
+                old_row = conn.execute(
+                    "SELECT id FROM spending_categories WHERE name = ?", (old_name,)
+                ).fetchone()
+                new_row = conn.execute(
+                    "SELECT id FROM spending_categories WHERE name = ?", (new_name,)
+                ).fetchone()
+                if old_row:
+                    conn.execute(
+                        "UPDATE spending_categories SET parent_id = ? WHERE parent_id = ?",
+                        (new_row["id"], old_row["id"]),
+                    )
                 conn.execute(
                     "DELETE FROM spending_categories WHERE name = ?", (old_name,)
                 )
