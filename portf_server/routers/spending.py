@@ -142,20 +142,34 @@ class SpendingSummaryResponse(BaseModel):
     by_category_eur: dict
 
 
-def _apply_rules(description: str, rules: List[dict]) -> str:
+def _sign_matches_root(root: Optional[str], amount: float) -> bool:
+    """True if a category's tree root is consistent with a transaction's
+    amount sign. A category outside the tree (root is None) is exempt."""
+    if root is None:
+        return True
+    return (root == "Spend") == (amount < 0)
+
+
+def _apply_rules(description: str, rules: List[dict], amount: float, db) -> str:
     """First-match-wins, case-insensitive substring match.
 
     Rules are already ordered by id (oldest = highest priority) by
     db.list_spending_rules(). A blank pattern is skipped rather than
     treated as a match-everything wildcard — "" is a substring of every
     string in Python, so an unguarded empty pattern would silently
-    recategorize an entire backlog to one category.
+    recategorize an entire backlog to one category. A rule matching a
+    category whose tree root doesn't match the transaction's amount sign
+    is treated as a non-match (falls back to uncategorized) rather than
+    applied incorrectly or raising -- this runs unattended over many rows.
     """
     desc_lower = description.lower()
     for rule in rules:
         pattern = rule["pattern"].strip()
         if pattern and pattern.lower() in desc_lower:
-            return rule["category"]
+            category = rule["category"]
+            if _sign_matches_root(db.get_spending_category_root(category), amount):
+                return category
+            return "uncategorized"
     return "uncategorized"
 
 
@@ -208,7 +222,7 @@ async def upload_bank_statement(
     dup_count = 0
     rows: List[PreviewSpendingRow] = []
     for r in result.rows:
-        category = _apply_rules(r.description, rules)
+        category = _apply_rules(r.description, rules, r.amount, db)
         is_dup = (
             db.find_duplicate_spending_transaction(
                 portfolio_id=portfolio_id,
@@ -293,6 +307,11 @@ async def save_spending_transactions(
     api_key_info: dict = Depends(_auth),
 ):
     """Save previewed spending rows, honoring duplicate_action, then auto-link transfers."""
+
+    def _resolve_row_category(row) -> str:
+        root = db.get_spending_category_root(row.category)
+        return row.category if _sign_matches_root(root, row.amount) else "uncategorized"
+
     saved = 0
     duplicates_skipped = 0
     overwritten = 0
@@ -313,7 +332,7 @@ async def save_spending_transactions(
                     continue
                 if body.duplicate_action == "overwrite":
                     db.update_spending_transaction(
-                        existing["id"], category=row.category
+                        existing["id"], category=_resolve_row_category(row)
                     )
                     overwritten += 1
                     saved_ids.append(existing["id"])
@@ -326,7 +345,7 @@ async def save_spending_transactions(
                 description=row.description,
                 amount=row.amount,
                 currency=row.currency,
-                category=row.category,
+                category=_resolve_row_category(row),
                 source="generic",
                 balance=row.balance,
             )
@@ -451,6 +470,13 @@ async def update_spending_category(
     if not category:
         raise HTTPException(status_code=400, detail="Category cannot be empty")
 
+    root = db.get_spending_category_root(category)
+    if not _sign_matches_root(root, existing["amount"]):
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{category}' is an {root} category; this transaction is {'a debit' if existing['amount'] < 0 else 'a credit'}",
+        )
+
     update_kwargs = {"category": category}
     if category != "Transfer" and existing.get("is_transfer"):
         update_kwargs["is_transfer"] = False
@@ -511,7 +537,7 @@ async def rescan_categories(
         uncategorized = [row for row in uncategorized if row["id"] in id_set]
     updated = 0
     for row in uncategorized:
-        category = _apply_rules(row["description"], rules)
+        category = _apply_rules(row["description"], rules, row["amount"], db)
         if category != "uncategorized":
             if db.update_spending_transaction(row["id"], category=category):
                 updated += 1
