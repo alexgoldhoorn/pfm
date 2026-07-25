@@ -1419,3 +1419,65 @@ class TestSpendingCategories:
         finally:
             if os.path.exists(db_path):
                 os.remove(db_path)
+
+    def test_migrate_to_v28_income_named_category_with_transactions_not_self_referenced(
+        self,
+    ):
+        # Regression for a code-review finding: a user already had actual
+        # *transactions* posted under a category literally named "Income"
+        # (very plausible pre-migration name for a salary category), with
+        # amounts whose majority sign is non-negative -- i.e. the category's
+        # own majority-sign classification would resolve to the Income root
+        # itself. _get_or_create_root("Income") promotes this pre-existing
+        # row to a root (parent_id=NULL, is_root=1) *before* the main
+        # per-category loop runs. That same row's name also appears in the
+        # loop's `names` list (it's still selected out of
+        # spending_transactions), and the loop must not then overwrite the
+        # already-promoted root's parent_id with a majority-sign parent_id
+        # -- which here would point at the root's own id, corrupting the
+        # is_root=1 => parent_id IS NULL invariant. Symmetric "Spend" case
+        # included since it's the same code path.
+        db_path = tempfile.mktemp(suffix=".db")
+        try:
+            self._build_v27_database(
+                db_path,
+                extra_sql=[
+                    "INSERT INTO spending_categories (name) VALUES ('Income')",
+                    "INSERT INTO spending_categories (name) VALUES ('Spend')",
+                    # Mostly non-negative amounts under "Income" -> majority
+                    # sign resolves to the Income root itself.
+                    "INSERT INTO spending_transactions (portfolio_id, date, description, amount, category) VALUES (1, '2026-01-01', 'Salary', 1000.0, 'Income')",
+                    "INSERT INTO spending_transactions (portfolio_id, date, description, amount, category) VALUES (1, '2026-01-02', 'Bonus', 200.0, 'Income')",
+                    "INSERT INTO spending_transactions (portfolio_id, date, description, amount, category) VALUES (1, '2026-01-03', 'Refund', -5.0, 'Income')",
+                    # Mostly negative amounts under "Spend" -> majority sign
+                    # resolves to the Spend root itself.
+                    "INSERT INTO spending_transactions (portfolio_id, date, description, amount, category) VALUES (1, '2026-01-04', 'Rent', -800.0, 'Spend')",
+                    "INSERT INTO spending_transactions (portfolio_id, date, description, amount, category) VALUES (1, '2026-01-05', 'Groceries', -50.0, 'Spend')",
+                    "INSERT INTO spending_transactions (portfolio_id, date, description, amount, category) VALUES (1, '2026-01-06', 'Cashback', 3.0, 'Spend')",
+                ],
+            )
+
+            db = Database(db_path)
+
+            # Query the migrated schema directly rather than via the
+            # not-yet-implemented list_spending_categories_tree() /
+            # get_spending_category_root() accessors (those land in a later
+            # task) -- this still exercises the real _run_migrations ->
+            # _migrate_to_v28 upgrade path via Database(db_path) above.
+            with db.get_connection() as conn:
+                income_row = conn.execute(
+                    "SELECT parent_id, is_root FROM spending_categories WHERE name = 'Income'"
+                ).fetchone()
+                spend_row = conn.execute(
+                    "SELECT parent_id, is_root FROM spending_categories WHERE name = 'Spend'"
+                ).fetchone()
+
+            assert income_row is not None
+            assert spend_row is not None
+            assert income_row["parent_id"] is None
+            assert income_row["is_root"] == 1
+            assert spend_row["parent_id"] is None
+            assert spend_row["is_root"] == 1
+        finally:
+            if os.path.exists(db_path):
+                os.remove(db_path)

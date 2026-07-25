@@ -1579,6 +1579,14 @@ class Database:
             existing = conn.execute(
                 "SELECT id FROM spending_categories WHERE name = ?", (name,)
             ).fetchone()
+            if existing and existing[0] in (income_id, spend_id):
+                # This name IS already one of the two roots (a pre-existing
+                # category literally named "Income"/"Spend" that
+                # _get_or_create_root already promoted above). Leave it
+                # alone -- filing it under its own majority-sign parent
+                # would self-reference the root and violate
+                # is_root=1 => parent_id IS NULL.
+                continue
             if existing:
                 conn.execute(
                     "UPDATE spending_categories SET parent_id = ? WHERE id = ?",
