@@ -1197,3 +1197,133 @@ def test_list_spending_min_abs_amount_and_sign_combine(tmp_path):
     body = r.json()
     assert body["total"] == 1
     assert body["items"][0]["description"] == "BigExpense"
+
+
+def test_update_category_rejects_sign_mismatch_income_category_on_debit(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    tx_id = db.create_spending_transaction(
+        pid, "2026-01-05", "Desc", -10.0, category="uncategorized"
+    )
+    income_id = next(
+        c["id"] for c in db.list_spending_categories_tree() if c["name"] == "Income"
+    )
+    db.create_spending_category("Freelance", parent_id=income_id)
+
+    r = client.put(
+        f"/api/v1/spending/{tx_id}",
+        json={"category": "Freelance"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 400
+
+
+def test_update_category_rejects_sign_mismatch_spend_category_on_credit(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    tx_id = db.create_spending_transaction(
+        pid, "2026-01-05", "Desc", 100.0, category="uncategorized"
+    )
+    spend_id = next(
+        c["id"] for c in db.list_spending_categories_tree() if c["name"] == "Spend"
+    )
+    db.create_spending_category("Groceries", parent_id=spend_id)
+
+    r = client.put(
+        f"/api/v1/spending/{tx_id}",
+        json={"category": "Groceries"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 400
+
+
+def test_update_category_accepts_matching_sign(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    tx_id = db.create_spending_transaction(
+        pid, "2026-01-05", "Desc", -10.0, category="uncategorized"
+    )
+    spend_id = next(
+        c["id"] for c in db.list_spending_categories_tree() if c["name"] == "Spend"
+    )
+    db.create_spending_category("Groceries", parent_id=spend_id)
+
+    r = client.put(
+        f"/api/v1/spending/{tx_id}",
+        json={"category": "Groceries"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+
+
+def test_update_category_exempt_for_uncategorized_and_transfer(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    tx_id = db.create_spending_transaction(
+        pid, "2026-01-05", "Desc", -10.0, category="Groceries"
+    )
+    r = client.put(
+        f"/api/v1/spending/{tx_id}", json={"category": "Transfer"}, headers=HEADERS
+    )
+    assert r.status_code == 200
+
+    tx_id_2 = db.create_spending_transaction(
+        pid, "2026-01-06", "Desc", -10.0, category="Groceries"
+    )
+    r2 = client.put(
+        f"/api/v1/spending/{tx_id_2}",
+        json={"category": "uncategorized"},
+        headers=HEADERS,
+    )
+    assert r2.status_code == 200
+
+
+def test_rescan_categories_skips_sign_mismatched_rule(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    income_id = next(
+        c["id"] for c in db.list_spending_categories_tree() if c["name"] == "Income"
+    )
+    db.create_spending_category("Freelance", parent_id=income_id)
+    db.create_spending_rule(pattern="INVOICE123", category="Freelance")
+    tx_id = db.create_spending_transaction(
+        pid, "2026-01-05", "INVOICE123 payment", -10.0, category="uncategorized"
+    )
+
+    r = client.post("/api/v1/spending/rescan-categories", headers=HEADERS)
+    assert r.status_code == 200
+    assert r.json()["recategorized"] == 0
+    assert db.get_spending_transaction(tx_id)["category"] == "uncategorized"
+
+
+def test_save_falls_back_to_uncategorized_on_sign_mismatch(tmp_path):
+    client, db = _make_client(tmp_path)
+    income_id = next(
+        c["id"] for c in db.list_spending_categories_tree() if c["name"] == "Income"
+    )
+    db.create_spending_category("Freelance", parent_id=income_id)
+
+    r = client.post(
+        "/api/v1/spending/save",
+        json={
+            "account_portfolio_id": db.create_portfolio(
+                "Example Bank", account_type="bank"
+            ),
+            "duplicate_action": "add",
+            "rows": [
+                {
+                    "date": "2026-01-05",
+                    "description": "Desc",
+                    "amount": -10.0,
+                    "currency": "EUR",
+                    "category": "Freelance",
+                    "is_duplicate": False,
+                }
+            ],
+        },
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+    assert r.json()["saved"] == 1
+    rows = client.get("/api/v1/spending/", headers=HEADERS).json()["items"]
+    assert rows[0]["category"] == "uncategorized"
