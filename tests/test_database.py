@@ -1481,3 +1481,117 @@ class TestSpendingCategories:
         finally:
             if os.path.exists(db_path):
                 os.remove(db_path)
+
+    def test_get_spending_category_root_resolves_nested_category(self):
+        # "Income" already exists as a seeded root (Task 1) -- use its real
+        # id rather than creating a second row of the same name, which
+        # would violate the UNIQUE(name) constraint.
+        income_id = next(
+            c["id"]
+            for c in self.db.list_spending_categories_tree()
+            if c["name"] == "Income"
+        )
+        with self.db.get_connection() as conn:
+            job_id = conn.execute(
+                "INSERT INTO spending_categories (name, parent_id) VALUES ('Job', ?)",
+                (income_id,),
+            ).lastrowid
+            conn.execute(
+                "INSERT INTO spending_categories (name, parent_id) VALUES ('Salary', ?)",
+                (job_id,),
+            )
+            conn.commit()
+        assert self.db.get_spending_category_root("Salary") == "Income"
+        assert self.db.get_spending_category_root("Job") == "Income"
+
+    def test_get_spending_category_root_returns_none_for_unknown_name(self):
+        assert self.db.get_spending_category_root("uncategorized") is None
+        assert self.db.get_spending_category_root("Nonexistent") is None
+
+    def test_list_spending_categories_tree_resolves_parent_name(self):
+        spend_id = next(
+            c["id"]
+            for c in self.db.list_spending_categories_tree()
+            if c["name"] == "Spend"
+        )
+        self.db.create_spending_category("Insurance", parent_id=spend_id)
+
+        tree = self.db.list_spending_categories_tree()
+        insurance = next(c for c in tree if c["name"] == "Insurance")
+        assert insurance["parent_name"] == "Spend"
+        spend = next(c for c in tree if c["name"] == "Spend")
+        assert spend["parent_name"] is None
+
+    def test_reparent_spending_category_moves_node(self):
+        spend_id = next(
+            c["id"]
+            for c in self.db.list_spending_categories_tree()
+            if c["name"] == "Spend"
+        )
+        self.db.create_spending_category("Car Insurance", parent_id=spend_id)
+        self.db.create_spending_category("Insurance", parent_id=spend_id)
+
+        self.db.reparent_spending_category("Car Insurance", "Insurance")
+
+        tree = self.db.list_spending_categories_tree()
+        car = next(c for c in tree if c["name"] == "Car Insurance")
+        assert car["parent_name"] == "Insurance"
+
+    def test_reparent_spending_category_rejects_root(self):
+        with pytest.raises(ValueError):
+            self.db.reparent_spending_category("Spend", "Income")
+
+    def test_reparent_spending_category_rejects_unknown_names(self):
+        with pytest.raises(ValueError):
+            self.db.reparent_spending_category("Nonexistent", "Spend")
+        self.db.create_spending_category("Vacation")
+        with pytest.raises(ValueError):
+            self.db.reparent_spending_category("Vacation", "AlsoNonexistent")
+
+    def test_reparent_spending_category_rejects_cycle(self):
+        spend_id = next(
+            c["id"]
+            for c in self.db.list_spending_categories_tree()
+            if c["name"] == "Spend"
+        )
+        self.db.create_spending_category("Insurance", parent_id=spend_id)
+        insurance_id = next(
+            c["id"]
+            for c in self.db.list_spending_categories_tree()
+            if c["name"] == "Insurance"
+        )
+        self.db.create_spending_category("Car Insurance", parent_id=insurance_id)
+
+        # Direct cycle: Insurance -> Car Insurance's parent, now try the reverse.
+        with pytest.raises(ValueError):
+            self.db.reparent_spending_category("Insurance", "Car Insurance")
+
+    def test_rename_spending_category_merge_reparents_children(self):
+        spend_id = next(
+            c["id"]
+            for c in self.db.list_spending_categories_tree()
+            if c["name"] == "Spend"
+        )
+        self.db.create_spending_category("Insurance", parent_id=spend_id)
+        self.db.create_spending_category("Cover", parent_id=spend_id)  # merge target
+        insurance_id = next(
+            c["id"]
+            for c in self.db.list_spending_categories_tree()
+            if c["name"] == "Insurance"
+        )
+        self.db.create_spending_category("Car Insurance", parent_id=insurance_id)
+
+        self.db.rename_spending_category("Insurance", "Cover")  # merge case
+
+        tree = self.db.list_spending_categories_tree()
+        car = next(c for c in tree if c["name"] == "Car Insurance")
+        assert car["parent_name"] == "Cover"
+
+    def test_create_spending_category_without_parent_still_works(self):
+        # Backward compatibility: existing callers that pass only a name
+        # must keep working unchanged (parent_id defaults to None/NULL).
+        cat_id = self.db.create_spending_category("Vacation")
+        assert isinstance(cat_id, int)
+        tree = self.db.list_spending_categories_tree()
+        vacation = next(c for c in tree if c["name"] == "Vacation")
+        assert vacation["parent_id"] is None
