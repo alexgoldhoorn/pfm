@@ -5,7 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-07-23
+Last updated: 2026-07-27
+
+**Recent (v2.5.35):** **Spending: hierarchical category tree.** Categories now form a tree rooted at two fixed "Income" and "Spend" nodes (db v28: new `spending_categories.parent_id`/`is_root` columns). A category's root must match its transactions' amount sign — direct edits reject a mismatch with 400, but automated rule application silently falls back to `uncategorized` on a sign mismatch instead of erroring. New endpoints: `GET /api/v1/spending/categories/tree` (returns each category with tree position and breadcrumb path) and `PUT /api/v1/spending/categories/{name}/parent` (reparent with cycle prevention). `POST /api/v1/spending/categories` now requires a `parent_name` field. The spending-by-category chart (Categories tab and Dashboard's "Spending" card) now rolls up to top-level Spend groups instead of showing every leaf category. The Categories tab is now an indented tree view with a parent-reassignment dropdown next to the existing rename pencil. Category datalists (bulk-recategorize field, Add Rule form, AI-suggest panel) now show breadcrumb paths (`"Spend > Insurance > Car Insurance"`) as suggestions while still persisting bare leaf names — unchanged by this feature for transactions and rules (globally unique names still unambiguously identify tree nodes).
 
 **Recent (v2.5.34):** **Spending: selectable time frame + Dashboard spending summary.** The Spending page's Spent/Income/Transferred cards (and the Categories tab's chart, which shares the same underlying data) were hardcoded to a 30-day window — a new "Period" selector (7/30/90/365 days) now drives both, persisted via `localStorage['pfmSpendingSummaryDays']`. The Dashboard's "Top Spending Categories" card is renamed **Spending**, gains its own inline period selector kept in sync with the Spending page's choice via the same key, and now shows a compact Spent/Income/Transferred stat row above the existing category bars — both from one shared `getSpendingSummary(days)` call.
 
