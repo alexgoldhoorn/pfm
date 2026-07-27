@@ -712,3 +712,54 @@ test('_isDescendant: returns false for an unrelated node', () => {
     ];
     assert.equal(ctx._isDescendant(tree, 1, 3), false);
 });
+
+test('_categoryFullPath: builds a nested path from parent pointers', () => {
+    const ctx = loadAppIntoContext();
+    const tree = [
+        { name: 'Spend', parent_name: null },
+        { name: 'Insurance', parent_name: 'Spend' },
+        { name: 'Car Insurance', parent_name: 'Insurance' },
+    ];
+    assert.equal(ctx._categoryFullPath(tree, 'Car Insurance'), 'Spend > Insurance > Car Insurance');
+});
+
+test('_categoryFullPath: a root-level category returns just its own name', () => {
+    const ctx = loadAppIntoContext();
+    const tree = [{ name: 'Spend', parent_name: null }];
+    assert.equal(ctx._categoryFullPath(tree, 'Spend'), 'Spend');
+});
+
+test('_resolveCategoryInput: extracts the leaf from a full path', () => {
+    const ctx = loadAppIntoContext();
+    assert.equal(ctx._resolveCategoryInput('Spend > Insurance > Car Insurance'), 'Car Insurance');
+});
+
+test('_resolveCategoryInput: a bare name with no path separator is unchanged', () => {
+    const ctx = loadAppIntoContext();
+    assert.equal(ctx._resolveCategoryInput('Groceries'), 'Groceries');
+});
+
+test('_resolveCategoryInput: trims surrounding whitespace', () => {
+    const ctx = loadAppIntoContext();
+    assert.equal(ctx._resolveCategoryInput('  Groceries  '), 'Groceries');
+});
+
+test('_allSpendingCategories: renders a tree-known category as its full path', () => {
+    const ctx = loadAppIntoContext();
+    ctx.window._spendingAllCategories = ['Car Insurance'];
+    ctx.window._spendingCategoryTree = [
+        { name: 'Spend', parent_name: null },
+        { name: 'Insurance', parent_name: 'Spend' },
+        { name: 'Car Insurance', parent_name: 'Insurance' },
+    ];
+    const result = ctx._allSpendingCategories();
+    assert.ok([...result].includes('Spend > Insurance > Car Insurance'));
+});
+
+test('_allSpendingCategories: a category not in the tree falls back to its bare name', () => {
+    const ctx = loadAppIntoContext();
+    ctx.window._spendingAllCategories = ['Groceries'];
+    ctx.window._spendingCategoryTree = [];
+    const result = ctx._allSpendingCategories();
+    assert.ok([...result].includes('Groceries'));
+});
