@@ -2743,11 +2743,15 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                 <div id="spCategoriesList" class="list-group list-group-flush"></div>
                                 <div class="card-body border-top">
                                     <form id="spCategoryAddForm" class="row g-2 align-items-end">
-                                        <div class="col-8 col-sm-9">
+                                        <div class="col-5 col-sm-5">
                                             <label class="form-label small mb-1">New category name</label>
                                             <input class="form-control form-control-sm" id="spCategoryNameInput" placeholder="e.g. Vacation" required>
                                         </div>
-                                        <div class="col-4 col-sm-3">
+                                        <div class="col-4 col-sm-4">
+                                            <label class="form-label small mb-1">Parent</label>
+                                            <select class="form-select form-select-sm" id="spCategoryParentInput"></select>
+                                        </div>
+                                        <div class="col-3 col-sm-3">
                                             <button type="submit" class="btn btn-sm btn-primary w-100"><i class="bi bi-plus-lg me-1"></i>Add</button>
                                         </div>
                                     </form>

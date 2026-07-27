@@ -683,3 +683,32 @@ test('_findDuplicatePairs: empty list when no category is close to another', () 
     const ctx = loadAppIntoContext();
     assert.deepEqual([...ctx._findDuplicatePairs(['Groceries', 'Insurance', 'Vacation'])], []);
 });
+
+test('_isDescendant: detects a direct child', () => {
+    const ctx = loadAppIntoContext();
+    const tree = [
+        { id: 1, name: 'Spend', parent_id: null },
+        { id: 2, name: 'Insurance', parent_id: 1 },
+    ];
+    assert.equal(ctx._isDescendant(tree, 1, 2), true);
+});
+
+test('_isDescendant: detects a multi-level descendant', () => {
+    const ctx = loadAppIntoContext();
+    const tree = [
+        { id: 1, name: 'Spend', parent_id: null },
+        { id: 2, name: 'Insurance', parent_id: 1 },
+        { id: 3, name: 'Car Insurance', parent_id: 2 },
+    ];
+    assert.equal(ctx._isDescendant(tree, 1, 3), true);
+});
+
+test('_isDescendant: returns false for an unrelated node', () => {
+    const ctx = loadAppIntoContext();
+    const tree = [
+        { id: 1, name: 'Spend', parent_id: null },
+        { id: 2, name: 'Insurance', parent_id: 1 },
+        { id: 3, name: 'Income', parent_id: null },
+    ];
+    assert.equal(ctx._isDescendant(tree, 1, 3), false);
+});
