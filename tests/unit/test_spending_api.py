@@ -1395,3 +1395,24 @@ def test_reparent_category_rejects_root(tmp_path):
         headers=HEADERS,
     )
     assert r.status_code == 400
+
+
+def test_summary_rolls_up_category_chart_to_top_level_spend_group(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    spend_id = next(
+        c["id"] for c in db.list_spending_categories_tree() if c["name"] == "Spend"
+    )
+    insurance_id = db.create_spending_category("Insurance", parent_id=spend_id)
+    db.create_spending_category("Car Insurance", parent_id=insurance_id)
+    db.create_spending_category("Home Insurance", parent_id=insurance_id)
+    today = date.today().isoformat()
+    db.create_spending_transaction(pid, today, "Desc", -30.0, category="Car Insurance")
+    db.create_spending_transaction(pid, today, "Desc", -20.0, category="Home Insurance")
+
+    r = client.get("/api/v1/spending/summary", params={"days": 30}, headers=HEADERS)
+    assert r.status_code == 200
+    by_cat = r.json()["by_category_eur"]
+    assert by_cat.get("Insurance") == 50.0
+    assert "Car Insurance" not in by_cat
+    assert "Home Insurance" not in by_cat

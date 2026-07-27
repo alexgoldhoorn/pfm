@@ -709,6 +709,18 @@ def get_spending_summary(
     transferred_eur = 0.0
     by_category_eur: dict = {}
 
+    tree = {row["name"]: row for row in db.list_spending_categories_tree()}
+
+    def _rollup_key(category: str) -> str:
+        node = tree.get(category)
+        if node is None:
+            return category
+        while node["parent_name"] is not None and node["parent_name"] != "Spend":
+            node = tree.get(node["parent_name"])
+            if node is None:
+                return category
+        return node["name"]
+
     for r in rows:
         amt_eur = float(r["amount"]) * _fx(r.get("currency", "EUR"))
         if r["is_transfer"]:
@@ -716,9 +728,8 @@ def get_spending_summary(
             continue
         if amt_eur < 0:
             spent_eur += abs(amt_eur)
-            by_category_eur[r["category"]] = by_category_eur.get(
-                r["category"], 0.0
-            ) + abs(amt_eur)
+            key = _rollup_key(r["category"])
+            by_category_eur[key] = by_category_eur.get(key, 0.0) + abs(amt_eur)
         else:
             income_eur += amt_eur
 
