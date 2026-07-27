@@ -1534,14 +1534,40 @@ function createAPIClient() {
             if (!response.ok) throw new Error('Failed to load categories');
             return response.json();
         },
-        async createSpendingCategory(name) {
+        async createSpendingCategory(name, parentName) {
             const response = await fetch(this.baseURL + '/api/v1/spending/categories', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
-                body: JSON.stringify({ name })
+                body: JSON.stringify({ name, parent_name: parentName })
             });
             if (!response.ok) {
                 let detail = 'Failed to create category';
+                try {
+                    const body = await response.json();
+                    detail = body.detail || detail;
+                } catch (e) { /* response wasn't JSON, use the generic message */ }
+                throw new Error(detail);
+            }
+            return response.json();
+        },
+        async getSpendingCategoryTree() {
+            const response = await fetch(this.baseURL + '/api/v1/spending/categories/tree', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) throw new Error('Failed to load category tree');
+            return response.json();
+        },
+        async reparentSpendingCategory(name, newParentName) {
+            const response = await fetch(
+                this.baseURL + '/api/v1/spending/categories/' + encodeURIComponent(name) + '/parent',
+                {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                    body: JSON.stringify({ new_parent_name: newParentName })
+                }
+            );
+            if (!response.ok) {
+                let detail = 'Failed to move category';
                 try {
                     const body = await response.json();
                     detail = body.detail || detail;
