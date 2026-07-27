@@ -1587,6 +1587,83 @@ class TestSpendingCategories:
         car = next(c for c in tree if c["name"] == "Car Insurance")
         assert car["parent_name"] == "Cover"
 
+    def test_rename_spending_category_merge_into_direct_child_avoids_cycle(self):
+        # Merging a category into its own direct child (e.g. "Insurance" ->
+        # "Car Insurance") must not create a self-reference: the blanket
+        # "reparent every child of old_name onto new_name" logic would
+        # otherwise set Car Insurance's own parent_id to its own id, since
+        # Car Insurance is itself a child of Insurance.
+        spend_id = next(
+            c["id"]
+            for c in self.db.list_spending_categories_tree()
+            if c["name"] == "Spend"
+        )
+        self.db.create_spending_category("Insurance", parent_id=spend_id)
+        insurance_id = next(
+            c["id"]
+            for c in self.db.list_spending_categories_tree()
+            if c["name"] == "Insurance"
+        )
+        self.db.create_spending_category("Car Insurance", parent_id=insurance_id)
+
+        self.db.rename_spending_category("Insurance", "Car Insurance")  # merge case
+
+        tree = {c["name"]: c for c in self.db.list_spending_categories_tree()}
+        car = tree["Car Insurance"]
+        # Car Insurance must take Insurance's former place under Spend, not
+        # point at itself.
+        assert car["parent_id"] == spend_id
+        assert car["parent_id"] != car["id"]
+        assert car["parent_name"] == "Spend"
+
+        # get_spending_category_root must still terminate and resolve
+        # correctly (would infinite-loop on a self-referencing row).
+        assert self.db.get_spending_category_root("Car Insurance") == "Spend"
+
+    def test_rename_spending_category_merge_into_grandchild_avoids_cycle(self):
+        # Two-level case: Insurance -> Car Insurance -> Comprehensive.
+        # Merging Insurance into Comprehensive (a grandchild) must promote
+        # the intermediate node (Car Insurance) onto Insurance's old
+        # parent, leaving Comprehensive's own parent_id untouched, with no
+        # cycle anywhere in the chain.
+        spend_id = next(
+            c["id"]
+            for c in self.db.list_spending_categories_tree()
+            if c["name"] == "Spend"
+        )
+        self.db.create_spending_category("Insurance", parent_id=spend_id)
+        insurance_id = next(
+            c["id"]
+            for c in self.db.list_spending_categories_tree()
+            if c["name"] == "Insurance"
+        )
+        self.db.create_spending_category("Car Insurance", parent_id=insurance_id)
+        car_insurance_id = next(
+            c["id"]
+            for c in self.db.list_spending_categories_tree()
+            if c["name"] == "Car Insurance"
+        )
+        self.db.create_spending_category("Comprehensive", parent_id=car_insurance_id)
+
+        self.db.rename_spending_category("Insurance", "Comprehensive")  # merge case
+
+        tree = {c["name"]: c for c in self.db.list_spending_categories_tree()}
+        car = tree["Car Insurance"]
+        comprehensive = tree["Comprehensive"]
+
+        # Car Insurance is promoted to Insurance's old parent.
+        assert car["parent_id"] == spend_id
+        assert car["parent_name"] == "Spend"
+        # Comprehensive's own parent_id is untouched -- still Car Insurance.
+        assert comprehensive["parent_id"] == car_insurance_id
+        assert comprehensive["parent_name"] == "Car Insurance"
+        # No cycle: neither node points at itself or at the other in a loop.
+        assert car["parent_id"] != car["id"]
+        assert comprehensive["parent_id"] != comprehensive["id"]
+
+        assert self.db.get_spending_category_root("Comprehensive") == "Spend"
+        assert self.db.get_spending_category_root("Car Insurance") == "Spend"
+
     def test_create_spending_category_without_parent_still_works(self):
         # Backward compatibility: existing callers that pass only a name
         # must keep working unchanged (parent_id defaults to None/NULL).

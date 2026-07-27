@@ -3148,13 +3148,21 @@ class Database:
             ).fetchone()
             if not row:
                 return None
-            while not row["is_root"]:
+            for _ in range(100):
+                if row["is_root"]:
+                    break
                 if row["parent_id"] is None:
                     return None
                 row = conn.execute(
                     "SELECT id, parent_id, is_root FROM spending_categories WHERE id = ?",
                     (row["parent_id"],),
                 ).fetchone()
+            else:
+                # Defensive guard: a real category tree is never this deep.
+                # If we get here, a cycle exists somewhere upstream (e.g. a
+                # bug in reparenting) -- bail out safely instead of looping
+                # forever.
+                return None
             return conn.execute(
                 "SELECT name FROM spending_categories WHERE id = ?", (row["id"],)
             ).fetchone()["name"]
@@ -3250,16 +3258,54 @@ class Database:
             )
             if self.find_spending_category_by_name(new_name):
                 old_row = conn.execute(
-                    "SELECT id FROM spending_categories WHERE name = ?", (old_name,)
+                    "SELECT id, parent_id FROM spending_categories WHERE name = ?",
+                    (old_name,),
                 ).fetchone()
                 new_row = conn.execute(
                     "SELECT id FROM spending_categories WHERE name = ?", (new_name,)
                 ).fetchone()
                 if old_row:
-                    conn.execute(
-                        "UPDATE spending_categories SET parent_id = ? WHERE parent_id = ?",
-                        (new_row["id"], old_row["id"]),
-                    )
+                    # new_name may itself be a descendant of old_name (e.g.
+                    # merging "Insurance" into its own child "Car Insurance").
+                    # A blanket reparent of every child of old_name onto
+                    # new_name would then also reparent the ancestor of
+                    # new_name that sits directly under old_name onto
+                    # new_name -- creating a self-reference (direct-child
+                    # case) or a 2-node cycle (deeper case). Detect that
+                    # "splice point" by walking up from new_name and route
+                    # around it: the splice point is promoted onto
+                    # old_name's own former parent instead, and every other
+                    # child of old_name is reparented onto new_name as
+                    # before.
+                    splice_id = None
+                    cursor_id = new_row["id"]
+                    for _ in range(100):
+                        if cursor_id is None:
+                            break
+                        row = conn.execute(
+                            "SELECT parent_id FROM spending_categories WHERE id = ?",
+                            (cursor_id,),
+                        ).fetchone()
+                        parent_id = row["parent_id"] if row else None
+                        if parent_id == old_row["id"]:
+                            splice_id = cursor_id
+                            break
+                        cursor_id = parent_id
+
+                    if splice_id is not None:
+                        conn.execute(
+                            "UPDATE spending_categories SET parent_id = ? WHERE id = ?",
+                            (old_row["parent_id"], splice_id),
+                        )
+                        conn.execute(
+                            "UPDATE spending_categories SET parent_id = ? WHERE parent_id = ? AND id != ?",
+                            (new_row["id"], old_row["id"], splice_id),
+                        )
+                    else:
+                        conn.execute(
+                            "UPDATE spending_categories SET parent_id = ? WHERE parent_id = ?",
+                            (new_row["id"], old_row["id"]),
+                        )
                 conn.execute(
                     "DELETE FROM spending_categories WHERE name = ?", (old_name,)
                 )
