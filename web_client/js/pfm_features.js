@@ -4977,9 +4977,31 @@ function _wireSpendingTablePagination() {
     }
 }
 
+function _categoryFullPath(tree, name) {
+    const byName = new Map(tree.map(c => [c.name, c]));
+    const parts = [name];
+    let node = byName.get(name);
+    while (node && node.parent_name) {
+        parts.unshift(node.parent_name);
+        node = byName.get(node.parent_name);
+    }
+    return parts.join(' > ');
+}
+window._categoryFullPath = _categoryFullPath;
+
+function _resolveCategoryInput(value) {
+    const trimmed = value.trim();
+    return trimmed.includes(' > ') ? trimmed.split(' > ').pop() : trimmed;
+}
+window._resolveCategoryInput = _resolveCategoryInput;
+
 function _allSpendingCategories(extra) {
-    return [...new Set(['uncategorized', 'Transfer',
-        ...(window._spendingAllCategories || []), ...(extra || [])])].sort();
+    const tree = window._spendingCategoryTree || [];
+    const names = [...new Set(['uncategorized', 'Transfer',
+        ...(window._spendingAllCategories || []), ...(extra || [])])];
+    return names
+        .map(n => tree.some(c => c.name === n) ? _categoryFullPath(tree, n) : n)
+        .sort();
 }
 
 function _levenshteinDistance(a, b) {
@@ -5076,7 +5098,7 @@ function _wireSpBulkActions() {
         recatBtn.dataset.wired = '1';
         recatBtn.addEventListener('click', async () => {
             const ids = _selectedSpendingIds();
-            const category = document.getElementById('spBulkCategorySelect')?.value.trim();
+            const category = _resolveCategoryInput(document.getElementById('spBulkCategorySelect')?.value || '');
             if (!ids.length || !category) return;
             if (!_warnIfSimilarCategory(category)) return;
             recatBtn.disabled = true;
@@ -5227,7 +5249,7 @@ function _renderSpSuggestReviewPanel() {
     });
     panel.querySelectorAll('.sp-suggest-category').forEach(inp => {
         inp.addEventListener('input', () => {
-            window._spSuggestGroups[parseInt(inp.dataset.idx, 10)].suggestedCategory = inp.value;
+            window._spSuggestGroups[parseInt(inp.dataset.idx, 10)].suggestedCategory = _resolveCategoryInput(inp.value);
         });
     });
     document.getElementById('spSuggestApplyBtn').addEventListener('click', _applySpSuggestions);
@@ -5561,7 +5583,7 @@ function _wireSpendingRuleForm() {
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
             const pattern = document.getElementById('spRulePattern').value.trim();
-            const category = document.getElementById('spRuleCategory').value.trim();
+            const category = _resolveCategoryInput(document.getElementById('spRuleCategory').value);
             if (!pattern || !category) return;
             if (!_warnIfSimilarCategory(category)) return;
             const status = document.getElementById('spRuleStatus');
