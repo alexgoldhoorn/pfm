@@ -4594,10 +4594,11 @@ window.loadSpendingPage = loadSpendingPage;
 
 async function _refreshSpendingData() {
     try {
-        const [summary, portfolios, categories, rules] = await Promise.all([
+        const [summary, portfolios, categories, categoryTree, rules] = await Promise.all([
             window.apiClient.getSpendingSummary(getSpendingPeriodDays()),
             window.apiClient.getPortfolios(),
             window.apiClient.getSpendingCategories(),
+            window.apiClient.getSpendingCategoryTree(),
             window.apiClient.getSpendingRules(),
         ]);
         const eur = v => Fmt.amt('€' + Fmt.num(v, 0, 0));
@@ -4607,17 +4608,27 @@ async function _refreshSpendingData() {
         if (el('spTransferred')) el('spTransferred').innerHTML = eur(summary.transferred_eur);
 
         window._spendingAllCategories = categories;
+        window._spendingCategoryTree = categoryTree;
         const bankAccounts = (portfolios || []).filter(p => p.account_type === 'bank');
         _populateSpendingAccountFilters(bankAccounts);
         _renderSpendingCategoryChart(summary.by_category_eur || {});
         _renderSpendingRules(rules);
-        _renderCategoriesList(categories);
+        _renderCategoriesList(categoryTree);
         _renderPossibleDuplicates(categories);
+        _populateSpCategoryParentSelect(categoryTree);
         await _fetchAndRenderSpendingTable();
     } catch (err) {
         const body = document.getElementById('spTxBody');
         if (body) body.innerHTML = `<tr><td colspan="6" class="text-center text-danger py-3">${esc(err.message)}</td></tr>`;
     }
+}
+
+function _populateSpCategoryParentSelect(tree) {
+    const sel = document.getElementById('spCategoryParentInput');
+    if (!sel) return;
+    sel.innerHTML = tree
+        .map(c => `<option value="${escapeForAttr(c.name)}" ${c.name === 'Spend' ? 'selected' : ''}>${esc(c.name)}</option>`)
+        .join('');
 }
 
 function _populateSpendingAccountFilters(bankAccounts) {
@@ -5341,20 +5352,50 @@ function _wireSpendingRulesSort() {
 
 window._spCategoriesSortDir = window._spCategoriesSortDir || 'asc';
 
-function _renderCategoriesList(categories) {
-    window._spCategoriesListData = categories;
+function _isDescendant(tree, ancestorId, candidateId) {
+    let node = tree.find(c => c.id === candidateId);
+    while (node && node.parent_id != null) {
+        if (node.parent_id === ancestorId) return true;
+        node = tree.find(c => c.id === node.parent_id);
+    }
+    return false;
+}
+window._isDescendant = _isDescendant;
+
+function _renderCategoriesList(tree) {
+    window._spCategoriesListData = tree;
+    if (!tree.length) {
+        const wrap = document.getElementById('spCategoriesList');
+        if (wrap) wrap.innerHTML = '<div class="list-group-item text-center text-muted py-2">No categories yet.</div>';
+        return;
+    }
+    const byParent = new Map();
+    tree.forEach(c => {
+        const key = c.parent_name || null;
+        if (!byParent.has(key)) byParent.set(key, []);
+        byParent.get(key).push(c);
+    });
     const dir = window._spCategoriesSortDir;
-    const sorted = [...categories].sort((a, b) => {
-        const cmp = a.toLowerCase().localeCompare(b.toLowerCase());
+    const sortSiblings = list => [...list].sort((a, b) => {
+        const cmp = a.name.toLowerCase().localeCompare(b.name.toLowerCase());
         return dir === 'asc' ? cmp : -cmp;
     });
+    const rowHtml = (c, depth) => {
+        const indent = 'ps-' + Math.min(depth * 3, 5);
+        const editControl = c.is_root
+            ? ''
+            : `<button class="btn btn-sm btn-outline-secondary" onclick="window.editSpendingCategory(${c.id})" title="Edit"><i class="bi bi-pencil"></i></button>`;
+        return `
+        <div class="list-group-item d-flex align-items-center justify-content-between ${indent}" data-cat-id="${c.id}">
+            <span id="spCategoryNameCell${c.id}" data-value="${escapeForAttr(c.name)}" data-parent="${escapeForAttr(c.parent_name || '')}">${esc(c.name)}</span>
+            ${editControl}
+        </div>`;
+    };
+    const renderChildren = (parentName, depth) =>
+        sortSiblings(byParent.get(parentName) || []).map(c => rowHtml(c, depth) + renderChildren(c.name, depth + 1)).join('');
     const wrap = document.getElementById('spCategoriesList');
     if (!wrap) return;
-    wrap.innerHTML = sorted.length ? sorted.map((cat, i) => `
-        <div class="list-group-item d-flex align-items-center justify-content-between">
-            <span id="spCategoryNameCell${i}" data-value="${escapeForAttr(cat)}">${esc(cat)}</span>
-            <button class="btn btn-sm btn-outline-secondary" onclick="window.editSpendingCategory(${i})" title="Edit"><i class="bi bi-pencil"></i></button>
-        </div>`).join('') : '<div class="list-group-item text-center text-muted py-2">No categories yet.</div>';
+    wrap.innerHTML = renderChildren(null, 0);
 }
 
 function _renderPossibleDuplicates(categories) {
@@ -5401,13 +5442,25 @@ function _wireCategoriesSortToggle() {
     }
 }
 
-window.editSpendingCategory = function (idx) {
-    const cell = document.getElementById(`spCategoryNameCell${idx}`);
+window.editSpendingCategory = function (id) {
+    const cell = document.getElementById(`spCategoryNameCell${id}`);
     if (!cell || cell.dataset.editing) return;
     cell.dataset.editing = '1';
     const originalName = cell.dataset.value;
-    cell.outerHTML = `<input class="form-control form-control-sm" style="max-width:220px;" id="spCategoryNameCell${idx}" value="${escapeForAttr(originalName)}">`;
-    const input = document.getElementById(`spCategoryNameCell${idx}`);
+    const originalParent = cell.dataset.parent;
+    const tree = window._spCategoriesListData || [];
+    const cat = tree.find(c => c.name === originalName);
+    const parentOptions = tree
+        .filter(c => c.id !== cat.id && !_isDescendant(tree, cat.id, c.id))
+        .map(c => `<option value="${escapeForAttr(c.name)}" ${c.name === originalParent ? 'selected' : ''}>${esc(c.name)}</option>`)
+        .join('');
+    cell.outerHTML = `
+        <span class="d-flex gap-1">
+            <input class="form-control form-control-sm" style="max-width:180px;" id="spCategoryNameCell${id}" value="${escapeForAttr(originalName)}">
+            <select class="form-select form-select-sm" style="max-width:160px;" id="spCategoryParentCell${id}">${parentOptions}</select>
+        </span>`;
+    const input = document.getElementById(`spCategoryNameCell${id}`);
+    const parentSelect = document.getElementById(`spCategoryParentCell${id}`);
     input.focus();
     input.select();
 
@@ -5416,16 +5469,19 @@ window.editSpendingCategory = function (idx) {
         if (done) return;
         done = true;
         const newName = input.value.trim();
-        if (!commit || !newName || newName === originalName) {
-            await _refreshSpendingData();
-            return;
-        }
-        if (!_warnIfSimilarCategory(newName, originalName)) {
+        const newParent = parentSelect.value;
+        if (!commit) {
             await _refreshSpendingData();
             return;
         }
         try {
-            await window.apiClient.renameSpendingCategory(originalName, newName);
+            if (newName && newName !== originalName) {
+                if (!_warnIfSimilarCategory(newName, originalName)) { await _refreshSpendingData(); return; }
+                await window.apiClient.renameSpendingCategory(originalName, newName);
+            }
+            if (newParent && newParent !== originalParent) {
+                await window.apiClient.reparentSpendingCategory(newName || originalName, newParent);
+            }
         } catch (err) {
             alert('Error: ' + err.message);
         }
@@ -5436,6 +5492,7 @@ window.editSpendingCategory = function (idx) {
         if (e.key === 'Escape') finish(false);
     });
     input.addEventListener('blur', () => finish(true));
+    parentSelect.addEventListener('change', () => finish(true));
 };
 
 window.deleteSpendingRule = async function (id) {
@@ -5533,11 +5590,12 @@ function _wireSpCategoryAddForm() {
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
             const name = document.getElementById('spCategoryNameInput').value.trim();
+            const parentName = document.getElementById('spCategoryParentInput').value;
             if (!name) return;
             if (!_warnIfSimilarCategory(name)) return;
             const status = document.getElementById('spCategoryAddStatus');
             try {
-                await window.apiClient.createSpendingCategory(name);
+                await window.apiClient.createSpendingCategory(name, parentName);
                 form.reset();
                 await _refreshSpendingData();
                 if (status) { status.className = 'small text-success mt-2'; status.textContent = 'Category added.'; }
