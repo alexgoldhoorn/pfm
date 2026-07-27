@@ -5381,7 +5381,7 @@ function _renderCategoriesList(tree) {
         return dir === 'asc' ? cmp : -cmp;
     });
     const rowHtml = (c, depth) => {
-        const indent = 'ps-' + Math.min(depth * 3, 5);
+        const indent = 'ps-' + Math.min(depth, 5);
         const editControl = c.is_root
             ? ''
             : `<button class="btn btn-sm btn-outline-secondary" onclick="window.editSpendingCategory(${c.id})" title="Edit"><i class="bi bi-pencil"></i></button>`;
@@ -5455,12 +5455,13 @@ window.editSpendingCategory = function (id) {
         .map(c => `<option value="${escapeForAttr(c.name)}" ${c.name === originalParent ? 'selected' : ''}>${esc(c.name)}</option>`)
         .join('');
     cell.outerHTML = `
-        <span class="d-flex gap-1">
+        <span class="d-flex gap-1" id="spCategoryEditRow${id}">
             <input class="form-control form-control-sm" style="max-width:180px;" id="spCategoryNameCell${id}" value="${escapeForAttr(originalName)}">
             <select class="form-select form-select-sm" style="max-width:160px;" id="spCategoryParentCell${id}">${parentOptions}</select>
         </span>`;
     const input = document.getElementById(`spCategoryNameCell${id}`);
     const parentSelect = document.getElementById(`spCategoryParentCell${id}`);
+    const wrapperEl = document.getElementById(`spCategoryEditRow${id}`);
     input.focus();
     input.select();
 
@@ -5491,8 +5492,12 @@ window.editSpendingCategory = function (id) {
         if (e.key === 'Enter') finish(true);
         if (e.key === 'Escape') finish(false);
     });
-    input.addEventListener('blur', () => finish(true));
-    parentSelect.addEventListener('change', () => finish(true));
+    parentSelect.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') finish(false);
+    });
+    wrapperEl.addEventListener('focusout', (e) => {
+        if (!wrapperEl.contains(e.relatedTarget)) finish(true);
+    });
 };
 
 window.deleteSpendingRule = async function (id) {
