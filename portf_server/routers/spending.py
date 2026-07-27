@@ -715,11 +715,16 @@ def get_spending_summary(
         node = tree.get(category)
         if node is None:
             return category
-        while node["parent_name"] is not None and node["parent_name"] != "Spend":
+        for _ in range(100):
+            if node["parent_name"] is None or node["parent_name"] == "Spend":
+                return node["name"]
             node = tree.get(node["parent_name"])
             if node is None:
                 return category
-        return node["name"]
+        # Defensive guard: a real category tree is never this deep. If we
+        # get here, a cycle exists somewhere upstream -- bail out safely
+        # with the original category rather than looping forever.
+        return category
 
     for r in rows:
         amt_eur = float(r["amount"]) * _fx(r.get("currency", "EUR"))
