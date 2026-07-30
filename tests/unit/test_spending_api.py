@@ -1486,3 +1486,93 @@ def test_trend_defaults_to_twelve_months(tmp_path):
     r = client.get("/api/v1/spending/trend", headers=HEADERS)
     assert r.status_code == 200
     assert len(r.json()) == 12
+
+
+def _make_insurance_tree(db):
+    """Spend > Insurance > {Car Insurance, Home Insurance}, plus a sibling
+    Spend > Groceries leaf. Returns (pid, spend_id)."""
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    spend_id = next(
+        c["id"] for c in db.list_spending_categories_tree() if c["name"] == "Spend"
+    )
+    insurance_id = db.create_spending_category("Insurance", parent_id=spend_id)
+    db.create_spending_category("Car Insurance", parent_id=insurance_id)
+    db.create_spending_category("Home Insurance", parent_id=insurance_id)
+    db.create_spending_category("Groceries", parent_id=spend_id)
+    today = date.today().isoformat()
+    db.create_spending_transaction(
+        pid, today, "Car ins", -30.0, category="Car Insurance"
+    )
+    db.create_spending_transaction(
+        pid, today, "Home ins", -20.0, category="Home Insurance"
+    )
+    db.create_spending_transaction(pid, today, "Food", -15.0, category="Groceries")
+    return pid, spend_id
+
+
+def test_breakdown_returns_immediate_children_with_subtree_totals(tmp_path):
+    client, db = _make_client(tmp_path)
+    _make_insurance_tree(db)
+
+    r = client.get(
+        "/api/v1/spending/categories/breakdown",
+        params={"parent": "Spend", "days": 30},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["parent"] == "Spend"
+    by_name = {c["name"]: c for c in body["children"]}
+    assert by_name["Insurance"]["amount_eur"] == 50.0
+    assert by_name["Insurance"]["has_children"] is True
+    assert by_name["Groceries"]["amount_eur"] == 15.0
+    assert by_name["Groceries"]["has_children"] is False
+    # Descending by amount.
+    assert [c["name"] for c in body["children"]] == ["Insurance", "Groceries"]
+
+
+def test_breakdown_drills_into_child(tmp_path):
+    client, db = _make_client(tmp_path)
+    _make_insurance_tree(db)
+
+    r = client.get(
+        "/api/v1/spending/categories/breakdown",
+        params={"parent": "Insurance", "days": 30},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+    by_name = {c["name"]: c for c in r.json()["children"]}
+    assert by_name["Car Insurance"]["amount_eur"] == 30.0
+    assert by_name["Car Insurance"]["has_children"] is False
+    assert by_name["Home Insurance"]["amount_eur"] == 20.0
+
+
+def test_breakdown_leaf_parent_returns_400(tmp_path):
+    client, db = _make_client(tmp_path)
+    _make_insurance_tree(db)
+
+    r = client.get(
+        "/api/v1/spending/categories/breakdown",
+        params={"parent": "Groceries", "days": 30},
+        headers=HEADERS,
+    )
+    assert r.status_code == 400
+
+
+def test_breakdown_unknown_parent_returns_400(tmp_path):
+    client, _ = _make_client(tmp_path)
+    r = client.get(
+        "/api/v1/spending/categories/breakdown",
+        params={"parent": "Nonexistent", "days": 30},
+        headers=HEADERS,
+    )
+    assert r.status_code == 400
+
+
+def test_breakdown_default_parent_is_spend(tmp_path):
+    client, db = _make_client(tmp_path)
+    _make_insurance_tree(db)
+
+    r = client.get("/api/v1/spending/categories/breakdown", headers=HEADERS)
+    assert r.status_code == 200
+    assert r.json()["parent"] == "Spend"
