@@ -763,3 +763,25 @@ test('_allSpendingCategories: a category not in the tree falls back to its bare 
     const result = ctx._allSpendingCategories();
     assert.ok([...result].includes('Groceries'));
 });
+
+test('_spPathAfterCrumbClick: clicking the last crumb keeps the full path', () => {
+    const ctx = loadAppIntoContext();
+    assert.deepEqual(ctx._spPathAfterCrumbClick(['Spend', 'Insurance'], 1), ['Spend', 'Insurance']);
+});
+
+test('_spPathAfterCrumbClick: clicking an earlier crumb truncates the path', () => {
+    const ctx = loadAppIntoContext();
+    assert.deepEqual(ctx._spPathAfterCrumbClick(['Spend', 'Insurance', 'Car Insurance'], 0), ['Spend']);
+});
+
+test('_spFindBreakdownChild: finds a child by name', () => {
+    const ctx = loadAppIntoContext();
+    const children = [{ name: 'Insurance', amount_eur: 50, has_children: true }, { name: 'Groceries', amount_eur: 15, has_children: false }];
+    assert.deepEqual(ctx._spFindBreakdownChild(children, 'Groceries'), { name: 'Groceries', amount_eur: 15, has_children: false });
+});
+
+test('_spFindBreakdownChild: returns undefined for an unknown name', () => {
+    const ctx = loadAppIntoContext();
+    const children = [{ name: 'Insurance', amount_eur: 50, has_children: true }];
+    assert.equal(ctx._spFindBreakdownChild(children, 'Nonexistent'), undefined);
+});

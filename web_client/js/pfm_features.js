@@ -4569,19 +4569,13 @@ async function loadSpendingPage() {
     const categoriesTabBtn = document.getElementById('spTabBtnCategories');
     if (categoriesTabBtn && !categoriesTabBtn.dataset.wired) {
         categoriesTabBtn.dataset.wired = '1';
-        // A Chart.js chart built while its canvas sits inside a
-        // display:none tab-pane renders at zero size — re-render (no
-        // re-fetch, the data's already in memory) once the pane is
-        // actually visible and the canvas has real dimensions.
-        categoriesTabBtn.addEventListener('shown.bs.tab', () => {
-            _renderSpendingCategoryChart(window._spCategoryChartData || {});
-        });
     }
     const analyticsTabBtn = document.getElementById('spTabBtnAnalytics');
     if (analyticsTabBtn && !analyticsTabBtn.dataset.wired) {
         analyticsTabBtn.dataset.wired = '1';
         analyticsTabBtn.addEventListener('shown.bs.tab', () => {
             _renderSpTrendChart();
+            _loadSpBreakdownLevel();
         });
     }
     const chartTypeBtn = document.getElementById('spCategoryChartTypeToggle');
@@ -4618,7 +4612,8 @@ async function _refreshSpendingData() {
         window._spendingCategoryTree = categoryTree;
         const bankAccounts = (portfolios || []).filter(p => p.account_type === 'bank');
         _populateSpendingAccountFilters(bankAccounts);
-        _renderSpendingCategoryChart(summary.by_category_eur || {});
+        window._spBreakdownPath = ['Spend'];
+        await _loadSpBreakdownLevel();
         _renderSpendingRules(rules);
         _renderCategoriesList(categoryTree);
         _renderPossibleDuplicates(categories);
@@ -4695,6 +4690,51 @@ async function _renderSpTrendChart() {
     }
 }
 window._renderSpTrendChart = _renderSpTrendChart;
+
+function _spPathAfterCrumbClick(path, depth) {
+    return path.slice(0, depth + 1);
+}
+window._spPathAfterCrumbClick = _spPathAfterCrumbClick;
+
+function _spFindBreakdownChild(children, name) {
+    return (children || []).find(c => c.name === name);
+}
+window._spFindBreakdownChild = _spFindBreakdownChild;
+
+async function _loadSpBreakdownLevel() {
+    const path = window._spBreakdownPath || ['Spend'];
+    const parent = path[path.length - 1];
+    const days = getSpendingPeriodDays();
+    let data;
+    try {
+        data = await window.apiClient.getSpendingCategoryBreakdown(parent, days);
+    } catch (err) {
+        window._spBreakdownChildren = [];
+        _renderSpendingCategoryChart({});
+        return;
+    }
+    window._spBreakdownChildren = data.children;
+    _renderSpBreadcrumb();
+    _renderSpendingCategoryChart(
+        Object.fromEntries(data.children.map(c => [c.name, c.amount_eur]))
+    );
+}
+window._loadSpBreakdownLevel = _loadSpBreakdownLevel;
+
+function _renderSpBreadcrumb() {
+    const el = document.getElementById('spCategoryBreakdownPath');
+    if (!el) return;
+    const path = window._spBreakdownPath || ['Spend'];
+    el.innerHTML = path
+        .map((name, i) => `<a href="#" data-depth="${i}">${esc(name)}</a>`)
+        .join(' <span class="text-muted">&gt;</span> ');
+    el.querySelectorAll('a').forEach(a => a.addEventListener('click', (e) => {
+        e.preventDefault();
+        window._spBreakdownPath = _spPathAfterCrumbClick(window._spBreakdownPath, Number(a.dataset.depth));
+        _loadSpBreakdownLevel();
+    }));
+}
+window._renderSpBreadcrumb = _renderSpBreadcrumb;
 
 let _spCategoryChartInstance = null;
 // Shared palette for pie slices -- same colors as the Dashboard's
