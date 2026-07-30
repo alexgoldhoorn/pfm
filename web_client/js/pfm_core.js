@@ -1564,6 +1564,21 @@ function createAPIClient() {
             if (!response.ok) throw new Error('Failed to load spending trend');
             return response.json();
         },
+        async getSpendingCategoryBreakdown(parent, days) {
+            const response = await fetch(
+                this.baseURL + `/api/v1/spending/categories/breakdown?parent=${encodeURIComponent(parent)}&days=${days}`,
+                { headers: { 'X-API-Key': this.apiKey } }
+            );
+            if (!response.ok) {
+                let detail = 'Failed to load category breakdown';
+                try {
+                    const body = await response.json();
+                    detail = body.detail || detail;
+                } catch (e) { /* response wasn't JSON, use the generic message */ }
+                throw new Error(detail);
+            }
+            return response.json();
+        },
         async reparentSpendingCategory(name, newParentName) {
             const response = await fetch(
                 this.baseURL + '/api/v1/spending/categories/' + encodeURIComponent(name) + '/parent',
