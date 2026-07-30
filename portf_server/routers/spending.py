@@ -672,6 +672,77 @@ async def list_categories_tree(
     return db.list_spending_categories_tree()
 
 
+class SpendingCategoryBreakdownChild(BaseModel):
+    name: str
+    amount_eur: float
+    has_children: bool
+
+
+class SpendingCategoryBreakdownResponse(BaseModel):
+    parent: str
+    children: List[SpendingCategoryBreakdownChild]
+
+
+@router.get("/categories/breakdown", response_model=SpendingCategoryBreakdownResponse)
+def get_spending_category_breakdown(
+    parent: str = "Spend",
+    days: int = 30,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Immediate children of a category tree node, each with its full
+    subtree total for the period (EUR, today's rate) and a has_children
+    flag, so the caller knows whether the next click should drill further
+    or show transactions. Powers the Spending page's Analytics tab
+    category chart drill-down. 400 if `parent` has no children (including
+    an unknown `parent` name).
+
+    Plain ``def`` — the blocking FX lookups in ``_fx`` run in the threadpool.
+    """
+    from datetime import date, timedelta
+
+    tree = db.list_spending_categories_tree()
+    children_by_parent: dict = {}
+    for c in tree:
+        children_by_parent.setdefault(c["parent_name"], []).append(c)
+
+    direct_children = children_by_parent.get(parent, [])
+    if not direct_children:
+        raise HTTPException(status_code=400, detail=f"'{parent}' has no sub-categories")
+
+    def _subtree_names(name: str, _depth: int = 0) -> List[str]:
+        # Defensive depth guard against a cycle slipping through reparent's
+        # own cycle check — same precautionary pattern as this file's
+        # _rollup_key and database.py's get_spending_category_root.
+        if _depth > 100:
+            return [name]
+        names = [name]
+        for child in children_by_parent.get(name, []):
+            names.extend(_subtree_names(child["name"], _depth + 1))
+        return names
+
+    start_date = (date.today() - timedelta(days=days)).isoformat()
+    rows = db.list_spending_transactions(start_date=start_date, is_transfer=False)
+
+    result = []
+    for child in direct_children:
+        names = set(_subtree_names(child["name"]))
+        amount_eur = sum(
+            abs(float(r["amount"]) * _fx(r.get("currency", "EUR")))
+            for r in rows
+            if r["category"] in names
+        )
+        result.append(
+            SpendingCategoryBreakdownChild(
+                name=child["name"],
+                amount_eur=round(amount_eur, 2),
+                has_children=bool(children_by_parent.get(child["name"])),
+            )
+        )
+    result.sort(key=lambda c: -c.amount_eur)
+    return SpendingCategoryBreakdownResponse(parent=parent, children=result)
+
+
 @router.put("/categories/{name}/parent", response_model=dict)
 async def reparent_category(
     name: str,
