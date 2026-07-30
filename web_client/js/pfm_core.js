@@ -1557,6 +1557,13 @@ function createAPIClient() {
             if (!response.ok) throw new Error('Failed to load category tree');
             return response.json();
         },
+        async getSpendingTrend(months = 12) {
+            const response = await fetch(this.baseURL + `/api/v1/spending/trend?months=${months}`, {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) throw new Error('Failed to load spending trend');
+            return response.json();
+        },
         async reparentSpendingCategory(name, newParentName) {
             const response = await fetch(
                 this.baseURL + '/api/v1/spending/categories/' + encodeURIComponent(name) + '/parent',

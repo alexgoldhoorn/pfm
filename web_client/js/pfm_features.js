@@ -4577,6 +4577,13 @@ async function loadSpendingPage() {
             _renderSpendingCategoryChart(window._spCategoryChartData || {});
         });
     }
+    const analyticsTabBtn = document.getElementById('spTabBtnAnalytics');
+    if (analyticsTabBtn && !analyticsTabBtn.dataset.wired) {
+        analyticsTabBtn.dataset.wired = '1';
+        analyticsTabBtn.addEventListener('shown.bs.tab', () => {
+            _renderSpTrendChart();
+        });
+    }
     const chartTypeBtn = document.getElementById('spCategoryChartTypeToggle');
     if (chartTypeBtn && !chartTypeBtn.dataset.wired) {
         chartTypeBtn.dataset.wired = '1';
@@ -4638,6 +4645,51 @@ function _populateSpendingAccountFilters(bankAccounts) {
     if (filterSel) filterSel.innerHTML = '<option value="">All accounts</option>' + opts;
     if (importSel) importSel.innerHTML = '<option value="">— New account —</option>' + opts;
 }
+
+let _spTrendChartInstance = null;
+
+async function _renderSpTrendChart() {
+    const canvas = document.getElementById('spTrendChartCanvas');
+    if (!canvas) return;
+    const months = await window.apiClient.getSpendingTrend(12);
+    if (_spTrendChartInstance) {
+        _spTrendChartInstance.destroy();
+        _spTrendChartInstance = null;
+    }
+    _spTrendChartInstance = new Chart(canvas, {
+        data: {
+            labels: months.map(m => m.month),
+            datasets: [
+                {
+                    type: 'bar',
+                    label: 'Spent',
+                    data: months.map(m => m.spent_eur),
+                    backgroundColor: SP_CATEGORY_CHART_COLORS[3],
+                },
+                {
+                    type: 'bar',
+                    label: 'Income',
+                    data: months.map(m => m.income_eur),
+                    backgroundColor: SP_CATEGORY_CHART_COLORS[1],
+                },
+                {
+                    type: 'line',
+                    label: 'Net',
+                    data: months.map(m => m.net_eur),
+                    borderColor: SP_CATEGORY_CHART_COLORS[5],
+                    fill: false,
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: true, position: 'top' } },
+            scales: { y: { ticks: { callback: v => '€' + v } } },
+        },
+    });
+}
+window._renderSpTrendChart = _renderSpTrendChart;
 
 let _spCategoryChartInstance = null;
 // Shared palette for pie slices -- same colors as the Dashboard's
