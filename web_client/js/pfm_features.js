@@ -4646,6 +4646,9 @@ let _spTrendChartInstance = null;
 async function _renderSpTrendChart() {
     const canvas = document.getElementById('spTrendChartCanvas');
     if (!canvas) return;
+    canvas.style.display = '';
+    const trendErrEl = document.getElementById('spTrendChartError');
+    if (trendErrEl) trendErrEl.style.display = 'none';
     try {
         const months = await window.apiClient.getSpendingTrend(12);
         if (_spTrendChartInstance) {
@@ -4685,8 +4688,16 @@ async function _renderSpTrendChart() {
             },
         });
     } catch (err) {
-        const container = canvas.parentElement;
-        if (container) container.innerHTML = `<p class="text-center text-danger small mb-0">Failed to load trend: ${esc(err.message)}</p>`;
+        if (_spTrendChartInstance) {
+            _spTrendChartInstance.destroy();
+            _spTrendChartInstance = null;
+        }
+        canvas.style.display = 'none';
+        const errEl = document.getElementById('spTrendChartError');
+        if (errEl) {
+            errEl.textContent = `Failed to load trend: ${err.message}`;
+            errEl.style.display = '';
+        }
     }
 }
 window._renderSpTrendChart = _renderSpTrendChart;
@@ -4709,11 +4720,28 @@ async function _loadSpBreakdownLevel() {
     try {
         data = await window.apiClient.getSpendingCategoryBreakdown(parent, days);
     } catch (err) {
+        const atTopLevel = path.length === 1;
+        if (err.status === 400 && atTopLevel) {
+            // Fresh install / no sub-categories yet under Spend -- empty
+            // state, not an error.
+            window._spBreakdownChildren = [];
+            _renderSpBreadcrumb();
+            _renderSpendingCategoryChart({});
+            return;
+        }
         window._spBreakdownChildren = [];
         _renderSpBreadcrumb();
         const canvas = document.getElementById('spCategoryChartCanvas');
-        const container = canvas ? canvas.parentElement : null;
-        if (container) container.innerHTML = `<p class="text-center text-danger small mb-0">Failed to load category breakdown: ${esc(err.message)}</p>`;
+        if (canvas) canvas.style.display = 'none';
+        if (_spCategoryChartInstance) {
+            _spCategoryChartInstance.destroy();
+            _spCategoryChartInstance = null;
+        }
+        const errEl = document.getElementById('spCategoryChartError');
+        if (errEl) {
+            errEl.textContent = `Failed to load category breakdown: ${err.message}`;
+            errEl.style.display = '';
+        }
         return;
     }
     window._spBreakdownChildren = data.children;
@@ -4748,6 +4776,9 @@ function _renderSpendingCategoryChart(byCategoryEur) {
     window._spCategoryChartData = byCategoryEur || {};
     const canvas = document.getElementById('spCategoryChartCanvas');
     if (!canvas) return;
+    canvas.style.display = '';
+    const catErrEl = document.getElementById('spCategoryChartError');
+    if (catErrEl) catErrEl.style.display = 'none';
     const showAll = !!window._spCategoryChartShowAll;
     let entries = Object.entries(window._spCategoryChartData).sort((a, b) => b[1] - a[1]);
     if (!showAll) entries = entries.slice(0, 8);
@@ -4885,6 +4916,7 @@ async function openSpCategoryTransactionsModal(categoryName, days) {
             if (toEl) toEl.value = endDate;
             bootstrap.Modal.getInstance(document.getElementById('spCategoryTxModal'))?.hide();
             new window.bootstrap.Tab(document.getElementById('spTabBtnTransactions')).show();
+            window._spTxState.page = 0;
             _fetchAndRenderSpendingTable();
         };
     }

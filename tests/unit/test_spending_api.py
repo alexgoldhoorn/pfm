@@ -1576,3 +1576,39 @@ def test_breakdown_default_parent_is_spend(tmp_path):
     r = client.get("/api/v1/spending/categories/breakdown", headers=HEADERS)
     assert r.status_code == 200
     assert r.json()["parent"] == "Spend"
+
+
+def test_breakdown_includes_uncategorized_at_spend_root(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid, _ = _make_insurance_tree(db)
+    today = date.today().isoformat()
+    db.create_spending_transaction(
+        pid, today, "Unknown", -12.0, category="uncategorized"
+    )
+
+    r = client.get(
+        "/api/v1/spending/categories/breakdown",
+        params={"parent": "Spend", "days": 30},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+    by_name = {c["name"]: c for c in r.json()["children"]}
+    assert by_name["uncategorized"]["amount_eur"] == 12.0
+    assert by_name["uncategorized"]["has_children"] is False
+
+
+def test_breakdown_sub_level_excludes_uncategorized(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid, _ = _make_insurance_tree(db)
+    today = date.today().isoformat()
+    db.create_spending_transaction(
+        pid, today, "Unknown", -12.0, category="uncategorized"
+    )
+
+    r = client.get(
+        "/api/v1/spending/categories/breakdown",
+        params={"parent": "Insurance", "days": 30},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+    assert "uncategorized" not in [c["name"] for c in r.json()["children"]]

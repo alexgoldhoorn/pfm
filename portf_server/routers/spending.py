@@ -739,6 +739,27 @@ def get_spending_category_breakdown(
                 has_children=bool(children_by_parent.get(child["name"])),
             )
         )
+
+    # Spend's tree-defined children don't include "uncategorized" spend --
+    # the Dashboard's Spending card (still reading /summary's
+    # by_category_eur) does include it, so surface it here too at the
+    # actual root (not when drilling into a sub-group) to keep the two
+    # surfaces in sync.
+    if parent == "Spend":
+        uncategorized_amount = sum(
+            abs(float(r["amount"]) * _fx(r.get("currency", "EUR")))
+            for r in rows
+            if r["category"] == "uncategorized"
+        )
+        if uncategorized_amount > 0:
+            result.append(
+                SpendingCategoryBreakdownChild(
+                    name="uncategorized",
+                    amount_eur=round(uncategorized_amount, 2),
+                    has_children=False,
+                )
+            )
+
     result.sort(key=lambda c: -c.amount_eur)
     return SpendingCategoryBreakdownResponse(parent=parent, children=result)
 
