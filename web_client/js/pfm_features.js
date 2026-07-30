@@ -4762,6 +4762,19 @@ function _renderSpendingCategoryChart(byCategoryEur) {
     const values = entries.map(([, amt]) => amt);
     const chartType = window._spCategoryChartType || 'bar';
 
+    const handleCategoryClick = (evt, elements) => {
+        if (!elements.length) return;
+        const clickedName = labels[elements[0].index];
+        const child = _spFindBreakdownChild(window._spBreakdownChildren, clickedName);
+        if (!child) return;
+        if (child.has_children) {
+            window._spBreakdownPath = (window._spBreakdownPath || ['Spend']).concat([child.name]);
+            _loadSpBreakdownLevel();
+        } else {
+            openSpCategoryTransactionsModal(child.name, getSpendingPeriodDays());
+        }
+    };
+
     if (chartType === 'pie') {
         _spCategoryChartInstance = new Chart(canvas, {
             type: 'pie',
@@ -4775,6 +4788,7 @@ function _renderSpendingCategoryChart(byCategoryEur) {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
+                onClick: handleCategoryClick,
                 plugins: {
                     legend: { display: true, position: 'right' },
                     tooltip: {
@@ -4806,6 +4820,7 @@ function _renderSpendingCategoryChart(byCategoryEur) {
                 indexAxis: 'y',
                 responsive: true,
                 maintainAspectRatio: false,
+                onClick: handleCategoryClick,
                 plugins: {
                     legend: { display: false },
                     tooltip: {
@@ -4824,6 +4839,57 @@ function _renderSpendingCategoryChart(byCategoryEur) {
         });
     }
 }
+
+async function openSpCategoryTransactionsModal(categoryName, days) {
+    const endDate = new Date().toISOString().slice(0, 10);
+    const startDate = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+
+    const titleEl = document.getElementById('spCategoryTxModalTitle');
+    const bodyEl = document.getElementById('spCategoryTxModalBody');
+    const linkEl = document.getElementById('spCategoryTxModalViewLink');
+    if (titleEl) titleEl.textContent = `${categoryName} — transactions`;
+    if (bodyEl) bodyEl.innerHTML = '<tr><td colspan="3" class="text-center text-muted py-2">Loading...</td></tr>';
+
+    new bootstrap.Modal(document.getElementById('spCategoryTxModal')).show();
+
+    let result;
+    try {
+        result = await window.apiClient.getSpendingTransactions({
+            categories: [categoryName],
+            start_date: startDate,
+            end_date: endDate,
+            sort_by: 'date',
+            sort_dir: 'desc',
+            limit: 200,
+        });
+    } catch (err) {
+        if (bodyEl) bodyEl.innerHTML = `<tr><td colspan="3" class="text-center text-danger py-2">${esc(err.message)}</td></tr>`;
+        return;
+    }
+    const rows = result.items || [];
+    if (bodyEl) {
+        bodyEl.innerHTML = rows.length ? rows.map(r => `
+            <tr>
+                <td>${Fmt.date(r.date)}</td>
+                <td>${esc(r.description)}</td>
+                <td class="text-end ${r.amount < 0 ? 'text-danger' : 'text-success'}">${Fmt.num(r.amount, 2, 2)} ${r.currency || ''}</td>
+            </tr>`).join('') : '<tr><td colspan="3" class="text-center text-muted py-2">No transactions in this period.</td></tr>';
+    }
+    if (linkEl) {
+        linkEl.onclick = (e) => {
+            e.preventDefault();
+            window._spCategoryFilterSelected = new Set([categoryName]);
+            const fromEl = document.getElementById('spFromDate');
+            const toEl = document.getElementById('spToDate');
+            if (fromEl) fromEl.value = startDate;
+            if (toEl) toEl.value = endDate;
+            bootstrap.Modal.getInstance(document.getElementById('spCategoryTxModal'))?.hide();
+            new window.bootstrap.Tab(document.getElementById('spTabBtnTransactions')).show();
+            _fetchAndRenderSpendingTable();
+        };
+    }
+}
+window.openSpCategoryTransactionsModal = openSpCategoryTransactionsModal;
 
 // Dashboard-only: top-5 categories as a compact bar list (no Chart.js, kept
 // consistent with the Dashboard's hand-rolled SVG donut rather than pulling
