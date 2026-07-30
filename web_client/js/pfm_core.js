@@ -1575,7 +1575,9 @@ function createAPIClient() {
                     const body = await response.json();
                     detail = body.detail || detail;
                 } catch (e) { /* response wasn't JSON, use the generic message */ }
-                throw new Error(detail);
+                const error = new Error(detail);
+                error.status = response.status;
+                throw error;
             }
             return response.json();
         },
