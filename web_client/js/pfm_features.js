@@ -4710,7 +4710,10 @@ async function _loadSpBreakdownLevel() {
         data = await window.apiClient.getSpendingCategoryBreakdown(parent, days);
     } catch (err) {
         window._spBreakdownChildren = [];
-        _renderSpendingCategoryChart({});
+        _renderSpBreadcrumb();
+        const canvas = document.getElementById('spCategoryChartCanvas');
+        const container = canvas ? canvas.parentElement : null;
+        if (container) container.innerHTML = `<p class="text-center text-danger small mb-0">Failed to load category breakdown: ${esc(err.message)}</p>`;
         return;
     }
     window._spBreakdownChildren = data.children;
