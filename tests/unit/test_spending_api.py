@@ -1416,3 +1416,73 @@ def test_summary_rolls_up_category_chart_to_top_level_spend_group(tmp_path):
     assert by_cat.get("Insurance") == 50.0
     assert "Car Insurance" not in by_cat
     assert "Home Insurance" not in by_cat
+
+
+def _months_ago_mid_month(n: int) -> str:
+    """ISO date for the 15th of the month N months before the current one
+    -- day 15 avoids any days-in-month edge case, and using the current
+    real month (rather than a hardcoded date) keeps the test independent
+    of when the suite runs, same convention as this file's existing
+    `date.today() - timedelta(days=...)` usage for /summary tests."""
+    y, m = date.today().year, date.today().month
+    m -= n
+    while m <= 0:
+        m += 12
+        y -= 1
+    return date(y, m, 15).isoformat()
+
+
+def test_trend_buckets_by_month_and_excludes_transfers(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    this_month = _months_ago_mid_month(0)
+    last_month = _months_ago_mid_month(1)
+    db.create_spending_transaction(
+        pid, this_month, "Groceries", -30.0, category="Groceries"
+    )
+    db.create_spending_transaction(
+        pid, this_month, "Salary", 100.0, category="uncategorized"
+    )
+    db.create_spending_transaction(
+        pid, last_month, "Rent", -20.0, category="uncategorized"
+    )
+    tx_transfer = db.create_spending_transaction(pid, this_month, "Xfer", -50.0)
+    db.update_spending_transaction(tx_transfer, category="Transfer", is_transfer=True)
+
+    r = client.get("/api/v1/spending/trend?months=2", headers=HEADERS)
+    assert r.status_code == 200
+    months = r.json()
+    assert len(months) == 2
+    # Oldest first.
+    assert months[0]["month"] == last_month[:7]
+    assert months[0]["spent_eur"] == 20.0
+    assert months[0]["income_eur"] == 0.0
+    assert months[0]["net_eur"] == -20.0
+    assert months[1]["month"] == this_month[:7]
+    assert months[1]["spent_eur"] == 30.0
+    assert months[1]["income_eur"] == 100.0
+    assert months[1]["net_eur"] == 70.0
+
+
+def test_trend_zero_fills_months_with_no_data(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_transaction(
+        pid, _months_ago_mid_month(0), "Only tx", -10.0, category="uncategorized"
+    )
+
+    r = client.get("/api/v1/spending/trend?months=3", headers=HEADERS)
+    assert r.status_code == 200
+    months = r.json()
+    assert len(months) == 3
+    assert months[0]["spent_eur"] == 0.0
+    assert months[0]["income_eur"] == 0.0
+    assert months[1]["spent_eur"] == 0.0
+    assert months[2]["spent_eur"] == 10.0
+
+
+def test_trend_defaults_to_twelve_months(tmp_path):
+    client, _ = _make_client(tmp_path)
+    r = client.get("/api/v1/spending/trend", headers=HEADERS)
+    assert r.status_code == 200
+    assert len(r.json()) == 12
