@@ -746,6 +746,68 @@ def get_spending_summary(
     )
 
 
+class SpendingTrendMonth(BaseModel):
+    month: str
+    spent_eur: float
+    income_eur: float
+    net_eur: float
+
+
+@router.get("/trend", response_model=List[SpendingTrendMonth])
+def get_spending_trend(
+    months: int = 12,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Monthly spent/income/net for the last N calendar months, EUR-converted
+    at today's rate (same convention as /summary). Transfers excluded.
+    Zero-filled for months with no matching rows, oldest month first.
+    Powers the Spending page's Analytics tab trend chart.
+
+    Plain ``def`` — the blocking FX lookups in ``_fx`` run in the threadpool.
+    """
+    from datetime import date
+
+    today = date.today()
+    first_of_this_month = today.replace(day=1)
+    start_year = first_of_this_month.year
+    start_month_num = first_of_this_month.month - (months - 1)
+    while start_month_num <= 0:
+        start_month_num += 12
+        start_year -= 1
+    start_date = date(start_year, start_month_num, 1).isoformat()
+
+    rows = db.list_spending_transactions(start_date=start_date, is_transfer=False)
+    buckets: dict = {}
+    for r in rows:
+        key = r["date"][:7]
+        amt_eur = float(r["amount"]) * _fx(r.get("currency", "EUR"))
+        b = buckets.setdefault(key, {"spent": 0.0, "income": 0.0})
+        if amt_eur < 0:
+            b["spent"] += abs(amt_eur)
+        else:
+            b["income"] += amt_eur
+
+    result = []
+    y, m = start_year, start_month_num
+    for _ in range(months):
+        key = f"{y:04d}-{m:02d}"
+        b = buckets.get(key, {"spent": 0.0, "income": 0.0})
+        result.append(
+            SpendingTrendMonth(
+                month=key,
+                spent_eur=round(b["spent"], 2),
+                income_eur=round(b["income"], 2),
+                net_eur=round(b["income"] - b["spent"], 2),
+            )
+        )
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+    return result
+
+
 class SuggestCategoriesRequest(BaseModel):
     rows: List[PreviewSpendingRow]
 
