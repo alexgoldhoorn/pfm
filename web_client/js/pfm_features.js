@@ -4651,43 +4651,48 @@ let _spTrendChartInstance = null;
 async function _renderSpTrendChart() {
     const canvas = document.getElementById('spTrendChartCanvas');
     if (!canvas) return;
-    const months = await window.apiClient.getSpendingTrend(12);
-    if (_spTrendChartInstance) {
-        _spTrendChartInstance.destroy();
-        _spTrendChartInstance = null;
+    try {
+        const months = await window.apiClient.getSpendingTrend(12);
+        if (_spTrendChartInstance) {
+            _spTrendChartInstance.destroy();
+            _spTrendChartInstance = null;
+        }
+        _spTrendChartInstance = new Chart(canvas, {
+            data: {
+                labels: months.map(m => m.month),
+                datasets: [
+                    {
+                        type: 'bar',
+                        label: 'Spent',
+                        data: months.map(m => m.spent_eur),
+                        backgroundColor: SP_CATEGORY_CHART_COLORS[3],
+                    },
+                    {
+                        type: 'bar',
+                        label: 'Income',
+                        data: months.map(m => m.income_eur),
+                        backgroundColor: SP_CATEGORY_CHART_COLORS[1],
+                    },
+                    {
+                        type: 'line',
+                        label: 'Net',
+                        data: months.map(m => m.net_eur),
+                        borderColor: SP_CATEGORY_CHART_COLORS[5],
+                        fill: false,
+                    },
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: true, position: 'top' } },
+                scales: { y: { ticks: { callback: v => '€' + v } } },
+            },
+        });
+    } catch (err) {
+        const container = canvas.parentElement;
+        if (container) container.innerHTML = `<p class="text-center text-danger small mb-0">Failed to load trend: ${esc(err.message)}</p>`;
     }
-    _spTrendChartInstance = new Chart(canvas, {
-        data: {
-            labels: months.map(m => m.month),
-            datasets: [
-                {
-                    type: 'bar',
-                    label: 'Spent',
-                    data: months.map(m => m.spent_eur),
-                    backgroundColor: SP_CATEGORY_CHART_COLORS[3],
-                },
-                {
-                    type: 'bar',
-                    label: 'Income',
-                    data: months.map(m => m.income_eur),
-                    backgroundColor: SP_CATEGORY_CHART_COLORS[1],
-                },
-                {
-                    type: 'line',
-                    label: 'Net',
-                    data: months.map(m => m.net_eur),
-                    borderColor: SP_CATEGORY_CHART_COLORS[5],
-                    fill: false,
-                },
-            ],
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { legend: { display: true, position: 'top' } },
-            scales: { y: { ticks: { callback: v => '€' + v } } },
-        },
-    });
 }
 window._renderSpTrendChart = _renderSpTrendChart;
 
