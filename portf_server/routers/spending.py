@@ -750,6 +750,7 @@ def get_spending_category_breakdown(
             abs(float(r["amount"]) * _fx(r.get("currency", "EUR")))
             for r in rows
             if r["category"] == "uncategorized"
+            and float(r["amount"]) * _fx(r.get("currency", "EUR")) < 0
         )
         if uncategorized_amount > 0:
             result.append(
