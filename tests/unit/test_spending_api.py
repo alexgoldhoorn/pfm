@@ -1612,3 +1612,27 @@ def test_breakdown_sub_level_excludes_uncategorized(tmp_path):
     )
     assert r.status_code == 200
     assert "uncategorized" not in [c["name"] for c in r.json()["children"]]
+
+
+def test_breakdown_uncategorized_excludes_income_rows(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid, _ = _make_insurance_tree(db)
+    today = date.today().isoformat()
+    db.create_spending_transaction(
+        pid, today, "Unknown spend", -12.0, category="uncategorized"
+    )
+    db.create_spending_transaction(
+        pid, today, "Unrecognized deposit", 500.0, category="uncategorized"
+    )
+
+    r = client.get(
+        "/api/v1/spending/categories/breakdown",
+        params={"parent": "Spend", "days": 30},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+    by_name = {c["name"]: c for c in r.json()["children"]}
+    # Only the spend-signed row counts -- the income-signed uncategorized
+    # row must not leak into the Spend chart's uncategorized bucket, same
+    # as /summary's by_category_eur (which is spend-only, amt_eur < 0).
+    assert by_name["uncategorized"]["amount_eur"] == 12.0
