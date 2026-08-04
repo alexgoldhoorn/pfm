@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime
 from typing import Any
 
 import yfinance as yf
@@ -178,6 +179,55 @@ def compute_targets(
         "buy_below": buy_below,
         "sell_above": sell_above,
     }
+
+
+def get_symbols_needing_refresh(db) -> list[dict[str, Any]]:
+    """Held + watchlist symbols with no research note, or one 90+ days stale.
+
+    Powers the Research page's "Refresh all targets" bulk button — see
+    docs/superpowers/specs/2026-08-04-bulk-research-refresh-design.md.
+    Deduplicated by symbol (uppercase), sorted by symbol.
+    """
+    from portf_manager.positions import compute_positions
+    from portf_manager.services.action_items import STALE_RESEARCH_DAYS, _parse_date
+
+    today = datetime.now().date()
+    positions, _ = compute_positions(db.get_all_transactions())
+    held_asset_ids = {aid for aid, pos in positions.items() if pos["quantity"] > 0}
+
+    candidates: dict[str, dict[str, Any]] = {}
+    for aid in held_asset_ids:
+        asset = db.get_asset(aid)
+        if not asset:
+            continue
+        sym = asset["symbol"].upper()
+        candidates[sym] = {
+            "symbol": sym,
+            "asset_id": aid,
+            "name": asset.get("name") or sym,
+        }
+    for w in db.get_watchlist():
+        sym = (w.get("symbol") or "").upper()
+        if not sym or sym in candidates:
+            continue
+        linked = db.get_asset_by_symbol(sym)
+        candidates[sym] = {
+            "symbol": sym,
+            "asset_id": linked["id"] if linked else None,
+            "name": w.get("name") or sym,
+        }
+
+    latest_by_symbol = {n["symbol"].upper(): n for n in db.get_latest_research_notes()}
+    out = []
+    for sym, c in candidates.items():
+        note = latest_by_symbol.get(sym)
+        if note is None:
+            out.append(c)
+            continue
+        created = _parse_date(note.get("created_at"))
+        if created is None or (today - created).days >= STALE_RESEARCH_DAYS:
+            out.append(c)
+    return sorted(out, key=lambda c: c["symbol"])
 
 
 def _num(v):
