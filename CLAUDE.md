@@ -122,7 +122,7 @@ Google Sheets API: `UNFORMATTED_VALUE + SERIAL_NUMBER` for reading (dates = floa
 
 ### Research API (`portf_server/routers/research.py` + `services/research.py`)
 
-**Route order is critical** (FastAPI first-match): `portfolio-analysis/*` routes → `compare` → `alerts/check` → `/{symbol}/*`.
+**Route order is critical** (FastAPI first-match): the single-segment GET routes `portfolio-analysis`, `compare`, `bulk-refresh-status` (plus `bulk-refresh`, POST-only, kept alongside them for consistency) must be registered before `/{symbol}` — otherwise e.g. `GET /research/compare` would match `/{symbol}` first with `symbol="compare"`. Multi-segment routes (`portfolio-analysis/settings`, `{symbol}/generate`, `{symbol}/lookup`, `{symbol}/save`, `{symbol}/history`, `{symbol}/report`, `{symbol}/targets`, `alerts/check`) never collide with `/{symbol}` regardless of order, since segment count differs — `alerts/check` is in fact registered *after* all `/{symbol}/*` routes in the file and is safe for exactly this reason.
 
 #### Portfolio Health (`GET /api/v1/research/portfolio-analysis`)
 Plain `def`; gathers 6 data bundles via `ThreadPoolExecutor` → LLM prompt → 5 scored categories (`diversification`, `risk_adjusted_return`, `income`, `fees`, `tax_efficiency`, each 1–10 with reason) + `recommendations` + `summary`. Cached in `kv_cache` (`portf:advisor:all` or `portf:advisor:{portfolio_id}`). `cache_ttl_hours` via `GET|PUT /api/v1/research/portfolio-analysis/settings`.
@@ -134,6 +134,7 @@ Plain `def`; gathers 6 data bundles via `ThreadPoolExecutor` → LLM prompt → 
 - `POST /api/v1/research/{symbol}/generate` — web-augmented LLM → fair value, BUY/HOLD/SELL, confidence, risks, catalysts
 - `compute_targets(fundamentals, method, assumptions)` — deterministic valuation (`pe`/`dividend_yield`); mirrored client-side for live recompute
 - `POST /api/v1/research/{symbol}/save` — versioned `research_notes` row + pushes to `price_targets`
+- `POST /api/v1/research/bulk-refresh` / `GET /api/v1/research/bulk-refresh-status` — background-thread bulk version of `/generate` + `/save`: sequentially regenerates targets for every symbol `get_symbols_needing_refresh(db)` (`portf_manager/services/research.py`) flags as held-or-watchlisted with no research note or one 90+ days old (`STALE_RESEARCH_DAYS`, from `action_items.py`). Never overwrites an existing target with nulls — `generate_valuation_report` swallows its own failures into a null-fields dict rather than raising, so the worker checks for a usable result before writing. Progress (`running/total/done/current_symbol/results`) lives in the module-level `_BULK_RESEARCH` dict, same pattern as `_BACKFILL`/`backfill-snapshots` in `analytics.py`. Web: "Refresh all targets" button on the Research page header (`pfm_features.js`), polls the status endpoint like the dashboard's `triggerPriceUpdate()`.
 - `GET /api/v1/research/compare` — registered before `/{symbol}`
 - `GET /api/v1/research/alerts/check` — price targets crossed vs latest prices (no Telegram send); Telegram sent by `~/scripts/portf-price-alerts.sh` at 20:05 via cron
 
