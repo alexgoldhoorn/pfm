@@ -5,7 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-07-30
+Last updated: 2026-08-04
+
+**Recent (v2.5.37):** **Research: "Refresh all targets" bulk button.** New `POST /api/v1/research/bulk-refresh` + `GET /api/v1/research/bulk-refresh-status` background-job pair sequentially regenerates buy/sell price targets for every held + watchlist symbol with no research note, or one 90+ days old — the same LLM valuation + save logic the single-symbol Workbench already uses, just batched. A stale symbol's existing target is always overwritten (no per-symbol prompt, since it's an unattended batch); a symbol whose LLM call comes back with no usable value is left untouched rather than clobbered with nulls. New "Refresh all targets" button on the Research page polls progress the same way the dashboard's "Refresh prices" button does.
 
 **Recent (v2.5.36):** **Spending: Analytics tab with trend chart and clickable category drill-down.** The Spending page gains a new Analytics tab, consolidating a new monthly trend chart with the category-breakdown chart relocated from the Categories tab (which now holds only the tree/CRUD UI). New `GET /api/v1/spending/trend?months=12` returns zero-filled monthly spent/income/net totals (EUR-converted at today's rate, transfers excluded) for the last N calendar months, rendered as a combo bar+line chart. New `GET /api/v1/spending/categories/breakdown?parent=Spend&days=30` returns a tree node's immediate children with subtree-summed totals and a `has_children` flag; the category chart is now click-to-drill-down — clicking a category with children re-scopes the chart to them, with a clickable breadcrumb trail back up, while clicking a leaf category opens a read-only transactions modal with a link back to the Transactions tab, pre-filtered to that category and date range.
 
