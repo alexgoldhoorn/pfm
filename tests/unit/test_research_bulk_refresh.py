@@ -169,6 +169,33 @@ class TestRunBulkResearchRefresh:
         assert target["buy_below"] == 90.0
         assert _BULK_RESEARCH["results"][0]["status"] == "no_data"
 
+    def test_overwrites_stale_target_with_new_usable_data(self, test_database, mocker):
+        aid = _held_asset(test_database)
+        test_database.upsert_price_target(
+            asset_id=aid, buy_below=90.0, sell_above=150.0
+        )
+        note_id = test_database.create_research_note(
+            asset_id=aid, symbol="AAPL", thesis="x"
+        )
+        _age_note(test_database, note_id, days_ago=120)
+        mocker.patch(
+            "portf_manager.services.research.fetch_fundamentals", return_value={}
+        )
+        mocker.patch(
+            "portf_manager.services.research.fetch_recent_news", return_value=[]
+        )
+        mocker.patch(
+            "portf_manager.services.research.generate_valuation_report",
+            return_value=dict(_USABLE_RESULT),
+        )
+
+        _run_bulk_research_refresh(test_database)
+
+        target = test_database.get_price_target(aid)
+        assert target["buy_below"] == 140.0
+        assert target["sell_above"] == 200.0
+        assert _BULK_RESEARCH["results"][0]["status"] == "updated"
+
     def test_one_symbol_error_does_not_abort_batch(self, test_database, mocker):
         _held_asset(test_database, symbol="AAPL", name="Apple Inc.")
         _held_asset(test_database, symbol="MSFT", name="Microsoft Corp.")

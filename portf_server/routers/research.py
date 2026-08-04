@@ -331,10 +331,18 @@ async def bulk_refresh(db=Depends(get_database), api_key_info: dict = Depends(_a
     refresh is already running, returns its current progress instead of
     starting a second one.
     """
+    from portf_manager.services.research import get_symbols_needing_refresh
+
     if _BULK_RESEARCH["running"]:
         return {"status": "running", **_BULK_RESEARCH}
+    # Pre-compute the eligible count synchronously (a fast, pure DB read) so
+    # the response can report it immediately instead of the frontend waiting
+    # for the first poll. The background thread recomputes it itself — that
+    # run's own total remains authoritative; this is only for the immediate
+    # UI response.
+    total = len(get_symbols_needing_refresh(db))
     threading.Thread(target=_run_bulk_research_refresh, args=(db,), daemon=True).start()
-    return {"status": "started"}
+    return {"status": "started", "total": total}
 
 
 @router.get("/bulk-refresh-status")
@@ -749,6 +757,10 @@ async def set_targets(
 # Batch-generates buy/sell targets for held + watchlist symbols missing or
 # stale (90+ days) on research. See
 # docs/superpowers/specs/2026-08-04-bulk-research-refresh-design.md.
+# NOTE: per-process in-memory state — safe under the single-process dev
+# server this branch runs against, but under multi-worker gunicorn (prod)
+# each worker has its own copy (same pre-existing limitation as _BACKFILL
+# and _price_update_state in analytics.py).
 _BULK_RESEARCH: dict = {
     "running": False,
     "total": 0,
@@ -757,6 +769,7 @@ _BULK_RESEARCH: dict = {
     "results": [],  # [{symbol, status: "updated" | "no_data" | "error", detail}]
     "started_at": None,
     "finished_at": None,
+    "error": None,
 }
 
 
@@ -775,11 +788,13 @@ def _run_bulk_research_refresh(db) -> None:
 
     _BULK_RESEARCH.update(
         running=True,
+        total=0,
         done=0,
         current_symbol=None,
         results=[],
         started_at=datetime.now().isoformat(),
         finished_at=None,
+        error=None,
     )
     try:
         candidates = get_symbols_needing_refresh(db)
@@ -846,6 +861,17 @@ def _run_bulk_research_refresh(db) -> None:
                         fair_value=result.get("fair_value"),
                         notes=(result.get("rationale") or "")[:500] or None,
                     )
+                    # Cache the full LLM dossier too, same as the single-symbol
+                    # /generate endpoint, so GET /{symbol} can serve it later.
+                    db.upsert_research_report(
+                        asset_id=c["asset_id"],
+                        symbol=sym,
+                        fair_value=result.get("fair_value"),
+                        recommendation=result.get("recommendation", "HOLD"),
+                        confidence=result.get("confidence", "low"),
+                        summary=result.get("summary", ""),
+                        report_json=json.dumps(result),
+                    )
                 if sym in watchlist_symbols and result.get("buy_below"):
                     db.add_watchlist(symbol=sym, buy_below=result.get("buy_below"))
                 _BULK_RESEARCH["results"].append(
@@ -858,6 +884,9 @@ def _run_bulk_research_refresh(db) -> None:
                 )
             finally:
                 _BULK_RESEARCH["done"] += 1
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Bulk research refresh aborted")
+        _BULK_RESEARCH["error"] = str(e)
     finally:
         _BULK_RESEARCH.update(
             running=False,

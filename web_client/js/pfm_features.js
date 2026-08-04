@@ -3525,18 +3525,21 @@ function setupResearchPage() {
                 if (s.running) {
                     setBulkRunning(s.done, s.total);
                     setTimeout(pollBulk, 3000);
+                } else if (s.error) {
+                    setBulkDone('Refresh failed: ' + s.error);
                 } else {
                     const updated = s.results.filter(x => x.status === 'updated').length;
                     const noData = s.results.filter(x => x.status === 'no_data').length;
                     const errored = s.results.filter(x => x.status === 'error').length;
-                    const text = s.total === 0
+                    let text = s.total === 0
                         ? 'Nothing needed refreshing.'
                         : `Updated ${updated} of ${s.total}` +
                           (noData ? ` · ${noData} had no usable data` : '') +
                           (errored ? ` · ${errored} failed` : '');
-                    setBulkDone(text);
                     if ($('researchCompare').style.display !== 'none') loadCompare();
                     else if (R.symbol) load(R.symbol);
+                    else text += ' — load a symbol or open the Compare tab to see the results.';
+                    setBulkDone(text);
                 }
             } catch (e) {
                 setBulkDone('Refresh failed: ' + e.message);
@@ -3551,6 +3554,8 @@ function setupResearchPage() {
                     headers: { 'X-API-Key': window.apiClient.apiKey },
                 });
                 if (!resp.ok) { setBulkDone('Failed to start.'); return; }
+                const body = await resp.json();
+                if (body.total) setBulkRunning(0, body.total);
             } catch (e) {
                 setBulkDone('Failed to start: ' + e.message);
                 return;
