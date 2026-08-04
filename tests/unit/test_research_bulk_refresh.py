@@ -2,7 +2,10 @@
 
 from datetime import date, timedelta
 
+import pytest
+
 from portf_manager.services.research import get_symbols_needing_refresh
+from portf_server.routers.research import _BULK_RESEARCH, _run_bulk_research_refresh
 
 
 def _held_asset(db, symbol="AAPL", name="Apple Inc.", qty=10.0, asset_type="stock"):
@@ -87,3 +90,145 @@ class TestGetSymbolsNeedingRefresh:
         _held_asset(test_database, symbol="AAPL", name="Apple Inc.")
         out = get_symbols_needing_refresh(test_database)
         assert [c["symbol"] for c in out] == ["AAPL", "MSFT"]
+
+
+_USABLE_RESULT = {
+    "fair_value": 175.0,
+    "buy_below": 140.0,
+    "sell_above": 200.0,
+    "recommendation": "BUY",
+    "confidence": "high",
+    "summary": "Solid outlook.",
+    "rationale": "Strong margins.",
+    "risks": [],
+    "catalysts": [],
+    "sources": [],
+}
+_NO_DATA_RESULT = {
+    "fair_value": None,
+    "buy_below": None,
+    "sell_above": None,
+    "recommendation": "HOLD",
+    "confidence": "low",
+    "summary": "Could not generate automated analysis for AAPL: boom",
+    "rationale": "",
+    "risks": [],
+    "catalysts": [],
+    "sources": [],
+}
+
+
+class TestRunBulkResearchRefresh:
+    def test_writes_price_target_for_held_asset(self, test_database, mocker):
+        aid = _held_asset(test_database)
+        mocker.patch(
+            "portf_manager.services.research.fetch_fundamentals", return_value={}
+        )
+        mocker.patch(
+            "portf_manager.services.research.fetch_recent_news", return_value=[]
+        )
+        mocker.patch(
+            "portf_manager.services.research.generate_valuation_report",
+            return_value=dict(_USABLE_RESULT),
+        )
+
+        _run_bulk_research_refresh(test_database)
+
+        target = test_database.get_price_target(aid)
+        assert target["buy_below"] == 140.0
+        assert target["sell_above"] == 200.0
+        assert _BULK_RESEARCH["running"] is False
+        assert _BULK_RESEARCH["done"] == 1
+        assert _BULK_RESEARCH["results"][0]["status"] == "updated"
+
+    def test_no_usable_data_does_not_overwrite_existing_target(
+        self, test_database, mocker
+    ):
+        aid = _held_asset(test_database)
+        test_database.upsert_price_target(
+            asset_id=aid, buy_below=90.0, sell_above=150.0
+        )
+        note_id = test_database.create_research_note(
+            asset_id=aid, symbol="AAPL", thesis="x"
+        )
+        _age_note(test_database, note_id, days_ago=120)
+        mocker.patch(
+            "portf_manager.services.research.fetch_fundamentals", return_value={}
+        )
+        mocker.patch(
+            "portf_manager.services.research.fetch_recent_news", return_value=[]
+        )
+        mocker.patch(
+            "portf_manager.services.research.generate_valuation_report",
+            return_value=dict(_NO_DATA_RESULT),
+        )
+
+        _run_bulk_research_refresh(test_database)
+
+        target = test_database.get_price_target(aid)
+        assert target["buy_below"] == 90.0
+        assert _BULK_RESEARCH["results"][0]["status"] == "no_data"
+
+    def test_one_symbol_error_does_not_abort_batch(self, test_database, mocker):
+        _held_asset(test_database, symbol="AAPL", name="Apple Inc.")
+        _held_asset(test_database, symbol="MSFT", name="Microsoft Corp.")
+        mocker.patch(
+            "portf_manager.services.research.fetch_fundamentals", return_value={}
+        )
+        mocker.patch(
+            "portf_manager.services.research.fetch_recent_news", return_value=[]
+        )
+        mocker.patch(
+            "portf_manager.services.research.generate_valuation_report",
+            side_effect=[RuntimeError("boom"), dict(_USABLE_RESULT)],
+        )
+
+        _run_bulk_research_refresh(test_database)
+
+        assert _BULK_RESEARCH["done"] == 2
+        statuses = {r["symbol"]: r["status"] for r in _BULK_RESEARCH["results"]}
+        assert statuses["AAPL"] == "error"
+        assert statuses["MSFT"] == "updated"
+
+    def test_watchlist_only_symbol_syncs_buy_zone_not_price_target(
+        self, test_database, mocker
+    ):
+        test_database.add_watchlist(symbol="MSFT", name="Microsoft Corp.")
+        mocker.patch(
+            "portf_manager.services.research.fetch_fundamentals", return_value={}
+        )
+        mocker.patch(
+            "portf_manager.services.research.fetch_recent_news", return_value=[]
+        )
+        mocker.patch(
+            "portf_manager.services.research.generate_valuation_report",
+            return_value=dict(_USABLE_RESULT),
+        )
+
+        _run_bulk_research_refresh(test_database)
+
+        watch = next(w for w in test_database.get_watchlist() if w["symbol"] == "MSFT")
+        assert watch["buy_below"] == 140.0
+        assert _BULK_RESEARCH["results"][0]["status"] == "updated"
+
+
+class TestBulkRefreshEndpoints:
+    @pytest.mark.asyncio
+    async def test_start_and_status_endpoints_respond(
+        self, async_test_client, auth_headers, test_database, mocker
+    ):
+        mocker.patch(
+            "portf_manager.services.research.get_symbols_needing_refresh",
+            return_value=[],
+        )
+        resp = await async_test_client.post(
+            "/api/v1/research/bulk-refresh", headers=auth_headers
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "started"
+
+        status_resp = await async_test_client.get(
+            "/api/v1/research/bulk-refresh-status", headers=auth_headers
+        )
+        assert status_resp.status_code == 200
+        assert "running" in status_resp.json()
