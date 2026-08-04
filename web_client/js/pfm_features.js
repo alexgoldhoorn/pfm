@@ -3495,6 +3495,75 @@ function setupResearchPage() {
         });
     });
 
+    // Bulk research refresh: generate buy/sell targets for every held +
+    // watchlisted symbol missing research or 90+ days stale. Mirrors
+    // triggerPriceUpdate() in pfm_core.js (trigger, then poll a status
+    // endpoint every few seconds until the background thread finishes).
+    const bulkBtn = $('researchBulkRefreshBtn');
+    if (bulkBtn) {
+        const bulkIcon = $('researchBulkRefreshIcon');
+        const bulkLabel = $('researchBulkRefreshLabel');
+        const bulkStatus = $('researchBulkRefreshStatus');
+        const setBulkRunning = (doneCount, total) => {
+            bulkBtn.disabled = true;
+            if (bulkIcon) bulkIcon.className = 'spinner-border spinner-border-sm me-1';
+            if (bulkLabel) bulkLabel.textContent = total ? `Refreshing ${doneCount}/${total}…` : 'Refreshing…';
+        };
+        const setBulkDone = (text) => {
+            bulkBtn.disabled = false;
+            if (bulkIcon) bulkIcon.className = 'bi bi-magic me-1';
+            if (bulkLabel) bulkLabel.textContent = 'Refresh all targets';
+            if (bulkStatus) bulkStatus.textContent = text || '';
+        };
+        const pollBulk = async () => {
+            try {
+                const r = await fetch(window.apiClient.baseURL + '/api/v1/research/bulk-refresh-status', {
+                    headers: { 'X-API-Key': window.apiClient.apiKey },
+                });
+                if (!r.ok) { setBulkDone('Refresh failed.'); return; }
+                const s = await r.json();
+                if (s.running) {
+                    setBulkRunning(s.done, s.total);
+                    setTimeout(pollBulk, 3000);
+                } else if (s.error) {
+                    setBulkDone('Refresh failed: ' + s.error);
+                } else {
+                    const updated = s.results.filter(x => x.status === 'updated').length;
+                    const noData = s.results.filter(x => x.status === 'no_data').length;
+                    const errored = s.results.filter(x => x.status === 'error').length;
+                    let text = s.total === 0
+                        ? 'Nothing needed refreshing.'
+                        : `Updated ${updated} of ${s.total}` +
+                          (noData ? ` · ${noData} had no usable data` : '') +
+                          (errored ? ` · ${errored} failed` : '');
+                    if ($('researchCompare').style.display !== 'none') loadCompare();
+                    else if (R.symbol) load(R.symbol);
+                    else text += ' — load a symbol or open the Compare tab to see the results.';
+                    setBulkDone(text);
+                }
+            } catch (e) {
+                setBulkDone('Refresh failed: ' + e.message);
+            }
+        };
+        bulkBtn.addEventListener('click', async () => {
+            setBulkRunning(0, 0);
+            if (bulkStatus) bulkStatus.textContent = '';
+            try {
+                const resp = await fetch(window.apiClient.baseURL + '/api/v1/research/bulk-refresh', {
+                    method: 'POST',
+                    headers: { 'X-API-Key': window.apiClient.apiKey },
+                });
+                if (!resp.ok) { setBulkDone('Failed to start.'); return; }
+                const body = await resp.json();
+                if (body.total) setBulkRunning(0, body.total);
+            } catch (e) {
+                setBulkDone('Failed to start: ' + e.message);
+                return;
+            }
+            setTimeout(pollBulk, 1500);
+        });
+    }
+
     function recompute() {
         const method = $('rvMethod').value;
         page.querySelectorAll('[data-method]').forEach(el => {

@@ -10,6 +10,7 @@ GET    /api/v1/research/alerts/check        — check all targets vs latest pric
 
 import json
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 from typing import Any, Optional
@@ -315,6 +316,39 @@ async def compare(db=Depends(get_database), api_key_info: dict = Depends(_auth))
         )
     out.sort(key=lambda x: (x["upside_pct"] is None, -(x["upside_pct"] or 0)))
     return out
+
+
+# ── Bulk Research Refresh endpoints ─────────────────────────────────────────
+# Registered here (before the "/{symbol}" catch-all below) so single-segment
+# paths like "/bulk-refresh-status" aren't swallowed by _resolve_asset() —
+# see "Route order is critical" in CLAUDE.md.
+@router.post("/bulk-refresh")
+async def bulk_refresh(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+    """Start a background research refresh for held + watchlist symbols
+    missing or stale (90+ days) on research targets.
+
+    Returns immediately; poll GET /bulk-refresh-status for progress. If a
+    refresh is already running, returns its current progress instead of
+    starting a second one.
+    """
+    from portf_manager.services.research import get_symbols_needing_refresh
+
+    if _BULK_RESEARCH["running"]:
+        return {"status": "running", **_BULK_RESEARCH}
+    # Pre-compute the eligible count synchronously (a fast, pure DB read) so
+    # the response can report it immediately instead of the frontend waiting
+    # for the first poll. The background thread recomputes it itself — that
+    # run's own total remains authoritative; this is only for the immediate
+    # UI response.
+    total = len(get_symbols_needing_refresh(db))
+    threading.Thread(target=_run_bulk_research_refresh, args=(db,), daemon=True).start()
+    return {"status": "started", "total": total}
+
+
+@router.get("/bulk-refresh-status")
+async def bulk_refresh_status(api_key_info: dict = Depends(_auth)):
+    """Progress of the bulk research refresh (poll while running)."""
+    return _BULK_RESEARCH
 
 
 @router.get("/{symbol}")
@@ -717,6 +751,148 @@ async def set_targets(
         notes=body.notes,
     )
     return db.get_price_target(asset["id"])
+
+
+# ── Bulk Research Refresh ───────────────────────────────────────────────────
+# Batch-generates buy/sell targets for held + watchlist symbols missing or
+# stale (90+ days) on research. See
+# docs/superpowers/specs/2026-08-04-bulk-research-refresh-design.md.
+# NOTE: per-process in-memory state — safe under the single-process dev
+# server this branch runs against, but under multi-worker gunicorn (prod)
+# each worker has its own copy (same pre-existing limitation as _BACKFILL
+# and _price_update_state in analytics.py).
+_BULK_RESEARCH: dict = {
+    "running": False,
+    "total": 0,
+    "done": 0,
+    "current_symbol": None,
+    "results": [],  # [{symbol, status: "updated" | "no_data" | "error", detail}]
+    "started_at": None,
+    "finished_at": None,
+    "error": None,
+}
+
+
+def _run_bulk_research_refresh(db) -> None:
+    """Sequentially refresh targets for every eligible symbol.
+
+    Runs in a background thread. Never raises — every per-symbol failure is
+    caught and recorded so one bad symbol can't abort the batch.
+    """
+    from portf_manager.services.research import (
+        fetch_fundamentals,
+        fetch_recent_news,
+        generate_valuation_report,
+        get_symbols_needing_refresh,
+    )
+
+    _BULK_RESEARCH.update(
+        running=True,
+        total=0,
+        done=0,
+        current_symbol=None,
+        results=[],
+        started_at=datetime.now().isoformat(),
+        finished_at=None,
+        error=None,
+    )
+    try:
+        candidates = get_symbols_needing_refresh(db)
+        _BULK_RESEARCH["total"] = len(candidates)
+        watchlist_symbols = {
+            (w.get("symbol") or "").upper() for w in db.get_watchlist()
+        }
+        for c in candidates:
+            sym = c["symbol"]
+            _BULK_RESEARCH["current_symbol"] = sym
+            try:
+                asset = db.get_asset(c["asset_id"]) if c["asset_id"] else None
+                pos = _position_stats(db, asset)
+                price, currency = _current_price(db, asset, sym)
+                fundamentals = fetch_fundamentals(sym, db)
+                news = fetch_recent_news(sym, db=db)
+                result = generate_valuation_report(
+                    symbol=sym,
+                    asset_name=c["name"],
+                    asset_type=(asset.get("asset_type", "stock") if asset else "stock"),
+                    current_price=price,
+                    avg_cost=pos["avg_cost"],
+                    currency=currency,
+                    fundamentals=fundamentals,
+                    news=news,
+                )
+                usable = any(
+                    result.get(k) is not None
+                    for k in ("fair_value", "buy_below", "sell_above")
+                )
+                if not usable:
+                    _BULK_RESEARCH["results"].append(
+                        {
+                            "symbol": sym,
+                            "status": "no_data",
+                            "detail": result.get("summary", ""),
+                        }
+                    )
+                    continue
+
+                db.create_research_note(
+                    asset_id=c["asset_id"],
+                    symbol=sym,
+                    thesis=result.get("rationale"),
+                    conviction=None,
+                    method="ai-bulk",
+                    assumptions=None,
+                    fair_value=result.get("fair_value"),
+                    buy_below=result.get("buy_below"),
+                    sell_above=result.get("sell_above"),
+                    price_at_save=price,
+                    llm_summary=result.get("summary"),
+                    sources=(
+                        json.dumps(result.get("sources"))
+                        if result.get("sources")
+                        else None
+                    ),
+                )
+                if c["asset_id"]:
+                    db.upsert_price_target(
+                        asset_id=c["asset_id"],
+                        buy_below=result.get("buy_below"),
+                        sell_above=result.get("sell_above"),
+                        fair_value=result.get("fair_value"),
+                        notes=(result.get("rationale") or "")[:500] or None,
+                    )
+                    # Cache the full LLM dossier too, same as the single-symbol
+                    # /generate endpoint, so GET /{symbol} can serve it later.
+                    db.upsert_research_report(
+                        asset_id=c["asset_id"],
+                        symbol=sym,
+                        fair_value=result.get("fair_value"),
+                        recommendation=result.get("recommendation", "HOLD"),
+                        confidence=result.get("confidence", "low"),
+                        summary=result.get("summary", ""),
+                        report_json=json.dumps(result),
+                    )
+                if sym in watchlist_symbols and result.get("buy_below"):
+                    db.add_watchlist(symbol=sym, buy_below=result.get("buy_below"))
+                _BULK_RESEARCH["results"].append(
+                    {"symbol": sym, "status": "updated", "detail": ""}
+                )
+            except Exception as e:  # noqa: BLE001
+                logger.exception(f"Bulk research refresh failed for {sym}")
+                _BULK_RESEARCH["results"].append(
+                    {"symbol": sym, "status": "error", "detail": str(e)}
+                )
+            finally:
+                _BULK_RESEARCH["done"] += 1
+    except Exception as e:  # noqa: BLE001
+        logger.exception("Bulk research refresh aborted")
+        _BULK_RESEARCH["error"] = str(e)
+    finally:
+        _BULK_RESEARCH.update(
+            running=False,
+            current_symbol=None,
+            finished_at=datetime.now().isoformat(),
+        )
 
 
 def compute_price_target_alerts(db) -> list[dict]:
