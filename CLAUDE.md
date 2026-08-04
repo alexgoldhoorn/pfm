@@ -122,7 +122,7 @@ Google Sheets API: `UNFORMATTED_VALUE + SERIAL_NUMBER` for reading (dates = floa
 
 ### Research API (`portf_server/routers/research.py` + `services/research.py`)
 
-**Route order is critical** (FastAPI first-match): `portfolio-analysis/*` routes → `compare` → `alerts/check` → `/{symbol}/*`.
+**Route order is critical** (FastAPI first-match): the single-segment GET routes `portfolio-analysis`, `compare`, `bulk-refresh-status` (plus `bulk-refresh`, POST-only, kept alongside them for consistency) must be registered before `/{symbol}` — otherwise e.g. `GET /research/compare` would match `/{symbol}` first with `symbol="compare"`. Multi-segment routes (`portfolio-analysis/settings`, `{symbol}/generate`, `{symbol}/lookup`, `{symbol}/save`, `{symbol}/history`, `{symbol}/report`, `{symbol}/targets`, `alerts/check`) never collide with `/{symbol}` regardless of order, since segment count differs — `alerts/check` is in fact registered *after* all `/{symbol}/*` routes in the file and is safe for exactly this reason.
 
 #### Portfolio Health (`GET /api/v1/research/portfolio-analysis`)
 Plain `def`; gathers 6 data bundles via `ThreadPoolExecutor` → LLM prompt → 5 scored categories (`diversification`, `risk_adjusted_return`, `income`, `fees`, `tax_efficiency`, each 1–10 with reason) + `recommendations` + `summary`. Cached in `kv_cache` (`portf:advisor:all` or `portf:advisor:{portfolio_id}`). `cache_ttl_hours` via `GET|PUT /api/v1/research/portfolio-analysis/settings`.
