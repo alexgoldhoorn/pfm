@@ -1481,6 +1481,17 @@
                                     <div class="card h-100">
                                         <div class="card-header fw-semibold"><i class="bi bi-calculator me-2"></i>Valuation → goal prices</div>
                                         <div class="card-body">
+                                            <!-- The currently saved target driving Dashboard/Action Items alerts —
+                                                 shown separately from the editable what-if calculator below so the
+                                                 two numbers (often different) are never mistaken for each other. -->
+                                            <div class="alert alert-secondary py-2 px-3 mb-3" id="rvActiveTarget" style="display:none;">
+                                                <div class="small text-muted mb-1"><i class="bi bi-bell me-1"></i>Active alert target <span id="rvActiveTargetMeta"></span></div>
+                                                <div class="d-flex gap-3 small">
+                                                    <span>Buy below <strong class="text-success" id="rvActiveBuyBelow">—</strong></span>
+                                                    <span>Fair value <strong id="rvActiveFairValue">—</strong></span>
+                                                    <span>Sell above <strong class="text-danger" id="rvActiveSellAbove">—</strong></span>
+                                                </div>
+                                            </div>
                                             <div class="row g-2 align-items-end">
                                                 <div class="col-sm-4">
                                                     <label class="form-label small mb-1">Method</label>
