@@ -3826,6 +3826,24 @@ function setupResearchPage() {
         });
     });
 
+    const RV_METHOD_LABELS = { pe: 'P/E multiple', dividend_yield: 'Dividend yield', 'ai-bulk': 'AI · bulk refresh' };
+    // Shows the price_targets row that actually drives Dashboard/Action Items
+    // alerts — separate from the always-live what-if calculator below it,
+    // which recomputes from today's fundamentals and can show a very
+    // different number (see the calculator's own default target_pe).
+    function renderActiveTarget(targets, note) {
+        const box = $('rvActiveTarget');
+        const hasTarget = targets && (targets.buy_below != null || targets.sell_above != null || targets.fair_value != null);
+        if (!hasTarget) { box.style.display = 'none'; return; }
+        box.style.display = '';
+        $('rvActiveBuyBelow').textContent = money(targets.buy_below, R.currency);
+        $('rvActiveFairValue').textContent = money(targets.fair_value, R.currency);
+        $('rvActiveSellAbove').textContent = money(targets.sell_above, R.currency);
+        const methodLbl = RV_METHOD_LABELS[note && note.method] || 'manual';
+        const dateStr = Fmt.date(targets.updated_at || targets.created_at || (note && note.created_at));
+        $('rvActiveTargetMeta').textContent = `— ${methodLbl}${dateStr ? ', saved ' + dateStr : ''}`;
+    }
+
     async function load(sym) {
         sym = (sym || '').trim().toUpperCase();
         if (!sym) return;
@@ -3856,6 +3874,7 @@ function setupResearchPage() {
             $('rvTargetYield').value = d.fundamentals?.dividendYield ? (d.fundamentals.dividendYield * 100).toFixed(1) : 4;
             const t = d.targets || {};
             if (d.latest_note && d.latest_note.thesis) $('rvThesis').value = d.latest_note.thesis;
+            renderActiveTarget(t, d.latest_note);
             recompute();
             $('rvLlmBody').innerHTML = '<span class="text-muted small">Click “Research with web” for an LLM read.</span>';
             $('rvSaveMsg').textContent = '';
@@ -4069,7 +4088,10 @@ function setupResearchPage() {
             }
             $('rvSaveMsg').innerHTML = msg;
             // Reflect the new target locally so a second save doesn't re-prompt.
-            if (res.targets_updated) R.targets = { buy_below: c.buy, sell_above: c.sell, fair_value: c.fair };
+            if (res.targets_updated) {
+                R.targets = { buy_below: c.buy, sell_above: c.sell, fair_value: c.fair };
+                renderActiveTarget(R.targets, { method: c.method, created_at: new Date().toISOString() });
+            }
             if (res.watchlist_updated) R.watchBuyBelow = c.buy;
             loadHistory(R.symbol);
         } catch (e) { $('rvSaveMsg').innerHTML = '<span class="text-danger">' + e.message + '</span>'; }
