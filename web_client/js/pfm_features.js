@@ -337,7 +337,14 @@ function _renderActionItems(items) {
         wrap.innerHTML = '<div class="alert alert-success"><i class="bi bi-check-circle me-1"></i>All clear — nothing needs your attention.</div>';
         return;
     }
-    wrap.innerHTML = items.map(item => `
+    wrap.innerHTML = items.map(item => {
+        // Research-linked items carry the specific symbol in context — pass it
+        // through as data-symbol so the nav click handler (createNavigationManager
+        // in this file) can load it straight into the Workbench instead of
+        // landing on a blank Research page.
+        const sym = item.link_page === 'research' && item.context && item.context.symbol;
+        const symAttr = sym ? ` data-symbol="${esc(sym)}"` : '';
+        return `
         <div class="card mb-2">
             <div class="card-body py-2 d-flex justify-content-between align-items-start">
                 <div>
@@ -347,11 +354,12 @@ function _renderActionItems(items) {
                     <div class="small text-muted">${esc(item.detail || '')}</div>
                 </div>
                 <div class="d-flex gap-2 ms-2 flex-shrink-0">
-                    <a href="#" data-page="${esc(item.link_page)}" class="btn btn-sm btn-outline-primary">Go to page</a>
+                    <a href="#" data-page="${esc(item.link_page)}"${symAttr} class="btn btn-sm btn-outline-primary">Go to page</a>
                     <button class="btn btn-sm btn-outline-secondary" data-dismiss-action-item="${esc(item.id)}" title="Dismiss"><i class="bi bi-x-lg"></i></button>
                 </div>
             </div>
-        </div>`).join('');
+        </div>`;
+    }).join('');
 }
 
 async function loadActionItemsPage() {
@@ -476,6 +484,21 @@ function createNavigationManager() {
                     e.preventDefault();
                     const page = navLink.dataset.page;
                     this.showPage(page);
+                    // Action Items' research-linked alerts carry the specific
+                    // symbol (data-symbol) — load it straight into the Workbench
+                    // instead of leaving the Research page blank. Same load
+                    // sequence the Compare table's row-click already uses.
+                    const sym = navLink.dataset.symbol;
+                    if (sym && page === 'research') {
+                        const tab = document.querySelector('#researchTabs [data-rtab="workbench"]');
+                        if (tab) tab.click();
+                        const tickerInput = document.getElementById('researchTicker');
+                        const loadBtn = document.getElementById('researchLoadBtn');
+                        if (tickerInput && loadBtn) {
+                            tickerInput.value = sym;
+                            loadBtn.click();
+                        }
+                    }
                 }
             });
         }

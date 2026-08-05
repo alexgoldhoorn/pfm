@@ -289,19 +289,39 @@ window.makeSortableTable = makeSortableTable;
 
 // Dashboard alerts banner: price targets crossed + watchlist buy zones.
 // Loaded async so it never blocks the dashboard (watchlist check hits live
-// prices). Hidden entirely when nothing is triggered.
+// prices). Hidden entirely when nothing is triggered. BUY/SELL/WATCH are
+// grouped into independently-collapsible sections (collapsed by default) so
+// the banner stays short once most holdings have targets set — a flat list
+// got unwieldy fast once the bulk research refresh populated ~45 targets.
 async function loadDashboardAlerts() {
     const box = document.getElementById('dashAlerts');
     if (!box) return;
+    // Research-icon click opens the same research modal used elsewhere —
+    // wired once via delegation since box.innerHTML is replaced on every load.
+    if (!box._wired) {
+        box._wired = true;
+        box.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-research-symbol]');
+            if (btn && window.openResearchModal) {
+                window.openResearchModal(btn.dataset.researchSymbol, btn.dataset.researchName || '');
+            }
+        });
+    }
+    const researchLink = (symbol, name) =>
+        `<button type="button" class="btn btn-link btn-sm p-0 ms-1 align-baseline" `
+        + `data-research-symbol="${esc(symbol)}" data-research-name="${esc(name || '')}" `
+        + `title="View research"><i class="bi bi-clipboard-data"></i></button>`;
     try {
         const [targets, watch, fresh] = await Promise.all([
             window.apiClient.getResearchAlerts().catch(() => ({ alerts: [] })),
             window.apiClient.getWatchlistAlerts().catch(() => ({ alerts: [] })),
             window.apiClient.getDataFreshness().catch(() => null),
         ]);
-        const items = [];
+        let dataItem = '';
         // Stale price-data warning: prices feed value & gain/loss, so flag when
         // the last refresh is old or some holdings have gone stale/unpriced.
+        // Always a single aggregated line, so it stays outside the BUY/SELL/
+        // WATCH grouping below rather than being its own collapsible section.
         if (fresh) {
             const ageH = fresh.refresh_age_hours;
             const oldRefresh = (ageH == null) || (ageH > 30);
@@ -320,10 +340,11 @@ async function loadDashboardAlerts() {
                     const more = fresh.stale_count > 6 ? ` +${fresh.stale_count - 6} more` : '';
                     bits.push(`${fresh.stale_count} holding${fresh.stale_count > 1 ? 's' : ''} with stale prices: ${names}${more}`);
                 }
-                items.push(`<li class="mb-1"><span class="badge bg-warning text-dark me-2">DATA</span>`
-                    + `<strong>Price data</strong> — ${bits.join('; ')}. Gain/loss may be out of date.</li>`);
+                dataItem = `<li class="mb-1"><span class="badge bg-warning text-dark me-2">DATA</span>`
+                    + `<strong>Price data</strong> — ${bits.join('; ')}. Gain/loss may be out of date.</li>`;
             }
         }
+        const buyItems = [], sellItems = [];
         (targets.alerts || []).forEach(a => {
             const cur = a.currency || 'EUR';
             // Position context: quantity, value, and P&L vs weighted-average cost.
@@ -342,26 +363,48 @@ async function loadDashboardAlerts() {
             (a.triggers || []).forEach(t => {
                 const buy = t.type === 'BUY';
                 const nameTxt = a.name ? ` <span class="text-muted">· ${esc(a.name)}</span>` : '';
-                items.push(`<li class="mb-1"><span class="badge bg-${buy ? 'success' : 'danger'} me-2">${t.type}</span><strong>${esc(a.symbol)}</strong>${nameTxt} at ${Fmt.num(t.price, 2, 2)} ${cur} ${buy ? '≤ buy-below' : '≥ sell-above'} ${Fmt.num(t.threshold, 2, 2)} ${cur}${posInfo}${priceDateTxt}</li>`);
+                const li = `<li class="mb-1"><span class="badge bg-${buy ? 'success' : 'danger'} me-2">${t.type}</span><strong>${esc(a.symbol)}</strong>${nameTxt} at ${Fmt.num(t.price, 2, 2)} ${cur} ${buy ? '≤ buy-below' : '≥ sell-above'} ${Fmt.num(t.threshold, 2, 2)} ${cur}${posInfo}${priceDateTxt}${researchLink(a.symbol, a.name)}</li>`;
+                (buy ? buyItems : sellItems).push(li);
             });
         });
+        const watchItems = [];
         (watch.alerts || []).forEach(a => {
             const fetchedTxt = a.price_fetched_at ? ` <small class="text-muted">[${fmtFetchedAt(a.price_fetched_at)}]</small>` : '';
-            items.push(`<li class="mb-1"><span class="badge bg-info text-dark me-2">WATCH</span><strong>${esc(a.symbol)}</strong> ${a.name ? '· ' + esc(a.name) : ''} at ${Fmt.num(a.price, 2, 2)} entered buy zone (≤ ${Fmt.num(a.buy_below, 2, 2)})${fetchedTxt}</li>`);
+            watchItems.push(`<li class="mb-1"><span class="badge bg-info text-dark me-2">WATCH</span><strong>${esc(a.symbol)}</strong> ${a.name ? '· ' + esc(a.name) : ''} at ${Fmt.num(a.price, 2, 2)} entered buy zone (≤ ${Fmt.num(a.buy_below, 2, 2)})${fetchedTxt}${researchLink(a.symbol, a.name)}</li>`);
         });
-        if (!items.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+        const totalCount = (dataItem ? 1 : 0) + buyItems.length + sellItems.length + watchItems.length;
+        if (!totalCount) { box.style.display = 'none'; box.innerHTML = ''; return; }
         // Dismissal is keyed by the alert content so a *new* alert reappears even
         // after the user closed the previous set; the same set stays hidden.
-        const sig = hashStr(items.join(''));
+        const sig = hashStr(dataItem + buyItems.join('') + sellItems.join('') + watchItems.join(''));
         if (localStorage.getItem('pfmAlertsDismissed') === sig) {
             box.style.display = 'none'; box.innerHTML = ''; return;
         }
+        // Each type gets its own collapsed-by-default section (omitted entirely
+        // when empty) so the banner doesn't grow one line per triggered symbol.
+        const section = (key, label, badgeCls, list) => {
+            if (!list.length) return '';
+            const bodyId = `dashAlerts${key}Body`;
+            return `
+                <div class="mt-2">
+                    <div class="d-flex align-items-center gap-2" role="button" data-bs-toggle="collapse" data-bs-target="#${bodyId}" aria-expanded="false">
+                        <span class="badge ${badgeCls}">${label} (${list.length})</span>
+                        <i class="bi bi-chevron-down small"></i>
+                    </div>
+                    <div id="${bodyId}" class="collapse">
+                        <ul class="list-unstyled mb-0 small mt-1">${list.join('')}</ul>
+                    </div>
+                </div>`;
+        };
         box.style.display = '';
         box.innerHTML = `
             <div class="alert alert-warning alert-dismissible mb-0">
                 <button type="button" class="btn-close" id="dashAlertsClose" aria-label="Dismiss"></button>
-                <div class="fw-semibold mb-1"><i class="bi bi-bell-fill me-2"></i>${items.length} alert${items.length > 1 ? 's' : ''}</div>
-                <ul class="list-unstyled mb-0 small">${items.join('')}</ul>
+                <div class="fw-semibold mb-1"><i class="bi bi-bell-fill me-2"></i>${totalCount} alert${totalCount > 1 ? 's' : ''}</div>
+                ${dataItem ? `<ul class="list-unstyled mb-0 small">${dataItem}</ul>` : ''}
+                ${section('Buy', 'BUY', 'bg-success', buyItems)}
+                ${section('Sell', 'SELL', 'bg-danger', sellItems)}
+                ${section('Watch', 'WATCH', 'bg-info text-dark', watchItems)}
             </div>`;
         const closeBtn = document.getElementById('dashAlertsClose');
         if (closeBtn) closeBtn.addEventListener('click', () => {
