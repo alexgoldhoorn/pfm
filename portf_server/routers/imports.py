@@ -350,11 +350,13 @@ def _parse_myinvestor_paste(
 def _parse_mintos(
     content: str,
 ) -> tuple[List[PreviewTransaction], List[PreviewBooking], List[dict]]:
-    """Mintos statement → monthly aggregated P2P interest (savings-base income).
+    """Mintos statement → monthly aggregated P2P interest + principal, plus
+    the Bonds sleeve (ETF sleeve funding has no per-ISIN detail in this
+    export — see mintos_csv_parser.py's module docstring).
 
-    The thousands of loan/principal/secondary-market rows are ignored (they net
-    out); only interest + withholding are kept, summed per month and booked as
-    'interest' transactions against a synthetic MINTOS asset.
+    The P2P position (MINTOS) is priced at a fixed 1.0 — 1 unit = €1 of
+    principal outstanding, since loans have no market price and Mintos
+    itself values them at par.
     """
     result = parse_mintos_csv(content)
     previews = [
@@ -373,6 +375,68 @@ def _parse_mintos(
         )
         for e in result.interest
     ]
+    for p in result.principal:
+        month = p["date"][:7]
+        if p["buy_amount"] > 0:
+            previews.append(
+                PreviewTransaction(
+                    symbol=MINTOS_SYMBOL,
+                    name=MINTOS_NAME,
+                    asset_type="bond",
+                    tx_type="buy",
+                    date=p["date"],
+                    quantity=p["buy_amount"],
+                    price=1.0,
+                    currency=p.get("currency", "EUR"),
+                    broker="Mintos",
+                    notes=f"Mintos P2P principal invested in {month} (new loans + secondary-market purchases)",
+                )
+            )
+        if p["sell_amount"] > 0:
+            previews.append(
+                PreviewTransaction(
+                    symbol=MINTOS_SYMBOL,
+                    name=MINTOS_NAME,
+                    asset_type="bond",
+                    tx_type="sell",
+                    date=p["date"],
+                    quantity=p["sell_amount"],
+                    price=1.0,
+                    currency=p.get("currency", "EUR"),
+                    broker="Mintos",
+                    notes=f"Mintos P2P principal returned in {month} (repayments + buybacks + secondary-market sales)",
+                )
+            )
+    for b in result.bond_buys:
+        previews.append(
+            PreviewTransaction(
+                symbol=b["isin"],
+                name=f"Mintos Bond {b['isin']}",
+                asset_type="bond",
+                tx_type="buy",
+                date=b["date"],
+                quantity=b["amount"],
+                price=1.0,
+                currency=b.get("currency", "EUR"),
+                broker="Mintos",
+                notes="Mintos Bonds sleeve — funded (priced at par, no market data available)",
+            )
+        )
+    for b in result.bond_income:
+        previews.append(
+            PreviewTransaction(
+                symbol=b["isin"],
+                name=f"Mintos Bond {b['isin']}",
+                asset_type="bond",
+                tx_type="interest",
+                date=b["date"],
+                quantity=1.0,
+                price=b["amount"],
+                currency=b.get("currency", "EUR"),
+                broker="Mintos",
+                notes="Mintos Bonds sleeve — coupon/interest received",
+            )
+        )
     # Surface the ignored internal activity as informational "skipped" rows.
     skipped = [
         {
