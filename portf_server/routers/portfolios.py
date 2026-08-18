@@ -78,6 +78,13 @@ def _get_fx_rate_on(database: Database, currency: str, on_date) -> float:
     Mirrors ``_fx_on`` in analytics.py (not imported from there — that module
     imports ``_get_fx_rate`` from this one, so importing back would cycle).
     Accepts a date, a 'YYYY-MM-DD...' string, or None.
+
+    Note: this is the *daily close* rate, not the broker's intraday
+    execution-time rate — expect cash_eur/cost_eur to sit within ~1-2% of a
+    real broker statement for a multi-currency portfolio with many
+    foreign-currency trades, not exactly on it (see CLAUDE.md, "Expect a
+    small residual gap"). That drift is inherent to reconstructing historical
+    FX after the fact; don't chase it as a bug.
     """
     cur = (currency or "EUR").strip().upper()
     if cur == "EUR":
