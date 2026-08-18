@@ -656,6 +656,20 @@ class APIClient:
 
         return results
 
+    def get_quote_currency(self, symbol: str) -> Optional[str]:
+        """Native trading currency yfinance reports for `symbol`.
+
+        Normalizes GBX pence ("GBp") to "GBP" to match the ÷100 conversion
+        fetch_latest_prices already applies before storing the price — so
+        this always describes the currency the *stored* price is actually
+        denominated in, not yfinance's raw quote-currency string.
+        """
+        try:
+            currency = yf.Ticker(symbol).fast_info.currency
+        except Exception:
+            return None
+        return "GBP" if currency == "GBp" else currency
+
     def fetch_symbols_with_progress(
         self,
         symbols: list[str],
