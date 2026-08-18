@@ -5,6 +5,7 @@ Handles portfolio management and analysis.
 """
 
 import time
+from datetime import datetime
 from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException, status, Depends, Request, Query
 from pydantic import BaseModel, Field
@@ -63,6 +64,37 @@ def _get_fx_rate(currency: str) -> float:
     rate, _stale = market.get_fx_eur(_SHARED_DB, currency, max_age=_FX_TTL)
     _FX_CACHE[currency] = rate
     _FX_CACHE_TS[currency] = now
+    return rate
+
+
+# Historical rates are immutable — memoise per (currency, date) for the
+# lifetime of the worker so per-transaction loops don't re-hit the kv_cache.
+_FX_HIST_MEMO: dict[tuple[str, str], float] = {}
+
+
+def _get_fx_rate_on(database: Database, currency: str, on_date) -> float:
+    """EUR rate at *on_date* (transaction-date FX); current rate as fallback.
+
+    Mirrors ``_fx_on`` in analytics.py (not imported from there — that module
+    imports ``_get_fx_rate`` from this one, so importing back would cycle).
+    Accepts a date, a 'YYYY-MM-DD...' string, or None.
+    """
+    cur = (currency or "EUR").strip().upper()
+    if cur == "EUR":
+        return 1.0
+    if isinstance(on_date, str):
+        try:
+            on_date = datetime.strptime(on_date[:10], "%Y-%m-%d").date()
+        except ValueError:
+            on_date = None
+    if on_date is None:
+        return _get_fx_rate(cur)
+    memo_key = (cur, on_date.isoformat())
+    if memo_key in _FX_HIST_MEMO:
+        return _FX_HIST_MEMO[memo_key]
+    rate, stale = market.get_fx_eur_on(database, cur, on_date)
+    if not stale:
+        _FX_HIST_MEMO[memo_key] = rate
     return rate
 
 
@@ -178,8 +210,10 @@ async def list_portfolios(
     """Get all portfolios (a portfolio doubles as a broker/account).
 
     Includes the broker website/description (stored value, else a built-in
-    default for known brokers) and the first/last transaction and booking dates
-    so you can see what each broker already covers.
+    default for known brokers) and the first/last transaction, booking, and
+    spending dates so you can see what each broker already covers. Bank-type
+    portfolios never populate transactions/bookings, so their activity shows
+    via first/last_spending_date instead.
     """
     portfolios = database.get_all_portfolios()
     ranges = database.get_portfolio_date_ranges()
@@ -204,6 +238,8 @@ async def list_portfolios(
                 "last_transaction_date": r.get("last_transaction_date"),
                 "first_booking_date": r.get("first_booking_date"),
                 "last_booking_date": r.get("last_booking_date"),
+                "first_spending_date": r.get("first_spending_date"),
+                "last_spending_date": r.get("last_spending_date"),
             }
         )
     return out
@@ -242,27 +278,49 @@ def get_portfolio_values(
         return _asset_cur[aid]
 
     # Cash balance per portfolio (EUR): deposits - withdrawals from bookings,
-    # plus sells + dividends, minus buys (all FX-converted). A first-class cash
-    # position so the page reconciles against the broker and shows idle cash.
+    # plus sells + dividends + interest, minus buys — each converted at ITS
+    # OWN transaction-date FX (not today's rate), so cash_eur matches what the
+    # broker's own EUR-denominated statement shows and doesn't drift between
+    # requests as the live rate ticks. A first-class cash position so the page
+    # reconciles against the broker and shows idle cash.
     cash_by_pid: dict = {}
     for tx in transactions:
         pid = tx.get("portfolio_id")
-        amt = float(tx["total_amount"] or 0) * _get_fx_rate(
-            asset_currency(tx["asset_id"])
+        amt = float(tx["total_amount"] or 0) * _get_fx_rate_on(
+            database, asset_currency(tx["asset_id"]), tx.get("transaction_date")
         )
         t = tx["transaction_type"].lower()
         if t == "buy":
             cash_by_pid[pid] = cash_by_pid.get(pid, 0.0) - amt
-        elif t in ("sell", "dividend"):
+        elif t in ("sell", "dividend", "interest"):
             cash_by_pid[pid] = cash_by_pid.get(pid, 0.0) + amt
     for bk in database.get_all_bookings():
         pid = bk.get("portfolio_id")
-        amt = float(bk["amount"] or 0) * _get_fx_rate(
-            bk.get("currency", "EUR") or "EUR"
+        amt = float(bk["amount"] or 0) * _get_fx_rate_on(
+            database, bk.get("currency", "EUR") or "EUR", bk.get("date")
         )
         cash_by_pid[pid] = cash_by_pid.get(pid, 0.0) + (
             amt if bk.get("action") == "Deposit" else -amt
         )
+
+    # Cost basis (EUR): re-run the same chronological buy/sell/split math on a
+    # copy of the transactions pre-converted to EUR at each one's own date, so
+    # cost_eur reflects what was actually paid in EUR rather than today's
+    # currency swings. value_eur below intentionally stays on the live rate —
+    # that's a genuine "what's it worth right now" figure.
+    eur_transactions = [
+        {
+            **tx,
+            "total_amount": float(tx.get("total_amount") or 0)
+            * _get_fx_rate_on(
+                database, asset_currency(tx["asset_id"]), tx.get("transaction_date")
+            ),
+        }
+        for tx in transactions
+    ]
+    eur_positions, _ = compute_positions(
+        eur_transactions, key=lambda tx: (tx.get("portfolio_id"), tx["asset_id"])
+    )
 
     by_portfolio: dict = {}
     for (pid, aid), pos in positions.items():
@@ -272,7 +330,7 @@ def get_portfolio_values(
         price_data = database.get_latest_price(aid)
         price = float(price_data["price"]) if price_data else 0.0
         value_eur = pos["quantity"] * price * _get_fx_rate(cur)
-        cost_eur = pos["cost"] * _get_fx_rate(cur)
+        cost_eur = eur_positions.get((pid, aid), {}).get("cost", 0.0)
         label = names.get(pid, "Unassigned")
         slot = by_portfolio.setdefault(
             label, {"portfolio_id": pid, "value_eur": 0.0, "cost_eur": 0.0}

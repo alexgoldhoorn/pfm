@@ -1,7 +1,10 @@
 """On-demand price update service — shared by CLI and API trigger endpoint."""
 
+import logging
 from datetime import datetime
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 _CRYPTO_YF_OVERRIDES: dict[str, tuple[str, str]] = {
@@ -120,6 +123,27 @@ def run_price_update(
             sym = asset["symbol"]
             try:
                 if sym in prices_data:
+                    # Catches an asset whose stored `currency` doesn't match what
+                    # yfinance actually quotes it in (e.g. a EUR-labeled asset that
+                    # really trades in USD or GBX pence) — previously only GBX
+                    # pence was special-cased (in fetch_latest_prices), and only
+                    # for the price itself, so a plain currency mislabel would
+                    # silently make every downstream EUR conversion wrong.
+                    if asset.get("asset_type") != "crypto":
+                        yf_ticker = asset.get("ticker") or sym
+                        detected_ccy = api_client.get_quote_currency(yf_ticker)
+                        stored_ccy = (asset.get("currency") or "EUR").upper()
+                        if (
+                            isinstance(detected_ccy, str)
+                            and detected_ccy.upper() != stored_ccy
+                        ):
+                            db.update_asset(asset["id"], currency=detected_ccy.upper())
+                            logger.warning(
+                                "Currency corrected for %s: %s -> %s",
+                                sym,
+                                stored_ccy,
+                                detected_ccy.upper(),
+                            )
                     db.insert_price_record(
                         symbol=sym,
                         price=prices_data[sym],

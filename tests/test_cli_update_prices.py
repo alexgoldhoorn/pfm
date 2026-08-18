@@ -298,3 +298,38 @@ class TestUpdatePricesCLI:
 
         # Verify that insert_price_record was called
         self.cli.db_manager.insert_price_record.assert_called_once()
+
+    @patch("portf_manager.api_client.get_client")
+    def test_update_prices_corrects_currency_mismatch(self, mock_get_client):
+        """An asset stored with the wrong currency (e.g. EUR-labeled but
+        actually trading in USD, like the MyInvestor IJPA.L bug) gets its
+        `currency` field self-corrected during the price update."""
+        mock_api_client = MagicMock(spec=APIClient)
+        mock_api_client.fetch_latest_prices.return_value = {"AAPL": 150.0}
+        mock_api_client.get_quote_currency.return_value = "USD"
+        mock_get_client.return_value = mock_api_client
+
+        # Test asset was created with currency="USD" in setup_method already
+        # matching, so force a mismatch by relabeling it EUR first.
+        asset = self.cli.db_manager.get_asset_by_symbol("AAPL")
+        self.cli.db_manager.update_asset(asset["id"], currency="EUR")
+
+        with patch("sys.stdout", new_callable=StringIO):
+            self.cli.update_prices(symbols=["AAPL"])
+
+        corrected = self.cli.db_manager.get_asset_by_symbol("AAPL")
+        assert corrected["currency"] == "USD"
+
+    @patch("portf_manager.api_client.get_client")
+    def test_update_prices_no_correction_when_currency_matches(self, mock_get_client):
+        """No spurious currency change when yfinance agrees with the DB."""
+        mock_api_client = MagicMock(spec=APIClient)
+        mock_api_client.fetch_latest_prices.return_value = {"AAPL": 150.0}
+        mock_api_client.get_quote_currency.return_value = "USD"
+        mock_get_client.return_value = mock_api_client
+
+        with patch("sys.stdout", new_callable=StringIO):
+            self.cli.update_prices(symbols=["AAPL"])
+
+        unchanged = self.cli.db_manager.get_asset_by_symbol("AAPL")
+        assert unchanged["currency"] == "USD"

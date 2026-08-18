@@ -823,7 +823,9 @@ function createPageManager() {
                         const site = p.website
                             ? ` <a href="${p.website}" target="_blank" rel="noopener" title="${p.website}${p.website_is_default ? ' (suggested)' : ''}" class="text-decoration-none"><i class="bi bi-box-arrow-up-right small ${p.website_is_default ? 'text-muted' : ''}"></i></a>`
                             : '';
-                        const activity = `
+                        const activity = p.account_type === 'bank'
+                            ? `<div class="small"><i class="bi bi-receipt me-1 text-muted" title="Bank statement transactions"></i>${range(p.first_spending_date, p.last_spending_date)}</div>`
+                            : `
                             <div class="small"><i class="bi bi-graph-up me-1 text-muted" title="Transactions"></i>${range(p.first_transaction_date, p.last_transaction_date)}</div>
                             <div class="small"><i class="bi bi-cash-stack me-1 text-muted" title="Cash deposits/withdrawals"></i>${range(p.first_booking_date, p.last_booking_date)}</div>`;
                         const valueCell = p.account_type === 'bank'
