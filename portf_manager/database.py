@@ -2464,7 +2464,7 @@ class Database:
                   AND transaction_type = ?
                   AND substr(transaction_date, 1, 10) = ?
                   AND ABS(quantity - ?) < 0.0001
-                  AND ABS(price - ?) / NULLIF(price, 0) < 0.00001
+                  AND ABS((price - ?) / NULLIF(price, 0)) < 0.00001
                   AND (portfolio_id IS ? OR portfolio_id = ?)
                 """,
                 (
@@ -2752,11 +2752,14 @@ class Database:
         return self.get_all_bookings(portfolio_id=portfolio_id)
 
     def get_portfolio_date_ranges(self) -> Dict[int, Dict[str, str]]:
-        """Per-portfolio first/last transaction date and first/last booking date.
+        """Per-portfolio first/last transaction, booking, and spending dates.
 
         Returns {portfolio_id: {first_transaction_date, last_transaction_date,
-        first_booking_date, last_booking_date}}. Lets the Brokers page show what
-        period each broker already covers (so you know what's left to import).
+        first_booking_date, last_booking_date, first_spending_date,
+        last_spending_date}}. Lets the Brokers page show what period each
+        broker already covers (so you know what's left to import) — the
+        spending columns are the bank-account equivalent, since bank
+        portfolios never populate transactions/bookings.
         """
         out: Dict[int, Dict[str, str]] = {}
         with self.get_connection() as conn:
@@ -2774,6 +2777,14 @@ class Database:
             ):
                 out.setdefault(row["portfolio_id"], {}).update(
                     first_booking_date=row["mn"], last_booking_date=row["mx"]
+                )
+            for row in conn.execute(
+                "SELECT portfolio_id, MIN(date) AS mn, MAX(date) AS mx "
+                "FROM spending_transactions WHERE portfolio_id IS NOT NULL "
+                "GROUP BY portfolio_id"
+            ):
+                out.setdefault(row["portfolio_id"], {}).update(
+                    first_spending_date=row["mn"], last_spending_date=row["mx"]
                 )
         return out
 
