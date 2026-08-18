@@ -534,6 +534,47 @@ class TestTransactionOperations:
         assert transaction["total_amount"] == 15000.0
         assert transaction["fees"] == 5.0
 
+    def test_find_duplicate_transaction_negative_price_is_not_a_false_positive(self):
+        # Regression: ABS() only wrapped the numerator, not the whole ratio,
+        # so when the *existing* row's price was negative the division sign
+        # flipped and the ratio was always < 0.00001 — any transaction of the
+        # same asset/type/date wrongly matched as a "duplicate" of it,
+        # regardless of how different the actual amounts were.
+        self.db.create_transaction(
+            asset_id=self.asset_id,
+            transaction_type="interest",
+            quantity=1.0,
+            price=-4.86,
+            total_amount=-4.86,
+            transaction_date="2026-08-12",
+        )
+        dup = self.db.find_duplicate_transaction(
+            asset_id=self.asset_id,
+            transaction_type="interest",
+            quantity=1.0,
+            price=25.59,
+            transaction_date="2026-08-12",
+        )
+        assert dup is None
+
+    def test_find_duplicate_transaction_negative_price_still_matches_itself(self):
+        self.db.create_transaction(
+            asset_id=self.asset_id,
+            transaction_type="interest",
+            quantity=1.0,
+            price=-4.86,
+            total_amount=-4.86,
+            transaction_date="2026-08-12",
+        )
+        dup = self.db.find_duplicate_transaction(
+            asset_id=self.asset_id,
+            transaction_type="interest",
+            quantity=1.0,
+            price=-4.86,
+            transaction_date="2026-08-12",
+        )
+        assert dup is not None
+
     def test_get_transactions_by_asset(self):
         """Test getting transactions by asset."""
         # Create test transactions

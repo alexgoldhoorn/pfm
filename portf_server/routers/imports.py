@@ -288,13 +288,17 @@ def _parse_myinvestor(
         PreviewTransaction(
             symbol=tx.symbol,
             name=tx.asset_name,
-            asset_type=_detect_asset_type(tx.asset_name, ""),
+            # A parser-supplied asset_type (e.g. "cash" for the synthetic
+            # MYINVESTOR-CASH interest asset) takes precedence over the
+            # name-based heuristic, which would otherwise default to "stock".
+            asset_type=tx.asset_type or _detect_asset_type(tx.asset_name, ""),
             tx_type=tx.tx_type,
             date=tx.date,
             quantity=tx.quantity,
             price=tx.price,
             currency=tx.currency or "EUR",
             fees=tx.fees,
+            tax=tx.tax,
             broker="MyInvestor",
             skip=tx.tx_type in ("buy", "sell"),
             notes=(tx.raw_text or "")
