@@ -13,7 +13,7 @@ pfm_analytics.js, already unit-tested) and the frontend merges it into the
 same displayed list. See docs/superpowers/specs/2026-07-16-action-items-design.md.
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 STALE_IMPORT_DAYS = 60
 
@@ -37,7 +37,10 @@ def _parse_date(value) -> date | None:
 
 
 def check_stale_imports(db, today: date = None) -> list[dict]:
-    """Portfolios with a transaction history but no activity in 60+ days."""
+    """Portfolios/bank accounts with a transaction history but no activity in
+    60+ days. Covers brokerage transactions/bookings and bank-account
+    spending imports equally, since a bank portfolio never populates the
+    former."""
     today = today or date.today()
     ranges = db.get_portfolio_date_ranges()
     items = []
@@ -51,6 +54,7 @@ def check_stale_imports(db, today: date = None) -> list[dict]:
             for d in (
                 _parse_date(r.get("last_transaction_date")),
                 _parse_date(r.get("last_booking_date")),
+                _parse_date(r.get("last_spending_date")),
             )
             if d is not None
         ]
@@ -60,6 +64,7 @@ def check_stale_imports(db, today: date = None) -> list[dict]:
         days = (today - most_recent).days
         if days < STALE_IMPORT_DAYS:
             continue
+        since_date = most_recent + timedelta(days=1)
         items.append(
             {
                 "id": f"import:portfolio:{pid}",
@@ -67,12 +72,17 @@ def check_stale_imports(db, today: date = None) -> list[dict]:
                 "severity": "medium",
                 "title": f"No new activity in {p['name']} for {days} days",
                 "detail": (
-                    f"Last transaction or booking recorded on "
-                    f"{most_recent.isoformat()}. Import recent statements if "
-                    "this broker is still active."
+                    f"Last imported {most_recent.isoformat()}. Upload "
+                    f"transactions for {p['name']} from "
+                    f"{since_date.isoformat()} onward to bring it up to date."
                 ),
                 "link_page": "importexport",
-                "context": {"portfolio_id": pid},
+                "context": {
+                    "portfolio_id": pid,
+                    "portfolio_name": p["name"],
+                    "account_type": p.get("account_type") or "brokerage",
+                    "since_date": since_date.isoformat(),
+                },
             }
         )
     return items
