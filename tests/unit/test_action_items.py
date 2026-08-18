@@ -51,6 +51,45 @@ class TestStaleImports:
         items = check_stale_imports(test_database)
         assert not any(i["context"]["portfolio_id"] == pid for i in items)
 
+    def test_context_has_explicit_upload_from_date(self, test_database):
+        pid, _ = _portfolio_with_transaction(test_database, days_ago=90)
+        item = next(
+            i
+            for i in check_stale_imports(test_database)
+            if i["context"]["portfolio_id"] == pid
+        )
+        expected_since = (date.today() - timedelta(days=89)).isoformat()
+        assert item["context"]["since_date"] == expected_since
+        assert expected_since in item["detail"]
+        assert item["context"]["account_type"] == "brokerage"
+
+    def test_flags_stale_bank_account_from_spending_transactions(self, test_database):
+        pid = test_database.get_or_create_portfolio(
+            "TestBank", base_currency="EUR", account_type="bank"
+        )
+        tx_date = (date.today() - timedelta(days=90)).isoformat()
+        test_database.create_spending_transaction(
+            portfolio_id=pid, date=tx_date, description="Groceries", amount=-10.0
+        )
+        items = check_stale_imports(test_database)
+        item = next(i for i in items if i["context"]["portfolio_id"] == pid)
+        assert item["context"]["account_type"] == "bank"
+        assert (
+            item["context"]["since_date"]
+            == (date.today() - timedelta(days=89)).isoformat()
+        )
+
+    def test_does_not_flag_recent_bank_activity(self, test_database):
+        pid = test_database.get_or_create_portfolio(
+            "RecentBank", base_currency="EUR", account_type="bank"
+        )
+        tx_date = (date.today() - timedelta(days=5)).isoformat()
+        test_database.create_spending_transaction(
+            portfolio_id=pid, date=tx_date, description="Coffee", amount=-3.0
+        )
+        items = check_stale_imports(test_database)
+        assert not any(i["context"]["portfolio_id"] == pid for i in items)
+
 
 class TestDataQuality:
     def test_flags_suspicious_zero_price(self, test_database):

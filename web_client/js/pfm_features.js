@@ -344,6 +344,15 @@ function _renderActionItems(items) {
         // landing on a blank Research page.
         const sym = item.link_page === 'research' && item.context && item.context.symbol;
         const symAttr = sym ? ` data-symbol="${esc(sym)}"` : '';
+        // Import-stale items carry enough context (which portfolio, since
+        // what date) to jump straight to the right upload form pre-filled,
+        // instead of leaving the user to figure out where/what to import.
+        const imp = item.category === 'import' && item.context && item.context.portfolio_id != null
+            ? item.context : null;
+        const impAttr = imp
+            ? ` data-portfolio-id="${esc(imp.portfolio_id)}" data-account-type="${esc(imp.account_type || 'brokerage')}"`
+              + ` data-since-date="${esc(imp.since_date || '')}" data-portfolio-name="${esc(imp.portfolio_name || '')}"`
+            : '';
         return `
         <div class="card mb-2">
             <div class="card-body py-2 d-flex justify-content-between align-items-start">
@@ -354,7 +363,7 @@ function _renderActionItems(items) {
                     <div class="small text-muted">${esc(item.detail || '')}</div>
                 </div>
                 <div class="d-flex gap-2 ms-2 flex-shrink-0">
-                    <a href="#" data-page="${esc(item.link_page)}"${symAttr} class="btn btn-sm btn-outline-primary">Go to page</a>
+                    <a href="#" data-page="${esc(item.link_page)}"${symAttr}${impAttr} class="btn btn-sm btn-outline-primary">Go to page</a>
                     <button class="btn btn-sm btn-outline-secondary" data-dismiss-action-item="${esc(item.id)}" title="Dismiss"><i class="bi bi-x-lg"></i></button>
                 </div>
             </div>
@@ -483,6 +492,19 @@ function createNavigationManager() {
                 if (navLink) {
                     e.preventDefault();
                     const page = navLink.dataset.page;
+                    // Action Items' stale-import alerts carry which account
+                    // and since-what-date to upload — stash it so the Import
+                    // page (loaded synchronously inside showPage below) can
+                    // pre-select the right form instead of leaving the user
+                    // to hunt for the right broker/portfolio themselves.
+                    if (page === 'importexport' && navLink.dataset.portfolioId) {
+                        window._pendingImportFocus = {
+                            portfolioId: navLink.dataset.portfolioId,
+                            accountType: navLink.dataset.accountType || 'brokerage',
+                            sinceDate: navLink.dataset.sinceDate || '',
+                            portfolioName: navLink.dataset.portfolioName || '',
+                        };
+                    }
                     this.showPage(page);
                     // Action Items' research-linked alerts carry the specific
                     // symbol (data-symbol) — load it straight into the Workbench
@@ -1887,6 +1909,43 @@ function setupImportExportPage() {
         if (!_ioDataTabLoaded) { _ioDataTabLoaded = true; loadBookings(); }
     }
 
+    // Pre-select the account/broker an Action Items "stale import" alert
+    // pointed at, and surface the exact date to resume uploading from —
+    // set by the nav click handler in createNavigationManager() before this
+    // page loads. One-shot: cleared as soon as it's applied.
+    function _applyPendingImportFocus() {
+        const pending = window._pendingImportFocus;
+        const banner = document.getElementById('ioPendingImportBanner');
+        if (!pending) {
+            if (banner) banner.style.display = 'none';
+            return;
+        }
+        window._pendingImportFocus = null;
+        if (banner) {
+            banner.textContent = pending.sinceDate
+                ? `Upload transactions for ${pending.portfolioName} from ${pending.sinceDate} onward.`
+                : `Upload transactions for ${pending.portfolioName}.`;
+            banner.style.display = '';
+        }
+        if (pending.accountType === 'bank') {
+            const sel = document.getElementById('ioSpImportAccountSelect');
+            if (sel && Array.from(sel.options).some(o => o.value === String(pending.portfolioId))) {
+                sel.value = String(pending.portfolioId);
+            }
+        } else if (ioFilePortfolio) {
+            const guess = Object.keys(BROKER_TO_PORTFOLIO).find(
+                k => pending.portfolioName.toLowerCase().includes(BROKER_TO_PORTFOLIO[k])
+            );
+            if (guess && fileBroker) {
+                fileBroker.value = guess;
+                fileBroker.dispatchEvent(new Event('change'));
+            }
+            if (Array.from(ioFilePortfolio.options).some(o => o.value === String(pending.portfolioId))) {
+                ioFilePortfolio.value = String(pending.portfolioId);
+            }
+        }
+    }
+
     function setupImportExportTabs() {
         const dataBtn = document.getElementById('ioTabBtnData');
         if (dataBtn && !dataBtn._ioWired) {
@@ -1912,6 +1971,7 @@ function setupImportExportPage() {
                 setupGoogleSheetsPage();
             });
         }
+        _applyPendingImportFocus();
     }
 
     setupImportExportTabs();
