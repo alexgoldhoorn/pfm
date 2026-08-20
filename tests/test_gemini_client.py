@@ -334,6 +334,109 @@ class TestGeminiClient:
         assert "9,87" in prompt
         assert "9.87" in prompt
 
+    @patch("google.genai.Client")
+    def test_extract_bookings_success(self, mock_client_class):
+        """Test successful booking extraction with an explicit date."""
+        mock_response = MagicMock()
+        mock_response.text = json.dumps(
+            [
+                {
+                    "date": "2026-01-10",
+                    "action": "Deposit",
+                    "amount": 2000.0,
+                    "currency": "EUR",
+                    "broker": "Degiro",
+                }
+            ]
+        )
+        mock_client_class.return_value.models.generate_content.return_value = (
+            mock_response
+        )
+
+        client = GeminiClient(api_key=self.api_key)
+        bookings = client.extract_bookings(
+            "10/01/2026 Ingreso por transferencia 2.000,00 € Degiro"
+        )
+
+        assert len(bookings) == 1
+        assert bookings[0] == {
+            "broker": "Degiro",
+            "date": "2026-01-10",
+            "action": "Deposit",
+            "amount": 2000.0,
+            "currency": "EUR",
+        }
+
+    @patch("google.genai.Client")
+    def test_extract_bookings_keeps_movement_with_no_date(self, mock_client_class):
+        """A real cash movement described with no date anywhere in the text
+        (e.g. a broker notification email whose only date is in its
+        metadata) must still be returned, with an empty date for the caller
+        to prompt the user to fill in — not silently dropped."""
+        mock_response = MagicMock()
+        mock_response.text = json.dumps(
+            [
+                {
+                    "date": None,
+                    "action": "Deposit",
+                    "amount": 800.0,
+                    "currency": "EUR",
+                    "broker": "Indexa",
+                }
+            ]
+        )
+        mock_client_class.return_value.models.generate_content.return_value = (
+            mock_response
+        )
+
+        client = GeminiClient(api_key=self.api_key)
+        bookings = client.extract_bookings(
+            "Nos ha llegado una nueva aportación a tu cuenta de fondos:\n"
+            "Nueva aportación: 800,00 €"
+        )
+
+        assert len(bookings) == 1
+        assert bookings[0]["date"] == ""
+        assert bookings[0]["action"] == "Deposit"
+        assert bookings[0]["amount"] == 800.0
+
+    @patch("google.genai.Client")
+    def test_extract_bookings_prompt_covers_missing_date(self, mock_client_class):
+        """The prompt must explicitly tell the LLM not to drop a cash
+        movement just because the text has no date, and must map
+        'Nueva aportación' (not just the bare 'Aportación') to a Deposit."""
+        mock_response = MagicMock()
+        mock_response.text = "[]"
+        mock_client_class.return_value.models.generate_content.return_value = (
+            mock_response
+        )
+
+        client = GeminiClient(api_key=self.api_key)
+        client.extract_bookings("dummy")
+
+        call_kwargs = (
+            mock_client_class.return_value.models.generate_content.call_args.kwargs
+        )
+        prompt = call_kwargs["contents"]
+        assert "Nueva aportación" in prompt
+        assert 'date": null' in prompt
+
+    @patch("google.genai.Client")
+    def test_extract_bookings_ignores_zero_amount(self, mock_client_class):
+        """Zero/invalid amounts are dropped regardless of the date fix."""
+        mock_response = MagicMock()
+        mock_response.text = json.dumps(
+            [{"date": None, "action": "Deposit", "amount": 0.0, "currency": "EUR"}]
+        )
+        mock_client_class.return_value.models.generate_content.return_value = (
+            mock_response
+        )
+
+        client = GeminiClient(api_key=self.api_key)
+        bookings = client.extract_bookings("dummy")
+
+        assert bookings == []
+
 
 class TestLLMTransaction:
     """Test suite for LLMTransaction class."""

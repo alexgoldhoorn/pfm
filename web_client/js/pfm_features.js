@@ -1561,10 +1561,24 @@ function setupImportExportPage() {
             textSaveBtn.style.display = (extractedText.length > 0 || extractedTextBookings.length > 0) ? '' : 'none';
             const dupControl = _dupControl(extractedText, extractedTextBookings);
             const dupBadge = '<span class="badge bg-warning text-dark ms-1">dup</span>';
+            // Cash movements extracted from free text/emails often have no
+            // explicit date in the source (e.g. a broker notification that
+            // states "Nueva aportación: 800,00 €" with the date only in the
+            // email metadata) — render a Date input per row so it can be
+            // filled in manually, same as the transactions table below.
+            const bookingRows = extractedTextBookings.map((b, i) => `
+                <tr class="${b.is_duplicate ? 'table-warning' : ''}">
+                    <td>${escapeForAttr(b.action)}</td>
+                    <td><input type="date" class="form-control form-control-sm" id="iobk_date_${i}" value="${escapeForAttr(b.date || '')}">
+                        ${b.is_duplicate ? dupBadge : ''}</td>
+                    <td>${b.amount.toFixed(2)} ${escapeForAttr(b.currency)}</td>
+                    <td>${escapeForAttr(b.broker || '')}</td>
+                </tr>`).join('');
             const bookingsSummary = extractedTextBookings.length > 0
-                ? `<div class="alert alert-info py-1 mb-2 small"><i class="bi bi-bank me-1"></i><strong>${extractedTextBookings.length} cash movement(s)</strong> detected (`
-                  + extractedTextBookings.map(b => `${b.action} ${b.amount.toFixed(2)} ${b.currency}${b.is_duplicate ? ' ' + dupBadge : ''}`).join(', ')
-                  + ') — saved with the transactions.</div>'
+                ? `<div class="alert alert-info py-1 mb-2 small"><i class="bi bi-bank me-1"></i><strong>${extractedTextBookings.length} cash movement(s)</strong> detected — saved with the transactions.</div>
+                   <div class="table-responsive mb-2"><table class="table table-sm table-hover">
+                   <thead><tr><th>Type</th><th>Date</th><th>Amount</th><th>Broker</th></tr></thead>
+                   <tbody>${bookingRows}</tbody></table></div>`
                 : '';
             const rows = extractedText.map((tx, i) => `
                 <tr class="${tx.is_duplicate ? 'table-warning' : ''}">
@@ -1625,11 +1639,22 @@ function setupImportExportPage() {
             alert(`Please fill in a date for: ${missingDate.map(t => t.symbol || '(row)').join(', ')}`);
             return;
         }
+        // Cash movements can arrive with no date (see extraction step) —
+        // pull back whatever the user filled in and refuse to save any that
+        // are still blank, same guard as the transactions above.
+        const bookingsToSave = extractedTextBookings.map((b, i) => Object.assign({}, b, {
+            date: (document.getElementById(`iobk_date_${i}`)?.value || '').trim()
+        }));
+        const missingBookingDate = bookingsToSave.filter(b => !b.date);
+        if (missingBookingDate.length > 0) {
+            alert(`Please fill in a date for cash movement(s): ${missingBookingDate.map(b => `${b.action} ${b.amount.toFixed(2)} ${b.currency}`).join(', ')}`);
+            return;
+        }
         textSaveBtn.disabled = true;
         textSaveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving…';
         try {
             const ioPortfolioId = ioTextPortfolio && ioTextPortfolio.value ? parseInt(ioTextPortfolio.value) : null;
-            const result = await window.apiClient.saveImportedTransactions(normalized, extractedTextBookings, ioPortfolioId, _dupAction());
+            const result = await window.apiClient.saveImportedTransactions(normalized, bookingsToSave, ioPortfolioId, _dupAction());
             const dupNote = result.duplicates_skipped ? `, ${result.duplicates_skipped} duplicate(s) skipped` : '';
             const owMsg = result.overwritten > 0 ? `, ${result.overwritten} overwritten` : '';
             const bkMsg = result.saved_bookings > 0 ? ` + ${result.saved_bookings} cash movement(s)` : '';

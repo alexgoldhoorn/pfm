@@ -302,14 +302,14 @@ account — NOT purchases or sales of shares/ETFs/crypto. Ignore any buy/sell
 trades, dividends, and fees.
 
 Return ONLY a JSON array. Each object has these exact fields:
-- date: ISO-8601 date (YYYY-MM-DD)
+- date: ISO-8601 date (YYYY-MM-DD), or null if the text does not state one
 - action: "Deposit" (money in) or "Withdrawal" (money out)
 - amount: positive number (float), the cash amount
 - currency: currency code (e.g. "EUR", "USD"); default "EUR"
 - broker: account/broker name if stated, else null
 
 LANGUAGE MAPPING:
-- "Ingreso" / "Transferencia recibida" / "Aportación" / "Deposit" / "Storting" -> "Deposit"
+- "Ingreso" / "Transferencia recibida" / "Aportación" / "Nueva aportación" / "Deposit" / "Storting" -> "Deposit"
 - "Retirada" / "Reintegro" / "Transferencia enviada" / "Withdrawal" / "Opname" -> "Withdrawal"
 - "Transferencia Sepa" / "TS" -> a cash transfer: usually a Deposit when it funds the
   investing/brokerage account (e.g. destination "INVEST"), a Withdrawal when money leaves
@@ -318,14 +318,27 @@ LANGUAGE MAPPING:
 - Ignore securities trades and dividends here (those are handled separately).
 - "€"->"EUR", "$"->"USD"; decimal comma "1.234,56" -> 1234.56
 
-EXAMPLE
+IMPORTANT — missing date: many broker notification emails (e.g. a fund
+platform's "you received a new contribution" alert) state the cash movement
+and its amount but never write a date anywhere in the body text — the date
+only exists in the email's own metadata, which you do not have. Never treat
+a missing date as a reason to skip a real cash movement: if you can clearly
+identify an amount and a direction (deposit/withdrawal) from the text, output
+it with "date": null rather than omitting it.
+
+EXAMPLE 1
 Input: "10/01/2026 Ingreso por transferencia 2.000,00 € Degiro"
 Output: [{{"date": "2026-01-10", "action": "Deposit", "amount": 2000.0, "currency": "EUR", "broker": "Degiro"}}]
+
+EXAMPLE 2 (no date anywhere in the text)
+Input: "Nos ha llegado una nueva aportación a tu cuenta de fondos: Nueva aportación: 800,00 €"
+Output: [{{"date": null, "action": "Deposit", "amount": 800.0, "currency": "EUR", "broker": null}}]
 
 Rules:
 - Return ONLY the JSON array, no prose.
 - If there are no cash movements, return [].
 - amount is always positive; the direction is in "action".
+- Never drop a real cash movement just because no date is written — use null instead.
 
 Now extract cash movements from this text:
 
@@ -348,12 +361,18 @@ Now extract cash movements from this text:
                     amount = abs(float(item.get("amount")))
                 except (TypeError, ValueError):
                     continue
-                if not item.get("date") or amount <= 0:
+                if amount <= 0:
                     continue
+                # A real cash movement with no date in the source text (e.g. a
+                # notification email with no body date) still gets returned,
+                # with an empty date the caller can prompt the user to fill in
+                # — mirrors how extracted transactions handle a blank date.
+                raw_date = item.get("date")
+                date_str = str(raw_date)[:10] if raw_date else ""
                 bookings.append(
                     {
                         "broker": item.get("broker") or None,
-                        "date": str(item["date"])[:10],
+                        "date": date_str,
                         "action": action,
                         "amount": amount,
                         "currency": (item.get("currency") or "EUR").upper()[:3],
