@@ -3,6 +3,15 @@
 ## Project Overview
 Portfolio Manager: a Python CLI + FastAPI server + web client for tracking stocks, ETFs, funds, bonds, crypto and commodities across multiple brokers, with LLM-powered import, file import/export, web chat, Spanish IRPF tax reporting, and Google Sheets PDT sync.
 
+## Exposed via the internet-facing MCP gateway
+`mcp/server.py` in this repo is symlinked from `~/mcp/pfm/server.py` and is
+imported live by `~/mcp/remote_gateway/server.py` — an always-on,
+internet-facing systemd service (`mcp-remote-gateway.service`,
+`https://mcp.goldhoorn.net`) that re-exports most of its tools. A change
+here can affect that internet-facing surface, not just local Claude
+Code/Hermes usage. See `~/mcp/CLAUDE.md`'s "Exception: remote_gateway/
+server.py" section for detail.
+
 ## Code Style
 - Use **black** code formatting (line length 88). Run: `uv run black <file>`.
 - Comments go on the **line before** the code they describe, not inline.
