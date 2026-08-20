@@ -45,6 +45,7 @@ from .pdt_xlsx_parser import (
     _PDT_SETTINGS_VERSION,
     _PDT_SETTINGS_URL,
     _asset_type_to_pdt_type,
+    _pdt_bond_quantity_price,
     _pdt_exchange,
     _tx_type_to_pdt_action,
     _float_or_none,
@@ -547,6 +548,9 @@ class PDTSheetsSync:
             exchange = _pdt_exchange(
                 asset.get("exchange"), asset_type, asset.get("symbol")
             )
+            quantity, price = _pdt_bond_quantity_price(
+                asset_type, tx.get("quantity"), tx.get("price")
+            )
             rows.append(
                 [
                     broker,
@@ -557,8 +561,8 @@ class PDTSheetsSync:
                     tx_date,
                     time(0, 0),
                     pdt_action,
-                    tx.get("quantity"),
-                    tx.get("price"),
+                    quantity,
+                    price,
                     currency,
                     None,
                     None,

@@ -14,6 +14,7 @@ from portf_manager.parsers.pdt_xlsx_parser import (  # noqa: E402
     PDTParseResult,
     _detect_asset_type,
     _pdt_action_to_tx_type,
+    _pdt_bond_quantity_price,
     _pdt_exchange,
     _tx_type_to_pdt_action,
     _asset_type_to_pdt_type,
@@ -1171,6 +1172,32 @@ class TestPdtExchange:
 
     def test_none_exchange_returns_empty_string(self):
         assert _pdt_exchange(None, "stock") == ""
+
+    def test_mutual_fund_returns_funds(self):
+        assert _pdt_exchange(None, "mutual_fund") == "Funds"
+
+    def test_mutual_fund_ignores_stored_exchange(self):
+        assert _pdt_exchange("XETRA Exchange", "mutual_fund") == "Funds"
+
+
+class TestPdtBondQuantityPrice:
+    def test_bond_rescales_to_percent_of_par(self):
+        # pfm's par convention (1 unit = 1 EUR nominal, price 1.0) becomes
+        # PDT's percent-of-par convention (quantity = nominal/100, price %).
+        quantity, price = _pdt_bond_quantity_price("bond", 198.95213333333, 1.0)
+        assert quantity == pytest.approx(1.9895213333333)
+        assert price == pytest.approx(100.0)
+
+    def test_bond_preserves_total_invested(self):
+        quantity, price = _pdt_bond_quantity_price("bond", 500.0, 1.0)
+        assert quantity * price == pytest.approx(500.0)
+
+    def test_non_bond_asset_type_unchanged(self):
+        assert _pdt_bond_quantity_price("stock", 10.0, 150.0) == (10.0, 150.0)
+
+    def test_none_quantity_or_price_unchanged(self):
+        assert _pdt_bond_quantity_price("bond", None, 1.0) == (None, 1.0)
+        assert _pdt_bond_quantity_price("bond", 10.0, None) == (10.0, None)
 
 
 class TestAssetTypePDTMapping:

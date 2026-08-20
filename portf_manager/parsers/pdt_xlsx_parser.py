@@ -604,12 +604,20 @@ def _pdt_exchange(
     """Return the PDT-canonical exchange value for a given asset type.
 
     Crypto and commodity assets must have an empty exchange field per PDT spec.
-    When exchange is None for a stock/ETF/index with an ISIN symbol, infer a
-    reasonable default from the ISIN country prefix to avoid PDT validation
-    errors.
+    Mutual funds must have the literal exchange value "Funds" — PDT's Google
+    Sheets import docs (help.portfoliodividendtracker.com/article/126) say
+    "wanneer de transactie gaat om een fund type, selecteer dan de beurs
+    'Funds'" (for a fund-type transaction, select the exchange "Funds").
+    Without it, PDT can't tell it should search its fund catalog for the
+    ISIN and the row lands in the import review as an unresolved suggestion
+    even though the ISIN itself is valid. When exchange is None for a
+    stock/ETF/index with an ISIN symbol, infer a reasonable default from the
+    ISIN country prefix to avoid PDT validation errors.
     """
     if asset_type.lower() in ("crypto", "commodity"):
         return ""
+    if asset_type.lower() == "mutual_fund":
+        return "Funds"
     if exchange:
         return exchange
     # Try to infer from ISIN country prefix (first 2 chars)
@@ -619,6 +627,31 @@ def _pdt_exchange(
         if inferred:
             return inferred
     return ""
+
+
+def _pdt_bond_quantity_price(
+    asset_type: str,
+    quantity: Optional[float],
+    price: Optional[float],
+) -> Tuple[Optional[float], Optional[float]]:
+    """Rescale a bond transaction's quantity/price to PDT's percent-of-par convention.
+
+    pfm stores bond positions par-priced — 1 unit = 1 currency unit of
+    principal, price pinned at 1.0 (see the Mintos parser notes in
+    CLAUDE.md). PDT prices a real market-traded bond it recognizes in its
+    own catalog as percent-of-par against a 100-nominal lot (quantity =
+    nominal / 100, price = percent of par) — feeding it our raw
+    par-convention numbers unscaled makes PDT compute quantity * price
+    directly against its live market price and wildly overstate the
+    position (confirmed against a real Mintos Bonds-sleeve holding: PDT
+    valued [redacted] nominal at a its live price as [redacted] —
+    100x the correct [redacted]). Total invested (quantity * price) is
+    unchanged by the rescale, so cost basis still imports correctly either
+    way; only PDT's live-priced valuation was wrong before this.
+    """
+    if asset_type.lower() != "bond" or quantity is None or price is None:
+        return quantity, price
+    return quantity / 100, price * 100
 
 
 class PDTXLSXExporter:
@@ -696,6 +729,9 @@ class PDTXLSXExporter:
             exchange = _pdt_exchange(
                 asset.get("exchange"), asset_type, asset.get("symbol")
             )
+            quantity, price = _pdt_bond_quantity_price(
+                asset_type, tx.get("quantity"), tx.get("price")
+            )
 
             ws.append(
                 [
@@ -707,8 +743,8 @@ class PDTXLSXExporter:
                     tx_date,
                     time(0, 0),
                     pdt_action,
-                    tx.get("quantity"),
-                    tx.get("price"),
+                    quantity,
+                    price,
                     currency,
                     None,
                     None,
