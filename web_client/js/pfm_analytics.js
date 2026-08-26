@@ -260,6 +260,121 @@ async function loadDashboardBankAccounts() {
 }
 window.loadDashboardBankAccounts = loadDashboardBankAccounts;
 
+// Dashboard-only: compact sparkline of ACTUAL portfolio value/cost history —
+// same GET /api/v1/analytics/networth-history snapshots the Analytics page's
+// full "Net Worth Over Time" chart uses (value of invested positions only;
+// cash isn't tracked historically, hence "Portfolio Value" not "Net Worth"
+// in this card's title). Complements the Wealth Simulator card's *projected
+// future* with the actual past. Independent, non-blocking.
+async function loadDashboardNetworthHistory() {
+    const area = document.getElementById('dashNetworthArea');
+    if (!area) return;
+    try {
+        const d = await window.apiClient.getNetworthHistory();
+        const snaps = (d.snapshots || []).slice().sort(
+            (a, b) => new Date(a.snapshot_date) - new Date(b.snapshot_date)
+        );
+        if (snaps.length < 2) {
+            area.innerHTML = '<div class="text-muted small text-center py-4">Not enough history yet — snapshots are recorded daily.</div>';
+            return;
+        }
+        renderDashboardNetworthSparkline(area, snaps);
+    } catch (e) {
+        area.innerHTML = '<div class="text-danger small text-center py-4">Could not load portfolio value history.</div>';
+    }
+}
+window.loadDashboardNetworthHistory = loadDashboardNetworthHistory;
+
+// Compact, dashboard-scale axis formatter — €180k / €1.2M, no decimals below 1k.
+function _fmtEurCompact(v) {
+    const abs = Math.abs(v);
+    if (abs >= 1000000) return '€' + (v / 1000000).toFixed(1) + 'M';
+    if (abs >= 1000) return '€' + (v / 1000).toFixed(0) + 'k';
+    return '€' + v.toFixed(0);
+}
+
+function renderDashboardNetworthSparkline(area, snaps) {
+    const W = area.clientWidth || 600;
+    const H = 190;
+    // Left padding fits the widest y-axis label; bottom fits date labels.
+    const PAD = { top: 16, right: 12, bottom: 24, left: 56 };
+    const innerW = W - PAD.left - PAD.right;
+    const innerH = H - PAD.top - PAD.bottom;
+    const n = snaps.length;
+
+    // Tight min/max (not forced to include zero) — unlike the Analytics
+    // page's axis-labelled chart, a compact sparkline reads better scaled to
+    // its own data range rather than anchored to a distant 0 baseline.
+    const values = snaps.map(s => parseFloat(s.total_value_eur || 0));
+    const maxVal = Math.max(...values);
+    const minVal = Math.min(...values);
+    const range = (maxVal - minVal) || 1;
+
+    const xScale = i => PAD.left + (n === 1 ? 0 : (i / (n - 1)) * innerW);
+    const yScale = v => PAD.top + innerH - ((v - minVal) / range) * innerH;
+
+    const linePath = snaps.map((s, i) =>
+        (i === 0 ? 'M' : 'L') + xScale(i).toFixed(1) + ',' + yScale(parseFloat(s.total_value_eur || 0)).toFixed(1)
+    ).join(' ');
+    const baseline = (PAD.top + innerH).toFixed(1);
+    const areaPath = `${linePath} L${xScale(n - 1).toFixed(1)},${baseline} L${xScale(0).toFixed(1)},${baseline} Z`;
+
+    const first = values[0];
+    const last = values[n - 1];
+    const changePct = first !== 0 ? ((last - first) / Math.abs(first)) * 100 : 0;
+    const changeCls = changePct >= 0 ? 'text-success' : 'text-danger';
+    const changeSign = changePct >= 0 ? '+' : '';
+    const lineColour = changePct >= 0 ? '#16a34a' : '#dc2626';
+    const fmtEur = v => '€' + v.toLocaleString(Fmt.loc(), { maximumFractionDigits: 0 });
+    const fmtDate = dStr => {
+        const dt = new Date(dStr);
+        return isNaN(dt) ? String(dStr) : dt.toLocaleDateString(Fmt.loc(), { month: 'short', year: '2-digit' });
+    };
+
+    // Y-axis: dashed gridlines + compact value labels at 4 even steps.
+    const Y_TICKS = 4;
+    const yGrid = [];
+    for (let i = 0; i <= Y_TICKS; i++) {
+        const v = minVal + range * (i / Y_TICKS);
+        yGrid.push({ v, y: yScale(v) });
+    }
+    // X-axis: ~4 evenly spaced date labels, always including the last point.
+    const xStep = Math.max(1, Math.floor((n - 1) / 4));
+    const xGrid = [];
+    for (let i = 0; i < n; i += xStep) xGrid.push(i);
+    if (xGrid[xGrid.length - 1] !== n - 1) xGrid.push(n - 1);
+
+    // Gridlines/labels use currentColor so they pick up the theme's ambient
+    // text color (light/dark) automatically, no separate dark-mode CSS rule.
+    const yGridLines = yGrid.map(g =>
+        `<line x1="${PAD.left}" y1="${g.y.toFixed(1)}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${g.y.toFixed(1)}" stroke="currentColor" stroke-opacity="0.15" stroke-dasharray="3 3"/>`
+    ).join('');
+    const yLabels = yGrid.map(g =>
+        `<text x="${(PAD.left - 8).toFixed(1)}" y="${(g.y + 3.5).toFixed(1)}" font-size="10" text-anchor="end" fill="currentColor" fill-opacity="0.6">${esc(_fmtEurCompact(g.v))}</text>`
+    ).join('');
+    const xGridLines = xGrid.map(i =>
+        `<line x1="${xScale(i).toFixed(1)}" y1="${PAD.top}" x2="${xScale(i).toFixed(1)}" y2="${baseline}" stroke="currentColor" stroke-opacity="0.1" stroke-dasharray="3 3"/>`
+    ).join('');
+    const xLabels = xGrid.map(i =>
+        `<text x="${xScale(i).toFixed(1)}" y="${H - 6}" font-size="10" text-anchor="middle" fill="currentColor" fill-opacity="0.6">${esc(fmtDate(snaps[i].snapshot_date))}</text>`
+    ).join('');
+
+    area.innerHTML = `
+        <div class="d-flex justify-content-between align-items-baseline mb-1">
+            <span class="fs-5 fw-bold">${fmtEur(last)}</span>
+            <span class="small ${changeCls}">${changeSign}${changePct.toFixed(1)}% since ${esc(fmtDate(snaps[0].snapshot_date))}</span>
+        </div>
+        <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;">
+            ${xGridLines}
+            ${yGridLines}
+            <path d="${areaPath}" fill="${lineColour}" opacity="0.12" stroke="none"/>
+            <path d="${linePath}" fill="none" stroke="${lineColour}" stroke-width="2"/>
+            <circle cx="${xScale(n - 1).toFixed(1)}" cy="${yScale(last).toFixed(1)}" r="3" fill="${lineColour}"/>
+            ${yLabels}
+            ${xLabels}
+        </svg>`;
+}
+
 function escapeForAttr(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }

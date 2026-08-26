@@ -47,6 +47,7 @@ window.PAGE_HELP = {
         <li><strong>Return</strong> defaults to lifetime (cost-basis) return. Switching to YTD / 1Y uses daily snapshots, so it only covers the period since snapshots began.</li>
         <li><strong>Top Positions</strong> and the <strong>allocation donut</strong> reflect current open positions by EUR value, plus a Cash slice.</li>
         <li>The <strong>action items</strong> banner (when shown) summarizes open items from the Action Items page — stale imports, data-quality issues, price-update errors, stale research, off-track goals, and the Net Worth setup checklist. Watchlist/price-target alerts are shown separately, in the alerts banner above it.</li>
+        <li><strong>Portfolio Value History</strong> plots actual daily snapshots (past) — cash isn't tracked historically, so it's positions-only, same as Portfolio Value above. The <strong>Wealth Simulator</strong> card below it is a projection of the future, not history.</li>
       </ul>
       <p class="text-muted small mb-0">Prices come from Yahoo Finance and are refreshed daily at 20:00 UTC.</p>`
   },
