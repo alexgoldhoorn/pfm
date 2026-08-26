@@ -434,6 +434,7 @@ function createPageManager() {
             catch (e) { console.error('Forecast preview failed:', e); }
             if (window.loadDashboardBankAccounts) window.loadDashboardBankAccounts();
             if (window.loadDashboardSpending) window.loadDashboardSpending();
+            if (window.loadDashboardNetworthHistory) window.loadDashboardNetworthHistory();
 
             if (el('totalValue'))    el('totalValue').textContent    = fmtEur(totalValue);
             if (el('dashTotalCost')) el('dashTotalCost').textContent = fmtEur(totalCost);

@@ -480,6 +480,25 @@
                         </div>
                     </div>
 
+                    <!-- Row 2b: Portfolio Value History (actual, from daily snapshots) -->
+                    <div class="row g-3 mb-4">
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <span data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="Value and cost basis of your invested positions over time, from daily snapshots — cash isn't tracked historically. This is the past; the Wealth Simulator card below projects the future."><i class="bi bi-graph-up me-2"></i>Portfolio Value History</span>
+                                    <a href="#" class="small" onclick="window.navigationManager.showPage('analytics'); return false;">Full history <i class="bi bi-arrow-right"></i></a>
+                                </div>
+                                <div class="card-body">
+                                    <div id="dashNetworthArea" style="min-height:150px;">
+                                        <div class="text-muted small text-center py-4">
+                                            <div class="spinner-border spinner-border-sm mb-1" role="status"></div><br>Loading…
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Row 3: Wealth Simulator preview + Recent Transactions -->
                     <div class="row g-3 mb-4">
                         <!-- Wealth Simulator live preview -->

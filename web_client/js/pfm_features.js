@@ -2924,8 +2924,9 @@ function setupForecastPage() {
 // (those stay exclusive to the full Wealth Simulator page).
 function renderDashboardForecastChart(container, data, years) {
     const W = container.clientWidth || 240;
-    const H = 130;
-    const PAD = { top: 22, right: 14, bottom: 18, left: 14 };
+    const H = 170;
+    // Left padding fits the widest y-axis label; bottom fits year labels.
+    const PAD = { top: 26, right: 12, bottom: 20, left: 52 };
     const innerW = W - PAD.left - PAD.right;
     const innerH = H - PAD.top - PAD.bottom;
 
@@ -2947,12 +2948,35 @@ function renderDashboardForecastChart(container, data, years) {
 
     const startVal = data[0].netWorth;
     const endVal = data[years].netWorth;
-    const fmtCompact = v => {
-        const n = Math.round(v);
-        if (Math.abs(n) >= 1000000) return '€' + (n / 1000000).toFixed(1) + 'M';
-        if (Math.abs(n) >= 1000) return '€' + (n / 1000).toFixed(0) + 'k';
-        return '€' + n;
-    };
+    const fmtCompact = v => _fmtEurCompact(Math.round(v));
+
+    // Y-axis: dashed gridlines + compact value labels at 4 even steps.
+    const Y_TICKS = 4;
+    const yGrid = [];
+    for (let i = 0; i <= Y_TICKS; i++) {
+        const v = minVal + range * (i / Y_TICKS);
+        yGrid.push({ v, y: yScale(v) });
+    }
+    // X-axis: year ticks at 4 even steps (rounded to whole years).
+    const xTickYears = new Set([0, years]);
+    for (let i = 1; i < 4; i++) xTickYears.add(Math.round(years * (i / 4)));
+    const xGrid = Array.from(xTickYears).sort((a, b) => a - b);
+
+    const baseline = (PAD.top + innerH).toFixed(1);
+    // Gridlines/labels use currentColor so they pick up the theme's ambient
+    // text color (light/dark) automatically, no separate dark-mode CSS rule.
+    const yGridLines = yGrid.map(g =>
+        `<line x1="${PAD.left}" y1="${g.y.toFixed(1)}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${g.y.toFixed(1)}" stroke="currentColor" stroke-opacity="0.15" stroke-dasharray="3 3"/>`
+    ).join('');
+    const yLabels = yGrid.map(g =>
+        `<text x="${(PAD.left - 8).toFixed(1)}" y="${(g.y + 3.5).toFixed(1)}" font-size="10" text-anchor="end" fill="currentColor" fill-opacity="0.6">${esc(_fmtEurCompact(g.v))}</text>`
+    ).join('');
+    const xGridLines = xGrid.map(t =>
+        `<line x1="${xScale(t).toFixed(1)}" y1="${PAD.top}" x2="${xScale(t).toFixed(1)}" y2="${baseline}" stroke="currentColor" stroke-opacity="0.1" stroke-dasharray="3 3"/>`
+    ).join('');
+    const xLabels = xGrid.map(t =>
+        `<text x="${xScale(t).toFixed(1)}" y="${H - 5}" font-size="10" text-anchor="middle" fill="currentColor" fill-opacity="0.6">${t === 0 ? 'Now' : '+' + t + 'y'}</text>`
+    ).join('');
 
     container.innerHTML = `
         <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;display:block;">
@@ -2962,12 +2986,16 @@ function renderDashboardForecastChart(container, data, years) {
                     <stop offset="100%" stop-color="#93c5fd" stop-opacity="0.05"/>
                 </linearGradient>
             </defs>
+            ${xGridLines}
+            ${yGridLines}
             <path d="${bandPath}" fill="url(#dashFcBandGrad)" stroke="none"/>
             <path d="${pathD('netWorth')}" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
             <circle cx="${xScale(0).toFixed(1)}" cy="${yScale(startVal).toFixed(1)}" r="3.5" fill="#64748b"/>
             <circle cx="${xScale(years).toFixed(1)}" cy="${yScale(endVal).toFixed(1)}" r="4" fill="#2563eb" stroke="white" stroke-width="1.5"/>
-            <text x="${xScale(0).toFixed(1)}" y="${(PAD.top - 8).toFixed(1)}" font-size="10" fill="#64748b">Now: ${fmtCompact(startVal)}</text>
-            <text x="${xScale(years).toFixed(1)}" y="${(PAD.top - 8).toFixed(1)}" text-anchor="end" font-size="10" fill="#2563eb" font-weight="bold">${fmtCompact(endVal)} in ${years}y</text>
+            <text x="${xScale(0).toFixed(1)}" y="${(PAD.top - 10).toFixed(1)}" font-size="10" fill="#64748b">Now: ${fmtCompact(startVal)}</text>
+            <text x="${xScale(years).toFixed(1)}" y="${(PAD.top - 10).toFixed(1)}" text-anchor="end" font-size="10" fill="#2563eb" font-weight="bold">${fmtCompact(endVal)} in ${years}y</text>
+            ${yLabels}
+            ${xLabels}
         </svg>
     `;
 }
