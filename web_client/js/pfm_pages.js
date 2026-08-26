@@ -373,9 +373,11 @@ function createPageManager() {
         loadDashboardPage: async function() {
             const el = id => document.getElementById(id);
 
-            // Alerts banner + price-data freshness chip load independently (non-blocking).
+            // Alerts banner + price-data freshness chip + action items summary
+            // load independently (non-blocking).
             loadDashboardAlerts();
             loadDataFreshness();
+            if (window.loadDashboardActionItems) window.loadDashboardActionItems();
 
             const fmtEur = (val) => {
                 const n = parseFloat(val) || 0;
@@ -387,16 +389,36 @@ function createPageManager() {
                 return (n >= 0 ? '+' : '') + n.toLocaleString(Fmt.loc(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%';
             };
 
-            // Kick off both data fetches in parallel
-            const [holdingsData, transactions] = await Promise.all([
+            // Kick off all data fetches in parallel
+            const [holdingsData, transactions, portfolioValues, networth] = await Promise.all([
                 window.apiClient.getHoldings(),
-                window.apiClient.getTransactions(10)
+                window.apiClient.getTransactions(10),
+                window.apiClient.getPortfolioValues().catch(() => null),
+                window.apiClient.getNetworth().catch(() => null)
             ]).catch(err => {
                 console.error('Error loading dashboard data:', err);
-                return [{ holdings: [], summary: {} }, []];
+                return [{ holdings: [], summary: {} }, [], null, null];
             });
 
             const { holdings = [], summary = {} } = holdingsData;
+            // "Cash" combines idle brokerage cash (uninvested deposits/sells/
+            // dividends/interest, e.g. MyInvestor) with real bank account
+            // balances (e.g. Abanca, Caixa Enginyers) into one figure — the
+            // Bank Accounts card below still shows the per-account breakdown.
+            const brokerageCashEur = parseFloat(portfolioValues && portfolioValues.total_cash_eur || 0);
+            const bankAccountsEur = parseFloat(networth && networth.bank_accounts_eur || 0);
+            const haveCashData = !!portfolioValues || !!networth;
+            const totalCashEur = brokerageCashEur + bankAccountsEur;
+
+            // Per-account counts for the Total Invested / Cash card subtitles —
+            // sourced from data already fetched above, no extra API calls.
+            const pvPortfolios = (portfolioValues && portfolioValues.portfolios) || [];
+            const investedBrokerCount = pvPortfolios.filter(p => Math.abs(parseFloat(p.cost_eur || 0)) > 0.005).length;
+            const cashBrokerCount = pvPortfolios.filter(p => Math.abs(parseFloat(p.cash_eur || 0)) > 0.005).length;
+            const cashBankCount = ((networth && networth.bank_accounts) || [])
+                .filter(a => a.balance !== null && a.balance !== undefined).length;
+            const cashAccountCount = cashBrokerCount + cashBankCount;
+            const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
             // --- KPI cards ---
             const totalValue = parseFloat(summary.total_value || 0);
@@ -415,6 +437,15 @@ function createPageManager() {
 
             if (el('totalValue'))    el('totalValue').textContent    = fmtEur(totalValue);
             if (el('dashTotalCost')) el('dashTotalCost').textContent = fmtEur(totalCost);
+            if (el('dashCash'))      el('dashCash').textContent      = haveCashData ? fmtEur(totalCashEur) : '—';
+            if (el('dashInvestedBrokers')) {
+                el('dashInvestedBrokers').textContent = portfolioValues && investedBrokerCount > 0
+                    ? plural(investedBrokerCount, 'broker') : '';
+            }
+            if (el('dashCashAccounts')) {
+                el('dashCashAccounts').textContent = haveCashData && cashAccountCount > 0
+                    ? plural(cashAccountCount, 'account') : '';
+            }
 
             if (el('totalGainLoss')) {
                 el('totalGainLoss').textContent = (totalPnl >= 0 ? '+' : '') + fmtEur(totalPnl);
@@ -454,6 +485,9 @@ function createPageManager() {
                     const t = h.asset_type || 'other';
                     grouped[t] = (grouped[t] || 0) + parseFloat(h.total_value_eur || h.total_value || 0);
                 });
+                // Uninvested cash is a real slice of the allocation, not just
+                // a KPI — otherwise a cash-heavy portfolio looks 100% invested.
+                if (totalCashEur > 0) grouped['cash'] = totalCashEur;
 
                 const COLOURS = ['#2563eb', '#16a34a', '#f59e0b', '#dc2626', '#7c3aed', '#64748b'];
                 const entries = Object.entries(grouped).sort((a, b) => b[1] - a[1]);
