@@ -330,6 +330,75 @@ const ACTIONITEMS_SEVERITY_BADGE = {
     high: 'text-bg-danger', medium: 'text-bg-warning', low: 'text-bg-secondary',
 };
 
+// Dashboard-only: compact summary banner for the same action items the full
+// Action Items page lists in detail — so a stale import or off-track goal is
+// visible without navigating there deliberately. Independent, non-blocking
+// (wired into loadDashboardPage alongside Bank Accounts/Spending).
+async function loadDashboardActionItems() {
+    const box = document.getElementById('dashActionItems');
+    if (!box) return;
+    try {
+        const [backendData, nwData, cfData] = await Promise.all([
+            window.apiClient.getActionItems(),
+            window.apiClient.getNetworth(),
+            window.apiClient.getCashflow(),
+        ]);
+        const nwResult = computeNetWorthChecklist(nwData.items, (cfData && cfData.items) || [], nwData.deposits, nwData.bank_accounts);
+        const dismissed = JSON.parse(localStorage.getItem('pfmDismissedActionItems') || '[]').map(i => i.id);
+        // "watchlist" items reuse the exact same check_watchlist_alerts /
+        // compute_price_target_alerts sources the Alerts banner above already
+        // shows in full — excluded here so the two banners don't repeat the
+        // same triggers.
+        const items = mergeActionItems(backendData.items, nwResult, dismissed)
+            .filter(i => i.category !== 'watchlist');
+        if (!items.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+
+        // Dismissal keyed by the item-id set, same "reappear only if the set
+        // changed" behavior as the Alerts banner's own dismiss.
+        const sig = hashStr(items.map(i => i.id).join(','));
+        if (localStorage.getItem('pfmDashActionItemsDismissed') === sig) {
+            box.style.display = 'none'; box.innerHTML = ''; return;
+        }
+
+        const counts = { high: 0, medium: 0, low: 0 };
+        items.forEach(i => { counts[i.severity] = (counts[i.severity] || 0) + 1; });
+        const countBadges = ['high', 'medium', 'low']
+            .filter(s => counts[s])
+            .map(s => `<span class="badge ${ACTIONITEMS_SEVERITY_BADGE[s]} me-1">${counts[s]} ${s}</span>`)
+            .join('');
+
+        const PREVIEW_N = 3;
+        const preview = items.slice(0, PREVIEW_N).map(i =>
+            `<li class="mb-1"><span class="badge ${ACTIONITEMS_SEVERITY_BADGE[i.severity] || 'text-bg-secondary'} me-2">${esc(i.severity)}</span>${esc(i.title)}</li>`
+        ).join('');
+        const more = items.length > PREVIEW_N
+            ? `<div class="small text-muted mt-1">+${items.length - PREVIEW_N} more</div>` : '';
+
+        box.style.display = '';
+        box.innerHTML = `
+            <div class="alert alert-secondary alert-dismissible mb-0">
+                <button type="button" class="btn-close" id="dashActionItemsClose" aria-label="Dismiss"></button>
+                <div class="d-flex align-items-center flex-wrap gap-2 mb-2">
+                    <span class="fw-semibold"><i class="bi bi-list-check me-2"></i>${items.length} action item${items.length > 1 ? 's' : ''}</span>
+                    ${countBadges}
+                </div>
+                <ul class="list-unstyled mb-0 small">${preview}</ul>
+                ${more}
+                <div class="text-end mt-2">
+                    <a href="#" class="small" onclick="window.navigationManager.showPage('actionitems'); return false;">View all <i class="bi bi-arrow-right"></i></a>
+                </div>
+            </div>`;
+        const closeBtn = document.getElementById('dashActionItemsClose');
+        if (closeBtn) closeBtn.addEventListener('click', () => {
+            localStorage.setItem('pfmDashActionItemsDismissed', sig);
+            box.style.display = 'none'; box.innerHTML = '';
+        });
+    } catch (e) {
+        box.style.display = 'none';
+    }
+}
+window.loadDashboardActionItems = loadDashboardActionItems;
+
 function _renderActionItems(items) {
     const wrap = document.getElementById('actionItemsList');
     if (!wrap) return;

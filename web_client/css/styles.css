@@ -90,6 +90,15 @@ body {
     color: var(--dark-color);
 }
 
+/* Dashboard "Return" period selector sits on a colored card and uses
+   text-white for its closed state; the browser renders the open dropdown
+   list with its own (usually light) background, so options need an
+   explicit dark color or they're unreadable except when selected. */
+#dashReturnPeriod option {
+    color: #212529;
+    background-color: #fff;
+}
+
 /* Section: Modals */
 .modal-header {
     background-color: rgba(0, 0, 0, 0.02);
