@@ -7,7 +7,7 @@ import os
 from unittest.mock import patch, MagicMock
 import json
 
-from portf_manager.gemini_client import GeminiClient
+from portf_manager.gemini_client import GeminiClient, _normalize_booking_date
 from portf_manager.llm_client import reset_llm_client
 from portf_manager.llm_types import LLMTransaction
 
@@ -422,6 +422,60 @@ class TestGeminiClient:
         assert 'date": null' in prompt
 
     @patch("google.genai.Client")
+    def test_extract_bookings_normalizes_non_iso_date(self, mock_client_class):
+        """The LLM often echoes the source date format (DD/MM/YYYY). A
+        non-ISO date renders blank in the preview's <input type="date">,
+        looking like the date was never extracted — normalize it here."""
+        mock_response = MagicMock()
+        mock_response.text = json.dumps(
+            [
+                {
+                    "date": "28/08/2026",
+                    "action": "Deposit",
+                    "amount": 3000.0,
+                    "currency": "EUR",
+                    "broker": None,
+                }
+            ]
+        )
+        mock_client_class.return_value.models.generate_content.return_value = (
+            mock_response
+        )
+
+        client = GeminiClient(api_key=self.api_key)
+        bookings = client.extract_bookings("TRANSFERENCIA SEPA ... 28/08/2026")
+
+        assert len(bookings) == 1
+        assert bookings[0]["date"] == "2026-08-28"
+
+    @patch("google.genai.Client")
+    def test_extract_bookings_prompt_covers_sepa_and_date_labels(
+        self, mock_client_class
+    ):
+        """The prompt must teach the model to (a) treat a standalone SEPA
+        transfer receipt as a real cash movement and infer direction from
+        the Ordenante/purpose, and (b) recognize 'Fecha Operación' as the
+        date label — both missing before, causing dropped rows / blank
+        dates on real Caixa d'Enginyers transfer receipts."""
+        mock_response = MagicMock()
+        mock_response.text = "[]"
+        mock_client_class.return_value.models.generate_content.return_value = (
+            mock_response
+        )
+
+        client = GeminiClient(api_key=self.api_key)
+        client.extract_bookings("dummy")
+
+        call_kwargs = (
+            mock_client_class.return_value.models.generate_content.call_args.kwargs
+        )
+        prompt = call_kwargs["contents"]
+        assert "Fecha Operación" in prompt
+        assert "Ordenante" in prompt
+        assert "Observaciones" in prompt
+        assert "standalone bank transfer receipt IS a real cash movement" in prompt
+
+    @patch("google.genai.Client")
     def test_extract_bookings_ignores_zero_amount(self, mock_client_class):
         """Zero/invalid amounts are dropped regardless of the date fix."""
         mock_response = MagicMock()
@@ -678,3 +732,32 @@ class TestGeminiIntegration:
         assert transactions[0].symbol == "US0378331005"
         assert transactions[0].currency == "EUR"
         assert transactions[0].quantity == 14.0
+
+
+class TestNormalizeBookingDate:
+    """Unit tests for _normalize_booking_date."""
+
+    def test_iso_passthrough(self):
+        assert _normalize_booking_date("2026-08-28") == "2026-08-28"
+
+    def test_european_slash(self):
+        assert _normalize_booking_date("28/08/2026") == "2026-08-28"
+
+    def test_european_dash_and_dot(self):
+        assert _normalize_booking_date("28-08-2026") == "2026-08-28"
+        assert _normalize_booking_date("28.08.2026") == "2026-08-28"
+
+    def test_strips_time_component(self):
+        assert _normalize_booking_date("2026-08-28T00:00:00") == "2026-08-28"
+
+    def test_none_and_null_and_blank(self):
+        assert _normalize_booking_date(None) == ""
+        assert _normalize_booking_date("null") == ""
+        assert _normalize_booking_date("") == ""
+
+    def test_unparseable_returns_empty(self):
+        assert _normalize_booking_date("last tuesday") == ""
+
+    def test_ambiguous_date_is_day_first(self):
+        # 05/08/2026 -> 5 August, not 8 May (European default)
+        assert _normalize_booking_date("05/08/2026") == "2026-08-05"
