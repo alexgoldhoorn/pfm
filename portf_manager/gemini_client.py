@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from typing import List, Optional
 import logging
 
@@ -6,6 +7,45 @@ from .llm_client import LLMClient, get_llm_client
 from .llm_types import LLMTransaction
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_booking_date(raw: object) -> str:
+    """Coerce an LLM-returned date into an ISO ``YYYY-MM-DD`` string.
+
+    The LLM is asked for ISO dates, but real statements label the date in
+    many ways ("Fecha Operación 28/08/2026") and the model frequently
+    echoes the source format (``DD/MM/YYYY``, ``DD-MM-YYYY``, ...). A
+    non-ISO value silently renders blank in the preview's ``<input
+    type="date">``, so it looks like the date was never extracted. Parse
+    the common formats here; return ``""`` when nothing matches so the
+    caller still prompts the user rather than saving garbage.
+
+    Args:
+        raw: The ``date`` value from the parsed LLM JSON (str, None, ...).
+
+    Returns:
+        An ISO ``YYYY-MM-DD`` string, or ``""`` if unparseable/absent.
+    """
+    if not raw:
+        return ""
+    s = str(raw).strip()
+    if not s or s.lower() in ("null", "none"):
+        return ""
+    # Drop any time component ("2026-08-28T00:00:00" -> "2026-08-28").
+    s = s.split("T")[0].split(" ")[0]
+    for fmt in (
+        "%Y-%m-%d",
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%d.%m.%Y",
+        "%Y/%m/%d",
+        "%m/%d/%Y",
+    ):
+        try:
+            return datetime.strptime(s, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return ""
 
 
 class GeminiClient:
@@ -311,12 +351,31 @@ Return ONLY a JSON array. Each object has these exact fields:
 LANGUAGE MAPPING:
 - "Ingreso" / "Transferencia recibida" / "Aportación" / "Nueva aportación" / "Deposit" / "Storting" -> "Deposit"
 - "Retirada" / "Reintegro" / "Transferencia enviada" / "Withdrawal" / "Opname" -> "Withdrawal"
-- "Transferencia Sepa" / "TS" -> a cash transfer: usually a Deposit when it funds the
-  investing/brokerage account (e.g. destination "INVEST"), a Withdrawal when money leaves
-  it (e.g. destination is an external bank). Infer the direction from the destination/label.
+- "Transferencia SEPA" / "Transferencia" / "TS" / "SEPA transfer" -> a cash transfer. A
+  standalone bank transfer receipt IS a real cash movement even when it only shows an
+  amount, a date and the parties — do NOT skip it as a "mere confirmation".
+  Infer the direction:
+  * If the account holder ("Titular") is the ORDENANTE / payer / sender, money is LEAVING
+    that bank account. When the purpose ("Observaciones", "Concepto", "Concepto de la
+    transferencia", "Detalle") or the beneficiary names an investing/brokerage account —
+    e.g. "Invest", "Inversión", "Aportación", "Broker", or a known broker/robo name
+    (MyInvestor, Indexa, Degiro, Trade Republic, ...) — record it as a "Deposit" (it funds
+    the brokerage).
+  * If the account holder is the BENEFICIARIO / payee and the money comes FROM a brokerage,
+    record a "Withdrawal".
+  * Otherwise infer from wording ("recibida"/"received" -> Deposit, "enviada"/"emitida"/
+    "sent" -> Withdrawal).
 - Include cash interest payouts ("Liquidac. Intereses" / "LI") as a "Deposit".
 - Ignore securities trades and dividends here (those are handled separately).
 - "€"->"EUR", "$"->"USD"; decimal comma "1.234,56" -> 1234.56
+
+DATE — look hard for it, it is almost always present:
+- Date labels: "Fecha", "Fecha Operación", "Fecha valor", "Fecha Valor", "Fecha contable",
+  "Valuta", "Datum", "Date". The date may sit on a SEPARATE line from its label or from the
+  amount — associate them. Prefer "Fecha Operación" over "Fecha valor" when both appear.
+- Date formats: "DD/MM/YYYY" -> "YYYY-MM-DD"; "DD-MM-YYYY" -> "YYYY-MM-DD";
+  "DD.MM.YYYY" -> "YYYY-MM-DD". Spanish/European day-first order.
+- Only use "date": null when there is genuinely NO date anywhere in the text.
 
 IMPORTANT — missing date: many broker notification emails (e.g. a fund
 platform's "you received a new contribution" alert) state the cash movement
@@ -333,6 +392,21 @@ Output: [{{"date": "2026-01-10", "action": "Deposit", "amount": 2000.0, "currenc
 EXAMPLE 2 (no date anywhere in the text)
 Input: "Nos ha llegado una nueva aportación a tu cuenta de fondos: Nueva aportación: 800,00 €"
 Output: [{{"date": null, "action": "Deposit", "amount": 800.0, "currency": "EUR", "broker": null}}]
+
+EXAMPLE 3 (standalone SEPA transfer receipt — date and amount on separate lines from
+their labels, purpose in "Observaciones")
+Input: "TRANSFERENCIA SEPA
+Fecha Operación         Fecha Valor
+28/08/2026         28/08/2026
+Importe Bruto
+3.000,00 EUR
+Ordenante         JANE DOE
+Observaciones         Invest
+Importe Neto (1)
+3.000,00 EUR"
+Output: [{{"date": "2026-08-28", "action": "Deposit", "amount": 3000.0, "currency": "EUR", "broker": null}}]
+(The account holder is the Ordenante -> money leaves the bank account; "Observaciones: Invest"
+marks it as funding the brokerage -> "Deposit". "Fecha Operación" is the date.)
 
 Rules:
 - Return ONLY the JSON array, no prose.
@@ -367,8 +441,7 @@ Now extract cash movements from this text:
                 # notification email with no body date) still gets returned,
                 # with an empty date the caller can prompt the user to fill in
                 # — mirrors how extracted transactions handle a blank date.
-                raw_date = item.get("date")
-                date_str = str(raw_date)[:10] if raw_date else ""
+                date_str = _normalize_booking_date(item.get("date"))
                 bookings.append(
                     {
                         "broker": item.get("broker") or None,
