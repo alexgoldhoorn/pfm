@@ -428,13 +428,14 @@ function createPageManager() {
             const openPositions = holdings.filter(h => parseFloat(h.quantity || 0) > 0).length;
 
             // Wealth Simulator live preview + Bank Accounts + Spending
-            // summary — independent, non-blocking (a failure in any one
-            // must not blank the rest of the dashboard).
+            // summary + Budget — independent, non-blocking (a failure in any
+            // one must not blank the rest of the dashboard).
             try { if (window.loadDashboardForecastPreview) window.loadDashboardForecastPreview(totalValue); }
             catch (e) { console.error('Forecast preview failed:', e); }
             if (window.loadDashboardBankAccounts) window.loadDashboardBankAccounts();
             if (window.loadDashboardSpending) window.loadDashboardSpending();
             if (window.loadDashboardNetworthHistory) window.loadDashboardNetworthHistory();
+            if (window.loadDashboardBudget) window.loadDashboardBudget();
 
             if (el('totalValue'))    el('totalValue').textContent    = fmtEur(totalValue);
             if (el('dashTotalCost')) el('dashTotalCost').textContent = fmtEur(totalCost);

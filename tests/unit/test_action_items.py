@@ -7,6 +7,7 @@ import pytest
 from httpx import AsyncClient
 
 from portf_manager.services.action_items import (
+    check_budget_overruns,
     check_data_quality,
     check_goals_off_track,
     check_price_alerts,
@@ -206,6 +207,109 @@ class TestGoalsOffTrack:
 
     def test_no_item_when_no_goals(self, test_database):
         assert check_goals_off_track(test_database) == []
+
+
+def _budget_with_activity(db, planned, spent, category="Groceries"):
+    """An active budget with one spending line, plus this month's actual spend."""
+    spend_id = db.find_spending_category_by_name("Spend")["id"]
+    if db.find_spending_category_by_name(category) is None:
+        db.create_spending_category(category, parent_id=spend_id)
+    bank = db.get_or_create_portfolio("Example Bank", account_type="bank")
+    this_month = date.today().strftime("%Y-%m")
+    if spent:
+        db.create_spending_transaction(
+            bank, f"{this_month}-05", "Supermarket", -spent, category=category
+        )
+    budget_id = db.create_budget("Base", is_active=True)
+    line_id = db.create_budget_line(budget_id, "spending", category, planned)
+    return budget_id, line_id
+
+
+class TestBudgetOverruns:
+    def test_silent_without_an_active_budget(self, test_database):
+        assert check_budget_overruns(test_database) == []
+
+    def test_silent_when_a_budget_exists_but_is_not_active(self, test_database):
+        test_database.create_budget("Draft")
+        assert check_budget_overruns(test_database) == []
+
+    def test_flags_a_line_over_plan(self, test_database):
+        _budget, line_id = _budget_with_activity(test_database, planned=400, spent=600)
+        items = check_budget_overruns(test_database)
+        overruns = [i for i in items if i["id"] == f"budget:line:{line_id}"]
+        assert len(overruns) == 1
+        assert overruns[0]["category"] == "budget"
+        assert overruns[0]["severity"] == "medium"
+        assert overruns[0]["link_page"] == "budget"
+        assert "Over budget" in overruns[0]["title"]
+        assert overruns[0]["context"]["ref_key"] == "Groceries"
+
+    def test_no_item_when_under_plan(self, test_database):
+        _budget_with_activity(test_database, planned=400, spent=300)
+        assert [
+            i for i in check_budget_overruns(test_database) if "line" in i["id"]
+        ] == []
+
+    def test_no_item_for_a_small_absolute_overrun(self, test_database):
+        # 20% over, but only 20 EUR — below the absolute floor, so no nudge.
+        _budget_with_activity(test_database, planned=100, spent=120)
+        assert [
+            i for i in check_budget_overruns(test_database) if "line" in i["id"]
+        ] == []
+
+    def test_no_item_for_a_small_relative_overrun(self, test_database):
+        # 60 EUR over, but only 1.2% of a big line — below the percentage floor.
+        _budget_with_activity(test_database, planned=5000, spent=5060)
+        assert [
+            i for i in check_budget_overruns(test_database) if "line" in i["id"]
+        ] == []
+
+    def test_flags_an_investment_line_that_fell_short(self, test_database):
+        broker = test_database.get_or_create_portfolio("Example Broker")
+        budget_id = test_database.create_budget("Base", is_active=True)
+        line_id = test_database.create_budget_line(
+            budget_id, "investment", str(broker), 500.0
+        )
+        items = [
+            i
+            for i in check_budget_overruns(test_database)
+            if i["id"] == f"budget:line:{line_id}"
+        ]
+        assert len(items) == 1
+        assert "Behind plan" in items[0]["title"]
+
+    def test_flags_spending_the_budget_does_not_cover(self, test_database):
+        _budget_with_activity(test_database, planned=400, spent=400)
+        spend_id = test_database.find_spending_category_by_name("Spend")["id"]
+        test_database.create_spending_category("Hobbies", parent_id=spend_id)
+        bank = test_database.get_portfolio_by_name("Example Bank")["id"]
+        this_month = date.today().strftime("%Y-%m")
+        test_database.create_spending_transaction(
+            bank, f"{this_month}-07", "Bike shop", -300.0, category="Hobbies"
+        )
+        items = [
+            i
+            for i in check_budget_overruns(test_database)
+            if i["id"] == "budget:unbudgeted"
+        ]
+        assert len(items) == 1
+        assert items[0]["severity"] == "low"
+        assert "Hobbies" in items[0]["detail"]
+
+    def test_no_unbudgeted_item_when_coverage_is_good(self, test_database):
+        _budget_with_activity(test_database, planned=400, spent=400)
+        assert [
+            i
+            for i in check_budget_overruns(test_database)
+            if i["id"] == "budget:unbudgeted"
+        ] == []
+
+    def test_item_ids_are_stable_per_line(self, test_database):
+        _budget, line_id = _budget_with_activity(test_database, planned=400, spent=600)
+        first = check_budget_overruns(test_database)
+        second = check_budget_overruns(test_database)
+        assert [i["id"] for i in first] == [i["id"] for i in second]
+        assert f"budget:line:{line_id}" in {i["id"] for i in first}
 
 
 class TestPriceAlerts:

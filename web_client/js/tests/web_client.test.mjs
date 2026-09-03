@@ -785,3 +785,149 @@ test('_spFindBreakdownChild: returns undefined for an unknown name', () => {
     const children = [{ name: 'Insurance', amount_eur: 50, has_children: true }];
     assert.equal(ctx._spFindBreakdownChild(children, 'Nonexistent'), undefined);
 });
+
+// ── Budget page helpers ────────────────────────────────────────────────────
+
+const BG_TREE = [
+    { id: 1, name: 'Spend', parent_id: null, parent_name: null, is_root: 1 },
+    { id: 2, name: 'Housing', parent_id: 1, parent_name: 'Spend', is_root: 0 },
+    { id: 3, name: 'Rent', parent_id: 2, parent_name: 'Housing', is_root: 0 },
+    { id: 4, name: 'Utilities', parent_id: 2, parent_name: 'Housing', is_root: 0 },
+    { id: 5, name: 'Groceries', parent_id: 1, parent_name: 'Spend', is_root: 0 },
+    { id: 6, name: 'Income', parent_id: null, parent_name: null, is_root: 1 },
+    { id: 7, name: 'Salary', parent_id: 6, parent_name: 'Income', is_root: 0 },
+];
+
+test('budgetRowStatus: a cost under plan is good, over plan is bad', () => {
+    const { budgetRowStatus } = loadAppIntoContext();
+    assert.equal(budgetRowStatus(400, 300, true).status, 'good');
+    assert.equal(budgetRowStatus(400, 600, true).status, 'bad');
+});
+
+test('budgetRowStatus: income and contributions read the other way round', () => {
+    const { budgetRowStatus } = loadAppIntoContext();
+    assert.equal(budgetRowStatus(3000, 3300, false).status, 'good');
+    assert.equal(budgetRowStatus(3000, 2000, false).status, 'bad');
+});
+
+test('budgetRowStatus: within a few percent of plan is neither', () => {
+    const { budgetRowStatus } = loadAppIntoContext();
+    assert.equal(budgetRowStatus(400, 405, true).status, 'near');
+    assert.equal(budgetRowStatus(400, 395, false).status, 'near');
+});
+
+test('budgetRowStatus: nothing planned means any activity is unplanned', () => {
+    const { budgetRowStatus } = loadAppIntoContext();
+    const spent = budgetRowStatus(0, 120, true);
+    assert.equal(spent.status, 'bad');
+    assert.equal(spent.pct, 0);
+    assert.equal(budgetRowStatus(0, 0, true).status, 'near');
+});
+
+test('budgetRowStatus: the bar percentage is clamped so a big overrun still fits', () => {
+    const { budgetRowStatus } = loadAppIntoContext();
+    const result = budgetRowStatus(100, 500, true);
+    assert.equal(result.pct, 500);
+    assert.equal(result.barPct, 100);
+});
+
+test('budgetMonthRange: counts back from the end month, oldest first', () => {
+    const { budgetMonthRange } = loadAppIntoContext();
+    // Spread into a host array: values built inside the vm carry the
+    // sandbox's Array prototype, which assert/strict's deepEqual rejects.
+    assert.deepEqual([...budgetMonthRange('2026-02', 3)], ['2025-12', '2026-01', '2026-02']);
+    assert.deepEqual([...budgetMonthRange('2026-05', 1)], ['2026-05']);
+    assert.deepEqual([...budgetMonthRange('2026-01', 0)], []);
+});
+
+test('budgetMonthRange: crosses a year boundary correctly', () => {
+    const { budgetMonthRange } = loadAppIntoContext();
+    const months = budgetMonthRange('2026-01', 14);
+    assert.equal(months.length, 14);
+    assert.equal(months[0], '2024-12');
+    assert.equal(months[months.length - 1], '2026-01');
+});
+
+test('expandBudgetLineMonths: overrides win, other months take the default', () => {
+    const { expandBudgetLineMonths } = loadAppIntoContext();
+    const line = { monthly_amount: 400, overrides: { '2026-03': 550 } };
+    assert.deepEqual({ ...expandBudgetLineMonths(line, ['2026-02', '2026-03']) }, {
+        '2026-02': 400,
+        '2026-03': 550,
+    });
+});
+
+test('expandBudgetLineMonths: a zero override is kept, not treated as absent', () => {
+    const { expandBudgetLineMonths } = loadAppIntoContext();
+    const line = { monthly_amount: 400, overrides: { '2026-03': 0 } };
+    assert.deepEqual({ ...expandBudgetLineMonths(line, ['2026-03']) }, { '2026-03': 0 });
+});
+
+test('expandBudgetLineMonths: a line with no overrides is all default', () => {
+    const { expandBudgetLineMonths } = loadAppIntoContext();
+    assert.deepEqual({ ...expandBudgetLineMonths({ monthly_amount: 400 }, ['2026-03']) }, { '2026-03': 400 });
+});
+
+test('budgetCoverageConflict: a child of a budgeted parent conflicts', () => {
+    const { budgetCoverageConflict } = loadAppIntoContext();
+    assert.equal(budgetCoverageConflict(BG_TREE, ['Housing'], 'Rent'), 'Housing');
+});
+
+test('budgetCoverageConflict: a parent of a budgeted child conflicts too', () => {
+    const { budgetCoverageConflict } = loadAppIntoContext();
+    assert.equal(budgetCoverageConflict(BG_TREE, ['Rent'], 'Housing'), 'Rent');
+});
+
+test('budgetCoverageConflict: the same category twice conflicts', () => {
+    const { budgetCoverageConflict } = loadAppIntoContext();
+    assert.equal(budgetCoverageConflict(BG_TREE, ['Groceries'], 'Groceries'), 'Groceries');
+});
+
+test('budgetCoverageConflict: a sibling branch is fine', () => {
+    const { budgetCoverageConflict } = loadAppIntoContext();
+    assert.equal(budgetCoverageConflict(BG_TREE, ['Groceries'], 'Rent'), null);
+    assert.equal(budgetCoverageConflict(BG_TREE, [], 'Rent'), null);
+});
+
+test('budgetCoverageConflict: a category not in the tree never conflicts', () => {
+    const { budgetCoverageConflict } = loadAppIntoContext();
+    assert.equal(budgetCoverageConflict(BG_TREE, ['Housing'], 'Unknown'), null);
+});
+
+test('_bgRootOf: resolves a nested category to its tree root', () => {
+    const ctx = loadAppIntoContext();
+    assert.equal(ctx._bgRootOf(BG_TREE, 'Rent'), 'Spend');
+    assert.equal(ctx._bgRootOf(BG_TREE, 'Salary'), 'Income');
+    assert.equal(ctx._bgRootOf(BG_TREE, 'Spend'), 'Spend');
+    assert.equal(ctx._bgRootOf(BG_TREE, 'uncategorized'), null);
+});
+
+test('budgetMonthsWithoutActivity: names months with no imported activity', () => {
+    const { budgetMonthsWithoutActivity } = loadAppIntoContext();
+    const variance = {
+        months: ['2026-07', '2026-08', '2026-09'],
+        sections: [
+            {
+                lines: [{ actual_eur: { '2026-07': 100, '2026-08': 0, '2026-09': 0 } }],
+                unbudgeted: [{ actual_eur: { '2026-07': 0, '2026-08': 50, '2026-09': 0 } }],
+            },
+        ],
+    };
+    // July has a line, August only an unbudgeted row — only September is empty.
+    assert.deepEqual([...budgetMonthsWithoutActivity(variance)], ['2026-09']);
+});
+
+test('budgetMonthsWithoutActivity: a budget with no lines at all reports every month', () => {
+    const { budgetMonthsWithoutActivity } = loadAppIntoContext();
+    const variance = {
+        months: ['2026-07', '2026-08'],
+        sections: [{ lines: [], unbudgeted: [] }],
+    };
+    assert.deepEqual([...budgetMonthsWithoutActivity(variance)], ['2026-07', '2026-08']);
+});
+
+test('budgetMonthsWithoutActivity: tolerates a missing or empty payload', () => {
+    const { budgetMonthsWithoutActivity } = loadAppIntoContext();
+    assert.deepEqual([...budgetMonthsWithoutActivity(null)], []);
+    assert.deepEqual([...budgetMonthsWithoutActivity({})], []);
+});

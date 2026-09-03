@@ -33,7 +33,7 @@ server.py" section for detail.
 ### Database
 SQLite by default (`portfolio.db`), PostgreSQL via `DATABASE_URL` env var. Use `portf_manager/database.py` for SQLite, `database_factory.py` for auto-detection.
 
-**Current schema version: 28.** Migrations run automatically on startup.
+**Current schema version: 29.** Migrations run automatically on startup.
 
 Migration history (condensed — see `_migrate_to_vN` for full schema detail):
 - v5: `bookings` table (deposits/withdrawals); `tax` on `transactions`
@@ -49,6 +49,7 @@ Migration history (condensed — see `_migrate_to_vN` for full schema detail):
 - v26: `spending_transactions.balance` (nullable REAL) — populated from the optional `balance` column in imported bank statements. See "Net Worth API" section below.
 - v27: `spending_categories` (id, name UNIQUE, created_at) — lightweight category name registry, decoupled from `spending_transactions`/`spending_rules` (which keep storing `category` as a free string, no FK) so a category can exist with zero usages. See "Spending Tracking" section below.
 - v28: `spending_categories.parent_id`, `is_root` — hierarchical category tree rooted at fixed "Income" and "Spend" nodes. See "Spending Tracking" section below.
+- v29: `budgets` (id, name UNIQUE, description, is_active, created_at, updated_at), `budget_lines` (id, budget_id FK CASCADE, line_type [`income`|`spending`|`debt`|`investment`], ref_key, monthly_amount, overrides [JSON], link_id, notes, UNIQUE(budget_id, line_type, ref_key)) — named open-ended monthly budgets with budget-vs-actual variance. See "Budgeting" section below.
 
 ⚠️ **New tables must appear in BOTH `_create_all_tables` (fresh DBs) AND `_migrate_to_vN` (existing DBs)** — migration-only adds break fresh installs/tests with "no such table".
 ⚠️ **CHECK constraint rebuilds** require `PRAGMA legacy_alter_table=ON` around the `RENAME` — see `_migrate_to_v13`.
@@ -209,13 +210,194 @@ Bank-account spending tracking, kept deliberately separate from the investment `
 - **Hierarchical spending categories (v28):** Categories now form a tree rooted at two fixed "Income" and "Spend" nodes, via new `spending_categories.parent_id`/`is_root` columns. `spending_transactions.category` and `spending_rules.category` continue storing bare leaf names (globally unique) unchanged — a bare name still unambiguously identifies one tree node. A category's tree root must match its transactions' amount sign (income categories live under Income, spend categories under Spend): direct edits (`PUT /api/v1/spending/{id}`) reject a mismatch with 400; automated rule application (imports, rescans) silently falls back to `uncategorized` on a mismatch instead of erroring. A migration auto-filed every pre-existing category under Income or Spend based on the majority sign of its own past transactions. New endpoints: `GET /api/v1/spending/categories/tree` (every category with its tree position and full breadcrumb path) and `PUT /api/v1/spending/categories/{name}/parent` (reparent a category, with cycle prevention). `POST /api/v1/spending/categories` now requires a `parent_name` field (or the parent is rejected as invalid). The Spending page's category-breakdown chart (and the Dashboard's "Spending" card, which reads the same data) now rolls up to top-level Spend groups instead of showing every individual leaf category (this chart has since moved to the Spending page's Analytics tab — see below — and, after the fix in this branch, both it and the Dashboard card include an `uncategorized` bucket so the two stay in sync). The Categories tab is now an indented tree view with a parent-reassignment dropdown control next to the existing rename-in-place pencil per category. The category datalist (used by the bulk-recategorize field, the Add Rule form's category field, and the AI-suggest review panel) now shows full breadcrumb paths (`"Spend > Insurance > Car Insurance"`) as suggestions while still submitting/persisting only the bare leaf name.
 - **Spending Analytics tab:** New Analytics tab (`#spTabBtnAnalytics`/`#spPaneAnalytics`) on the Spending page holds a monthly trend chart plus the category-breakdown chart, which moved here from the Categories tab — the Categories tab now shows only the tree/CRUD UI, no chart. `GET /api/v1/spending/trend?months=12` (`SpendingTrendMonth`: `month` [`"YYYY-MM"`], `spent_eur`, `income_eur`, `net_eur`) returns zero-filled monthly spent/income/net for the last N calendar months, EUR-converted at today's rate (same convention as `/summary`), transfers excluded, oldest month first; rendered by `_renderSpTrendChart` as a combo Chart.js chart (Spent/Income bars + a Net line). `GET /api/v1/spending/categories/breakdown?parent=Spend&days=30` (`SpendingCategoryBreakdownResponse`: `parent`, `children: [{name, amount_eur, has_children}]`) returns a tree node's immediate children with subtree-summed EUR totals for the period; 400 if `parent` is a leaf or an unknown name. The category chart is now click-to-drill-down: clicking a child with `has_children=true` re-scopes the chart to that child's own children — `window._spBreakdownPath` tracks the stack of parent names, `_loadSpBreakdownLevel` fetches the new level, and `_renderSpBreadcrumb` renders it as a clickable breadcrumb trail (clicking an earlier crumb truncates the path back to it); clicking a leaf child (`has_children=false`) instead opens `openSpCategoryTransactionsModal(categoryName, days)`, a read-only transactions list for that category+period whose "View in Transactions tab" link switches to the Transactions tab, sets its category filter and date range to match, and re-renders the table.
 
+### Budgeting (`portf_server/routers/budgets.py` + `portf_manager/services/budget.py`)
+
+Named, **open-ended** monthly plans with budget-vs-actual variance. A budget's
+amounts apply to any month you look at (no year scoping, no valid-from/to);
+several budgets coexist as scenarios (base / best case / worst case) and
+exactly one carries `is_active`. Nothing here changes `monthly_cashflow`,
+Goals or the Wealth Simulator — the budget is deliberately not their data
+source. Design: `docs/superpowers/specs/2026-09-03-budgeting-design.md`.
+
+- **Line addressing**: `budget_lines.line_type` + `ref_key` is the same
+  discriminator idiom as `spending_transactions`' `transfer_link_type` +
+  `transfer_link_id`. `ref_key` holds a **bare spending-category name** (no FK,
+  same convention as `spending_transactions.category`) for `income`,
+  `spending`, `debt` — and for an `investment` line too, unless it's
+  **broker-keyed**, in which case it's a **`portfolio_id` as text**.
+- ⚠️ **An `investment` line has two possible keyings, told apart by shape**:
+  `budget_service.is_broker_ref(ref_key)` is `str(ref_key).isdigit()`. All
+  digits → broker, actual = net Deposit `bookings`. Otherwise → a Spend-rooted
+  spending category, actual = that category's **bank outflows**, exactly like a
+  spending line. The bank side is the only way to budget a destination pfm
+  doesn't track (a pension plan), and the only one that can be reclassified.
+  The router rejects an all-digits *category* name on an investment line so the
+  two can never collide. `line_uses_category(line_type, ref_key)` is the
+  predicate for "resolves against the category tree" — use it, not a
+  `line_type != "investment"` check, anywhere coverage is computed
+  (`_category_ref_keys`, `covered_by_type`), or a category-keyed investment
+  line's category will also surface as unbudgeted *spending*, doubling it. `overrides` is a JSON object of per-month exceptions
+  (`{"2026-03": 450.0}`), parsed by the service (`parse_overrides`, tolerant
+  of `NULL`/malformed) — never by the DB layer, which passes the text through.
+  `link_id` is an optional `manual_assets.id` on a debt line, display only.
+- `is_active` exclusivity lives in `db.set_active_budget()` (clears every other
+  row in the same transaction), **not** in a constraint.
+- **Endpoints** — `GET|POST /api/v1/budgets/`, `GET /summary`,
+  `GET|PUT|DELETE /{budget_id}`, `POST /{budget_id}/activate`,
+  `GET|POST /{budget_id}/lines`, `POST /{budget_id}/lines/bulk`,
+  `PUT|DELETE /{budget_id}/lines/{line_id}`,
+  `GET /{budget_id}/variance?months=&end_month=`,
+  `GET /{budget_id}/seed-proposals?months=`.
+- ⚠️ **`GET /summary` must stay registered before `GET /{budget_id}`** —
+  FastAPI matches first, so a single-segment route declared after it is
+  swallowed as a budget id (same hazard documented for `research.py`'s
+  `compare`/`portfolio-analysis`). `/summary` returns the active budget's
+  current-month variance, or `null` when there is no active budget; it's the
+  one call behind both the Dashboard card and the Action Items check.
+- `/variance`, `/summary` and `/seed-proposals` are plain `def` (blocking
+  `_fx`, which is the same lazy-import shim of `portfolios._get_fx_rate` that
+  `spending.py` uses).
+- **`line_type` IS editable on `PUT`; `ref_key` is not.** Reclassifying is the
+  lever that keeps money you merely moved out of the spending total — a
+  mortgage charge is `debt`, a transfer to a broker or pension is
+  `investment`, and only `spending` swells the spending figure. The category is
+  unchanged so the coverage space is identical; only the reporting section
+  moves. Validation re-runs (an Income category can't become a spending line),
+  excluding the line's own `ref_key` so it can't conflict with itself.
+  Retargeting a line at a *different* category is still a delete plus a
+  create, so the coverage check can't be sidestepped.
+
+**Variance conventions** (all of these are load-bearing):
+- Calendar months keyed `YYYY-MM` off `date[:7]`, EUR at **today's** rate,
+  transfers excluded — identical to `GET /api/v1/spending/trend`, and the two
+  **reconcile to the cent**. That equality is the invariant to re-check after
+  touching either surface.
+- Investment actuals read net `bookings` (Deposits − Withdrawals) for the
+  portfolio, never `spending_transactions` — a bank→broker transfer is already
+  `is_transfer=1` on the spending side, so the same euros can't be counted twice.
+- **`variance_eur` is signed so positive always means favourable**:
+  `planned − actual` for spending/debt (costs are good under plan),
+  `actual − planned` for income and investment (earning and contributing are
+  good over plan). Every line/section also carries an explicit `favourable`
+  bool so no client re-derives the direction. `variance_pct` is `None` when
+  nothing was planned.
+- **No two category lines on the same branch** in one budget (`Housing` and
+  `Housing > Rent` would double-count, since a parent's actual sums its
+  children's subtree) — 400 via `coverage_conflict`. On `POST /lines/bulk` the
+  check must consider **the rest of the batch**, not just stored lines, or two
+  overlapping lines arriving together both pass; the handler builds the
+  post-save key set first, then validates each candidate against
+  `final_keys - {candidate}`. Bulk also validates the whole batch before
+  writing anything.
+- An income line's category must sit under the `Income` root, spending/debt
+  under `Spend` (`db.get_spending_category_root`) — 400 on mismatch, mirroring
+  `PUT /api/v1/spending/{id}`.
+- ⚠️ **Unbudgeted actuals are attributed by SIGN, not by tree root.** Filtering
+  on the category's root silently drops three real cases: a refund in a Spend
+  category (positive but Spend-rooted), a charge in an Income category, and
+  anything unfiled — including **`uncategorized`, which exists in a real
+  database as a parentless `is_root=0` node with no root at all**. Sign
+  attribution is what `/spending/summary` and `/spending/trend` do; this cost a
+  real reconciliation bug during implementation and is regression-tested in
+  `tests/unit/test_budget_service.py`.
+- Uncovered spend rolls up to its **highest ancestor that is neither budgeted
+  nor an ancestor of something budgeted** (`budgeted_or_above` +
+  `uncovered_rollup_key`). With no lines, everything rolls to the direct
+  children of Income/Spend; with a line on `Housing > Rent`, a stray
+  `Housing > Utilities` charge reports as `Utilities` (naming the line worth
+  adding) rather than as a second, confusing `Housing` row. Unbudgeted totals
+  count toward each section's `actual_total` but never its `planned_total`, so
+  "under budget" can't be an artifact of leaving spending out of the plan.
+- Debt lines share the Spend tree with spending lines, so the **Debt section's
+  `unbudgeted` list is always empty by design** — uncovered charges are
+  reported once, in the Spending section.
+- ⚠️ **A section reports ONE measurement basis, never the sum of two.** As soon
+  as a budget holds any category-keyed (bank-side) investment line,
+  `compute_budget_variance` sets `bank_basis` and the Investments section's
+  broker-side `unbudgeted` list is emptied, flagged by
+  `unbudgeted_suppressed: true` on the section (the Overview explains it in a
+  table footer row). A bank outflow to a broker and that broker's Deposit are
+  the same euros; summing them doubles the total, and broker deposits are
+  inflated further by moves between the user's own accounts. Confirmed on real
+  data, where the broker-side figure was an order of magnitude larger than the
+  bank-side one describing the same money.
+- `subtree_names`/`build_children_index` are shared with
+  `/spending/categories/breakdown`, which previously carried its own copy of
+  the same tree walk. Don't reintroduce a local copy.
+
+**Seeding**: `propose_budget_lines(db, months, fx)` averages the last N
+**complete** months (the current partial month is excluded, so a mid-month run
+doesn't halve every average) per direct child of Spend/Income, plus one
+investment line per portfolio with net deposits. Writes nothing — the UI
+reviews and applies via bulk upsert, the same "nothing is written until Apply"
+shape as the Spending page's AI category suggestions. Every proposal carries a
+`line_type` the review panel lets you change before applying, because
+seeding **never guesses** which outflows are really debt or contributions —
+that's a judgement about intent, not a pattern in the data.
+
+⚠️ **Transactions can be filed against a tree root directly**, not against one
+of its children, and walking only the children misses that money entirely — a
+real account had nearly all its income booked straight against `Income`, and
+seeding proposed an amount an order of magnitude below the real one. So per root, seeding compares the
+root's own direct activity against the sum of its children's and proposes
+whichever side holds more; a root line and its child lines can't coexist
+(the root covers the whole subtree, so `coverage_conflict` rejects the pair).
+A proposed root line's amount is the **whole subtree** total, not the
+root-direct rows alone, since that's what the line will actually measure.
+
+**Action Items**: `check_budget_overruns` (`services/action_items.py`) emits
+`category: "budget"` items — one per line missing plan by both
+`BUDGET_OVERRUN_PCT` (10%) and `BUDGET_OVERRUN_EUR` (€50), reading "over
+budget" for costs and "behind plan" for contributions (income is skipped;
+that's what `check_goals_off_track` is for), plus one low-severity
+`budget:unbudgeted` when more than `BUDGET_UNBUDGETED_SHARE` (15%) of the
+month's spending falls outside the budget. Silent with no active budget.
+
+**Web**: new top-level "Budget" page under the **Planning** nav section, tabs
+Overview / Edit / Scenarios (`#bgTabs`), plus a Dashboard card
+(`#dashBudgetCard`, `loadDashboardBudget()`) hidden unless an active budget has
+lines. Pure helpers are module-scope and `window.`-exported for the DOM-free
+test runner: `budgetRowStatus` (planned-vs-actual classification, direction
+aware), `budgetMonthRange`, `expandBudgetLineMonths`, `budgetCoverageConflict`
+(client mirror of the server rule, reusing `_isDescendant`),
+`budgetMonthsWithoutActivity`, `_bgRootOf`. The Edit tab's category input is
+backed by a breadcrumb `<datalist>` filtered to the root the selected line type
+can budget, via the existing `_categoryFullPath`/`_resolveCategoryInput`
+helpers.
+
+The Edit tab renders a **type selector per line** (`.bg-line-type` →
+`setBudgetLineType`) and the seed-proposal panel one per proposal
+(`.bg-seed-type`), because reclassifying is the main thing a user does to a
+seeded budget. Both are omitted for a broker-keyed investment line, which can't
+become anything else — its actual comes from `bookings`, which no other line
+type reads. The investment picker in the add-line form offers brokers and
+Spend-rooted categories in two `<optgroup>`s, labelled by how each is measured.
+
+⚠️ **A month with no imported statement reads as zero spend, i.e. gloriously
+under budget** — actuals only exist for what's been imported on the Spending
+page, so this bites every time you look at the current month before importing
+it. `budgetMonthsWithoutActivity(variance)` names those months (no activity in
+any section, budgeted or not); the Overview tab renders them as a warning
+banner above the tables, and the Dashboard card replaces its net line with an
+explanation and **suppresses the per-section variance figure entirely** rather
+than showing a flattering green number. Keep that suppression if you touch the
+card — a €0-actual month showing a large "under budget" figure is the misleading case
+this exists to prevent.
+
+The Overview trend chart plots **spending + debt only**, deliberately
+excluding investment contributions: broker deposits are an order of magnitude
+larger and lumpier than day-to-day spending (and include moves between your
+own accounts), so folding them in buries the comparison the chart exists to
+make. This matches the KPI tiles, which are also spending-only; investment
+lines still appear in their own section of the variance table.
+
 ### Watchlist / Goals / Sync APIs
 - Watchlist: `GET|POST /api/v1/watchlist/`, `DELETE /api/v1/watchlist/{symbol}`, `GET /api/v1/watchlist/alerts/check`
 - Goals: `GET|POST /api/v1/goals/`, `DELETE /api/v1/goals/{id}`; GET computes progress %, projected value, on-track flag, required monthly contribution. Current net worth basis = `networth.net_worth_eur(db)` (same total as the Net Worth page). No backend "monthly_contribution defaults from cashflow" logic — that autofill and the per-goal net-worth breakdown panel are client-side only (`pfm_features.js`, reusing `GET /api/v1/networth/cashflow` and `GET /api/v1/networth/`).
 - Sync: `GET|PUT /api/v1/sync/pdt-config`, `POST pdt-pull`, `POST pdt-push`, `POST pdt-backup`. Resolution order for `spreadsheet_id`: query param → DB `app_settings` → `GOOGLE_SPREADSHEET_ID` env var.
 
 ### Action Items API (`portf_server/routers/action_items.py` + `services/action_items.py`)
-- `GET /api/v1/action-items/` — plain `def`; aggregates six independent checks (each wrapped in try/except so one failure doesn't take down the rest), sorted by severity: stale broker imports (`import`, 60+ days no transaction/booking/spending activity — see below), data-quality summary (`data_quality`, reuses `dq_duplicates`/`dq_suspicious` in-process — **not** `dq_reconciliation`, which has no automatic pass/fail threshold, only informational implied-cash figures for manual comparison), price-update-run failures (`errors`, latest run's `error_count`/`error_symbols`), stale research on held positions (`errors`, no `research_notes` row in 90+ days — detects staleness, not past LLM-call failures, since only successful saves are persisted), off-track goals (`goals`, reuses `list_goals`'s `on_track`), watchlist/price-target alerts (`watchlist`, reuses `check_watchlist_alerts` and the extracted `compute_price_target_alerts`). Response: `{"items": [...], "generated_at": "..."}`, each item `{id, category, severity, title, detail, link_page, context}`.
+- `GET /api/v1/action-items/` — plain `def`; aggregates seven independent checks (each wrapped in try/except so one failure doesn't take down the rest), sorted by severity: stale broker imports (`import`, 60+ days no transaction/booking/spending activity — see below), data-quality summary (`data_quality`, reuses `dq_duplicates`/`dq_suspicious` in-process — **not** `dq_reconciliation`, which has no automatic pass/fail threshold, only informational implied-cash figures for manual comparison), price-update-run failures (`errors`, latest run's `error_count`/`error_symbols`), stale research on held positions (`errors`, no `research_notes` row in 90+ days — detects staleness, not past LLM-call failures, since only successful saves are persisted), off-track goals (`goals`, reuses `list_goals`'s `on_track`), watchlist/price-target alerts (`watchlist`, reuses `check_watchlist_alerts` and the extracted `compute_price_target_alerts`), budget overruns (`budget`, reuses `GET /api/v1/budgets/summary` in-process — see the Budgeting section). Response: `{"items": [...], "generated_at": "..."}`, each item `{id, category, severity, title, detail, link_page, context}`.
 - **Net Worth gaps are deliberately NOT included server-side** — the frontend Action Items page fetches `GET /api/v1/networth/` + `/networth/cashflow` and runs the existing client-only `computeNetWorthChecklist()` against them, merging the result in via `mergeActionItems()` (`pfm_features.js`). Avoids maintaining the same checklist rules in two languages.
 - Web: new "Action Items" nav page (top-level, next to Dashboard). Dismissal via `localStorage["pfmDismissedActionItems"]`, same `{id, dismissed_at}` shape as the Diagnostics Data Quality tab's `pfmDismissedIssues`. Item ids are deterministic per entity (`import:portfolio:{id}`, `dq:duplicates`, `errors:price-update:{run_id}`, `goals:{goal_id}`, ...) so dismissing one doesn't hide a *new* occurrence (e.g. a later failing price-update run has a different `run_id`).
 - `research.py`'s `/alerts/check` endpoint delegates to `compute_price_target_alerts(db)`, a pure function extracted so the Action Items aggregator can reuse the same alert computation without re-triggering `send_alerts_push()` on every page load.
@@ -283,7 +465,7 @@ Single `index.html` + five JS files (no build step), **must load in order**: `he
 - `pfm_core.js`: prefs, `Fmt`, `esc`, `AssetSearch`, API + modal managers, `openChatWithContext()`
 - `pfm_pages.js`: page/nav/auth, dashboard, transactions, assets (positions + catalogue merged, see below), help/resources
 - `pfm_analytics.js`: net-worth/dividend/analytics/diversification charts
-- `pfm_features.js`: watchlist, goals, chat, portfolios, import/export, forecast, rebalance, research, settings + `DOMContentLoaded` bootstrap
+- `pfm_features.js`: watchlist, goals, chat, portfolios, import/export, forecast, rebalance, research, budget, settings + `DOMContentLoaded` bootstrap
 
 `openChatWithContext(threadName, openingMessage)` — sets `window._chatPendingContext`, navigates to chat; used by Research ("Chat about this") and Portfolio Health ("Discuss with AI").
 
@@ -295,7 +477,7 @@ Single `index.html` + five JS files (no build step), **must load in order**: `he
 
 **Dashboard Action Items summary** (`dashActionItems` in `index.html`, `loadDashboardActionItems` in `pfm_features.js`) is a compact banner, directly below the existing Alerts banner, surfacing the same items the Action Items page lists in full: stale imports, data-quality issues, price-update errors, stale research, off-track goals, and the Net Worth setup checklist (via `getActionItems()` + `getNetworth()` + `getCashflow()` → `computeNetWorthChecklist()` → `mergeActionItems()`, the exact same pipeline `loadActionItemsPage()` uses, filtered by the same `pfmDismissedActionItems` localStorage list). The `watchlist` category (price-target/watchlist-alert items) is deliberately excluded here — it reuses the exact same `check_watchlist_alerts`/`compute_price_target_alerts` sources the Alerts banner above it already shows in full, so including it would duplicate those triggers. Hidden entirely when there are no (non-watchlist) items; otherwise shows severity-count badges, the first 3 item titles, and a link to the Action Items page. Independently dismissible via a `pfmDashActionItemsDismissed` localStorage signature hash of the current item-id set (same "reappears only if the set changed" pattern as the Alerts banner's own dismiss) — separate from `pfmDismissedActionItems`, which permanently dismisses an item everywhere including the full Action Items page.
 
-**Dashboard** (`pfm_pages.js`, `loadDashboardPage`) also renders two independent, non-blocking cards alongside the KPI/positions/donut/simulator content: **Bank Accounts** (`renderDashboardBankAccounts` in `pfm_analytics.js`, same `getNetworth().bank_accounts` source as the Net Worth page's card) and **Spending** (`loadDashboardSpending` in `pfm_features.js` — a Spent/Income/Transferred stat row via `renderDashboardSpendingStats` plus the top-5-categories bars via `renderDashboardTopCategories`, both from one `getSpendingSummary(days)` call, plain Bootstrap progress bars rather than Chart.js). Both cards degrade to an empty-state message independently of each other and of the simulator preview. The Spending card's time frame (7/30/90/365 days) is shared with the Spending page's own period selector via `localStorage['pfmSpendingSummaryDays']` (read/written through `getSpendingPeriodDays()`/`setSpendingPeriodDays()`) — picking a period on either page is reflected on the other the next time it loads. The Net Worth page's own "Actual (last 30 days)" comparison widget is separate and stays fixed at 30 days.
+**Dashboard** (`pfm_pages.js`, `loadDashboardPage`) also renders three independent, non-blocking cards alongside the KPI/positions/donut/simulator content: **Bank Accounts** (`renderDashboardBankAccounts` in `pfm_analytics.js`, same `getNetworth().bank_accounts` source as the Net Worth page's card) and **Spending** (`loadDashboardSpending` in `pfm_features.js` — a Spent/Income/Transferred stat row via `renderDashboardSpendingStats` plus the top-5-categories bars via `renderDashboardTopCategories`, both from one `getSpendingSummary(days)` call, plain Bootstrap progress bars rather than Chart.js). The third is **Budget** (`loadDashboardBudget` in `pfm_features.js`, one `GET /api/v1/budgets/summary` call) — current-month planned-vs-actual progress bars per section plus a net line, hidden entirely when there's no active budget with lines. All three cards degrade independently of each other and of the simulator preview. The Spending card's time frame (7/30/90/365 days) is shared with the Spending page's own period selector via `localStorage['pfmSpendingSummaryDays']` (read/written through `getSpendingPeriodDays()`/`setSpendingPeriodDays()`) — picking a period on either page is reflected on the other the next time it loads. The Net Worth page's own "Actual (last 30 days)" comparison widget is separate and stays fixed at 30 days.
 
 `window.METRIC_HELP` / `window.PAGE_HELP` in `help_text.js` — tooltip definitions and per-page help modal content. Add entries when adding new pages or non-obvious cards. `METRIC_HELP` is a flat `key: "plain string"` map used directly as a `title=` attribute — there's no shared helper function; the convention is inline `data-bs-toggle="tooltip" title="${METRIC_HELP.xxx}"` (optionally on a `<i class="bi bi-info-circle">` icon next to a label). Bootstrap tooltips need explicit init after dynamic rendering — call `initTooltips()` (defined in `pfm_analytics.js`, exposed as `window.initTooltips`) once after any table/card is (re)rendered with new tooltip-bearing elements; static tooltips already in `index.html` are covered by the `initTooltips()` call in `loadDashboardPage()`.
 
@@ -315,12 +497,12 @@ docker compose build web && docker stop portf_web && WEB_PORT=8080 docker compos
 `saveImportedTransactions(transactions, bookings = [], portfolioId = null)` — always pass bookings array (even if empty) so PDT bookings are saved alongside transactions.
 
 ## Testing
-- Unit tests: `uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e` (827 passing, 6 skipped)
-- JS tests: `make test-js` or `node --test web_client/js/tests/`
+- Unit tests: `uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e` (1107 passing, 6 skipped); JS: 100 passing
+- JS tests: `make test-js` (Node 24 no longer expands a bare directory passed to `--test`, so the target names `web_client/js/tests/*.test.mjs` explicitly — `node --test web_client/js/tests/` fails with a misleading `MODULE_NOT_FOUND`)
 - Pre-push hook runs full unit suite automatically.
 - F541 fixer: `uv run python scripts/fix_f541.py`
 - Reset LLM singleton: `from portf_manager.llm_client import reset_llm_client`
-- DB tests: `tests/test_database.py` — version assertion is `== 25` (bump with `DATABASE_VERSION`)
+- DB tests: `tests/test_database.py` — version assertion is `== 29` (bump with `DATABASE_VERSION`; it appears in four places in that file)
 
 ## Documentation (Default Behaviour)
 When adding or changing any feature, always update **both**:

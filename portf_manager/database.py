@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Any
 from pathlib import Path
 
 # Database version for migration tracking
-DATABASE_VERSION = 28
+DATABASE_VERSION = 29
 
 
 # black
@@ -654,6 +654,47 @@ class Database:
             "INSERT INTO spending_categories (name, parent_id, is_root) VALUES ('Income', NULL, 1), ('Spend', NULL, 1)"
         )
 
+        # Budgets: named, open-ended monthly plans (base / best case / worst
+        # case ...). Exactly one row is flagged is_active at a time -- enforced
+        # by set_active_budget, not by a constraint. See _migrate_to_v29.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS budgets (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                name        TEXT NOT NULL UNIQUE,
+                description TEXT,
+                is_active   INTEGER NOT NULL DEFAULT 0,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        # One planned monthly amount per budgeted thing. line_type + ref_key is
+        # the same discriminator idiom as spending_transactions'
+        # transfer_link_type + transfer_link_id: ref_key holds a bare spending
+        # category name for income/spending/debt lines (no FK, matching how
+        # spending_transactions.category stores one) and a portfolio_id as text
+        # for investment lines. overrides is a JSON object of per-month
+        # exceptions, {"2026-03": 450.0}. See _migrate_to_v29.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS budget_lines (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                budget_id      INTEGER NOT NULL REFERENCES budgets(id) ON DELETE CASCADE,
+                line_type      TEXT NOT NULL CHECK (line_type IN
+                                   ('income', 'spending', 'debt', 'investment')),
+                ref_key        TEXT NOT NULL,
+                monthly_amount REAL NOT NULL DEFAULT 0,
+                overrides      TEXT,
+                link_id        INTEGER,
+                notes          TEXT,
+                created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (budget_id, line_type, ref_key)
+            )
+            """
+        )
+
         # Create triggers for updated_at timestamps
         for table in [
             "entities",
@@ -730,6 +771,8 @@ class Database:
             self._migrate_to_v27(conn)
         if current_version < 28:
             self._migrate_to_v28(conn)
+        if current_version < 29:
+            self._migrate_to_v29(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -1597,6 +1640,46 @@ class Database:
                     "INSERT INTO spending_categories (name, parent_id) VALUES (?, ?)",
                     (name, parent_id),
                 )
+        conn.commit()
+
+    def _migrate_to_v29(self, conn: sqlite3.Connection) -> None:
+        """Migrate from v28 to v29 — budgeting.
+
+        Adds the budgets table (named, open-ended monthly plans, one flagged
+        active) and budget_lines (one planned monthly amount per budgeted
+        spending/income category, broker contribution or debt payment, with
+        optional per-month overrides stored as JSON). Nothing is backfilled —
+        a budget only exists once the user creates one.
+        """
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS budgets (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                name        TEXT NOT NULL UNIQUE,
+                description TEXT,
+                is_active   INTEGER NOT NULL DEFAULT 0,
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS budget_lines (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                budget_id      INTEGER NOT NULL REFERENCES budgets(id) ON DELETE CASCADE,
+                line_type      TEXT NOT NULL CHECK (line_type IN
+                                   ('income', 'spending', 'debt', 'investment')),
+                ref_key        TEXT NOT NULL,
+                monthly_amount REAL NOT NULL DEFAULT 0,
+                overrides      TEXT,
+                link_id        INTEGER,
+                notes          TEXT,
+                created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (budget_id, line_type, ref_key)
+            )
+            """
+        )
         conn.commit()
 
     # ── App settings (persistent key/value) ────────────────────────────────
@@ -4008,6 +4091,277 @@ class Database:
             cursor = conn.execute("DELETE FROM goals WHERE id = ?", (goal_id,))
             conn.commit()
             return cursor.rowcount > 0
+
+    # ── Budgets ───────────────────────────────────────────────────────────────
+
+    def _touch_budget(self, conn: sqlite3.Connection, budget_id: int) -> None:
+        """Bump a budget's updated_at. Called after any change to its lines.
+
+        budgets has an updated_at column but no trigger — the trigger loop in
+        _create_all_tables covers a fixed set of older tables only.
+        """
+        conn.execute(
+            "UPDATE budgets SET updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (budget_id,),
+        )
+
+    def list_budgets(self) -> List[Dict]:
+        """Return every budget, newest first, each with its line_count."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT b.id, b.name, b.description, b.is_active,
+                       b.created_at, b.updated_at,
+                       (SELECT COUNT(*) FROM budget_lines l WHERE l.budget_id = b.id)
+                           AS line_count
+                FROM budgets b
+                ORDER BY b.is_active DESC, b.name
+                """
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_budget(self, budget_id: int) -> Optional[Dict]:
+        """Get one budget by id."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM budgets WHERE id = ?", (budget_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_budget_by_name(self, name: str) -> Optional[Dict]:
+        """Get one budget by its (unique) name."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM budgets WHERE name = ?", (name,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_active_budget(self) -> Optional[Dict]:
+        """Get the budget currently flagged active, if any."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM budgets WHERE is_active = 1 ORDER BY id LIMIT 1"
+            ).fetchone()
+            return dict(row) if row else None
+
+    def create_budget(
+        self, name: str, description: str = None, is_active: bool = False
+    ) -> int:
+        """Create a budget. Pass is_active to make it the active one."""
+        with self.get_connection() as conn:
+            if is_active:
+                conn.execute("UPDATE budgets SET is_active = 0")
+            cursor = conn.execute(
+                "INSERT INTO budgets (name, description, is_active) VALUES (?, ?, ?)",
+                (name, description, 1 if is_active else 0),
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def update_budget(self, budget_id: int, **kwargs) -> bool:
+        """Update a budget's name/description. Returns False if nothing to do."""
+        valid_fields = {"name", "description"}
+        update_fields = {k: v for k, v in kwargs.items() if k in valid_fields}
+        if not update_fields:
+            return False
+        with self.get_connection() as conn:
+            set_clause = ", ".join(f"{field} = ?" for field in update_fields)
+            values = list(update_fields.values()) + [budget_id]
+            cursor = conn.execute(
+                f"UPDATE budgets SET {set_clause}, updated_at = CURRENT_TIMESTAMP "
+                f"WHERE id = ?",
+                values,
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def set_active_budget(self, budget_id: int) -> bool:
+        """Make one budget active, clearing the flag on every other one.
+
+        Both statements run inside a single connection/transaction so there is
+        never a moment with zero or two active budgets.
+        """
+        with self.get_connection() as conn:
+            exists = conn.execute(
+                "SELECT 1 FROM budgets WHERE id = ?", (budget_id,)
+            ).fetchone()
+            if not exists:
+                return False
+            conn.execute("UPDATE budgets SET is_active = 0")
+            conn.execute(
+                "UPDATE budgets SET is_active = 1, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ?",
+                (budget_id,),
+            )
+            conn.commit()
+            return True
+
+    def delete_budget(self, budget_id: int) -> bool:
+        """Delete a budget. Its lines go with it (ON DELETE CASCADE)."""
+        with self.get_connection() as conn:
+            cursor = conn.execute("DELETE FROM budgets WHERE id = ?", (budget_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def list_budget_lines(self, budget_id: int) -> List[Dict]:
+        """Return a budget's lines. ``overrides`` comes back as raw JSON text."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM budget_lines WHERE budget_id = ? "
+                "ORDER BY line_type, ref_key",
+                (budget_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_budget_line(self, line_id: int) -> Optional[Dict]:
+        """Get one budget line by id."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM budget_lines WHERE id = ?", (line_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def find_budget_line(
+        self, budget_id: int, line_type: str, ref_key: str
+    ) -> Optional[Dict]:
+        """Find a line by its (budget_id, line_type, ref_key) natural key."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM budget_lines "
+                "WHERE budget_id = ? AND line_type = ? AND ref_key = ?",
+                (budget_id, line_type, ref_key),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def create_budget_line(
+        self,
+        budget_id: int,
+        line_type: str,
+        ref_key: str,
+        monthly_amount: float = 0,
+        overrides: str = None,
+        link_id: int = None,
+        notes: str = None,
+    ) -> int:
+        """Create a budget line.
+
+        Args:
+            overrides: Per-month exceptions as a JSON object string,
+                ``{"2026-03": 450.0}`` — serialized by the caller, stored
+                verbatim.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                """INSERT INTO budget_lines
+                       (budget_id, line_type, ref_key, monthly_amount,
+                        overrides, link_id, notes)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    budget_id,
+                    line_type,
+                    ref_key,
+                    monthly_amount,
+                    overrides,
+                    link_id,
+                    notes,
+                ),
+            )
+            self._touch_budget(conn, budget_id)
+            conn.commit()
+            return cursor.lastrowid
+
+    def update_budget_line(self, line_id: int, **kwargs) -> bool:
+        """Update a budget line's amount/overrides/link/notes (and ref_key)."""
+        valid_fields = {
+            "line_type",
+            "ref_key",
+            "monthly_amount",
+            "overrides",
+            "link_id",
+            "notes",
+        }
+        update_fields = {k: v for k, v in kwargs.items() if k in valid_fields}
+        if not update_fields:
+            return False
+        with self.get_connection() as conn:
+            set_clause = ", ".join(f"{field} = ?" for field in update_fields)
+            values = list(update_fields.values()) + [line_id]
+            cursor = conn.execute(
+                f"UPDATE budget_lines SET {set_clause} WHERE id = ?", values
+            )
+            row = conn.execute(
+                "SELECT budget_id FROM budget_lines WHERE id = ?", (line_id,)
+            ).fetchone()
+            if row:
+                self._touch_budget(conn, row[0])
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def delete_budget_line(self, line_id: int) -> bool:
+        """Delete a single budget line."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT budget_id FROM budget_lines WHERE id = ?", (line_id,)
+            ).fetchone()
+            cursor = conn.execute("DELETE FROM budget_lines WHERE id = ?", (line_id,))
+            if row:
+                self._touch_budget(conn, row[0])
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def upsert_budget_lines(self, budget_id: int, lines: List[Dict]) -> Dict[str, int]:
+        """Insert-or-update many lines in one transaction (the grid save).
+
+        Each dict needs ``line_type`` and ``ref_key`` (the natural key) plus any
+        of monthly_amount/overrides/link_id/notes. Existing lines matching the
+        natural key are updated in place, so ids — and anything referencing
+        them, like dismissed action items — survive a bulk save.
+
+        Returns:
+            Counts as ``{"created": n, "updated": n}``.
+        """
+        created = updated = 0
+        with self.get_connection() as conn:
+            for line in lines:
+                existing = conn.execute(
+                    "SELECT id FROM budget_lines "
+                    "WHERE budget_id = ? AND line_type = ? AND ref_key = ?",
+                    (budget_id, line["line_type"], line["ref_key"]),
+                ).fetchone()
+                if existing:
+                    conn.execute(
+                        """UPDATE budget_lines
+                           SET monthly_amount = ?, overrides = ?, link_id = ?, notes = ?
+                           WHERE id = ?""",
+                        (
+                            line.get("monthly_amount", 0),
+                            line.get("overrides"),
+                            line.get("link_id"),
+                            line.get("notes"),
+                            existing[0],
+                        ),
+                    )
+                    updated += 1
+                else:
+                    conn.execute(
+                        """INSERT INTO budget_lines
+                               (budget_id, line_type, ref_key, monthly_amount,
+                                overrides, link_id, notes)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            budget_id,
+                            line["line_type"],
+                            line["ref_key"],
+                            line.get("monthly_amount", 0),
+                            line.get("overrides"),
+                            line.get("link_id"),
+                            line.get("notes"),
+                        ),
+                    )
+                    created += 1
+            self._touch_budget(conn, budget_id)
+            conn.commit()
+        return {"created": created, "updated": updated}
 
     # ── Chat sessions ──────────────────────────────────────────────────────────
 

@@ -50,7 +50,7 @@ class TestDatabase:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             result = cursor.fetchone()
-            assert result[0] == 28  # Current schema version
+            assert result[0] == 29  # Current schema version
 
     def test_v18_assets_have_ticker_column(self):
         """v18 adds the nullable ticker alias column to assets."""
@@ -1039,7 +1039,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 28
+            assert version == 29
 
             # Assert columns exist
             for table in ["entities", "portfolios", "transactions"]:
@@ -1069,7 +1069,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 28
+            assert version == 29
 
             # Check all tables exist
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -1140,7 +1140,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 28
+            assert version == 29
 
             # Check new tables exist
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -1519,6 +1519,117 @@ class TestSpendingCategories:
             assert income_row["is_root"] == 1
             assert spend_row["parent_id"] is None
             assert spend_row["is_root"] == 1
+        finally:
+            if os.path.exists(db_path):
+                os.remove(db_path)
+
+    def _build_v28_database(self, db_path, extra_sql=()):
+        """Hand-build a v28-shaped database on disk: the spending tables with
+        the category tree but no budgets, stamped at schema version 28 (so
+        constructing a real Database() against this file triggers
+        _run_migrations, exercising the actual upgrade path rather than
+        invoking a migration method directly)."""
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            """
+            CREATE TABLE database_version (
+                version INTEGER PRIMARY KEY, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute("INSERT INTO database_version (version) VALUES (28)")
+        conn.execute(
+            """
+            CREATE TABLE portfolios (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, account_type TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE spending_transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, portfolio_id INTEGER,
+                date TEXT, description TEXT, amount REAL, currency TEXT DEFAULT 'EUR',
+                category TEXT DEFAULT 'uncategorized', is_transfer INTEGER DEFAULT 0,
+                transfer_link_type TEXT, transfer_link_id INTEGER, source TEXT, balance REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE spending_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, pattern TEXT, category TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE spending_categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE,
+                parent_id INTEGER REFERENCES spending_categories(id),
+                is_root INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO spending_categories (name, parent_id, is_root) "
+            "VALUES ('Income', NULL, 1), ('Spend', NULL, 1)"
+        )
+        for sql in extra_sql:
+            conn.execute(sql)
+        conn.commit()
+        conn.close()
+
+    def test_migrate_to_v29_adds_budget_tables(self):
+        """v29 adds budgets/budget_lines to an existing v28 database."""
+        db_path = tempfile.mktemp(suffix=".db")
+        try:
+            self._build_v28_database(
+                db_path,
+                extra_sql=[
+                    "INSERT INTO spending_categories (name, parent_id) "
+                    "VALUES ('Groceries', 2)",
+                ],
+            )
+            db = Database(db_path)
+
+            with db.get_connection() as conn:
+                version = conn.execute(
+                    "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
+                ).fetchone()[0]
+                tables = {
+                    row[0]
+                    for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type = 'table'"
+                    )
+                }
+            assert version == 29
+            assert {"budgets", "budget_lines"} <= tables
+
+            # Pre-existing spending data is untouched by the upgrade.
+            assert db.find_spending_category_by_name("Groceries") is not None
+
+            # And the new tables are actually usable, not just present.
+            budget_id = db.create_budget("Base", is_active=True)
+            db.create_budget_line(budget_id, "spending", "Groceries", 400.0)
+            assert db.get_active_budget()["name"] == "Base"
+            assert len(db.list_budget_lines(budget_id)) == 1
+        finally:
+            if os.path.exists(db_path):
+                os.remove(db_path)
+
+    def test_migrate_to_v29_is_idempotent_on_a_fresh_database(self):
+        """A fresh DB gets the budget tables from _create_all_tables, not the
+        migration -- a migration-only add would break fresh installs with
+        "no such table"."""
+        db_path = tempfile.mktemp(suffix=".db")
+        try:
+            db = Database(db_path)
+            budget_id = db.create_budget("Base")
+            assert db.get_budget(budget_id)["name"] == "Base"
         finally:
             if os.path.exists(db_path):
                 os.remove(db_path)
