@@ -1739,6 +1739,73 @@ function createAPIClient() {
             return response.json();
         },
 
+        // ── Budget ─────────────────────────────────────────────────
+        // All of these share one error shape: FastAPI's `detail` when the
+        // response carries JSON, a generic message otherwise.
+        async _budgetFetch(path, options = {}, fallback = 'Budget request failed') {
+            const headers = { 'X-API-Key': this.apiKey };
+            if (options.body) headers['Content-Type'] = 'application/json';
+            const response = await fetch(this.baseURL + '/api/v1/budgets' + path, {
+                ...options,
+                headers
+            });
+            if (!response.ok) {
+                let detail = fallback;
+                try {
+                    const body = await response.json();
+                    detail = body.detail || detail;
+                } catch (e) { /* response wasn't JSON, use the generic message */ }
+                const error = new Error(detail);
+                error.status = response.status;
+                throw error;
+            }
+            return response.json();
+        },
+        async getBudgets() {
+            return this._budgetFetch('/', {}, 'Failed to load budgets');
+        },
+        async getBudget(id) {
+            return this._budgetFetch('/' + id, {}, 'Failed to load budget');
+        },
+        async createBudget(payload) {
+            return this._budgetFetch('/', { method: 'POST', body: JSON.stringify(payload) }, 'Failed to create budget');
+        },
+        async updateBudget(id, payload) {
+            return this._budgetFetch('/' + id, { method: 'PUT', body: JSON.stringify(payload) }, 'Failed to update budget');
+        },
+        async deleteBudget(id) {
+            return this._budgetFetch('/' + id, { method: 'DELETE' }, 'Failed to delete budget');
+        },
+        async activateBudget(id) {
+            return this._budgetFetch('/' + id + '/activate', { method: 'POST' }, 'Failed to activate budget');
+        },
+        async getBudgetLines(id) {
+            return this._budgetFetch('/' + id + '/lines', {}, 'Failed to load budget lines');
+        },
+        async createBudgetLine(id, payload) {
+            return this._budgetFetch('/' + id + '/lines', { method: 'POST', body: JSON.stringify(payload) }, 'Failed to add budget line');
+        },
+        async updateBudgetLine(id, lineId, payload) {
+            return this._budgetFetch('/' + id + '/lines/' + lineId, { method: 'PUT', body: JSON.stringify(payload) }, 'Failed to update budget line');
+        },
+        async deleteBudgetLine(id, lineId) {
+            return this._budgetFetch('/' + id + '/lines/' + lineId, { method: 'DELETE' }, 'Failed to delete budget line');
+        },
+        async bulkUpsertBudgetLines(id, lines) {
+            return this._budgetFetch('/' + id + '/lines/bulk', { method: 'POST', body: JSON.stringify({ lines }) }, 'Failed to save budget lines');
+        },
+        async getBudgetVariance(id, months = 6, endMonth = null) {
+            const params = new URLSearchParams({ months: String(months) });
+            if (endMonth) params.append('end_month', endMonth);
+            return this._budgetFetch('/' + id + '/variance?' + params.toString(), {}, 'Failed to load budget variance');
+        },
+        async getBudgetSeedProposals(id, months = 12) {
+            return this._budgetFetch('/' + id + '/seed-proposals?months=' + months, {}, 'Failed to load suggestions');
+        },
+        async getBudgetSummary() {
+            return this._budgetFetch('/summary', {}, 'Failed to load budget summary');
+        },
+
         async sendChat(message, sessionId) {
             const response = await fetch(this.baseURL + '/api/v1/llm/chat', {
                 method: 'POST',

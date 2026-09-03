@@ -32,6 +32,10 @@ window.METRIC_HELP = {
   diversification: "Diversification: your holdings grouped by sector, country, currency and asset type (from Yahoo Finance fundamentals). Concentration (HHI) measures how lopsided the mix is.",
   pnl: "P/L (Profit & Loss): current value minus cost basis, in euros. Unrealised while you still hold the position.",
   pnlPct: "P/L % (Profit & Loss): current value minus cost basis, as a percentage of cost basis.",
+  budgetPlanned: "Planned: what the selected budget says you intended for the period — each line's monthly amount, plus any per-month overrides.",
+  budgetActual: "Actual: what really happened, from imported bank statements (spending and income) and broker deposits (contributions), excluding transfers between your own accounts.",
+  budgetVariance: "Variance: planned minus actual, signed so positive is always the good direction — under budget on a cost, above plan on income or a contribution.",
+  budgetUnbudgeted: "Not budgeted: real spending in categories your budget has no line for. Counted in the actual total, so \"under budget\" can't be an artifact of leaving half your spending out of the plan.",
 };
 
 // Per-page help: what's shown, where data comes from, how it's computed.
@@ -192,6 +196,21 @@ window.PAGE_HELP = {
         <li>If you import bank statements on the <strong>Spending</strong> page, an "Actual" comparison appears here for the last 30 days — read-only, doesn't change the manual figures above.</li>
       </ul>
       <p class="text-muted small mb-0">All amounts converted to EUR at live FX rates.</p>`
+  },
+  budget: {
+    title: "Budget",
+    body: `
+      <p>What you <em>planned</em> to earn, spend, invest and repay each month, compared against what actually happened. Everything on the actual side is data the app already holds — imported bank statements and broker deposits — so a budget needs no separate bookkeeping.</p>
+      <ul class="mb-2">
+        <li><strong>Budgets are open-ended.</strong> A line's monthly amount applies to every month you look at; you edit it in place as life changes rather than rebuilding it each January. For costs that land in one month (insurance, holidays), use the <i class="bi bi-calendar3"></i> per-month override editor on that line instead of smearing the cost across the year.</li>
+        <li><strong>Start with "Seed from actuals"</strong> on the Edit tab. It reads your last 12 complete months and proposes a line per top-level category with a suggested amount — review, adjust, apply. Nothing is written until you click Apply.</li>
+        <li><strong>Four kinds of line.</strong> Spending and Income match against categorized bank rows; Debt is a spending category tracked separately so mortgage/loan repayments don't hide inside general spending; Investment matches deposits into a broker account.</li>
+        <li><strong>One line per branch.</strong> You can budget a group ("Housing") or its children ("Rent", "Utilities"), but not both — a parent's actual already includes its children, so both lines would count the same euros. The app blocks the overlap and names the conflicting line.</li>
+        <li><strong>"Not budgeted" rows</strong> show real spending in categories with no line, and they count toward the actual total. Without them, "under budget" could just mean most of your spending isn't in the plan.</li>
+        <li><strong>Variance is signed so positive is good</strong> — under plan on a cost, above plan on income or a contribution. Green is favourable regardless of which way round the line reads.</li>
+        <li><strong>Scenarios.</strong> Create several budgets (base, best case, worst case) and duplicate one into another as a starting point. Exactly one is <em>active</em>: that's the one the Dashboard card and Action Items use.</li>
+      </ul>
+      <p class="text-muted small mb-0">Amounts are converted to EUR at today's rate and exclude transfers between your own accounts — the same conventions as the Spending page, so the two reconcile. Actual figures come from the Spending page's imports, so a month with no statement imported will read as under budget.</p>`
   },
   spending: {
     title: "Spending",

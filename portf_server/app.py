@@ -38,6 +38,7 @@ from .routers import (
     exports,
     bookings,
     spending,
+    budgets,
     sync,
     rebalance,
     research,
@@ -389,6 +390,13 @@ app.include_router(
     goals.router,
     prefix="/api/v1/goals",
     tags=["Goals"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    budgets.router,
+    prefix="/api/v1/budgets",
+    tags=["Budget"],
     dependencies=_PROTECTED,
 )
 

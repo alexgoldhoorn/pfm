@@ -286,6 +286,98 @@ def check_price_alerts(db) -> list[dict]:
     return items
 
 
+# A budget line has to miss plan by BOTH of these before it's worth a nudge --
+# a percentage alone spams on small lines, an absolute alone spams on large
+# ones. "Miss" means over plan on a cost, short of plan on a contribution.
+BUDGET_OVERRUN_PCT = 10.0
+BUDGET_OVERRUN_EUR = 50.0
+
+# Share of a month's spending that can sit outside the budget before the budget
+# stops describing reality.
+BUDGET_UNBUDGETED_SHARE = 0.15
+
+
+def check_budget_overruns(db) -> list[dict]:
+    """Lines over plan, and spending the active budget doesn't cover.
+
+    Silent when there is no active budget — an unused feature shouldn't nag.
+    """
+    from portf_server.routers.budgets import get_budget_summary
+
+    summary = get_budget_summary(db=db, api_key_info={})
+    if not summary:
+        return []
+
+    items = []
+    for section in summary["sections"]:
+        # Costs are worth flagging when they run over; contributions when they
+        # fall short. Income is neither — a light month there is a goals
+        # question, already covered by check_goals_off_track.
+        if section["key"] == "income":
+            continue
+        for line in section["lines"]:
+            # variance_eur is signed so negative is always the bad direction,
+            # whichever way round the section reads.
+            missed = -line["variance_eur"]
+            pct = line.get("variance_pct")
+            if missed < BUDGET_OVERRUN_EUR or pct is None or -pct < BUDGET_OVERRUN_PCT:
+                continue
+            if section["favourable_when_under"]:
+                title = f"Over budget on {line['label']}"
+                detail = (
+                    f"{line['actual_total']:,.0f} EUR spent this month vs "
+                    f"{line['planned_total']:,.0f} EUR planned "
+                    f"({missed:,.0f} EUR over)"
+                )
+            else:
+                title = f"Behind plan on {line['label']}"
+                detail = (
+                    f"{line['actual_total']:,.0f} EUR contributed this month vs "
+                    f"{line['planned_total']:,.0f} EUR planned "
+                    f"({missed:,.0f} EUR short)"
+                )
+            items.append(
+                {
+                    "id": f"budget:line:{line['line_id']}",
+                    "category": "budget",
+                    "severity": "medium",
+                    "title": title,
+                    "detail": f"{detail} in budget \"{summary['budget_name']}\".",
+                    "link_page": "budget",
+                    "context": {
+                        "budget_id": summary["budget_id"],
+                        "line_id": line["line_id"],
+                        "ref_key": line["ref_key"],
+                    },
+                }
+            )
+
+    spending = next(s for s in summary["sections"] if s["key"] == "spending")
+    unbudgeted_total = sum(u["actual_total"] for u in spending["unbudgeted"])
+    if (
+        spending["actual_total"] > 0
+        and unbudgeted_total / spending["actual_total"] > BUDGET_UNBUDGETED_SHARE
+    ):
+        top = ", ".join(u["label"] for u in spending["unbudgeted"][:3])
+        items.append(
+            {
+                "id": "budget:unbudgeted",
+                "category": "budget",
+                "severity": "low",
+                "title": f"{unbudgeted_total:,.0f} EUR of spending isn't budgeted",
+                "detail": (
+                    f"{unbudgeted_total / spending['actual_total'] * 100:.0f}% of "
+                    f"this month's spending falls outside budget "
+                    f"\"{summary['budget_name']}\". Largest: {top}."
+                ),
+                "link_page": "budget",
+                "context": {"budget_id": summary["budget_id"]},
+            }
+        )
+
+    return items
+
+
 _SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
 
@@ -301,6 +393,7 @@ def get_action_items(db) -> list[dict]:
         check_stale_research,
         check_goals_off_track,
         check_price_alerts,
+        check_budget_overruns,
     ]
     items = []
     for check in checks:

@@ -27,6 +27,7 @@ from pydantic import BaseModel
 from portf_manager.parsers.generic_bank_csv_parser import parse_generic_bank_csv
 from portf_manager.parsers.aeb43_parser import looks_like_aeb43, parse_aeb43
 from portf_manager.services.transfer_matcher import find_all_transfer_matches
+from portf_manager.services.budget import build_children_index, subtree_names
 from portf_manager.llm_client import get_llm_client
 
 from ..dependencies import get_database
@@ -702,31 +703,18 @@ def get_spending_category_breakdown(
     from datetime import date, timedelta
 
     tree = db.list_spending_categories_tree()
-    children_by_parent: dict = {}
-    for c in tree:
-        children_by_parent.setdefault(c["parent_name"], []).append(c)
+    children_by_parent = build_children_index(tree)
 
     direct_children = children_by_parent.get(parent, [])
     if not direct_children:
         raise HTTPException(status_code=400, detail=f"'{parent}' has no sub-categories")
-
-    def _subtree_names(name: str, _depth: int = 0) -> List[str]:
-        # Defensive depth guard against a cycle slipping through reparent's
-        # own cycle check — same precautionary pattern as this file's
-        # _rollup_key and database.py's get_spending_category_root.
-        if _depth > 100:
-            return [name]
-        names = [name]
-        for child in children_by_parent.get(name, []):
-            names.extend(_subtree_names(child["name"], _depth + 1))
-        return names
 
     start_date = (date.today() - timedelta(days=days)).isoformat()
     rows = db.list_spending_transactions(start_date=start_date, is_transfer=False)
 
     result = []
     for child in direct_children:
-        names = set(_subtree_names(child["name"]))
+        names = set(subtree_names(children_by_parent, child["name"]))
         amount_eur = sum(
             abs(float(r["amount"]) * _fx(r.get("currency", "EUR")))
             for r in rows

@@ -490,7 +490,7 @@ function createNavigationManager() {
     return {
         currentPage: 'dashboard',
         showPage: function(pageName) {
-            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage', 'helpPage', 'versionPage', 'aboutPage', 'resourcesPage', 'networthPage', 'diagnosticsPage', 'actionitemsPage', 'spendingPage'];
+            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage', 'helpPage', 'versionPage', 'aboutPage', 'resourcesPage', 'networthPage', 'diagnosticsPage', 'actionitemsPage', 'spendingPage', 'budgetPage'];
             pages.forEach(pageId => {
                 const page = document.getElementById(pageId);
                 if (page) page.style.display = 'none';
@@ -524,6 +524,7 @@ function createNavigationManager() {
                 version: "What's New", about: 'About', resources: 'Resources',
                 networth: 'Net Worth', diagnostics: 'Diagnostics',
                 actionitems: 'Action Items', spending: 'Spending',
+                budget: 'Budget',
             };
             const titleEl = document.getElementById('mobilePageTitle');
             if (titleEl) titleEl.textContent = PAGE_TITLES[pageName] || pageName;
@@ -552,6 +553,7 @@ function createNavigationManager() {
                 case 'diagnostics':  if (window.loadDiagnosticsPage) window.loadDiagnosticsPage(); break;
                 case 'actionitems':  if (window.loadActionItemsPage) window.loadActionItemsPage(); break;
                 case 'spending':     if (window.loadSpendingPage) window.loadSpendingPage(); break;
+                case 'budget':       if (window.loadBudgetPage) window.loadBudgetPage(); break;
             }
         },
 
@@ -6286,3 +6288,991 @@ function downloadGenericBankTemplate() {
     document.body.removeChild(a); URL.revokeObjectURL(url);
 }
 window.downloadGenericBankTemplate = downloadGenericBankTemplate;
+
+// ─────────────────────────────────────────────────────────────────────────
+// Budget page
+//
+// A budget is a set of planned monthly amounts keyed to categories, brokers
+// and debts pfm already tracks. The backend does all the aggregation; this
+// file is state, rendering and wiring, plus a handful of pure helpers kept at
+// module scope so the DOM-free test runner can reach them.
+// ─────────────────────────────────────────────────────────────────────────
+
+// Section order on the page, matching the backend's own.
+const BG_SECTION_ORDER = ['income', 'spending', 'debt', 'investment'];
+
+// A line within this much of plan reads as "on track" rather than over/under.
+const BG_NEAR_PLAN_PCT = 5;
+
+/**
+ * Classify a line's progress against its plan.
+ *
+ * `favourableWhenUnder` is true for costs (spending, debt) and false for
+ * income and contributions, so "over" and "under" alone would be ambiguous —
+ * the returned status says whether the line is doing well, not which side of
+ * plan it landed on.
+ *
+ * @returns {{pct: number, status: 'good'|'near'|'bad', barPct: number}}
+ *   `pct` is actual as a percentage of plan (0 when nothing was planned),
+ *   `barPct` the same value clamped to 100 for a progress bar's width.
+ */
+function budgetRowStatus(plannedTotal, actualTotal, favourableWhenUnder) {
+    const planned = Number(plannedTotal) || 0;
+    const actual = Number(actualTotal) || 0;
+    const pct = planned ? (actual / planned) * 100 : 0;
+    let status;
+    if (!planned) {
+        // Nothing planned: any activity is unplanned, none is unremarkable.
+        status = actual > 0 ? 'bad' : 'near';
+    } else if (Math.abs(pct - 100) <= BG_NEAR_PLAN_PCT) {
+        status = 'near';
+    } else if (favourableWhenUnder) {
+        status = pct < 100 ? 'good' : 'bad';
+    } else {
+        status = pct > 100 ? 'good' : 'bad';
+    }
+    return { pct, status, barPct: Math.max(0, Math.min(100, pct)) };
+}
+
+/**
+ * The `count` calendar months ending at `endMonth` ("YYYY-MM"), oldest first.
+ * Client mirror of the service's month_range, used for the override grid.
+ */
+function budgetMonthRange(endMonth, count) {
+    if (!count || count < 1) return [];
+    let year = parseInt(String(endMonth).slice(0, 4), 10);
+    let month = parseInt(String(endMonth).slice(5, 7), 10) - (count - 1);
+    while (month <= 0) { month += 12; year -= 1; }
+    const months = [];
+    for (let i = 0; i < count; i++) {
+        months.push(String(year).padStart(4, '0') + '-' + String(month).padStart(2, '0'));
+        month += 1;
+        if (month > 12) { month = 1; year += 1; }
+    }
+    return months;
+}
+
+/**
+ * Expand a line's default monthly amount plus its overrides across months.
+ * Mirror of the service's planned_for_months, for the edit grid's preview.
+ */
+function expandBudgetLineMonths(line, months) {
+    const base = Number(line && line.monthly_amount) || 0;
+    const overrides = (line && line.overrides) || {};
+    const out = {};
+    months.forEach(m => {
+        out[m] = Object.prototype.hasOwnProperty.call(overrides, m) ? Number(overrides[m]) : base;
+    });
+    return out;
+}
+
+/**
+ * The already-budgeted category a candidate would double-count, or null.
+ *
+ * Mirrors the server's coverage rule so the Add-line form can say no before a
+ * round trip. Reuses _isDescendant, the same tree walk the Spending page's
+ * reparent dropdown uses.
+ */
+function budgetCoverageConflict(tree, existingRefKeys, candidate) {
+    const byName = {};
+    (tree || []).forEach(node => { byName[node.name] = node; });
+    const candidateNode = byName[candidate];
+    for (const existing of existingRefKeys || []) {
+        if (existing === candidate) return existing;
+        const existingNode = byName[existing];
+        if (!existingNode || !candidateNode) continue;
+        if (_isDescendant(tree, existingNode.id, candidateNode.id)) return existing;
+        if (_isDescendant(tree, candidateNode.id, existingNode.id)) return existing;
+    }
+    return null;
+}
+
+/**
+ * Months in the period with no imported activity at all.
+ *
+ * Actuals come from imported bank statements, so a month nobody has imported
+ * yet reads as zero spend — i.e. gloriously under budget. Naming those months
+ * is the difference between "you underspent" and "we have no data".
+ */
+function budgetMonthsWithoutActivity(variance) {
+    if (!variance || !variance.months) return [];
+    return variance.months.filter(month => {
+        const total = (variance.sections || []).reduce((sum, section) => {
+            const lines = section.lines.reduce((a, l) => a + (l.actual_eur[month] || 0), 0);
+            const extra = section.unbudgeted.reduce((a, u) => a + (u.actual_eur[month] || 0), 0);
+            return sum + lines + extra;
+        }, 0);
+        return total === 0;
+    });
+}
+
+window.budgetMonthsWithoutActivity = budgetMonthsWithoutActivity;
+window.budgetRowStatus = budgetRowStatus;
+window.budgetMonthRange = budgetMonthRange;
+window.expandBudgetLineMonths = expandBudgetLineMonths;
+window.budgetCoverageConflict = budgetCoverageConflict;
+
+// Page state. Kept on window so the tab handlers and inline onclick handlers
+// can reach it, same as the Spending page's own _sp* state.
+window._bgBudgets = [];
+window._bgSelectedId = null;
+window._bgVariance = null;
+window._bgLines = [];
+window._bgSeedProposals = [];
+let _bgTrendChartInstance = null;
+
+function _bgStatus(message, kind = 'muted') {
+    const el = document.getElementById('bgStatus');
+    if (!el) return;
+    el.className = 'small mb-2 text-' + kind;
+    el.textContent = message || '';
+}
+
+function _bgEur(value) {
+    return Fmt.amt('€' + Fmt.num(Number(value) || 0, 0, 0));
+}
+
+/** Signed euro amount with the colour its favourability implies. */
+function _bgVarianceCell(varianceEur, favourable) {
+    const amount = Number(varianceEur) || 0;
+    const cls = amount === 0 ? 'text-muted' : (favourable ? 'text-success' : 'text-danger');
+    const sign = amount > 0 ? '+' : (amount < 0 ? '−' : '');
+    return `<span class="${cls}">${sign}${Fmt.amt('€' + Fmt.num(Math.abs(amount), 0, 0))}</span>`;
+}
+
+const BG_BAR_CLASS = { good: 'bg-success', near: 'bg-secondary', bad: 'bg-danger' };
+
+function _bgProgressBar(plannedTotal, actualTotal, favourableWhenUnder) {
+    const { status, barPct, pct } = budgetRowStatus(plannedTotal, actualTotal, favourableWhenUnder);
+    const label = plannedTotal ? `${Math.round(pct)}% of plan` : 'not planned';
+    return `<div class="progress" style="height:6px;" title="${esc(label)}">
+        <div class="progress-bar ${BG_BAR_CLASS[status]}" style="width:${barPct}%"></div>
+    </div>`;
+}
+
+async function loadBudgetPage() {
+    _wireBudgetPage();
+    try {
+        window._bgBudgets = await window.apiClient.getBudgets();
+    } catch (err) {
+        _bgStatus(err.message, 'danger');
+        return;
+    }
+    const empty = document.getElementById('bgEmptyState');
+    const main = document.getElementById('bgMain');
+    if (!window._bgBudgets.length) {
+        if (empty) empty.style.display = '';
+        if (main) main.style.display = 'none';
+        _renderBgScenarios();
+        return;
+    }
+    if (empty) empty.style.display = 'none';
+    if (main) main.style.display = '';
+
+    // Default to the active budget, but keep whatever the user picked if it
+    // still exists — reloading the page shouldn't yank them back.
+    const known = window._bgBudgets.some(b => b.id === window._bgSelectedId);
+    if (!known) {
+        const active = window._bgBudgets.find(b => b.is_active);
+        window._bgSelectedId = (active || window._bgBudgets[0]).id;
+    }
+    _renderBgBudgetSelect();
+    _renderBgScenarios();
+    await _refreshBudgetData();
+}
+window.loadBudgetPage = loadBudgetPage;
+
+function _renderBgBudgetSelect() {
+    const select = document.getElementById('bgBudgetSelect');
+    if (select) {
+        select.innerHTML = window._bgBudgets.map(b =>
+            `<option value="${b.id}" ${b.id === window._bgSelectedId ? 'selected' : ''}>${esc(b.name)}${b.is_active ? ' (active)' : ''}</option>`
+        ).join('');
+    }
+    const copyFrom = document.getElementById('bgNewCopyFrom');
+    if (copyFrom) {
+        copyFrom.innerHTML = '<option value="">Empty budget</option>' + window._bgBudgets.map(b =>
+            `<option value="${b.id}">Copy of ${esc(b.name)}</option>`
+        ).join('');
+    }
+    const activateBtn = document.getElementById('bgActivateBtn');
+    const selected = window._bgBudgets.find(b => b.id === window._bgSelectedId);
+    if (activateBtn && selected) {
+        activateBtn.disabled = !!selected.is_active;
+        activateBtn.innerHTML = selected.is_active
+            ? '<i class="bi bi-star-fill me-1"></i>Active'
+            : '<i class="bi bi-star me-1"></i>Make active';
+    }
+}
+
+function _bgSelectedMonths() {
+    const select = document.getElementById('bgMonthsSelect');
+    const value = parseInt(select && select.value, 10);
+    return Number.isFinite(value) && value > 0 ? value : 6;
+}
+
+async function _refreshBudgetData() {
+    if (!window._bgSelectedId) return;
+    _bgStatus('Loading…');
+    try {
+        const [variance, lines, tree, portfolios] = await Promise.all([
+            window.apiClient.getBudgetVariance(window._bgSelectedId, _bgSelectedMonths()),
+            window.apiClient.getBudgetLines(window._bgSelectedId),
+            window.apiClient.getSpendingCategoryTree(),
+            window.apiClient.getPortfolios(),
+        ]);
+        window._bgVariance = variance;
+        window._bgLines = lines;
+        window._bgCategoryTree = tree;
+        window._bgPortfolios = portfolios;
+        _bgStatus('');
+        _renderBgKpis();
+        _renderBgVariance();
+        _renderBgLines();
+        _wireBgLineTypeSelects();
+        _renderBgCategoryDatalist();
+        _renderBgPortfolioSelect();
+        _renderBgTrendChart();
+        if (window.initTooltips) window.initTooltips();
+    } catch (err) {
+        _bgStatus(err.message, 'danger');
+        const area = document.getElementById('bgVarianceArea');
+        if (area) area.innerHTML = `<div class="text-danger small">${esc(err.message)}</div>`;
+    }
+}
+
+function _bgSection(key) {
+    const variance = window._bgVariance;
+    if (!variance) return null;
+    return variance.sections.find(s => s.key === key) || null;
+}
+
+function _renderBgKpis() {
+    const variance = window._bgVariance;
+    if (!variance) return;
+    const spending = _bgSection('spending');
+    const monthCount = variance.months.length;
+    const suffix = monthCount === 1 ? 'this month' : `${monthCount} months`;
+
+    const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
+    const setText = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+
+    setText('bgKpiPlannedLabel', `Planned spending (${suffix})`);
+    setText('bgKpiActualLabel', `Actual spending (${suffix})`);
+    set('bgKpiPlanned', spending ? _bgEur(spending.planned_total) : '—');
+    set('bgKpiActual', spending ? _bgEur(spending.actual_total) : '—');
+    set('bgKpiVariance', spending ? _bgVarianceCell(spending.variance_eur, spending.favourable) : '—');
+    set('bgKpiNet', `${_bgEur(variance.net.planned_total)} → ${_bgEur(variance.net.actual_total)} ${_bgVarianceCell(variance.net.variance_eur, variance.net.favourable)}`);
+}
+
+function _renderBgVariance() {
+    const area = document.getElementById('bgVarianceArea');
+    const variance = window._bgVariance;
+    if (!area || !variance) return;
+
+    const missing = budgetMonthsWithoutActivity(variance);
+    const missingNote = missing.length ? `<div class="alert alert-warning py-2 small mb-3">
+        <i class="bi bi-info-circle me-1"></i>No bank activity imported for
+        <strong>${esc(missing.join(', '))}</strong>, so ${missing.length === 1 ? 'that month counts' : 'those months count'}
+        as zero spend and inflates the variance below. Import on the
+        <a href="#" data-page="spending">Spending</a> page, or narrow the period.
+    </div>` : '';
+
+    const hasAnything = variance.sections.some(s => s.lines.length || s.unbudgeted.length);
+    if (!hasAnything) {
+        area.innerHTML = `<div class="card"><div class="card-body text-center py-4">
+            <p class="mb-1">This budget has no lines yet.</p>
+            <p class="text-muted small mb-0">Open the <strong>Edit</strong> tab and seed it from your last 12 months of actual activity.</p>
+        </div></div>`;
+        return;
+    }
+
+    area.innerHTML = missingNote + BG_SECTION_ORDER.map(key => {
+        const section = variance.sections.find(s => s.key === key);
+        if (!section || (!section.lines.length && !section.unbudgeted.length)) return '';
+        const rows = section.lines.map(line => `
+            <tr>
+                <td>
+                    <div>${esc(line.label)}</div>
+                    ${line.notes ? `<div class="text-muted small">${esc(line.notes)}</div>` : ''}
+                    ${_bgProgressBar(line.planned_total, line.actual_total, section.favourable_when_under)}
+                </td>
+                <td class="text-end">${_bgEur(line.planned_total)}</td>
+                <td class="text-end">${_bgEur(line.actual_total)}</td>
+                <td class="text-end">${_bgVarianceCell(line.variance_eur, line.favourable)}</td>
+                <td class="text-end text-muted small">${line.variance_pct === null || line.variance_pct === undefined ? '—' : Fmt.num(line.variance_pct, 1, 1) + '%'}</td>
+            </tr>`).join('');
+
+        const suppressed = section.unbudgeted_suppressed ? `
+            <tr><td colspan="5" class="text-muted small">
+                <i class="bi bi-info-circle me-1"></i>Deposits into your brokers aren't listed
+                separately here: this budget measures contributions from the bank side, and the
+                outflow plus the deposit it funds are the same money.
+            </td></tr>` : '';
+
+        // Unbudgeted rows sit in the same table so the section total visibly
+        // adds up — the whole point of showing them.
+        const unbudgeted = section.unbudgeted.map(item => `
+            <tr class="table-warning-subtle">
+                <td class="text-muted"><i class="bi bi-exclamation-circle me-1"></i>${esc(item.label)} <span class="badge text-bg-light">not budgeted</span></td>
+                <td class="text-end text-muted">—</td>
+                <td class="text-end">${_bgEur(item.actual_total)}</td>
+                <td class="text-end text-muted">—</td>
+                <td class="text-end text-muted small">—</td>
+            </tr>`).join('');
+
+        return `<div class="card mb-3">
+            <div class="card-header py-2 d-flex align-items-center justify-content-between">
+                <span class="fw-semibold small">${esc(section.label)}</span>
+                <span class="small">${_bgEur(section.actual_total)} of ${_bgEur(section.planned_total)} planned ${_bgVarianceCell(section.variance_eur, section.favourable)}</span>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-sm mb-0 align-middle">
+                        <thead><tr>
+                            <th>Line</th>
+                            <th class="text-end">Planned</th>
+                            <th class="text-end">Actual</th>
+                            <th class="text-end">Variance</th>
+                            <th class="text-end">%</th>
+                        </tr></thead>
+                        <tbody>${rows}${unbudgeted}${suppressed}</tbody>
+                    </table>
+                </div>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+const BG_TYPE_LABELS = { income: 'Income', spending: 'Spending', debt: 'Debt', investment: 'Investment' };
+
+function _renderBgLines() {
+    const body = document.getElementById('bgLinesBody');
+    if (!body) return;
+    if (!window._bgLines.length) {
+        body.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3">No lines yet — add one above, or seed from actuals.</td></tr>';
+        return;
+    }
+    body.innerHTML = window._bgLines.map(line => {
+        const overrideCount = Object.keys(line.overrides || {}).length;
+        // A brokerage-keyed investment line can't be reclassified -- its actual
+        // comes from Deposit bookings, which the other types can't read.
+        const brokerKeyed = line.line_type === 'investment' && /^\d+$/.test(String(line.ref_key));
+        const typeCell = brokerKeyed
+            ? `<span class="badge text-bg-secondary">${esc(BG_TYPE_LABELS[line.line_type])}</span>
+               <div class="text-muted small">broker</div>`
+            : `<select class="form-select form-select-sm bg-line-type" data-line-id="${line.id}" style="width:auto;"
+                       title="Only Spending counts toward the spending total">
+                ${['spending', 'debt', 'investment', 'income']
+                    .filter(t => (line.line_type === 'income') === (t === 'income'))
+                    .map(t => `<option value="${t}" ${t === line.line_type ? 'selected' : ''}>${esc(BG_TYPE_LABELS[t])}</option>`)
+                    .join('')}
+               </select>`;
+        return `<tr data-line-id="${line.id}">
+            <td>${typeCell}</td>
+            <td>${esc(line.label)}</td>
+            <td class="text-end">
+                <span id="bgLineAmount${line.id}" data-value="${escapeForAttr(String(line.monthly_amount))}">${_bgEur(line.monthly_amount)}</span>
+                ${overrideCount ? `<div class="text-muted small">${overrideCount} month${overrideCount === 1 ? '' : 's'} overridden</div>` : ''}
+            </td>
+            <td class="text-muted small">${esc(line.notes || '')}</td>
+            <td class="text-end text-nowrap">
+                <button class="btn btn-sm btn-link p-0 me-2" onclick="editBudgetLineAmount(${line.id})" title="Edit monthly amount"><i class="bi bi-pencil"></i></button>
+                <button class="btn btn-sm btn-link p-0 me-2" onclick="openBudgetOverrides(${line.id})" title="Per-month overrides"><i class="bi bi-calendar3"></i></button>
+                <button class="btn btn-sm btn-link p-0 text-danger" onclick="deleteBudgetLine(${line.id})" title="Remove line"><i class="bi bi-trash"></i></button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+/**
+ * Reclassify a line without deleting it.
+ *
+ * Reclassifying is the lever that keeps money you merely moved out of the
+ * spending total: a mortgage charge is Debt, a transfer to a broker or pension
+ * is Investment, and only Spending swells "actual spending". The category is
+ * unchanged, so the server's coverage rules are unaffected — only the section
+ * the line reports under moves.
+ */
+async function setBudgetLineType(lineId, lineType) {
+    try {
+        await window.apiClient.updateBudgetLine(window._bgSelectedId, lineId, { line_type: lineType });
+        await _refreshBudgetData();
+        _bgStatus('Line reclassified as ' + (BG_TYPE_LABELS[lineType] || lineType) + '.', 'success');
+    } catch (err) {
+        _bgStatus(err.message, 'danger');
+        await _refreshBudgetData();
+    }
+}
+window.setBudgetLineType = setBudgetLineType;
+
+function _wireBgLineTypeSelects() {
+    document.querySelectorAll('.bg-line-type').forEach(select => {
+        if (select.dataset.wired) return;
+        select.dataset.wired = '1';
+        select.addEventListener('change', e =>
+            setBudgetLineType(parseInt(e.target.dataset.lineId, 10), e.target.value));
+    });
+}
+
+function _renderBgCategoryDatalist() {
+    const list = document.getElementById('bgCategoryList');
+    if (!list) return;
+    const tree = window._bgCategoryTree || [];
+    const type = (document.getElementById('bgNewLineType') || {}).value || 'spending';
+    const wantedRoot = type === 'income' ? 'Income' : 'Spend';
+    // Only offer categories from the root this line type can budget — the
+    // server rejects the others anyway, so don't suggest them.
+    const options = tree
+        .filter(node => !node.is_root && _bgRootOf(tree, node.name) === wantedRoot)
+        .map(node => _categoryFullPath(tree, node.name))
+        .sort();
+    list.innerHTML = options.map(path => `<option value="${escapeForAttr(path)}"></option>`).join('');
+}
+
+/** The tree root ("Income"/"Spend") a category sits under, or null. */
+function _bgRootOf(tree, name) {
+    const byName = {};
+    (tree || []).forEach(node => { byName[node.name] = node; });
+    let node = byName[name];
+    if (!node) return null;
+    if (node.is_root) return node.name;
+    for (let i = 0; i < 100; i++) {
+        if (!node.parent_name) return null;
+        const parent = byName[node.parent_name];
+        if (!parent) return null;
+        if (parent.is_root) return parent.name;
+        node = parent;
+    }
+    return null;
+}
+window._bgRootOf = _bgRootOf;
+
+function _renderBgPortfolioSelect() {
+    const select = document.getElementById('bgNewLinePortfolio');
+    if (!select) return;
+    const portfolios = (window._bgPortfolios || []).filter(p => p.account_type !== 'bank');
+    const tree = window._bgCategoryTree || [];
+    const categories = tree
+        .filter(node => !node.is_root && _bgRootOf(tree, node.name) === 'Spend')
+        .map(node => node.name)
+        .sort();
+    // Two ways to measure a contribution, so two groups. The broker side reads
+    // Deposit bookings; the bank side reads what left the account under a
+    // category, which is the only option for a destination pfm doesn't track
+    // (a pension plan) and the only one that can be reclassified.
+    select.innerHTML = '<option value="">Select a destination…</option>'
+        + `<optgroup label="Broker — measured from deposit bookings">`
+        + portfolios.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('')
+        + `</optgroup>`
+        + `<optgroup label="Bank category — measured from outflows">`
+        + categories.map(name => `<option value="${escapeForAttr(name)}">${esc(_categoryFullPath(tree, name))}</option>`).join('')
+        + `</optgroup>`;
+}
+
+function _renderBgScenarios() {
+    const body = document.getElementById('bgScenariosBody');
+    if (!body) return;
+    if (!window._bgBudgets.length) {
+        body.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">No budgets yet.</td></tr>';
+        return;
+    }
+    // Planned totals need each budget's lines; fetch them all, then render.
+    Promise.all(window._bgBudgets.map(b =>
+        window.apiClient.getBudgetLines(b.id).catch(() => [])
+    )).then(allLines => {
+        body.innerHTML = window._bgBudgets.map((budget, index) => {
+            const totals = { income: 0, spending: 0, debt: 0, investment: 0 };
+            allLines[index].forEach(line => {
+                totals[line.line_type] = (totals[line.line_type] || 0) + (Number(line.monthly_amount) || 0);
+            });
+            const net = totals.income - totals.spending - totals.debt - totals.investment;
+            return `<tr${budget.id === window._bgSelectedId ? ' class="table-active"' : ''}>
+                <td>
+                    <a href="#" onclick="selectBudget(${budget.id}); return false;">${esc(budget.name)}</a>
+                    ${budget.is_active ? '<span class="badge text-bg-success ms-1">active</span>' : ''}
+                    ${budget.description ? `<div class="text-muted small">${esc(budget.description)}</div>` : ''}
+                </td>
+                <td class="text-end">${_bgEur(totals.income)}</td>
+                <td class="text-end">${_bgEur(totals.spending)}</td>
+                <td class="text-end">${_bgEur(totals.debt)}</td>
+                <td class="text-end">${_bgEur(totals.investment)}</td>
+                <td class="text-end ${net < 0 ? 'text-danger' : ''}">${_bgEur(net)}</td>
+                <td class="text-end text-nowrap">
+                    ${budget.is_active ? '' : `<button class="btn btn-sm btn-link p-0 me-2" onclick="activateBudget(${budget.id})" title="Make active"><i class="bi bi-star"></i></button>`}
+                    <button class="btn btn-sm btn-link p-0 text-danger" onclick="deleteBudget(${budget.id})" title="Delete budget"><i class="bi bi-trash"></i></button>
+                </td>
+            </tr>`;
+        }).join('');
+    });
+}
+
+function _renderBgTrendChart() {
+    const canvas = document.getElementById('bgTrendChartCanvas');
+    const errorEl = document.getElementById('bgTrendChartError');
+    const variance = window._bgVariance;
+    if (!canvas || !variance) return;
+    if (_bgTrendChartInstance) {
+        _bgTrendChartInstance.destroy();
+        _bgTrendChartInstance = null;
+    }
+    try {
+        const months = variance.months;
+        // Costs only — spending plus debt. Investment contributions are
+        // deliberately excluded: broker deposits are an order of magnitude
+        // larger and lumpier than day-to-day spending (and include moves
+        // between your own accounts), so folding them in here buries the
+        // comparison the chart exists to make. They have their own section in
+        // the table above, and this matches the KPI tiles, which are also
+        // spending-only.
+        const outflow = ['spending', 'debt'];
+        const plannedByMonth = months.map(month => outflow.reduce((sum, key) => {
+            const section = variance.sections.find(s => s.key === key);
+            return sum + (section ? section.lines.reduce((s, l) => s + (l.planned_eur[month] || 0), 0) : 0);
+        }, 0));
+        const actualByMonth = months.map(month => outflow.reduce((sum, key) => {
+            const section = variance.sections.find(s => s.key === key);
+            if (!section) return sum;
+            const lineSum = section.lines.reduce((s, l) => s + (l.actual_eur[month] || 0), 0);
+            const extraSum = section.unbudgeted.reduce((s, u) => s + (u.actual_eur[month] || 0), 0);
+            return sum + lineSum + extraSum;
+        }, 0));
+
+        canvas.style.display = '';
+        if (errorEl) errorEl.style.display = 'none';
+        _bgTrendChartInstance = new Chart(canvas, {
+            data: {
+                labels: months,
+                datasets: [
+                    { type: 'bar', label: 'Actual spend', data: actualByMonth, backgroundColor: SP_CATEGORY_CHART_COLORS[3] },
+                    { type: 'line', label: 'Planned spend', data: plannedByMonth, borderColor: SP_CATEGORY_CHART_COLORS[0], borderDash: [5, 4], fill: false, tension: 0.1 },
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: true, position: 'top' } },
+                scales: { y: { beginAtZero: true, ticks: { callback: v => '€' + v } } },
+            },
+        });
+    } catch (err) {
+        if (_bgTrendChartInstance) { _bgTrendChartInstance.destroy(); _bgTrendChartInstance = null; }
+        canvas.style.display = 'none';
+        if (errorEl) {
+            errorEl.style.display = '';
+            errorEl.textContent = 'Chart unavailable: ' + err.message;
+        }
+    }
+}
+
+// ── Actions ────────────────────────────────────────────────────────────────
+
+async function selectBudget(id) {
+    window._bgSelectedId = id;
+    _renderBgBudgetSelect();
+    _renderBgScenarios();
+    await _refreshBudgetData();
+    const overviewTab = document.getElementById('bgTabBtnOverview');
+    if (overviewTab && window.bootstrap) new window.bootstrap.Tab(overviewTab).show();
+}
+window.selectBudget = selectBudget;
+
+async function activateBudget(id) {
+    try {
+        await window.apiClient.activateBudget(id);
+        await loadBudgetPage();
+        _bgStatus('Active budget updated.', 'success');
+    } catch (err) {
+        _bgStatus(err.message, 'danger');
+    }
+}
+window.activateBudget = activateBudget;
+
+async function deleteBudget(id) {
+    const budget = window._bgBudgets.find(b => b.id === id);
+    if (!confirm(`Delete budget "${budget ? budget.name : id}" and all of its lines?`)) return;
+    try {
+        await window.apiClient.deleteBudget(id);
+        if (window._bgSelectedId === id) window._bgSelectedId = null;
+        await loadBudgetPage();
+        _bgStatus('Budget deleted.', 'success');
+    } catch (err) {
+        _bgStatus(err.message, 'danger');
+    }
+}
+window.deleteBudget = deleteBudget;
+
+async function deleteBudgetLine(lineId) {
+    const line = window._bgLines.find(l => l.id === lineId);
+    if (!confirm(`Remove the budget line for "${line ? line.label : lineId}"?`)) return;
+    try {
+        await window.apiClient.deleteBudgetLine(window._bgSelectedId, lineId);
+        await _refreshBudgetData();
+    } catch (err) {
+        _bgStatus(err.message, 'danger');
+    }
+}
+window.deleteBudgetLine = deleteBudgetLine;
+
+/**
+ * Swap a line's amount cell for an input, commit on Enter or blur.
+ * Same latch/Escape/focusout shape as editSpendingCategory.
+ */
+function editBudgetLineAmount(lineId) {
+    const cell = document.getElementById('bgLineAmount' + lineId);
+    if (!cell) return;
+    const original = cell.dataset.value;
+    const wrapper = document.createElement('span');
+    wrapper.innerHTML = `<input type="number" step="0.01" min="0" class="form-control form-control-sm d-inline-block" style="width:8rem;" value="${escapeForAttr(original)}">`;
+    cell.replaceWith(wrapper);
+    const input = wrapper.querySelector('input');
+    input.focus();
+    input.select();
+
+    let done = false;
+    const finish = async (commit) => {
+        if (done) return;
+        done = true;
+        const value = parseFloat(input.value);
+        if (!commit || !Number.isFinite(value) || String(value) === original) {
+            await _refreshBudgetData();
+            return;
+        }
+        try {
+            await window.apiClient.updateBudgetLine(window._bgSelectedId, lineId, { monthly_amount: value });
+        } catch (err) {
+            _bgStatus(err.message, 'danger');
+        }
+        await _refreshBudgetData();
+    };
+    input.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+        if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    });
+    input.addEventListener('focusout', () => finish(true));
+}
+window.editBudgetLineAmount = editBudgetLineAmount;
+
+/**
+ * Per-month override editor: one input per month of the selected period,
+ * prefilled with the effective amount. Clearing a cell drops the override.
+ */
+function openBudgetOverrides(lineId) {
+    const line = window._bgLines.find(l => l.id === lineId);
+    const row = document.querySelector(`#bgLinesBody tr[data-line-id="${lineId}"]`);
+    if (!line || !row) return;
+    const existing = document.getElementById('bgOverrideRow');
+    if (existing) existing.remove();
+    if (existing && existing.dataset.lineId === String(lineId)) return;
+
+    const months = budgetMonthRange(
+        (window._bgVariance && window._bgVariance.months.slice(-1)[0]) || new Date().toISOString().slice(0, 7),
+        Math.max(_bgSelectedMonths(), 6)
+    );
+    const effective = expandBudgetLineMonths(line, months);
+    const cells = months.map(month => `
+        <div class="col-6 col-md-2">
+            <label class="form-label small mb-1">${esc(month)}</label>
+            <input type="number" step="0.01" min="0" class="form-control form-control-sm bg-override-input"
+                   data-month="${escapeForAttr(month)}" value="${escapeForAttr(String(effective[month]))}">
+        </div>`).join('');
+
+    const tr = document.createElement('tr');
+    tr.id = 'bgOverrideRow';
+    tr.dataset.lineId = String(lineId);
+    tr.innerHTML = `<td colspan="5" class="bg-body-tertiary">
+        <div class="small text-muted mb-2">Per-month amounts for <strong>${esc(line.label)}</strong>. A month left at the default (${_bgEur(line.monthly_amount)}) stores no override.</div>
+        <div class="row g-2">${cells}</div>
+        <div class="mt-2 d-flex gap-2">
+            <button class="btn btn-sm btn-primary" onclick="saveBudgetOverrides(${lineId})">Save months</button>
+            <button class="btn btn-sm btn-outline-secondary" onclick="document.getElementById('bgOverrideRow').remove()">Cancel</button>
+        </div>
+    </td>`;
+    row.after(tr);
+}
+window.openBudgetOverrides = openBudgetOverrides;
+
+async function saveBudgetOverrides(lineId) {
+    const line = window._bgLines.find(l => l.id === lineId);
+    const row = document.getElementById('bgOverrideRow');
+    if (!line || !row) return;
+    const base = Number(line.monthly_amount) || 0;
+    // Start from the stored overrides so months outside the visible window
+    // aren't silently dropped by editing a shorter period.
+    const overrides = { ...(line.overrides || {}) };
+    row.querySelectorAll('.bg-override-input').forEach(input => {
+        const month = input.dataset.month;
+        const value = parseFloat(input.value);
+        if (!Number.isFinite(value) || value === base) delete overrides[month];
+        else overrides[month] = value;
+    });
+    try {
+        await window.apiClient.updateBudgetLine(window._bgSelectedId, lineId, { overrides });
+        await _refreshBudgetData();
+        _bgStatus('Monthly overrides saved.', 'success');
+    } catch (err) {
+        _bgStatus(err.message, 'danger');
+    }
+}
+window.saveBudgetOverrides = saveBudgetOverrides;
+
+function _bgAddLineStatus(message, kind = 'muted') {
+    const el = document.getElementById('bgAddLineStatus');
+    if (el) {
+        el.className = 'small mt-2 text-' + kind;
+        el.textContent = message || '';
+    }
+}
+
+async function _bgAddLine() {
+    const type = document.getElementById('bgNewLineType').value;
+    const amountEl = document.getElementById('bgNewLineAmount');
+    const notesEl = document.getElementById('bgNewLineNotes');
+    const refKey = type === 'investment'
+        ? document.getElementById('bgNewLinePortfolio').value
+        : _resolveCategoryInput(document.getElementById('bgNewLineRef').value.trim());
+
+    if (!refKey) {
+        _bgAddLineStatus(type === 'investment' ? 'Pick a broker.' : 'Pick a category.', 'danger');
+        return;
+    }
+    const amount = parseFloat(amountEl.value);
+    if (!Number.isFinite(amount) || amount < 0) {
+        _bgAddLineStatus('Enter a monthly amount.', 'danger');
+        return;
+    }
+    // Same coverage rule the server enforces, checked here so the answer is
+    // immediate and names the conflicting line.
+    if (type !== 'investment') {
+        const existing = window._bgLines
+            .filter(l => l.line_type !== 'investment')
+            .map(l => l.ref_key);
+        const conflict = budgetCoverageConflict(window._bgCategoryTree || [], existing, refKey);
+        if (conflict) {
+            _bgAddLineStatus(`"${refKey}" overlaps the budgeted category "${conflict}" — budget one or the other.`, 'danger');
+            return;
+        }
+    }
+    try {
+        await window.apiClient.createBudgetLine(window._bgSelectedId, {
+            line_type: type,
+            ref_key: refKey,
+            monthly_amount: amount,
+            notes: notesEl.value.trim() || null,
+        });
+        amountEl.value = '';
+        notesEl.value = '';
+        document.getElementById('bgNewLineRef').value = '';
+        _bgAddLineStatus('Line added.', 'success');
+        await _refreshBudgetData();
+    } catch (err) {
+        _bgAddLineStatus(err.message, 'danger');
+    }
+}
+
+async function _bgLoadSeedProposals() {
+    const panel = document.getElementById('bgSeedPanel');
+    const rows = document.getElementById('bgSeedRows');
+    if (!panel || !rows) return;
+    panel.style.display = '';
+    rows.innerHTML = '<div class="text-muted small">Reading your last 12 months…</div>';
+    try {
+        window._bgSeedProposals = await window.apiClient.getBudgetSeedProposals(window._bgSelectedId, 12);
+    } catch (err) {
+        rows.innerHTML = `<div class="text-danger small">${esc(err.message)}</div>`;
+        return;
+    }
+    if (!window._bgSeedProposals.length) {
+        rows.innerHTML = '<div class="text-muted small">Nothing to suggest yet — import some bank statements on the Spending page first.</div>';
+        return;
+    }
+    // Anything already budgeted is shown unchecked: applying it would just
+    // overwrite a figure the user set deliberately.
+    const budgeted = new Set(window._bgLines.map(l => l.line_type + '|' + l.ref_key));
+    rows.innerHTML = `<div class="alert alert-info py-2 small mb-2">
+        <i class="bi bi-lightbulb me-1"></i><strong>Set the type for anything that isn't day-to-day spending.</strong>
+        A mortgage or loan repayment is <strong>Debt</strong>; money moved to a broker or a pension is
+        <strong>Investment</strong>. Only <strong>Spending</strong> counts toward your spending total, so
+        classifying these here is what stops money you kept from inflating it.
+    </div>
+    <div class="table-responsive"><table class="table table-sm mb-0 align-middle">
+        <thead><tr><th style="width:2rem;"></th><th>Line</th><th>Treat as</th><th class="text-end">€ / month</th><th class="text-muted small">Based on</th></tr></thead>
+        <tbody>${window._bgSeedProposals.map((p, i) => {
+            const already = budgeted.has(p.line_type + '|' + p.ref_key);
+            const brokerKeyed = p.line_type === 'investment' && /^\d+$/.test(String(p.ref_key));
+            const typeCell = brokerKeyed
+                ? `<span class="badge text-bg-secondary">${esc(BG_TYPE_LABELS[p.line_type])}</span>`
+                : `<select class="form-select form-select-sm bg-seed-type" data-index="${i}" style="width:auto;">
+                    ${['spending', 'debt', 'investment', 'income']
+                        .filter(t => (p.line_type === 'income') === (t === 'income'))
+                        .map(t => `<option value="${t}" ${t === p.line_type ? 'selected' : ''}>${esc(BG_TYPE_LABELS[t])}</option>`)
+                        .join('')}
+                   </select>`;
+            return `<tr>
+                <td><input type="checkbox" class="form-check-input bg-seed-check" data-index="${i}" ${already ? '' : 'checked'}></td>
+                <td>${esc(p.label)}${already ? ' <span class="badge text-bg-light">already budgeted</span>' : ''}</td>
+                <td>${typeCell}</td>
+                <td class="text-end"><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end bg-seed-amount" data-index="${i}" value="${escapeForAttr(String(p.monthly_amount))}" style="width:7rem;"></td>
+                <td class="text-muted small">${p.months_seen} month${p.months_seen === 1 ? '' : 's'} of activity</td>
+            </tr>`;
+        }).join('')}</tbody>
+    </table></div>`;
+}
+
+async function _bgApplySeed() {
+    const statusEl = document.getElementById('bgSeedStatus');
+    const checks = Array.from(document.querySelectorAll('.bg-seed-check')).filter(c => c.checked);
+    if (!checks.length) {
+        if (statusEl) statusEl.textContent = 'Nothing selected.';
+        return;
+    }
+    const lines = checks.map(check => {
+        const index = parseInt(check.dataset.index, 10);
+        const proposal = window._bgSeedProposals[index];
+        const amountEl = document.querySelector(`.bg-seed-amount[data-index="${index}"]`);
+        const typeEl = document.querySelector(`.bg-seed-type[data-index="${index}"]`);
+        const amount = parseFloat(amountEl && amountEl.value);
+        return {
+            line_type: (typeEl && typeEl.value) || proposal.line_type,
+            ref_key: proposal.ref_key,
+            monthly_amount: Number.isFinite(amount) ? amount : proposal.monthly_amount,
+        };
+    });
+    if (statusEl) statusEl.textContent = 'Saving…';
+    try {
+        const result = await window.apiClient.bulkUpsertBudgetLines(window._bgSelectedId, lines);
+        if (statusEl) statusEl.textContent = `Added ${result.created}, updated ${result.updated}.`;
+        await _refreshBudgetData();
+    } catch (err) {
+        if (statusEl) statusEl.textContent = err.message;
+    }
+}
+
+async function _bgCreateBudget() {
+    const nameEl = document.getElementById('bgNewName');
+    const descEl = document.getElementById('bgNewDescription');
+    const copyEl = document.getElementById('bgNewCopyFrom');
+    const statusEl = document.getElementById('bgCreateStatus');
+    const name = (nameEl.value || '').trim();
+    if (!name) {
+        if (statusEl) { statusEl.className = 'small mt-2 text-danger'; statusEl.textContent = 'Give the budget a name.'; }
+        return;
+    }
+    const payload = { name, description: descEl.value.trim() || null };
+    if (copyEl.value) payload.copy_from_budget_id = parseInt(copyEl.value, 10);
+    // The first budget becomes active automatically — otherwise the Dashboard
+    // card and Action Items check would stay silent until the user noticed the
+    // "Make active" button.
+    if (!window._bgBudgets.length) payload.is_active = true;
+    try {
+        const created = await window.apiClient.createBudget(payload);
+        nameEl.value = '';
+        descEl.value = '';
+        copyEl.value = '';
+        if (statusEl) { statusEl.className = 'small mt-2 text-success'; statusEl.textContent = `Created "${created.name}".`; }
+        window._bgSelectedId = created.id;
+        await loadBudgetPage();
+    } catch (err) {
+        if (statusEl) { statusEl.className = 'small mt-2 text-danger'; statusEl.textContent = err.message; }
+    }
+}
+
+function _wireBudgetPage() {
+    const wire = (id, event, handler) => {
+        const el = document.getElementById(id);
+        if (el && !el.dataset.wired) {
+            el.dataset.wired = '1';
+            el.addEventListener(event, handler);
+        }
+    };
+    wire('bgBudgetSelect', 'change', async e => {
+        window._bgSelectedId = parseInt(e.target.value, 10);
+        _renderBgBudgetSelect();
+        _renderBgScenarios();
+        await _refreshBudgetData();
+    });
+    wire('bgMonthsSelect', 'change', () => _refreshBudgetData());
+    wire('bgActivateBtn', 'click', () => activateBudget(window._bgSelectedId));
+    wire('bgAddLineBtn', 'click', _bgAddLine);
+    wire('bgSeedBtn', 'click', _bgLoadSeedProposals);
+    wire('bgSeedApply', 'click', _bgApplySeed);
+    wire('bgSeedClose', 'click', () => {
+        const panel = document.getElementById('bgSeedPanel');
+        if (panel) panel.style.display = 'none';
+    });
+    wire('bgCreateBtn', 'click', _bgCreateBudget);
+    wire('bgCreateFirstBtn', 'click', () => {
+        const tab = document.getElementById('bgTabBtnScenarios');
+        const main = document.getElementById('bgMain');
+        // The tabs live inside the hidden main block when no budget exists, so
+        // reveal it before switching — otherwise the click lands on nothing.
+        if (main) main.style.display = '';
+        if (tab && window.bootstrap) new window.bootstrap.Tab(tab).show();
+        const nameEl = document.getElementById('bgNewName');
+        if (nameEl) nameEl.focus();
+    });
+    wire('bgNewLineType', 'change', e => {
+        const isInvestment = e.target.value === 'investment';
+        const refEl = document.getElementById('bgNewLineRef');
+        const portfolioEl = document.getElementById('bgNewLinePortfolio');
+        const labelEl = document.getElementById('bgNewLineRefLabel');
+        if (refEl) refEl.style.display = isInvestment ? 'none' : '';
+        if (portfolioEl) portfolioEl.style.display = isInvestment ? '' : 'none';
+        if (labelEl) labelEl.textContent = isInvestment ? 'Destination' : 'Category';
+        _renderBgCategoryDatalist();
+    });
+}
+
+// ── Dashboard card ─────────────────────────────────────────────────────────
+
+/**
+ * Compact current-month planned-vs-actual bars on the Dashboard.
+ *
+ * Best-effort and self-hiding, like the Bank Accounts and Spending cards: no
+ * active budget, no card, no error.
+ */
+async function loadDashboardBudget() {
+    const card = document.getElementById('dashBudgetCard');
+    const area = document.getElementById('dashBudgetArea');
+    if (!card || !area) return;
+    let summary;
+    try {
+        summary = await window.apiClient.getBudgetSummary();
+    } catch (err) {
+        card.style.display = 'none';
+        return;
+    }
+    if (!summary) {
+        card.style.display = 'none';
+        return;
+    }
+    const sections = BG_SECTION_ORDER
+        .map(key => summary.sections.find(s => s.key === key))
+        .filter(s => s && (s.planned_total > 0 || s.actual_total > 0));
+    if (!sections.length) {
+        card.style.display = 'none';
+        return;
+    }
+    card.style.display = '';
+    const nameEl = document.getElementById('dashBudgetName');
+    if (nameEl) nameEl.textContent = summary.budget_name;
+    // Nothing imported for this month yet: show the plan, but don't dress a
+    // missing statement up as a favourable variance.
+    const noActivity = budgetMonthsWithoutActivity(summary).length > 0;
+    area.innerHTML = sections.map(section => `
+        <div class="mb-2">
+            <div class="d-flex justify-content-between small">
+                <span>${esc(section.label)}</span>
+                <span>${_bgEur(section.actual_total)} / ${_bgEur(section.planned_total)} ${noActivity ? '' : _bgVarianceCell(section.variance_eur, section.favourable)}</span>
+            </div>
+            ${_bgProgressBar(section.planned_total, section.actual_total, section.favourable_when_under)}
+        </div>`).join('') + (noActivity ? `
+        <div class="small text-muted border-top pt-2 mt-2">
+            <i class="bi bi-info-circle me-1"></i>Nothing imported for this month yet — actuals will fill in once you import a statement.
+        </div>` : `
+        <div class="d-flex justify-content-between small border-top pt-2 mt-2">
+            <span class="fw-semibold">Net this month</span>
+            <span>${_bgEur(summary.net.actual_total)} vs ${_bgEur(summary.net.planned_total)} planned</span>
+        </div>`);
+}
+window.loadDashboardBudget = loadDashboardBudget;

@@ -162,6 +162,7 @@
 
                 <button type="button" class="sidebar-section-toggle" data-sect="planning"><span>Planning</span><i class="bi bi-chevron-down sect-chevron"></i></button>
                 <div class="sidebar-section-items" data-sect-items="planning">
+                    <a class="sidebar-nav-link" href="#" data-page="budget"><i class="bi bi-clipboard-data me-2"></i>Budget</a>
                     <a class="sidebar-nav-link" href="#" data-page="goals"><i class="bi bi-bullseye me-2"></i>Goals</a>
                     <a class="sidebar-nav-link" href="#" data-page="forecast"><i class="bi bi-graph-up-arrow me-2"></i>Wealth Simulator</a>
                     <a class="sidebar-nav-link" href="#" data-page="networth"><i class="bi bi-piggy-bank me-2"></i>Net Worth</a>
@@ -230,6 +231,7 @@
 
                 <button type="button" class="sidebar-section-toggle" data-sect="planning"><span>Planning</span><i class="bi bi-chevron-down sect-chevron"></i></button>
                 <div class="sidebar-section-items" data-sect-items="planning">
+                    <a class="sidebar-nav-link" href="#" data-page="budget"><i class="bi bi-clipboard-data me-2"></i>Budget</a>
                     <a class="sidebar-nav-link" href="#" data-page="goals"><i class="bi bi-bullseye me-2"></i>Goals</a>
                     <a class="sidebar-nav-link" href="#" data-page="forecast"><i class="bi bi-graph-up-arrow me-2"></i>Wealth Simulator</a>
                     <a class="sidebar-nav-link" href="#" data-page="networth"><i class="bi bi-piggy-bank me-2"></i>Net Worth</a>
@@ -609,6 +611,26 @@
                                 </div>
                                 <div class="card-footer bg-transparent text-end">
                                     <a href="#" class="small" onclick="window.navigationManager.showPage('spending'); const t = document.getElementById('spTabBtnCategories'); if (t) t.click(); return false;">View all <i class="bi bi-arrow-right"></i></a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Row 5: Budget (hidden until an active budget exists) -->
+                    <div class="row g-3 mt-0" id="dashBudgetCard" style="display:none;">
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <span><i class="bi bi-clipboard-data me-2"></i>Budget this month</span>
+                                    <span class="text-muted small" id="dashBudgetName"></span>
+                                </div>
+                                <div class="card-body">
+                                    <div id="dashBudgetArea">
+                                        <div class="text-muted small">Loading…</div>
+                                    </div>
+                                </div>
+                                <div class="card-footer bg-transparent text-end">
+                                    <a href="#" class="small" data-page="budget">Open budget <i class="bi bi-arrow-right"></i></a>
                                 </div>
                             </div>
                         </div>
@@ -3351,6 +3373,239 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                     </div>
                 </div>
 
+
+                <div id="budgetPage" class="page-content" style="display: none;">
+                    <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+                        <div>
+                            <h4 class="mb-0"><i class="bi bi-clipboard-data me-2 text-primary"></i>Budget<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('budget')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
+                            <p class="text-muted small mb-0">What you planned to earn, spend and invest each month — and how far actual activity has drifted from it.</p>
+                        </div>
+                        <div class="d-flex gap-2 align-items-center flex-wrap">
+                            <div class="d-flex align-items-center gap-1">
+                                <label class="small text-muted mb-0" for="bgBudgetSelect">Budget</label>
+                                <select class="form-select form-select-sm" id="bgBudgetSelect" style="width:auto;"></select>
+                            </div>
+                            <div class="d-flex align-items-center gap-1">
+                                <label class="small text-muted mb-0" for="bgMonthsSelect">Period</label>
+                                <select class="form-select form-select-sm" id="bgMonthsSelect" style="width:auto;">
+                                    <option value="1">This month</option>
+                                    <option value="3">Last 3 months</option>
+                                    <option value="6" selected>Last 6 months</option>
+                                    <option value="12">Last 12 months</option>
+                                </select>
+                            </div>
+                            <button class="btn btn-sm btn-outline-primary" id="bgActivateBtn" title="Make this the active budget — the one the Dashboard and Action Items use"><i class="bi bi-star me-1"></i>Make active</button>
+                        </div>
+                    </div>
+                    <div id="bgStatus" class="small text-muted mb-2"></div>
+
+                    <div id="bgEmptyState" class="card mb-3" style="display:none;">
+                        <div class="card-body text-center py-4">
+                            <i class="bi bi-clipboard-data fs-1 text-muted"></i>
+                            <p class="mt-2 mb-1">No budgets yet.</p>
+                            <p class="text-muted small mb-3">Create one, then seed it from your last 12 months of real spending instead of filling in every category by hand.</p>
+                            <button class="btn btn-primary btn-sm" id="bgCreateFirstBtn"><i class="bi bi-plus-lg me-1"></i>Create a budget</button>
+                        </div>
+                    </div>
+
+                    <div id="bgMain" style="display:none;">
+                    <ul class="nav nav-tabs mb-3" id="bgTabs">
+                        <li class="nav-item">
+                            <button type="button" class="nav-link active" data-bs-toggle="tab" data-bs-target="#bgPaneOverview" id="bgTabBtnOverview"><i class="bi bi-speedometer2 me-1"></i>Overview</button>
+                        </li>
+                        <li class="nav-item">
+                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#bgPaneEdit" id="bgTabBtnEdit"><i class="bi bi-pencil-square me-1"></i>Edit</button>
+                        </li>
+                        <li class="nav-item">
+                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#bgPaneScenarios" id="bgTabBtnScenarios"><i class="bi bi-diagram-3 me-1"></i>Scenarios</button>
+                        </li>
+                    </ul>
+
+                    <div class="tab-content">
+                        <!-- ── Overview ─────────────────────────────────── -->
+                        <div class="tab-pane fade show active" id="bgPaneOverview">
+                            <div class="row g-2 mb-3">
+                                <div class="col-6 col-md-3">
+                                    <div class="card h-100">
+                                        <div class="card-body py-2">
+                                            <div class="small text-muted mb-1" id="bgKpiPlannedLabel">Planned</div>
+                                            <div class="fs-6 fw-bold" id="bgKpiPlanned">—</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-6 col-md-3">
+                                    <div class="card h-100">
+                                        <div class="card-body py-2">
+                                            <div class="small text-muted mb-1" id="bgKpiActualLabel">Actual</div>
+                                            <div class="fs-6 fw-bold" id="bgKpiActual">—</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-6 col-md-3">
+                                    <div class="card h-100">
+                                        <div class="card-body py-2">
+                                            <div class="small text-muted mb-1">Spending variance <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="Planned minus actual spending for the period. Positive (green) means you stayed under budget."></i></div>
+                                            <div class="fs-6 fw-bold" id="bgKpiVariance">—</div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-6 col-md-3">
+                                    <div class="card h-100">
+                                        <div class="card-body py-2">
+                                            <div class="small text-muted mb-1">Net (planned → actual)</div>
+                                            <div class="fs-6 fw-bold" id="bgKpiNet">—</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div id="bgVarianceArea">
+                                <div class="text-muted small">Loading…</div>
+                            </div>
+
+                            <div class="card mt-3">
+                                <div class="card-header py-2 d-flex align-items-center justify-content-between">
+                                    <span class="fw-semibold small">Spending: planned vs actual by month</span>
+                                    <span class="text-muted small">Spending and debt payments. Investment contributions are shown in the table above, not here.</span>
+                                </div>
+                                <div class="card-body">
+                                    <div style="height:260px;"><canvas id="bgTrendChartCanvas"></canvas></div>
+                                    <div id="bgTrendChartError" class="text-muted small" style="display:none;"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- ── Edit ─────────────────────────────────────── -->
+                        <div class="tab-pane fade" id="bgPaneEdit">
+                            <div class="card mb-3">
+                                <div class="card-header py-2 d-flex align-items-center justify-content-between flex-wrap gap-2">
+                                    <span class="fw-semibold small">Add a budget line</span>
+                                    <button class="btn btn-sm btn-outline-primary" id="bgSeedBtn" title="Propose lines from your last 12 months of real activity"><i class="bi bi-magic me-1"></i>Seed from actuals</button>
+                                </div>
+                                <div class="card-body py-2">
+                                    <div class="row g-2 align-items-end">
+                                        <div class="col-6 col-md-2">
+                                            <label class="form-label small mb-1" for="bgNewLineType">Type</label>
+                                            <select class="form-select form-select-sm" id="bgNewLineType">
+                                                <option value="spending">Spending</option>
+                                                <option value="income">Income</option>
+                                                <option value="debt">Debt</option>
+                                                <option value="investment">Investment</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-6 col-md-4">
+                                            <label class="form-label small mb-1" for="bgNewLineRef" id="bgNewLineRefLabel">Category</label>
+                                            <input type="text" class="form-control form-control-sm" id="bgNewLineRef" list="bgCategoryList" placeholder="e.g. Groceries" autocomplete="off">
+                                            <select class="form-select form-select-sm" id="bgNewLinePortfolio" style="display:none;"></select>
+                                            <div class="form-text small">Only <strong>Spending</strong> lines count toward the spending total — use Debt for a mortgage or loan, Investment for money you moved to a broker or pension.</div>
+                                            <datalist id="bgCategoryList"></datalist>
+                                        </div>
+                                        <div class="col-6 col-md-2">
+                                            <label class="form-label small mb-1" for="bgNewLineAmount">€ / month</label>
+                                            <input type="number" step="0.01" min="0" class="form-control form-control-sm" id="bgNewLineAmount" placeholder="0.00">
+                                        </div>
+                                        <div class="col-6 col-md-3">
+                                            <label class="form-label small mb-1" for="bgNewLineNotes">Notes</label>
+                                            <input type="text" class="form-control form-control-sm" id="bgNewLineNotes" placeholder="optional">
+                                        </div>
+                                        <div class="col-12 col-md-1 d-grid">
+                                            <button class="btn btn-sm btn-primary" id="bgAddLineBtn">Add</button>
+                                        </div>
+                                    </div>
+                                    <div id="bgAddLineStatus" class="small mt-2"></div>
+                                </div>
+                            </div>
+
+                            <div id="bgSeedPanel" class="card mb-3" style="display:none;">
+                                <div class="card-header py-2 d-flex align-items-center justify-content-between">
+                                    <span class="fw-semibold small">Suggested lines — nothing is saved until you apply</span>
+                                    <button type="button" class="btn-close" id="bgSeedClose" aria-label="Close"></button>
+                                </div>
+                                <div class="card-body py-2">
+                                    <div id="bgSeedRows"></div>
+                                    <div class="d-flex gap-2 mt-2">
+                                        <button class="btn btn-sm btn-primary" id="bgSeedApply">Apply selected</button>
+                                        <span id="bgSeedStatus" class="small text-muted align-self-center"></span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="card">
+                                <div class="card-header py-2"><span class="fw-semibold small">Budget lines</span></div>
+                                <div class="card-body p-0">
+                                    <div class="table-responsive">
+                                        <table class="table table-sm mb-0 align-middle">
+                                            <thead>
+                                                <tr>
+                                                    <th>Type</th>
+                                                    <th>Line</th>
+                                                    <th class="text-end">€ / month</th>
+                                                    <th>Notes</th>
+                                                    <th class="text-end"></th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="bgLinesBody"></tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- ── Scenarios ────────────────────────────────── -->
+                        <div class="tab-pane fade" id="bgPaneScenarios">
+                            <div class="card mb-3">
+                                <div class="card-header py-2"><span class="fw-semibold small">Create a budget</span></div>
+                                <div class="card-body py-2">
+                                    <div class="row g-2 align-items-end">
+                                        <div class="col-12 col-md-3">
+                                            <label class="form-label small mb-1" for="bgNewName">Name</label>
+                                            <input type="text" class="form-control form-control-sm" id="bgNewName" placeholder="e.g. Worst case">
+                                        </div>
+                                        <div class="col-12 col-md-4">
+                                            <label class="form-label small mb-1" for="bgNewDescription">Description</label>
+                                            <input type="text" class="form-control form-control-sm" id="bgNewDescription" placeholder="optional">
+                                        </div>
+                                        <div class="col-12 col-md-3">
+                                            <label class="form-label small mb-1" for="bgNewCopyFrom">Start from</label>
+                                            <select class="form-select form-select-sm" id="bgNewCopyFrom"><option value="">Empty budget</option></select>
+                                        </div>
+                                        <div class="col-12 col-md-2 d-grid">
+                                            <button class="btn btn-sm btn-primary" id="bgCreateBtn">Create</button>
+                                        </div>
+                                    </div>
+                                    <div id="bgCreateStatus" class="small mt-2"></div>
+                                </div>
+                            </div>
+
+                            <div class="card">
+                                <div class="card-header py-2">
+                                    <span class="fw-semibold small">Planned monthly totals</span>
+                                    <span class="text-muted small ms-2">Planned figures only — pick a budget above to see it against actuals.</span>
+                                </div>
+                                <div class="card-body p-0">
+                                    <div class="table-responsive">
+                                        <table class="table table-sm mb-0 align-middle">
+                                            <thead>
+                                                <tr>
+                                                    <th>Budget</th>
+                                                    <th class="text-end">Income</th>
+                                                    <th class="text-end">Spending</th>
+                                                    <th class="text-end">Debt</th>
+                                                    <th class="text-end">Investments</th>
+                                                    <th class="text-end">Net / month</th>
+                                                    <th class="text-end"></th>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="bgScenariosBody"></tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    </div>
+                </div>
+
             </div><!-- /.app-content -->
         </div><!-- /.app-main -->
     </div><!-- /.app-shell -->
@@ -4134,7 +4389,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
 
     <!-- Centralized help text (must load before the app scripts) -->
-    <script src="js/help_text.js?v=1781886806"></script>
+    <script src="js/help_text.js?v=1788428227"></script>
 
     <!-- App scripts: portfolio_debug.js was split into these four classic
          scripts. They share one global scope and MUST load in this order:
@@ -4186,10 +4441,10 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
         </div>
     </div>
 
-    <script src="js/pfm_core.js?v=1781886806"></script>
-    <script src="js/pfm_pages.js?v=1780000051"></script>
+    <script src="js/pfm_core.js?v=1788428227"></script>
+    <script src="js/pfm_pages.js?v=1788428227"></script>
     <script src="js/pfm_analytics.js?v=1780000055"></script>
-    <script src="js/pfm_features.js?v=1781886807"></script>
+    <script src="js/pfm_features.js?v=1788432153"></script>
     <script>
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('/sw.js');
