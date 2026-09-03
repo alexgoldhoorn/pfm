@@ -112,6 +112,8 @@ class BudgetVarianceLine(BaseModel):
     label: str
     notes: Optional[str] = None
     link_id: Optional[int] = None
+    link_label: Optional[str] = None
+    link_amount_eur: Optional[float] = None
     monthly_amount: float
     planned_eur: Dict[str, float]
     actual_eur: Dict[str, float]
@@ -572,7 +574,9 @@ async def update_budget_line(
     if body.overrides is not None:
         fields["overrides"] = budget_service.serialize_overrides(body.overrides)
     if body.link_id is not None:
-        fields["link_id"] = body.link_id
+        # An omitted field means "unchanged", so 0 is the way to say "no
+        # liability" -- normalize it to NULL rather than storing a sentinel.
+        fields["link_id"] = body.link_id or None
     if body.notes is not None:
         fields["notes"] = body.notes
     if fields:

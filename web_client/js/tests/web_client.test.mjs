@@ -931,3 +931,50 @@ test('budgetMonthsWithoutActivity: tolerates a missing or empty payload', () => 
     assert.deepEqual([...budgetMonthsWithoutActivity(null)], []);
     assert.deepEqual([...budgetMonthsWithoutActivity({})], []);
 });
+
+test('budgetNetBreakdown: net subtracts every outflow, not just spending', () => {
+    const { budgetNetBreakdown } = loadAppIntoContext();
+    const variance = {
+        sections: [
+            { key: 'income', actual_total: 33774 },
+            { key: 'spending', actual_total: 28120 },
+            { key: 'debt', actual_total: 5880 },
+            { key: 'investment', actual_total: 4165 },
+        ],
+    };
+    const b = budgetNetBreakdown(variance);
+    assert.equal(b.cashFlow, 33774 - 28120 - 5880 - 4165);
+    // The natural misreading -- income minus spending alone -- is positive
+    // while the real cash flow is negative. That gap is why the UI spells the
+    // arithmetic out.
+    assert.ok(b.income - b.spending > 0);
+    assert.ok(b.cashFlow < 0);
+});
+
+test('budgetNetBreakdown: kept counts contributions but never debt', () => {
+    const { budgetNetBreakdown } = loadAppIntoContext();
+    const b = budgetNetBreakdown({
+        sections: [
+            { key: 'income', actual_total: 1000 },
+            { key: 'spending', actual_total: 200 },
+            { key: 'debt', actual_total: 300 },
+            { key: 'investment', actual_total: 400 },
+        ],
+    });
+    // A statement can't split a debt payment into principal and interest, so
+    // debt is excluded rather than guessed at.
+    assert.equal(b.kept, 400);
+});
+
+test('budgetNetBreakdown: missing sections count as zero', () => {
+    const { budgetNetBreakdown } = loadAppIntoContext();
+    const b = budgetNetBreakdown({ sections: [{ key: 'income', actual_total: 500 }] });
+    assert.equal(b.cashFlow, 500);
+    assert.equal(b.kept, 0);
+});
+
+test('budgetNetBreakdown: tolerates a missing payload', () => {
+    const { budgetNetBreakdown } = loadAppIntoContext();
+    assert.equal(budgetNetBreakdown(null).cashFlow, 0);
+    assert.equal(budgetNetBreakdown({}).kept, 0);
+});

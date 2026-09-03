@@ -611,6 +611,102 @@ def test_reclassifying_a_line_does_not_conflict_with_itself(tmp_path):
     )
 
 
+def test_a_debt_line_can_be_linked_to_the_liability_it_repays(tmp_path):
+    """Display only: the payment shows next to the balance, never in a total."""
+    client, db = _make_client(tmp_path)
+    _seed_tree(db)
+    liability_id = db.create_manual_asset(
+        name="Example Mortgage", category="mortgage", amount=250000.0, is_liability=True
+    )
+    bid = client.post(
+        "/api/v1/budgets/", json={"name": "Base"}, headers=HEADERS
+    ).json()["id"]
+    line = client.post(
+        f"/api/v1/budgets/{bid}/lines",
+        json={"line_type": "debt", "ref_key": "Housing", "monthly_amount": 1000},
+        headers=HEADERS,
+    ).json()
+
+    linked = client.put(
+        f"/api/v1/budgets/{bid}/lines/{line['id']}",
+        json={"link_id": liability_id},
+        headers=HEADERS,
+    )
+    assert linked.status_code == 200 and linked.json()["link_id"] == liability_id
+
+    debt = next(
+        s
+        for s in client.get(
+            f"/api/v1/budgets/{bid}/variance?months=1", headers=HEADERS
+        ).json()["sections"]
+        if s["key"] == "debt"
+    )
+    assert debt["lines"][0]["link_label"] == "Example Mortgage"
+    assert debt["lines"][0]["link_amount_eur"] == 250000.0
+    # The balance is not a budget figure -- it must not reach any total.
+    assert debt["planned_total"] == 1000.0
+    assert debt["actual_total"] == 0.0
+
+
+def test_sending_link_id_zero_clears_the_link(tmp_path):
+    client, db = _make_client(tmp_path)
+    _seed_tree(db)
+    liability_id = db.create_manual_asset(
+        name="Example Loan", category="personal_loan", amount=5000.0, is_liability=True
+    )
+    bid = client.post(
+        "/api/v1/budgets/", json={"name": "Base"}, headers=HEADERS
+    ).json()["id"]
+    line = client.post(
+        f"/api/v1/budgets/{bid}/lines",
+        json={
+            "line_type": "debt",
+            "ref_key": "Housing",
+            "monthly_amount": 100,
+            "link_id": liability_id,
+        },
+        headers=HEADERS,
+    ).json()
+    assert line["link_id"] == liability_id
+
+    cleared = client.put(
+        f"/api/v1/budgets/{bid}/lines/{line['id']}",
+        json={"link_id": 0},
+        headers=HEADERS,
+    )
+    # Stored as NULL, not as a 0 sentinel.
+    assert cleared.status_code == 200 and cleared.json()["link_id"] is None
+
+
+def test_an_unlinked_or_dangling_line_reports_no_liability(tmp_path):
+    client, db = _make_client(tmp_path)
+    _seed_tree(db)
+    bid = client.post(
+        "/api/v1/budgets/", json={"name": "Base"}, headers=HEADERS
+    ).json()["id"]
+    line = client.post(
+        f"/api/v1/budgets/{bid}/lines",
+        json={
+            "line_type": "debt",
+            "ref_key": "Housing",
+            "monthly_amount": 100,
+            "link_id": 999,
+        },
+        headers=HEADERS,
+    ).json()
+    assert line["link_id"] == 999
+    debt = next(
+        s
+        for s in client.get(
+            f"/api/v1/budgets/{bid}/variance?months=1", headers=HEADERS
+        ).json()["sections"]
+        if s["key"] == "debt"
+    )
+    # A link pointing at a deleted liability degrades to no label, not a 500.
+    assert debt["lines"][0]["link_label"] is None
+    assert debt["lines"][0]["link_amount_eur"] is None
+
+
 # ── Variance & summary ─────────────────────────────────────────────────────
 
 

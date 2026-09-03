@@ -422,6 +422,13 @@ def compute_budget_variance(
     booking_actuals = _collect_booking_actuals(db.get_all_bookings(), month_set, fx)
 
     portfolio_names = {str(p["id"]): p["name"] for p in db.get_all_portfolios()}
+    # A debt line can point at the manual liability it repays, so the payment
+    # shows next to the balance it's chipping away at. Display only -- the
+    # balance never enters any total, because a bank statement can't say how
+    # much of a payment was principal and how much was interest.
+    liabilities = {
+        item["id"]: item for item in db.get_manual_assets() if item["is_liability"]
+    }
 
     # Every category any line covers — shared by spending and debt, which both
     # live under the Spend root, so an uncovered charge is only ever reported
@@ -487,6 +494,7 @@ def compute_budget_variance(
                 if broker_keyed
                 else category_path(tree, line["ref_key"])
             )
+            liability = liabilities.get(line.get("link_id"))
             section_lines.append(
                 {
                     "line_id": line["id"],
@@ -495,6 +503,16 @@ def compute_budget_variance(
                     "label": label,
                     "notes": line.get("notes"),
                     "link_id": line.get("link_id"),
+                    "link_label": (liability or {}).get("name"),
+                    "link_amount_eur": (
+                        round(
+                            float(liability["amount"] or 0)
+                            * fx(liability.get("currency") or "EUR"),
+                            2,
+                        )
+                        if liability
+                        else None
+                    ),
                     "monthly_amount": round(float(line["monthly_amount"] or 0), 2),
                     "planned_eur": {m: round(v, 2) for m, v in planned.items()},
                     "actual_eur": {m: round(v, 2) for m, v in actual.items()},
