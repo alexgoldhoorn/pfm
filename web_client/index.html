@@ -2762,6 +2762,8 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                         <button class="btn btn-sm btn-outline-primary" id="spBulkRecategorizeBtn">Set category</button>
                                         <button class="btn btn-sm btn-outline-info" id="spBulkSuggestBtn"><i class="bi bi-magic me-1"></i>Suggest categories (AI)</button>
                                         <button class="btn btn-sm btn-outline-secondary" id="spBulkApplyRulesBtn" title="Re-apply category rules to selected rows that are still uncategorized"><i class="bi bi-tags me-1"></i>Apply rules to selected</button>
+                                        <button class="btn btn-sm btn-outline-secondary" id="spBulkMarkTransferBtn" title="These rows are moves between your own accounts, not spending — use when the other side was never imported, so the matcher can't pair them"><i class="bi bi-arrow-left-right me-1"></i>Mark as transfer</button>
+                                        <button class="btn btn-sm btn-outline-secondary" id="spBulkUnmarkTransferBtn" title="These rows are not transfers after all"><i class="bi bi-x-circle me-1"></i>Not a transfer</button>
                                         <button class="btn btn-sm btn-outline-danger ms-auto" id="spBulkDeleteBtn"><i class="bi bi-trash me-1"></i>Delete selected</button>
                                     </div>
                                 </div>
@@ -4443,10 +4445,10 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
         </div>
     </div>
 
-    <script src="js/pfm_core.js?v=1788428227"></script>
+    <script src="js/pfm_core.js?v=1788463269"></script>
     <script src="js/pfm_pages.js?v=1788428227"></script>
     <script src="js/pfm_analytics.js?v=1780000055"></script>
-    <script src="js/pfm_features.js?v=1788440928"></script>
+    <script src="js/pfm_features.js?v=1788463269"></script>
     <script>
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('/sw.js');

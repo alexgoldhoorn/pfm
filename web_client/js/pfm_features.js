@@ -5642,6 +5642,37 @@ function _wireSpBulkActions() {
             applyRulesBtn.disabled = false;
         });
     }
+    // Marking by hand exists because the matcher can only pair a counterpart
+    // that was actually imported; a move to an account you don't track would
+    // otherwise count as spending forever, on every surface.
+    [['spBulkMarkTransferBtn', true], ['spBulkUnmarkTransferBtn', false]].forEach(([btnId, flag]) => {
+        const btn = document.getElementById(btnId);
+        if (!btn || btn.dataset.wired) return;
+        btn.dataset.wired = '1';
+        btn.addEventListener('click', async () => {
+            const ids = _selectedSpendingIds();
+            if (!ids.length) return;
+            btn.disabled = true;
+            let succeeded = 0, failed = 0;
+            for (const id of ids) {
+                try {
+                    await window.apiClient.setSpendingTransferFlag(id, flag);
+                    succeeded++;
+                } catch (err) { failed++; }
+            }
+            await _refreshSpendingData();
+            const status = document.getElementById('spBulkStatus');
+            if (status) {
+                const verb = flag ? 'Marked' : 'Unmarked';
+                status.className = failed > 0 ? 'small text-danger px-3 pt-2' : 'small text-success px-3 pt-2';
+                status.textContent = failed > 0
+                    ? `${verb} ${succeeded} of ${ids.length} (${failed} failed).`
+                    : `${verb} ${succeeded} row(s) as ${flag ? 'transfers' : 'not transfers'} — they now ${flag ? 'drop out of' : 'count toward'} your spending totals.`;
+            }
+            btn.disabled = false;
+        });
+    });
+
     const delBtn = document.getElementById('spBulkDeleteBtn');
     if (delBtn && !delBtn.dataset.wired) {
         delBtn.dataset.wired = '1';

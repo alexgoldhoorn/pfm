@@ -218,11 +218,137 @@ def test_update_category_clears_transfer_flag(tmp_path):
     assert recategorized["transfer_link_type"] is None
     assert recategorized["transfer_link_id"] is None
 
-    # The counterpart is deliberately left untouched by this endpoint.
+    # The counterpart is reset too. Leaving it flagged with a link back to a
+    # row that no longer claims it stranded it: permanently excluded from
+    # spending totals and invisible to rescan-transfers, with no way back.
     counterpart = db.get_spending_transaction(id_b)
-    assert counterpart["is_transfer"] == 1
-    assert counterpart["category"] == "Transfer"
-    assert counterpart["transfer_link_id"] == id_a
+    assert counterpart["is_transfer"] == 0
+    assert counterpart["transfer_link_type"] is None
+    assert counterpart["transfer_link_id"] is None
+    assert counterpart["category"] == "uncategorized"
+
+
+def test_mark_row_as_transfer_by_hand(tmp_path):
+    """The matcher can only pair a counterpart that was actually imported.
+
+    A genuine move to an untracked account otherwise counts as spending
+    forever, with no way to say otherwise.
+    """
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    sid = db.create_spending_transaction(
+        pid, "2026-07-08", "Transfer to my other account", -1500.0
+    )
+
+    r = client.put(
+        f"/api/v1/spending/{sid}", json={"is_transfer": True}, headers=HEADERS
+    )
+    assert r.status_code == 200
+    assert r.json()["is_transfer"] is True
+
+    row = db.get_spending_transaction(sid)
+    assert row["is_transfer"] == 1
+    # Categorized the way the matcher does, so every surface that already
+    # excludes transfers excludes this one too.
+    assert row["category"] == "Transfer"
+    # No counterpart exists, so no link is invented.
+    assert row["transfer_link_type"] is None
+    assert row["transfer_link_id"] is None
+
+
+def test_a_hand_marked_transfer_drops_out_of_the_spending_totals(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    today = date.today().isoformat()
+    db.create_spending_transaction(
+        pid, today, "Supermarket", -40.0, category="Groceries"
+    )
+    sid = db.create_spending_transaction(pid, today, "Move to savings", -1500.0)
+
+    before = client.get("/api/v1/spending/summary?days=30", headers=HEADERS).json()
+    assert before["spent_eur"] == 1540.0
+
+    client.put(f"/api/v1/spending/{sid}", json={"is_transfer": True}, headers=HEADERS)
+    after = client.get("/api/v1/spending/summary?days=30", headers=HEADERS).json()
+    assert after["spent_eur"] == 40.0
+    assert after["transferred_eur"] == 1500.0
+
+
+def test_marking_by_hand_can_keep_an_explicit_category(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    sid = db.create_spending_transaction(pid, "2026-07-08", "Move", -100.0)
+    r = client.put(
+        f"/api/v1/spending/{sid}",
+        json={"is_transfer": True, "category": "Transfer"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200 and r.json()["category"] == "Transfer"
+
+
+def test_unmarking_a_transfer_clears_the_flag_and_resets_the_counterpart(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    other = db.create_portfolio("Example Bank 2", account_type="bank")
+    id_a = db.create_spending_transaction(
+        pid, "2026-07-01", "Out", -100.0, category="Transfer"
+    )
+    id_b = db.create_spending_transaction(
+        other, "2026-07-01", "In", 100.0, category="Transfer"
+    )
+    db.update_spending_transaction(
+        id_a, is_transfer=True, transfer_link_type="spending", transfer_link_id=id_b
+    )
+    db.update_spending_transaction(
+        id_b, is_transfer=True, transfer_link_type="spending", transfer_link_id=id_a
+    )
+
+    r = client.put(
+        f"/api/v1/spending/{id_a}", json={"is_transfer": False}, headers=HEADERS
+    )
+    assert r.status_code == 200 and r.json()["is_transfer"] is False
+
+    for sid in (id_a, id_b):
+        row = db.get_spending_transaction(sid)
+        assert row["is_transfer"] == 0, sid
+        assert row["transfer_link_type"] is None, sid
+        assert row["transfer_link_id"] is None, sid
+
+
+def test_unmarking_leaves_a_non_reciprocal_row_alone(tmp_path):
+    """Only a genuine reciprocal link is reset, never a coincidence."""
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    other = db.create_portfolio("Example Bank 2", account_type="bank")
+    id_a = db.create_spending_transaction(pid, "2026-07-01", "Out", -100.0)
+    id_b = db.create_spending_transaction(other, "2026-07-01", "In", 100.0)
+    # b points somewhere else entirely, so it isn't a's counterpart.
+    db.update_spending_transaction(
+        id_a, is_transfer=True, transfer_link_type="spending", transfer_link_id=id_b
+    )
+    db.update_spending_transaction(
+        id_b, is_transfer=True, transfer_link_type="spending", transfer_link_id=99999
+    )
+    client.put(f"/api/v1/spending/{id_a}", json={"is_transfer": False}, headers=HEADERS)
+    assert db.get_spending_transaction(id_b)["is_transfer"] == 1
+
+
+def test_put_with_neither_field_is_rejected(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    sid = db.create_spending_transaction(pid, "2026-07-01", "Row", -10.0)
+    r = client.put(f"/api/v1/spending/{sid}", json={}, headers=HEADERS)
+    assert r.status_code == 400 and "Nothing to update" in r.json()["detail"]
+
+
+def test_a_hand_marked_transfer_is_not_reclaimed_by_the_matcher(tmp_path):
+    """is_transfer=1 self-excludes from the unlinked pool, so a later rescan
+    can't pair a row the user already settled."""
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    sid = db.create_spending_transaction(pid, "2026-07-08", "Move", -1500.0)
+    client.put(f"/api/v1/spending/{sid}", json={"is_transfer": True}, headers=HEADERS)
+    assert sid not in {r["id"] for r in db.list_unlinked_spending_transactions()}
 
 
 def test_update_category_non_transfer_row_unaffected(tmp_path):

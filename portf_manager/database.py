@@ -3147,6 +3147,51 @@ class Database:
             row = cursor.fetchone()
             return dict(row) if row else None
 
+    def reset_transfer_counterpart(self, spending_id: int) -> bool:
+        """Un-transfer the other leg of a spending<->spending transfer pair.
+
+        Used whenever a row stops being a transfer — deleted, recategorized
+        away from "Transfer", or explicitly unmarked. Without this the
+        surviving leg keeps ``is_transfer=1`` and a ``transfer_link_id``
+        pointing at a row that no longer claims it, leaving it permanently
+        excluded from spending totals and invisible to rescan-transfers.
+
+        Only a genuine reciprocal link is reset (the counterpart's own
+        ``transfer_link_id`` must point back at this row), never a coincidence.
+        Booking-linked rows have no spending-side counterpart and are a no-op.
+
+        Returns:
+            True if a counterpart was reset.
+        """
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT transfer_link_type, transfer_link_id "
+                "FROM spending_transactions WHERE id = ?",
+                (spending_id,),
+            ).fetchone()
+            if not row or row["transfer_link_type"] != "spending":
+                return False
+            counterpart = conn.execute(
+                "SELECT id FROM spending_transactions "
+                "WHERE id = ? AND transfer_link_id = ?",
+                (row["transfer_link_id"], spending_id),
+            ).fetchone()
+            if not counterpart:
+                return False
+            conn.execute(
+                """
+                UPDATE spending_transactions
+                SET is_transfer = 0,
+                    transfer_link_type = NULL,
+                    transfer_link_id = NULL,
+                    category = 'uncategorized'
+                WHERE id = ?
+                """,
+                (counterpart["id"],),
+            )
+            conn.commit()
+            return True
+
     def delete_spending_transaction(self, spending_id: int) -> bool:
         """Delete a spending transaction by ID (hard delete — this table has
         no soft-delete concept, consistent with bookings/spending_rules).
