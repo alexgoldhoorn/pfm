@@ -6406,6 +6406,35 @@ function budgetMonthsWithoutActivity(variance) {
     });
 }
 
+/**
+ * The four components behind the net figure, plus what of it you still have.
+ *
+ * Net is a CASH-FLOW number: income minus every outflow, including debt
+ * repayments and contributions. Reading it as "am I better off?" is wrong and
+ * the natural mistake to make — income minus spending alone looks healthy while
+ * net is negative — so callers should render the arithmetic, not just the
+ * result.
+ *
+ * `kept` is the part of the outflow that is still yours. Contributions count in
+ * full. Mortgage principal is money kept too, but a bank statement can't say
+ * how much of a payment was principal and how much was interest, so debt is
+ * deliberately excluded rather than guessed at.
+ */
+function budgetNetBreakdown(variance) {
+    const totals = { income: 0, spending: 0, debt: 0, investment: 0 };
+    ((variance && variance.sections) || []).forEach(section => {
+        if (Object.prototype.hasOwnProperty.call(totals, section.key)) {
+            totals[section.key] = Number(section.actual_total) || 0;
+        }
+    });
+    return {
+        ...totals,
+        cashFlow: totals.income - totals.spending - totals.debt - totals.investment,
+        kept: totals.investment,
+    };
+}
+
+window.budgetNetBreakdown = budgetNetBreakdown;
 window.budgetMonthsWithoutActivity = budgetMonthsWithoutActivity;
 window.budgetRowStatus = budgetRowStatus;
 window.budgetMonthRange = budgetMonthRange;
@@ -6515,21 +6544,26 @@ async function _refreshBudgetData() {
     if (!window._bgSelectedId) return;
     _bgStatus('Loading…');
     try {
-        const [variance, lines, tree, portfolios] = await Promise.all([
+        const [variance, lines, tree, portfolios, networth] = await Promise.all([
             window.apiClient.getBudgetVariance(window._bgSelectedId, _bgSelectedMonths()),
             window.apiClient.getBudgetLines(window._bgSelectedId),
             window.apiClient.getSpendingCategoryTree(),
             window.apiClient.getPortfolios(),
+            // Best-effort: a debt line can be linked to the liability it repays,
+            // but the page must still render if Net Worth is unavailable.
+            window.apiClient.getNetworth().catch(() => ({ items: [] })),
         ]);
         window._bgVariance = variance;
         window._bgLines = lines;
         window._bgCategoryTree = tree;
         window._bgPortfolios = portfolios;
+        window._bgLiabilities = ((networth && networth.items) || []).filter(i => i.is_liability);
         _bgStatus('');
         _renderBgKpis();
         _renderBgVariance();
         _renderBgLines();
         _wireBgLineTypeSelects();
+        _wireBgLineLinkSelects();
         _renderBgCategoryDatalist();
         _renderBgPortfolioSelect();
         _renderBgTrendChart();
@@ -6557,12 +6591,30 @@ function _renderBgKpis() {
     const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
     const setText = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
 
+    _renderBgNetBreakdown();
     setText('bgKpiPlannedLabel', `Planned spending (${suffix})`);
     setText('bgKpiActualLabel', `Actual spending (${suffix})`);
     set('bgKpiPlanned', spending ? _bgEur(spending.planned_total) : '—');
     set('bgKpiActual', spending ? _bgEur(spending.actual_total) : '—');
     set('bgKpiVariance', spending ? _bgVarianceCell(spending.variance_eur, spending.favourable) : '—');
     set('bgKpiNet', `${_bgEur(variance.net.planned_total)} → ${_bgEur(variance.net.actual_total)} ${_bgVarianceCell(variance.net.variance_eur, variance.net.favourable)}`);
+}
+
+function _renderBgNetBreakdown() {
+    const el = document.getElementById('bgNetBreakdown');
+    const variance = window._bgVariance;
+    if (!el || !variance) return;
+    const b = budgetNetBreakdown(variance);
+    const sign = b.cashFlow < 0 ? '−' : '+';
+    const cls = b.cashFlow < 0 ? 'text-danger' : 'text-success';
+    const keptNote = b.kept > 0
+        ? ` <span class="ms-1">${_bgEur(b.kept)} of that is contributions — it left your accounts but is still yours.</span>`
+        : '';
+    el.innerHTML = `<i class="bi bi-calculator me-1"></i>`
+        + `Income ${_bgEur(b.income)} − Spending ${_bgEur(b.spending)} `
+        + `− Debt ${_bgEur(b.debt)} − Investments ${_bgEur(b.investment)} `
+        + `= <strong class="${cls}">${sign}${Fmt.amt('€' + Fmt.num(Math.abs(b.cashFlow), 0, 0))}</strong> cash flow.`
+        + keptNote;
 }
 
 function _renderBgVariance() {
@@ -6595,6 +6647,7 @@ function _renderBgVariance() {
                 <td>
                     <div>${esc(line.label)}</div>
                     ${line.notes ? `<div class="text-muted small">${esc(line.notes)}</div>` : ''}
+                    ${line.link_label ? `<div class="text-muted small">against ${_bgEur(line.link_amount_eur)} outstanding on ${esc(line.link_label)}</div>` : ''}
                     ${_bgProgressBar(line.planned_total, line.actual_total, section.favourable_when_under)}
                 </td>
                 <td class="text-end">${_bgEur(line.planned_total)}</td>
@@ -6670,7 +6723,10 @@ function _renderBgLines() {
                </select>`;
         return `<tr data-line-id="${line.id}">
             <td>${typeCell}</td>
-            <td>${esc(line.label)}</td>
+            <td>
+                ${esc(line.label)}
+                ${line.line_type === 'debt' ? _bgLiabilitySelect(line) : ''}
+            </td>
             <td class="text-end">
                 <span id="bgLineAmount${line.id}" data-value="${escapeForAttr(String(line.monthly_amount))}">${_bgEur(line.monthly_amount)}</span>
                 ${overrideCount ? `<div class="text-muted small">${overrideCount} month${overrideCount === 1 ? '' : 's'} overridden</div>` : ''}
@@ -6712,6 +6768,45 @@ function _wireBgLineTypeSelects() {
         select.dataset.wired = '1';
         select.addEventListener('change', e =>
             setBudgetLineType(parseInt(e.target.dataset.lineId, 10), e.target.value));
+    });
+}
+
+/**
+ * Liability picker for a debt line.
+ *
+ * A debt line measures the payments leaving your bank account; the outstanding
+ * balance lives on the Net Worth page as a manual liability. Linking the two
+ * puts the payment next to the balance it is chipping away at. It is display
+ * only — the balance never enters any budget total, because a bank statement
+ * can't say how much of a payment was principal and how much was interest.
+ */
+function _bgLiabilitySelect(line) {
+    const liabilities = window._bgLiabilities || [];
+    if (!liabilities.length) return '';
+    return `<select class="form-select form-select-sm mt-1 bg-line-link" data-line-id="${line.id}" style="max-width:16rem;">
+        <option value="">Not linked to a liability</option>
+        ${liabilities.map(l => `<option value="${l.id}" ${l.id === line.link_id ? 'selected' : ''}>Repays ${esc(l.name)}</option>`).join('')}
+    </select>`;
+}
+
+async function setBudgetLineLink(lineId, linkId) {
+    try {
+        // null clears the link; the API treats an omitted field as "unchanged",
+        // so send 0 and let the backend store it as "no liability".
+        await window.apiClient.updateBudgetLine(window._bgSelectedId, lineId, { link_id: linkId || 0 });
+        await _refreshBudgetData();
+    } catch (err) {
+        _bgStatus(err.message, 'danger');
+    }
+}
+window.setBudgetLineLink = setBudgetLineLink;
+
+function _wireBgLineLinkSelects() {
+    document.querySelectorAll('.bg-line-link').forEach(select => {
+        if (select.dataset.wired) return;
+        select.dataset.wired = '1';
+        select.addEventListener('change', e =>
+            setBudgetLineLink(parseInt(e.target.dataset.lineId, 10), parseInt(e.target.value, 10) || null));
     });
 }
 

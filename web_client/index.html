@@ -3452,12 +3452,14 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                 <div class="col-6 col-md-3">
                                     <div class="card h-100">
                                         <div class="card-body py-2">
-                                            <div class="small text-muted mb-1">Net (planned → actual)</div>
+                                            <div class="small text-muted mb-1">Net cash flow <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="Income minus every outflow: spending, debt repayments and contributions. Negative means more left your accounts than came in — it does not mean you are worse off, since contributions and mortgage principal are money you kept."></i></div>
                                             <div class="fs-6 fw-bold" id="bgKpiNet">—</div>
                                         </div>
                                     </div>
                                 </div>
                             </div>
+
+                            <div id="bgNetBreakdown" class="small text-muted mb-3"></div>
 
                             <div id="bgVarianceArea">
                                 <div class="text-muted small">Loading…</div>
@@ -4444,7 +4446,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <script src="js/pfm_core.js?v=1788428227"></script>
     <script src="js/pfm_pages.js?v=1788428227"></script>
     <script src="js/pfm_analytics.js?v=1780000055"></script>
-    <script src="js/pfm_features.js?v=1788432153"></script>
+    <script src="js/pfm_features.js?v=1788440928"></script>
     <script>
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('/sw.js');

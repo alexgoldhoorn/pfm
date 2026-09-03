@@ -199,6 +199,31 @@ Result on the account in question: the spending figure fell by about a quarter,
 the income figure rose by an order of magnitude, Debt and Investments were
 populated, and planned net went from heavily negative to roughly break-even.
 
+## Follow-up: net is a cash-flow figure
+
+Reported after a real read: income minus spending looked like a healthy surplus
+while the Net tile showed a loss. Both were right — net subtracts *every*
+outflow, and the debt and investment sections created in the previous change
+hold the difference. The tile showed only the result, so `income − spending` was
+the natural inference.
+
+- `budgetNetBreakdown(variance)` (pure, `window.`-exported) returns the four
+  components plus `cashFlow` and `kept`. The Overview prints the arithmetic
+  under the KPI row instead of leaving one number to carry it.
+- `kept` is investment contributions only. Mortgage principal is money kept too,
+  but a bank statement can't split a payment into principal and interest, so it
+  is excluded rather than guessed at.
+- A `debt` line can link to the `manual_assets` liability it repays
+  (`budget_lines.link_id`, already in the v29 schema but previously unwired).
+  The variance response resolves it into `link_label`/`link_amount_eur`; the
+  Overview prints "against X outstanding" and the Edit tab shows a liability
+  picker on debt rows. Display only: the balance never enters a total, again
+  because principal and interest aren't separable from a statement.
+
+No payoff-date estimate is offered. Balance ÷ payment is badly wrong for a
+mortgage, where interest dominates the early years, and pfm holds no interest
+rate to do it properly.
+
 ## Missing-data caveat
 
 Actuals only exist for what has been imported on the Spending page, so a month

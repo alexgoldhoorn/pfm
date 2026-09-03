@@ -308,6 +308,24 @@ source. Design: `docs/superpowers/specs/2026-09-03-budgeting-design.md`.
   adding) rather than as a second, confusing `Housing` row. Unbudgeted totals
   count toward each section's `actual_total` but never its `planned_total`, so
   "under budget" can't be an artifact of leaving spending out of the plan.
+- ⚠️ **`net` is a CASH-FLOW figure**: `income − spending − debt − investment`,
+  i.e. everything that left the accounts. Reading it as "am I better off?" is
+  wrong and is the natural mistake — income minus spending alone can look
+  healthy while net is negative, because debt repayments and contributions are
+  outflows too. The Overview therefore renders the arithmetic explicitly
+  (`#bgNetBreakdown`, from the pure `budgetNetBreakdown(variance)`) rather than
+  showing the result alone, and names the part that is still yours
+  (`kept` = investment contributions). **`kept` deliberately excludes debt**:
+  mortgage principal is money kept too, but a bank statement can't say how much
+  of a payment was principal and how much was interest, so it isn't guessed at.
+- **A debt line can link to the `manual_assets` liability it repays**, via
+  `budget_lines.link_id`; the variance response resolves it into `link_label` +
+  `link_amount_eur` so the Overview can print "against X outstanding" under the
+  line, and the Edit tab renders a liability picker on debt rows only. This is
+  **display only — the balance never enters any total**, for the same
+  principal/interest reason. A `link_id` pointing at a deleted liability
+  degrades to nulls, never a 500. On `PUT`, `link_id: 0` means "clear the
+  link" (an omitted field means "unchanged") and is normalized to NULL.
 - Debt lines share the Spend tree with spending lines, so the **Debt section's
   `unbudgeted` list is always empty by design** — uncovered charges are
   reported once, in the Spending section.
@@ -360,7 +378,7 @@ lines. Pure helpers are module-scope and `window.`-exported for the DOM-free
 test runner: `budgetRowStatus` (planned-vs-actual classification, direction
 aware), `budgetMonthRange`, `expandBudgetLineMonths`, `budgetCoverageConflict`
 (client mirror of the server rule, reusing `_isDescendant`),
-`budgetMonthsWithoutActivity`, `_bgRootOf`. The Edit tab's category input is
+`budgetMonthsWithoutActivity`, `budgetNetBreakdown`, `_bgRootOf`. The Edit tab's category input is
 backed by a breadcrumb `<datalist>` filtered to the root the selected line type
 can budget, via the existing `_categoryFullPath`/`_resolveCategoryInput`
 helpers.
@@ -497,7 +515,7 @@ docker compose build web && docker stop portf_web && WEB_PORT=8080 docker compos
 `saveImportedTransactions(transactions, bookings = [], portfolioId = null)` — always pass bookings array (even if empty) so PDT bookings are saved alongside transactions.
 
 ## Testing
-- Unit tests: `uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e` (1107 passing, 6 skipped); JS: 100 passing
+- Unit tests: `uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e` (1110 passing, 6 skipped); JS: 104 passing
 - JS tests: `make test-js` (Node 24 no longer expands a bare directory passed to `--test`, so the target names `web_client/js/tests/*.test.mjs` explicitly — `node --test web_client/js/tests/` fails with a misleading `MODULE_NOT_FOUND`)
 - Pre-push hook runs full unit suite automatically.
 - F541 fixer: `uv run python scripts/fix_f541.py`
