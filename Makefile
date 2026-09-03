@@ -74,7 +74,7 @@ test-integration: ## Run integration tests only
 
 test-js: ## Run web client JS tests (Node built-in runner, no npm deps)
 	@echo "$(GREEN)Running web client JS tests...$(NC)"
-	@node --test web_client/js/tests/
+	@node --test web_client/js/tests/*.test.mjs
 
 # Database operations
 migrate: ## Run database migrations
