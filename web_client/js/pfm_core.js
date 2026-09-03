@@ -1509,6 +1509,23 @@ function createAPIClient() {
             if (!response.ok) throw new Error('Failed to load spending transactions');
             return response.json();
         },
+        // The transfer matcher can only pair a counterpart that was actually
+        // imported, so a genuine move to an untracked account needs to be
+        // settled by hand or it counts as spending forever.
+        async setSpendingTransferFlag(id, isTransfer) {
+            const response = await fetch(this.baseURL + '/api/v1/spending/' + id, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify({ is_transfer: isTransfer })
+            });
+            if (!response.ok) {
+                let detail = 'Failed to update transfer flag';
+                try { const body = await response.json(); detail = body.detail || detail; }
+                catch (e) { /* response wasn't JSON, use the generic message */ }
+                throw new Error(detail);
+            }
+            return response.json();
+        },
         async updateSpendingCategory(id, category) {
             const response = await fetch(this.baseURL + '/api/v1/spending/' + id, {
                 method: 'PUT',

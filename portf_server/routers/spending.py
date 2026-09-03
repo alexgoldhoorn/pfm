@@ -109,7 +109,8 @@ class SpendingTransactionListResponse(BaseModel):
 
 
 class CategoryUpdateBody(BaseModel):
-    category: str
+    category: Optional[str] = None
+    is_transfer: Optional[bool] = None
 
 
 class SpendingRuleBody(BaseModel):
@@ -455,42 +456,80 @@ async def update_spending_category(
     db=Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
-    """Edit a spending row's category (inline edit from the UI table).
+    """Edit a spending row's category and/or its transfer flag.
 
     Recategorizing a row away from "Transfer" also clears its transfer flag
     and link fields — otherwise the row would keep showing the "Transfer"
     badge and stay excluded from spent_eur/income_eur even though the user
-    just said it isn't a transfer. Only this row is reset; its counterpart
-    (the other leg of the pair, if any) is left untouched — a known,
-    accepted limitation for this pass.
+    just said it isn't a transfer.
 
-    Recategorizing TO "Transfer" does not itself set is_transfer=True — that
-    flag is only meant to reflect a genuine match made by the transfer
-    matcher, not a manual category edit.
+    Recategorizing TO "Transfer" still does not by itself set is_transfer —
+    that stays an explicit decision, made by passing ``is_transfer``.
+
+    **Marking a transfer by hand** (``is_transfer: true``) exists because the
+    matcher can only pair an outflow with a counterpart that has actually been
+    imported. A genuine move to an account you don't track, or one whose
+    statement you haven't loaded, otherwise counts as spending forever, with no
+    way to say otherwise. A hand-marked row carries no link (there is no
+    counterpart row to point at) and is categorized "Transfer" to match what
+    the matcher does, so every surface that already excludes transfers —
+    /summary, /trend, and the Budget — excludes it too, consistently.
+
+    Unmarking (``is_transfer: false``) clears the flag and the link, and resets
+    a genuine reciprocal counterpart the same way deleting the row would, so
+    the other leg is never left orphaned and excluded from totals forever.
     """
     existing = db.get_spending_transaction(spending_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Spending transaction not found")
-
-    category = body.category.strip()
-    if not category:
-        raise HTTPException(status_code=400, detail="Category cannot be empty")
-
-    root = db.get_spending_category_root(category)
-    if not _sign_matches_root(root, existing["amount"]):
+    if body.category is None and body.is_transfer is None:
         raise HTTPException(
             status_code=400,
-            detail=f"'{category}' is an {root} category; this transaction is {'a debit' if existing['amount'] < 0 else 'a credit'}",
+            detail="Nothing to update: pass category, is_transfer, or both",
         )
 
-    update_kwargs = {"category": category}
-    if category != "Transfer" and existing.get("is_transfer"):
+    update_kwargs: dict = {}
+    category = None
+    if body.category is not None:
+        category = body.category.strip()
+        if not category:
+            raise HTTPException(status_code=400, detail="Category cannot be empty")
+        root = db.get_spending_category_root(category)
+        if not _sign_matches_root(root, existing["amount"]):
+            raise HTTPException(
+                status_code=400,
+                detail=f"'{category}' is an {root} category; this transaction is {'a debit' if existing['amount'] < 0 else 'a credit'}",
+            )
+        update_kwargs["category"] = category
+
+    if body.is_transfer is True:
+        update_kwargs["is_transfer"] = True
+        # No counterpart exists to link to — that's the whole point of marking
+        # by hand — so the link fields stay empty.
+        update_kwargs["transfer_link_type"] = None
+        update_kwargs["transfer_link_id"] = None
+        update_kwargs.setdefault("category", "Transfer")
+        category = update_kwargs["category"]
+    elif body.is_transfer is False:
         update_kwargs["is_transfer"] = False
         update_kwargs["transfer_link_type"] = None
         update_kwargs["transfer_link_id"] = None
+        db.reset_transfer_counterpart(spending_id)
+    elif (
+        category is not None and category != "Transfer" and existing.get("is_transfer")
+    ):
+        update_kwargs["is_transfer"] = False
+        update_kwargs["transfer_link_type"] = None
+        update_kwargs["transfer_link_id"] = None
+        db.reset_transfer_counterpart(spending_id)
 
     db.update_spending_transaction(spending_id, **update_kwargs)
-    return {"id": spending_id, "category": category}
+    updated = db.get_spending_transaction(spending_id)
+    return {
+        "id": spending_id,
+        "category": updated["category"],
+        "is_transfer": bool(updated["is_transfer"]),
+    }
 
 
 @router.delete("/{spending_id}", response_model=dict)
