@@ -560,6 +560,34 @@ def test_seeding_still_prefers_children_when_they_hold_the_money(tmp_path):
     assert {p["ref_key"] for p in proposals} == {"Salary"}
 
 
+def test_months_without_activity_names_only_the_empty_months(seeded):
+    db, bank, _broker = seeded
+    budget_id = db.create_budget("Base")
+    db.create_budget_line(budget_id, "spending", "Housing", 1000.0)
+    result = bs.compute_budget_variance(
+        db, budget_id, ["2026-07", "2026-08", "2026-09"], _fx
+    )
+    # The fixture has activity in July and August, none in September.
+    assert bs.months_without_activity(result) == ["2026-09"]
+    assert bank  # fixture guard
+
+
+def test_months_without_activity_counts_unbudgeted_rows_as_activity(seeded):
+    db, _bank, _broker = seeded
+    budget_id = db.create_budget("Empty")
+    # No lines at all, so every euro lands in `unbudgeted` -- which is still
+    # activity, and must not read as an un-imported month.
+    result = bs.compute_budget_variance(db, budget_id, ["2026-07"], _fx)
+    assert bs.months_without_activity(result) == []
+
+
+def test_months_without_activity_tolerates_an_empty_report():
+    assert bs.months_without_activity({}) == []
+    assert bs.months_without_activity({"months": ["2026-07"], "sections": []}) == [
+        "2026-07"
+    ]
+
+
 def test_variance_raises_for_an_unknown_budget(seeded):
     db, _bank, _broker = seeded
     with pytest.raises(ValueError):

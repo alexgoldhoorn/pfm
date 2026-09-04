@@ -209,6 +209,21 @@ class TestGoalsOffTrack:
         assert check_goals_off_track(test_database) == []
 
 
+def _budget_activity_this_month(db, amount=25.0):
+    """One real spending row this month, so the no-activity guard stays off."""
+    spend_id = db.find_spending_category_by_name("Spend")["id"]
+    if db.find_spending_category_by_name("Sundries") is None:
+        db.create_spending_category("Sundries", parent_id=spend_id)
+    bank = db.get_or_create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_transaction(
+        bank,
+        f"{date.today().strftime('%Y-%m')}-01",
+        "Shop",
+        -amount,
+        category="Sundries",
+    )
+
+
 def _budget_with_activity(db, planned, spent, category="Groceries"):
     """An active budget with one spending line, plus this month's actual spend."""
     spend_id = db.find_spending_category_by_name("Spend")["id"]
@@ -264,12 +279,27 @@ class TestBudgetOverruns:
             i for i in check_budget_overruns(test_database) if "line" in i["id"]
         ] == []
 
+    def test_silent_when_this_month_has_no_imported_activity(self, test_database):
+        """A missing statement is not a budgeting problem.
+
+        Regression: with nothing imported yet, every line reads as zero actual,
+        so a contribution line looked "behind plan" on the 1st of every month.
+        """
+        broker = test_database.get_or_create_portfolio("Example Broker")
+        budget_id = test_database.create_budget("Base", is_active=True)
+        test_database.create_budget_line(budget_id, "investment", str(broker), 500.0)
+        # No spending rows and no bookings at all -> no activity this month.
+        assert check_budget_overruns(test_database) == []
+
     def test_flags_an_investment_line_that_fell_short(self, test_database):
         broker = test_database.get_or_create_portfolio("Example Broker")
         budget_id = test_database.create_budget("Base", is_active=True)
         line_id = test_database.create_budget_line(
             budget_id, "investment", str(broker), 500.0
         )
+        # Some activity this month, so the "nothing imported" guard doesn't
+        # (correctly) silence the whole check.
+        _budget_activity_this_month(test_database)
         items = [
             i
             for i in check_budget_overruns(test_database)
