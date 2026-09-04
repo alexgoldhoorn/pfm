@@ -59,6 +59,11 @@ class AssetUpdateRequest(BaseModel):
         None, max_length=50, description="Market ticker alias (e.g., NVDA, ASML.AS)"
     )
     is_active: Optional[bool] = Field(None, description="Whether asset is active")
+    # Adding a manual price auto-disables this (see add_price / deposits router);
+    # this field is the supported way to turn automatic price updates back on.
+    auto_price: Optional[bool] = Field(
+        None, description="Whether the daily price cron updates this asset"
+    )
 
 
 class AssetResponse(BaseModel):
