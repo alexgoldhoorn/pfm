@@ -96,6 +96,39 @@ class TestAssetRouter:
     @pytest.mark.unit
     @pytest.mark.api
     @pytest.mark.asyncio
+    async def test_update_asset_toggles_auto_price(
+        self, async_test_client: AsyncClient, auth_headers, sample_asset_data
+    ):
+        """auto_price can be turned off and back on via the update endpoint.
+
+        Adding a manual price auto-disables auto_price with no supported way
+        back on before this field existed.
+        """
+        create_response = await async_test_client.post(
+            "/api/v1/assets", json=sample_asset_data, headers=auth_headers
+        )
+        asset_id = create_response.json()["id"]
+
+        off = await async_test_client.put(
+            f"/api/v1/assets/{asset_id}",
+            json={"auto_price": False},
+            headers=auth_headers,
+        )
+        assert off.status_code == status.HTTP_200_OK
+        assert off.json()["auto_price"] is False
+
+        on = await async_test_client.put(
+            f"/api/v1/assets/{asset_id}",
+            json={"auto_price": True, "ticker": "PRAB.DE"},
+            headers=auth_headers,
+        )
+        assert on.status_code == status.HTTP_200_OK
+        assert on.json()["auto_price"] is True
+        assert on.json()["ticker"] == "PRAB.DE"
+
+    @pytest.mark.unit
+    @pytest.mark.api
+    @pytest.mark.asyncio
     async def test_delete_asset(
         self, async_test_client: AsyncClient, auth_headers, sample_asset_data
     ):
