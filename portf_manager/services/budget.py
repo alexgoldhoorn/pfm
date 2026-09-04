@@ -377,6 +377,32 @@ def _collect_booking_actuals(
     return buckets
 
 
+def months_without_activity(variance: Dict) -> List[str]:
+    """Months in a variance report with no imported activity at all.
+
+    Actuals only exist for what has been imported, so a month nobody has
+    imported yet reads as zero of everything — which looks like heroic
+    underspending on a cost and like falling behind on income or a
+    contribution. Any consumer that judges a line against its plan has to
+    exclude these months or it reports noise; the Python twin of the web
+    client's ``budgetMonthsWithoutActivity``.
+    """
+    months = variance.get("months") or []
+    out = []
+    for month in months:
+        total = 0.0
+        for section in variance.get("sections") or []:
+            total += sum(
+                line["actual_eur"].get(month, 0.0) for line in section["lines"]
+            )
+            total += sum(
+                item["actual_eur"].get(month, 0.0) for item in section["unbudgeted"]
+            )
+        if total == 0:
+            out.append(month)
+    return out
+
+
 def compute_budget_variance(
     db,
     budget_id: int,

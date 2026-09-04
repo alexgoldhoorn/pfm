@@ -304,8 +304,16 @@ def check_budget_overruns(db) -> list[dict]:
     """
     from portf_server.routers.budgets import get_budget_summary
 
+    from portf_manager.services.budget import months_without_activity
+
     summary = get_budget_summary(db=db, api_key_info={})
     if not summary:
+        return []
+    # Nothing imported for this month yet, so every line reads as zero actual:
+    # costs look heroically under plan and contributions look behind. That is
+    # a missing statement, not a budgeting problem, and flagging it every
+    # month-start would train the user to ignore this whole category.
+    if months_without_activity(summary):
         return []
 
     items = []

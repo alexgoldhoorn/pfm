@@ -365,7 +365,12 @@ whichever side holds more; a root line and its child lines can't coexist
 A proposed root line's amount is the **whole subtree** total, not the
 root-direct rows alone, since that's what the line will actually measure.
 
-**Action Items**: `check_budget_overruns` (`services/action_items.py`) emits
+**Action Items**: `check_budget_overruns` (`services/action_items.py`) returns
+early when `months_without_activity(summary)` is non-empty — with nothing
+imported for the month yet every line reads as zero actual, so costs look
+heroically under plan and contributions look behind, and flagging that at every
+month-start would train the user to ignore the whole category. Otherwise it
+emits
 `category: "budget"` items — one per line missing plan by both
 `BUDGET_OVERRUN_PCT` (10%) and `BUDGET_OVERRUN_EUR` (€50), reading "over
 budget" for costs and "behind plan" for contributions (income is skipped;
@@ -517,7 +522,7 @@ docker compose build web && docker stop portf_web && WEB_PORT=8080 docker compos
 `saveImportedTransactions(transactions, bookings = [], portfolioId = null)` — always pass bookings array (even if empty) so PDT bookings are saved alongside transactions.
 
 ## Testing
-- Unit tests: `uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e` (1117 passing, 6 skipped); JS: 104 passing
+- Unit tests: `uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e` (1122 passing, 6 skipped); JS: 104 passing
 - JS tests: `make test-js` (Node 24 no longer expands a bare directory passed to `--test`, so the target names `web_client/js/tests/*.test.mjs` explicitly — `node --test web_client/js/tests/` fails with a misleading `MODULE_NOT_FOUND`)
 - Pre-push hook runs full unit suite automatically.
 - F541 fixer: `uv run python scripts/fix_f541.py`
