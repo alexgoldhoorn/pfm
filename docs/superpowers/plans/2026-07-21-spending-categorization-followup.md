@@ -538,7 +538,7 @@ Co-Authored-By: Oz <oz-agent@warp.dev>"
 
 - [ ] **Step 1: Update CLAUDE.md**
 
-In `/home/agoldhoorn/repos/pfm/CLAUDE.md`, find the Spending Tracking section's bullet that starts with `- `GET /api/v1/spending/` (filters: `portfolio_id`, `category`, ...)` — the one listing `GET/POST /api/v1/spending/rules`, `DELETE /api/v1/spending/rules/{id}`, `GET /api/v1/spending/summary?days=30`, `POST /api/v1/spending/rescan-transfers`. Add a new bullet immediately after it:
+In `~/repos/pfm/CLAUDE.md`, find the Spending Tracking section's bullet that starts with `- `GET /api/v1/spending/` (filters: `portfolio_id`, `category`, ...)` — the one listing `GET/POST /api/v1/spending/rules`, `DELETE /api/v1/spending/rules/{id}`, `GET /api/v1/spending/summary?days=30`, `POST /api/v1/spending/rescan-transfers`. Add a new bullet immediately after it:
 
 ```markdown
 - `POST /api/v1/spending/rescan-categories` — re-applies current `spending_rules` to every row still at `category='uncategorized'` (all accounts), same on-demand pattern as `/rescan-transfers`; never touches a row that already has a non-`uncategorized` category, so it's safe to run after adding/editing rules without risk of overwriting a manually-set or previously-matched category. Web: "Rescan categories" button next to "Re-scan transfers" on the Spending page.
@@ -547,7 +547,7 @@ In `/home/agoldhoorn/repos/pfm/CLAUDE.md`, find the Spending Tracking section's 
 
 - [ ] **Step 2: Update PROJECT_STATUS.md**
 
-In `/home/agoldhoorn/repos/pfm/PROJECT_STATUS.md`, bump the "Last updated" line to today's date (check the current date rather than assuming — use whatever `date +%F` reports), and insert a new "Recent" line immediately after it, before the current top entry:
+In `~/repos/pfm/PROJECT_STATUS.md`, bump the "Last updated" line to today's date (check the current date rather than assuming — use whatever `date +%F` reports), and insert a new "Recent" line immediately after it, before the current top entry:
 
 ```markdown
 **Recent (v2.5.24):** **Categorize already-imported Spending rows.** New `POST /api/v1/spending/rescan-categories` re-applies current rules to every row still `uncategorized` (manual button, mirrors the existing Rescan Transfers pattern) — safe to run after adding/editing rules since it never overwrites an already-set category. The Spending page's existing bulk-select checkboxes gained a "Suggest categories (AI)" action: calls the existing (unchanged) `/suggest-categories` endpoint against selected uncategorized rows, deduplicated by description, and opens an editable review panel — nothing saves until you click Apply, at which point accepted suggestions both categorize the matching rows and create a new rule each, so Rescan (or the next import) picks up the same merchant automatically afterward.

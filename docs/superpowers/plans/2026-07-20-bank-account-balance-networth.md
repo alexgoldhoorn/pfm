@@ -20,7 +20,7 @@
 - Web changes only go live after: `docker compose build web && docker stop portf_web && WEB_PORT=8080 docker compose up -d web`
 - Python changes only go live after: `docker exec portf_backend_dev kill -HUP 1`
 - No real personal/financial data anywhere (tests, fixtures) — fictional data only
-- Public repo: no home-directory paths (`/home/agoldhoorn/` → `~/`) in anything committed
+- Public repo: no home-directory paths (`~/` → `~/`) in anything committed
 - Tests that touch `_get_fx_rate`/`_fx` should use `currency="EUR"` throughout — it short-circuits to `1.0` with no network call (`portf_server/routers/portfolios.py:58-59`); no FX mocking needed
 
 ---

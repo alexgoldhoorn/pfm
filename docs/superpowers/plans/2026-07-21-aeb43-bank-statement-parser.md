@@ -733,7 +733,7 @@ Co-Authored-By: Oz <oz-agent@warp.dev>"
 
 - [ ] **Step 1: Update CLAUDE.md**
 
-In `/home/agoldhoorn/repos/pfm/CLAUDE.md`, find the "Spending Tracking"
+In `~/repos/pfm/CLAUDE.md`, find the "Spending Tracking"
 section's bullet that starts with `- **Deferred**: dedicated parsers for
 Abanca, Caixa Enginyers, Revolut, and MyInvestor-cash...` and replace it
 with:
@@ -760,7 +760,7 @@ with:
 
 - [ ] **Step 2: Update PROJECT_STATUS.md**
 
-In `/home/agoldhoorn/repos/pfm/PROJECT_STATUS.md`, change line 8 from:
+In `~/repos/pfm/PROJECT_STATUS.md`, change line 8 from:
 
 ```
 Last updated: 2026-07-20
