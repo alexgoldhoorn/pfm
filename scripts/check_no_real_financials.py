@@ -12,7 +12,7 @@ a hook that fires on every legitimate example teaches people to pass
 example:
 
 - **Money with cents, in Markdown.** Invented figures in prose are round
-  ("€1,000", "€50k"); ``€1,887.70`` is copied from a statement. Code and tests
+  ("€1,000", "€50k"); ``€1,234.56`` is copied from a statement. Code and tests
   are exempt — a fixture price of ``155.00`` is normal and carries no meaning.
 - **Six-figure amounts, in Markdown.** Net-worth-scale numbers.
 - **ISINs outside an allowlist**, anywhere. An ISIN names a specific security,
@@ -125,7 +125,9 @@ def main(argv: list[str]) -> int:
         path = Path(name)
         if path.suffix not in TEXT_SUFFIXES or not path.is_file():
             continue
-        # This file necessarily contains the patterns it hunts for.
+        # This file necessarily contains the patterns it hunts for. That is
+        # an exemption for the regexes and the ISIN allowlist only -- every
+        # illustrative figure in here must still be invented.
         if path.name == Path(__file__).name:
             continue
         try:
