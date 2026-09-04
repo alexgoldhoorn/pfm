@@ -21,7 +21,7 @@
 - Web changes only go live after: `docker compose build web && docker stop portf_web && WEB_PORT=8080 docker compose up -d web`
 - Python changes only go live after: `docker exec portf_backend_dev kill -HUP 1`
 - No real personal/financial data anywhere (tests, fixtures, sample files) — use fictional data (e.g. "MERCADONA COMPRA", fictional amounts); no real IBANs/account numbers
-- Public repo: no home-directory paths (`/home/agoldhoorn/` → `~/`) in anything committed
+- Public repo: no home-directory paths (`~/` → `~/`) in anything committed
 
 ---
 

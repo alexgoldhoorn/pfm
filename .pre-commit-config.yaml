@@ -1,4 +1,15 @@
 repos:
+  # Blocks real personal financial data reaching this public repo. Runs first
+  # so a privacy failure is the first thing reported, not buried under
+  # formatting noise.
+  - repo: local
+    hooks:
+      - id: no-real-financials
+        name: no real financial data
+        entry: python3 scripts/check_no_real_financials.py
+        language: system
+        pass_filenames: true
+
   - repo: https://github.com/psf/black
     rev: 25.1.0
     hooks:

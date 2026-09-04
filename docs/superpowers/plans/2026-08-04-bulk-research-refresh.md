@@ -795,7 +795,7 @@ Replace with (adds the bulk-refresh wiring between the tabs block and `recompute
 
 Run:
 ```bash
-cd /home/agoldhoorn/repos/pfm && docker compose build web && docker stop portf_web && WEB_PORT=8080 docker compose up -d web
+cd ~/repos/pfm && docker compose build web && docker stop portf_web && WEB_PORT=8080 docker compose up -d web
 ```
 Expected: build succeeds, container restarts healthy (`docker ps` shows `portf_web` "Up ... (healthy)").
 
