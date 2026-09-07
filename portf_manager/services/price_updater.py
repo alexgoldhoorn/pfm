@@ -7,9 +7,13 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+# Coins whose Yahoo symbol is not the plain "{SYMBOL}-EUR" pair, usually
+# because the bare ticker collides with an equity. Each entry is
+# (yahoo symbol, quote currency); the quote is converted to EUR on ingest.
 _CRYPTO_YF_OVERRIDES: dict[str, tuple[str, str]] = {
     "UNI": ("UNI7083-USD", "USD"),
     "SUI": ("SUI20947-USD", "USD"),
+    "INV": ("INV-USD", "USD"),
 }
 
 
