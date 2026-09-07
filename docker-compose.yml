@@ -129,6 +129,10 @@ services:
       context: ./web_client
       dockerfile: Dockerfile
     container_name: portf_web
+    deploy:
+      resources:
+        limits:
+          memory: 256m   # 26x 10d peak (10M)
     profiles:
       - dev
       - prod
