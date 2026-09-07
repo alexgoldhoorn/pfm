@@ -13,6 +13,7 @@ Two failures motivated these tests, both visible in the daily finance digest:
   the same payload, reading as a -99% day.
 """
 
+from portf_manager.services.price_updater import _CRYPTO_YF_OVERRIDES
 from portf_manager.services.research import _normalize_gbp_fundamentals
 from portf_server.routers.research import _yf_symbol
 
@@ -34,6 +35,14 @@ class TestYfSymbol:
         # fundamentals must follow it or the two describe different things.
         asset = {"symbol": "SUI", "ticker": "SUI-EUR", "asset_type": "crypto"}
         assert _yf_symbol(asset, "SUI") == "SUI20947-USD"
+
+    def test_every_override_coin_resolves_to_its_override(self):
+        # A coin in the override map must never fall back to "{SYM}-EUR" —
+        # those pairs carry no yfinance data, which is how INV's price sat
+        # frozen at a May figure and SUI reported against Sun Communities.
+        for sym, (want, _ccy) in _CRYPTO_YF_OVERRIDES.items():
+            asset = {"symbol": sym, "ticker": f"{sym}-EUR", "asset_type": "crypto"}
+            assert _yf_symbol(asset, sym) == want
 
     def test_caller_passing_a_yahoo_pair_does_not_double_the_suffix(self):
         # The finance digest normalizes BTC -> BTC-EUR before calling, so the
