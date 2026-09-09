@@ -10,7 +10,7 @@ import sqlite3
 import logging
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Set
 from pathlib import Path
 
 # Database version for migration tracking
@@ -3866,19 +3866,78 @@ class Database:
         sell_above: Optional[float] = None,
         fair_value: Optional[float] = None,
         notes: Optional[str] = None,
+        clear: Optional[Set[str]] = None,
     ) -> None:
-        """Create or update price targets for an asset."""
+        """Create or update price targets for an asset.
+
+        Manual/partial saves (the UI's target edit form, a saved research
+        note) pass ``None`` for any field left untouched. That is a COALESCE
+        no-op: the existing stored value is kept, so editing one field can't
+        clobber the others.
+
+        ``clear`` says the opposite: "this field was evaluated and is
+        explicitly empty", which ``None`` cannot express on its own. It
+        exists for the automated/bulk research writer — an LLM run that
+        declines to set e.g. ``fair_value`` on a corrected re-run must be
+        able to remove a previously-written bad value, not silently leave it
+        in place (COALESCE would otherwise treat the decline exactly like an
+        untouched field). Name the columns to null in ``clear``; whatever
+        value is passed for a cleared column is ignored.
+
+        Args:
+            asset_id: Asset to upsert the price target row for.
+            buy_below: New buy-below price, or ``None`` to leave unchanged
+                (unless the column is also named in ``clear``).
+            sell_above: New sell-above price, or ``None`` to leave unchanged.
+            fair_value: New fair-value estimate, or ``None`` to leave
+                unchanged.
+            notes: New notes text, or ``None`` to leave unchanged.
+            clear: Column names (subset of ``buy_below``, ``sell_above``,
+                ``fair_value``, ``notes``) to explicitly null instead of
+                leaving untouched.
+
+        Raises:
+            ValueError: If ``clear`` names a column this table doesn't have.
+        """
+        clear = clear or set()
+        valid_columns = {"buy_below", "sell_above", "fair_value", "notes"}
+        unknown = clear - valid_columns
+        if unknown:
+            raise ValueError(
+                f"upsert_price_target: unknown clear field(s): {sorted(unknown)}"
+            )
+
+        # A cleared column always writes NULL, regardless of what (if
+        # anything) was passed in for it.
+        values = {
+            "buy_below": None if "buy_below" in clear else buy_below,
+            "sell_above": None if "sell_above" in clear else sell_above,
+            "fair_value": None if "fair_value" in clear else fair_value,
+            "notes": None if "notes" in clear else notes,
+        }
+        set_clauses = [
+            (
+                f"{col} = NULL"
+                if col in clear
+                else f"{col} = COALESCE(excluded.{col}, {col})"
+            )
+            for col in ("buy_below", "sell_above", "fair_value", "notes")
+        ]
+        set_clauses.append("updated_at = CURRENT_TIMESTAMP")
+
         with self.get_connection() as conn:
             conn.execute(
-                """INSERT INTO price_targets (asset_id, buy_below, sell_above, fair_value, notes)
+                f"""INSERT INTO price_targets (asset_id, buy_below, sell_above, fair_value, notes)
                    VALUES (?, ?, ?, ?, ?)
                    ON CONFLICT(asset_id) DO UPDATE SET
-                       buy_below = COALESCE(excluded.buy_below, buy_below),
-                       sell_above = COALESCE(excluded.sell_above, sell_above),
-                       fair_value = COALESCE(excluded.fair_value, fair_value),
-                       notes = COALESCE(excluded.notes, notes),
-                       updated_at = CURRENT_TIMESTAMP""",
-                (asset_id, buy_below, sell_above, fair_value, notes),
+                       {", ".join(set_clauses)}""",
+                (
+                    asset_id,
+                    values["buy_below"],
+                    values["sell_above"],
+                    values["fair_value"],
+                    values["notes"],
+                ),
             )
             conn.commit()
 

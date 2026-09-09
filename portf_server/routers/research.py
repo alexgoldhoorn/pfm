@@ -881,12 +881,24 @@ def _run_bulk_research_refresh(db) -> None:
                     ),
                 )
                 if c["asset_id"]:
+                    # The LLM evaluates all three of these every run and can
+                    # explicitly decline any of them (null in its response).
+                    # A decline must clear a stale value from an earlier,
+                    # possibly-bad run rather than silently leave it in
+                    # place (COALESCE's usual "untouched" meaning, which
+                    # manual/partial saves still rely on elsewhere).
+                    clear_fields = {
+                        field
+                        for field in ("buy_below", "sell_above", "fair_value")
+                        if result.get(field) is None
+                    }
                     db.upsert_price_target(
                         asset_id=c["asset_id"],
                         buy_below=result.get("buy_below"),
                         sell_above=result.get("sell_above"),
                         fair_value=result.get("fair_value"),
                         notes=(result.get("rationale") or "")[:500] or None,
+                        clear=clear_fields,
                     )
                     # Cache the full LLM dossier too, same as the single-symbol
                     # /generate endpoint, so GET /{symbol} can serve it later.

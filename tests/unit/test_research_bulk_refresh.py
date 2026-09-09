@@ -116,6 +116,21 @@ _NO_DATA_RESULT = {
     "catalysts": [],
     "sources": [],
 }
+# A corrected re-run: buy_below/sell_above are usable, but the LLM explicitly
+# declined fair_value this time (e.g. it previously came back contaminated
+# and the fix is to stop asserting a number at all, not guess a new one).
+_DECLINES_FAIR_VALUE_RESULT = {
+    "fair_value": None,
+    "buy_below": 140.0,
+    "sell_above": 200.0,
+    "recommendation": "HOLD",
+    "confidence": "medium",
+    "summary": "Insufficient data for a fair value estimate.",
+    "rationale": "Strong margins.",
+    "risks": [],
+    "catalysts": [],
+    "sources": [],
+}
 
 
 class TestRunBulkResearchRefresh:
@@ -145,8 +160,11 @@ class TestRunBulkResearchRefresh:
         self, test_database, mocker
     ):
         aid = _held_asset(test_database)
+        # Every field declined here — the safety net that must hold is that
+        # a manually-set row survives an automated run that has nothing
+        # usable to say, not just that one field of it does.
         test_database.upsert_price_target(
-            asset_id=aid, buy_below=90.0, sell_above=150.0
+            asset_id=aid, buy_below=90.0, sell_above=150.0, fair_value=125.0
         )
         note_id = test_database.create_research_note(
             asset_id=aid, symbol="AAPL", thesis="x"
@@ -167,7 +185,40 @@ class TestRunBulkResearchRefresh:
 
         target = test_database.get_price_target(aid)
         assert target["buy_below"] == 90.0
+        assert target["sell_above"] == 150.0
+        assert target["fair_value"] == 125.0
         assert _BULK_RESEARCH["results"][0]["status"] == "no_data"
+
+    def test_declined_fair_value_clears_previous_value(self, test_database, mocker):
+        # Reproduces the incident this change fixes: a bad automated
+        # fair_value survives because a later run that explicitly declines
+        # to set it (None) gets COALESCE'd away instead of clearing it.
+        aid = _held_asset(test_database)
+        test_database.upsert_price_target(
+            asset_id=aid, buy_below=90.0, sell_above=150.0, fair_value=999.0
+        )
+        note_id = test_database.create_research_note(
+            asset_id=aid, symbol="AAPL", thesis="x"
+        )
+        _age_note(test_database, note_id, days_ago=120)
+        mocker.patch(
+            "portf_manager.services.research.fetch_fundamentals", return_value={}
+        )
+        mocker.patch(
+            "portf_manager.services.research.fetch_recent_news", return_value=[]
+        )
+        mocker.patch(
+            "portf_manager.services.research.generate_valuation_report",
+            return_value=dict(_DECLINES_FAIR_VALUE_RESULT),
+        )
+
+        _run_bulk_research_refresh(test_database)
+
+        target = test_database.get_price_target(aid)
+        assert target["fair_value"] is None
+        assert target["buy_below"] == 140.0
+        assert target["sell_above"] == 200.0
+        assert _BULK_RESEARCH["results"][0]["status"] == "updated"
 
     def test_overwrites_stale_target_with_new_usable_data(self, test_database, mocker):
         aid = _held_asset(test_database)
