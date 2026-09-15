@@ -12,6 +12,39 @@ here can affect that internet-facing surface, not just local Claude
 Code/Hermes usage. See `~/mcp/CLAUDE.md`'s "Exception: remote_gateway/
 server.py" section for detail.
 
+The MCP tools are read-only and call the HTTP API; tests live in
+`~/mcp/pfm/test_server.py`, run with `cd ~/mcp/pfm && python3 -m pytest -q .`.
+When an API response changes shape, update the matching tool. The tools read
+fields with `.get(..., 0)`, so a renamed field quietly becomes zero instead of
+raising an error. That already happened to `goals`: it read
+`target_amount`/`current_value` while the API returns `target_amount_eur`/
+`current_networth_eur`, so every goal printed 0.00/0.00. The test pinned the
+wrong names, so it stayed green. The tools added on 2026-09-15 follow the
+web client's rules for data it can't trust:
+- `budget_summary` mirrors `months_without_activity`: no verdicts for a month
+  with nothing imported. It also flags a month still in progress.
+- `wash_sale_check` applies art. 33.5 LIRPF: a 2-month window, or 1 year for
+  unlisted fund units. It matches repurchases against FIFO lots from
+  `/analytics/tax-report` for this year and last. ⚠️ **Don't trust
+  `asset_type` to spot a fund.** No asset in the live DB is typed
+  `mutual_fund`: heuristic imports store index funds as `stock`, and Indexa's
+  funds are `etf` on the `"Funds"` exchange. So `_wash_window_months` counts
+  an asset as a fund if any of these holds:
+  - it is typed `mutual_fund`
+  - its exchange is `"Funds"`
+  - it isn't typed `etf` and its name contains a fund word (fund/idx/fondo/fonds)
+
+  Erring towards the year is the safe side. Crypto, cash and the synthetic
+  `MINTOS` P2P asset are excluded. "Bought recently" only lists positions
+  still held (from `/portfolios/holdings`) and flags those at a loss.
+- The other tools (`networth`, `action_items`, `spending_summary`,
+  `rebalance_analysis`, `data_freshness`) wrap their endpoint one-to-one.
+
+A new tool must also be registered in three places, or it stays local-only:
+the gateway (`~/mcp/remote_gateway/server.py`, including `TOOL_SPECIALIST`),
+the finance agent's tools line (`~/.claude/agents/finance.md`), and the
+persona (`~/agents/finance/persona.md`).
+
 ## Code Style
 - Use **black** code formatting (line length 88). Run: `uv run black <file>`.
 - Comments go on the **line before** the code they describe, not inline.
