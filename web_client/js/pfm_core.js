@@ -123,6 +123,27 @@ function esc(s) {
 }
 window.esc = esc;
 
+// LLM extraction returns "YYYY-MM-DDTHH:MM:SS" when a statement shows an
+// execution time, but <input type="date"> silently renders any value that
+// isn't a bare "YYYY-MM-DD" as blank — so the preview looked like the date was
+// never extracted. Feed the input the date part only.
+function txDateInputValue(d) {
+    const m = /^(\d{4}-\d{2}-\d{2})(?:[T ]|$)/.exec(String(d || '').trim());
+    return m ? m[1] : '';
+}
+window.txDateInputValue = txDateInputValue;
+
+// Re-attach the extracted time on save (duplicate detection is time-aware, so
+// it tells same-day trades apart) — but only while the user left the date as
+// extracted; a hand-edited date no longer belongs to that time.
+function mergeTxDateTime(inputDate, originalDate) {
+    if (!inputDate) return '';
+    const orig = String(originalDate || '').trim();
+    const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2})?)/.exec(orig);
+    return m && m[1] === inputDate ? `${inputDate}T${m[2]}` : inputDate;
+}
+window.mergeTxDateTime = mergeTxDateTime;
+
 // Pure, DOM-free filter+sort for the dashboard Top Positions card (unit-tested
 // in web_client/js/tests/). Drops zero/negative-quantity positions, filters by
 // asset type, sorts by the chosen mode, then takes the top N.

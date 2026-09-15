@@ -653,6 +653,25 @@ test('_categorySimilarity: near-duplicate pair scores above threshold, distinct 
     assert.ok(ctx._categorySimilarity('Groceries', 'Insurance') < ctx.SP_CATEGORY_SIMILARITY_THRESHOLD);
 });
 
+test('txDateInputValue: strips the time so <input type="date"> can show an LLM datetime', () => {
+    const ctx = loadAppIntoContext();
+    assert.equal(ctx.txDateInputValue('2026-09-15T11:31:32'), '2026-09-15');
+    assert.equal(ctx.txDateInputValue('2026-09-15 11:31:32'), '2026-09-15');
+    assert.equal(ctx.txDateInputValue('2026-09-15'), '2026-09-15');
+    assert.equal(ctx.txDateInputValue(''), '');
+    assert.equal(ctx.txDateInputValue(null), '');
+    assert.equal(ctx.txDateInputValue('15/09/2026'), '');
+});
+
+test('mergeTxDateTime: keeps the extracted time only while the date is unchanged', () => {
+    const ctx = loadAppIntoContext();
+    assert.equal(ctx.mergeTxDateTime('2026-09-15', '2026-09-15T11:31:32'), '2026-09-15T11:31:32');
+    assert.equal(ctx.mergeTxDateTime('2026-09-16', '2026-09-15T11:31:32'), '2026-09-16');
+    assert.equal(ctx.mergeTxDateTime('2026-09-15', '2026-09-15'), '2026-09-15');
+    assert.equal(ctx.mergeTxDateTime('2026-09-15', undefined), '2026-09-15');
+    assert.equal(ctx.mergeTxDateTime('', '2026-09-15T11:31:32'), '');
+});
+
 test('_categorySimilarity: empty string never scores 1 against a non-empty string', () => {
     const ctx = loadAppIntoContext();
     assert.equal(ctx._categorySimilarity('', 'Groceries'), 0);
