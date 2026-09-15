@@ -11,9 +11,11 @@ symlink to this file, so the existing Claude registration (which points at the
 Credentials are read from ~/repos/pfm/.env.local at startup.
 """
 
+import calendar
 import json
 import os
 import urllib.request
+from datetime import date
 from typing import Optional
 
 from mcp.server.fastmcp import FastMCP
@@ -925,27 +927,714 @@ def goals() -> str:
     if not data:
         return "No goals defined."
 
-    lines = ["FINANCIAL GOALS:"]
+    lines = ["FINANCIAL GOALS (current = total net worth, same basis as `networth`):"]
     for g in data:
         name = g.get("name", "?")
-        target = g.get("target_amount", 0)
-        current = g.get("current_value", 0)
-        progress = g.get("progress_pct", 0)
+        # Field names as GET /api/v1/goals/ returns them. Reading the pre-EUR
+        # names (target_amount, current_value, ...) silently printed 0.00 EUR.
+        target = g.get("target_amount_eur") or 0
+        current = g.get("current_networth_eur") or 0
+        progress = g.get("progress_pct") or 0
         on_track = g.get("on_track")
         horizon = g.get("target_date", "?")
-        monthly = g.get("required_monthly_contribution")
-        projected = g.get("projected_value")
+        monthly = g.get("required_monthly_eur")
+        projected = g.get("projected_value_eur")
+        contributing = g.get("monthly_contribution_eur")
+        shortfall = g.get("shortfall_eur")
 
         track_str = (
             "  ✅ ON TRACK" if on_track else ("  ⚠️ BEHIND" if on_track is False else "")
         )
-        monthly_str = f"  (need {_fmt_currency(monthly)}/mo)" if monthly else ""
+        monthly_str = ""
+        if monthly:
+            contrib_str = (
+                f", contributing {_fmt_currency(contributing)}/mo"
+                if contributing
+                else ""
+            )
+            monthly_str = f"  (need {_fmt_currency(monthly)}/mo{contrib_str})"
         proj_str = f"  → projected {_fmt_currency(projected)}" if projected else ""
+        short_str = (
+            f"  shortfall {_fmt_currency(shortfall)}"
+            if shortfall and shortfall > 0
+            else ""
+        )
         lines.append(
             f"  {name}: {_fmt_currency(current)} / {_fmt_currency(target)}"
             f"  ({progress:.1f}%)  by {str(horizon)[:10]}"
-            f"{proj_str}{monthly_str}{track_str}"
+            f"{proj_str}{monthly_str}{short_str}{track_str}"
         )
+    return "\n".join(lines)
+
+
+def _today() -> date:
+    """Today's date — a seam so tests can pin the calendar."""
+    return date.today()
+
+
+@mcp.tool()
+def networth() -> str:
+    """
+    Total net worth: live brokerage positions + bank-account balances (from
+    imported bank statements) + active fixed deposits + manually entered assets
+    (home, pension, ...) minus manual liabilities (mortgage, loans). Lists each
+    bank account, deposit and manual item. This is the tool for cash questions —
+    portfolio_holdings only sees invested positions.
+    """
+    try:
+        data = _get("/api/v1/networth/")
+    except Exception as e:
+        return f"Error fetching net worth: {e}"
+
+    liabilities_total = float(data.get("manual_liabilities_eur") or 0)
+    lines = [f"NET WORTH: {_fmt_currency(float(data.get('net_worth_eur') or 0))}"]
+    lines.append(
+        f"  Brokerage (live positions): {_fmt_currency(float(data.get('brokerage_eur') or 0))}"
+    )
+    lines.append(
+        f"  Bank accounts:              {_fmt_currency(float(data.get('bank_accounts_eur') or 0))}"
+    )
+    lines.append(
+        f"  Fixed deposits (active):    {_fmt_currency(float(data.get('deposits_eur') or 0))}"
+    )
+    lines.append(
+        f"  Other assets (manual):      {_fmt_currency(float(data.get('manual_assets_eur') or 0))}"
+    )
+    lines.append(
+        f"  Liabilities (manual):       {_fmt_currency(-liabilities_total if liabilities_total else 0.0)}"
+    )
+
+    accounts = data.get("bank_accounts") or []
+    if accounts:
+        lines.append("\nBank accounts:")
+        for a in accounts:
+            name = a.get("name") or "?"
+            if a.get("balance_eur") is None:
+                lines.append(f"  {name:24s}  no balance imported — not in the total")
+                continue
+            native = ""
+            if a.get("currency") and a["currency"] != "EUR":
+                native = (
+                    f" ({_fmt_currency(float(a.get('balance') or 0), a['currency'])})"
+                )
+            lines.append(
+                f"  {name:24s}  {_fmt_currency(float(a['balance_eur']))}{native}"
+                f"  as of {str(a.get('as_of') or '?')[:10]}"
+            )
+
+    deposits = data.get("deposits") or []
+    if deposits:
+        lines.append("\nFixed deposits:")
+        for d in deposits:
+            rate = d.get("interest_rate")
+            rate_str = f"  {float(rate):.2f}%" if rate is not None else ""
+            lines.append(
+                f"  {d.get('name') or '?':24s}"
+                f"  {_fmt_currency(float(d.get('principal') or 0), d.get('currency') or 'EUR')}"
+                f"{rate_str}  matures {str(d.get('maturity_date') or '?')[:10]}"
+            )
+
+    items = data.get("items") or []
+    groups = (
+        ("Manual assets", [i for i in items if not i.get("is_liability")]),
+        ("Liabilities", [i for i in items if i.get("is_liability")]),
+    )
+    for title, group in groups:
+        if not group:
+            continue
+        lines.append(f"\n{title}:")
+        for i in sorted(group, key=lambda x: -float(x.get("amount_eur") or 0)):
+            amount = float(i.get("amount_eur") or 0)
+            if i.get("is_liability"):
+                amount = -amount
+            lines.append(
+                f"  {i.get('name') or '?':24s}  [{i.get('category') or '?'}]"
+                f"  {_fmt_currency(amount)}"
+                f"  updated {str(i.get('updated_at') or '?')[:10]}"
+            )
+
+    lines.append(
+        "\nBank balances come from imported statements; manual items are only as"
+        " current as their 'updated' date."
+    )
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def action_items(category: Optional[str] = None) -> str:
+    """
+    Open action items pfm has detected, most severe first: stale broker/bank
+    imports (with the date to upload from), data-quality issues, failed price
+    updates, stale research on held positions, off-track goals, budget overruns
+    and watchlist/price-target alerts. Items dismissed in the web UI still show
+    here (dismissal is per-browser), and the Net Worth setup checklist is not
+    included (it is computed in the web client).
+
+    Args:
+        category: Optional filter — 'import', 'data_quality', 'errors', 'goals',
+            'budget' or 'watchlist'.
+    """
+    try:
+        data = _get("/api/v1/action-items/")
+    except Exception as e:
+        return f"Error fetching action items: {e}"
+
+    items = data.get("items") or []
+    if category:
+        items = [
+            i for i in items if (i.get("category") or "").lower() == category.lower()
+        ]
+    if not items:
+        if category:
+            return f"No open action items in category '{category}'."
+        return "No open action items."
+
+    lines = [f"ACTION ITEMS ({len(items)}):"]
+    for i in items:
+        lines.append(
+            f"  [{(i.get('severity') or '?').upper()}] {i.get('title') or ''}"
+            f"  ({i.get('category') or '?'})"
+        )
+        if i.get("detail"):
+            lines.append(f"      {i['detail']}")
+    return "\n".join(lines)
+
+
+def _budget_months_without_activity(summary: dict) -> list[str]:
+    """Months with no imported activity at all in a budget variance report.
+
+    Python twin of portf_manager.services.budget.months_without_activity: a
+    month nobody has imported reads as zero actuals everywhere, which looks
+    like heroic underspending. Any verdict on such a month is noise.
+    """
+    out = []
+    for month in summary.get("months") or []:
+        total = 0.0
+        for section in summary.get("sections") or []:
+            entries = (section.get("lines") or []) + (section.get("unbudgeted") or [])
+            total += sum(
+                float((e.get("actual_eur") or {}).get(month, 0) or 0) for e in entries
+            )
+        if total == 0:
+            out.append(month)
+    return out
+
+
+@mcp.tool()
+def budget_summary() -> str:
+    """
+    The active budget's current month: planned vs actual per section (income,
+    spending, debt, investments) and per line, unbudgeted spending, and net cash
+    flow. Variance is signed so + is always favourable. Actuals exist only for
+    imported bank statements — the output says when a month has no imported
+    activity or is still in progress; relay that instead of calling it
+    "under budget".
+    """
+    try:
+        data = _get("/api/v1/budgets/summary")
+    except Exception as e:
+        return f"Error fetching budget summary: {e}"
+
+    if not data:
+        return "No active budget."
+
+    months = data.get("months") or []
+    idle = _budget_months_without_activity(data)
+    judged = not idle
+    lines = [f"BUDGET — {data.get('budget_name') or '?'} ({', '.join(months)})"]
+    if idle:
+        lines.append(
+            f"⚠️ No imported activity for {', '.join(idle)} yet — every actual reads as"
+            " zero, so the variances are not meaningful. Import bank statements on the"
+            " Spending page first."
+        )
+    else:
+        today = _today()
+        if months and months[-1] == today.strftime("%Y-%m"):
+            month_days = calendar.monthrange(today.year, today.month)[1]
+            if today.day < month_days:
+                lines.append(
+                    f"Month in progress (day {today.day} of {month_days}): actuals are"
+                    " month-to-date against a full-month plan, so costs read under"
+                    " budget and income/contributions behind plan until the month closes."
+                )
+
+    def verdict(obj: dict) -> str:
+        if not judged or obj.get("variance_eur") is None:
+            return ""
+        mark = "✓" if obj.get("favourable") else "✗"
+        return f"  {mark} {float(obj['variance_eur']):+,.2f} EUR"
+
+    for section in data.get("sections") or []:
+        section_lines = section.get("lines") or []
+        unbudgeted = section.get("unbudgeted") or []
+        if not (
+            section_lines
+            or unbudgeted
+            or section.get("planned_total")
+            or section.get("actual_total")
+        ):
+            continue
+        lines.append(
+            f"\n{(section.get('label') or '?').upper()}:"
+            f" planned {_fmt_currency(float(section.get('planned_total') or 0))}"
+            f"  actual {_fmt_currency(float(section.get('actual_total') or 0))}"
+            f"{verdict(section)}"
+        )
+        for ln in section_lines:
+            planned = _fmt_currency(float(ln.get("planned_total") or 0))
+            actual = _fmt_currency(float(ln.get("actual_total") or 0))
+            lines.append(
+                f"  {ln.get('label') or '?':28s} planned {planned:>14s}"
+                f"  actual {actual:>14s}{verdict(ln)}"
+            )
+            if ln.get("link_label") and ln.get("link_amount_eur") is not None:
+                lines.append(
+                    f"    (against {ln['link_label']}:"
+                    f" {_fmt_currency(float(ln['link_amount_eur']))} outstanding)"
+                )
+        for u in unbudgeted:
+            lines.append(
+                f"  unbudgeted: {u.get('label') or '?'}"
+                f" {_fmt_currency(float(u.get('actual_total') or 0))}"
+            )
+        if section.get("unbudgeted_suppressed"):
+            lines.append(
+                "  (broker-side unbudgeted deposits hidden: this budget measures"
+                " investments from bank outflows, and counting both would double the"
+                " same money)"
+            )
+
+    net = data.get("net") or {}
+    if net:
+        lines.append(
+            "\nNet cash flow (income − spending − debt − investment):"
+            f" planned {_fmt_currency(float(net.get('planned_total') or 0))}"
+            f"  actual {_fmt_currency(float(net.get('actual_total') or 0))}{verdict(net)}"
+        )
+        lines.append(
+            "  Debt repayments and investment contributions count as outflows here,"
+            " so a negative net is not the same as losing money."
+        )
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def spending_summary(days: int = 30, trend_months: int = 6) -> str:
+    """
+    Bank-account spending: spent / income / transferred over the last N days,
+    the category breakdown, and a monthly spent/income/net trend. Transfers
+    between own accounts and to brokers are excluded from spending. Only covers
+    imported bank statements.
+
+    Args:
+        days: Look-back window for the totals and categories (default 30).
+        trend_months: Calendar months of trend to include (default 6; 0 = none).
+    """
+    try:
+        data = _get("/api/v1/spending/summary", {"days": days})
+    except Exception as e:
+        return f"Error fetching spending summary: {e}"
+
+    lines = [f"SPENDING — last {days} days (imported bank accounts):"]
+    lines.append(f"  Spent:        {_fmt_currency(float(data.get('spent_eur') or 0))}")
+    lines.append(f"  Income:       {_fmt_currency(float(data.get('income_eur') or 0))}")
+    lines.append(
+        f"  Transferred:  {_fmt_currency(float(data.get('transferred_eur') or 0))}"
+        "  (between own accounts / to brokers — not spending)"
+    )
+
+    categories = data.get("by_category_eur") or {}
+    if categories:
+        lines.append("\nBy category (absolute EUR, largest first):")
+        ranked = sorted(categories.items(), key=lambda kv: -abs(float(kv[1] or 0)))
+        for cat, amount in ranked[:20]:
+            lines.append(f"  {cat:24s} {_fmt_currency(float(amount or 0)):>14s}")
+
+    if trend_months and trend_months > 0:
+        # Best-effort — the totals above are still worth returning without it.
+        try:
+            trend = _get("/api/v1/spending/trend", {"months": trend_months})
+        except Exception:
+            trend = []
+        if trend:
+            lines.append("\nMONTHLY TREND (transfers excluded):")
+            for m in trend:
+                spent = _fmt_currency(float(m.get("spent_eur") or 0))
+                income = _fmt_currency(float(m.get("income_eur") or 0))
+                lines.append(
+                    f"  {m.get('month') or '?'}  spent {spent:>14s}"
+                    f"  income {income:>14s}  net {float(m.get('net_eur') or 0):+,.2f} EUR"
+                )
+
+    lines.append(
+        "\nOnly imported statements count: a month not imported yet reads as zero,"
+        " and the current month is partial."
+    )
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def rebalance_analysis() -> str:
+    """
+    Current allocation by asset type vs the target allocation set on the pfm
+    Rebalance page: drift in percentage points and EUR, plus suggested buy/sell
+    amounts to get back to target. Asset-type level only, and tax-unaware.
+    """
+    try:
+        data = _get("/api/v1/rebalance/analysis")
+    except Exception as e:
+        return f"Error fetching rebalance analysis: {e}"
+
+    allocations = data.get("allocations") or []
+    if not allocations or not data.get("targets_sum_pct"):
+        return "No allocation targets set (set them on the Rebalance page in the pfm web UI)."
+
+    lines = [
+        f"REBALANCE — total {_fmt_currency(float(data.get('total_value_eur') or 0))}:"
+    ]
+    targets_sum = float(data.get("targets_sum_pct") or 0)
+    if abs(targets_sum - 100) > 0.5:
+        lines.append(
+            f"⚠️ Targets sum to {targets_sum:.1f}%, not 100% — drifts are measured"
+            " against incomplete targets."
+        )
+    for a in sorted(allocations, key=lambda x: -abs(float(x.get("drift_pct") or 0))):
+        lines.append(
+            f"  {a.get('asset_type') or '?':14s}"
+            f" now {float(a.get('current_pct') or 0):5.1f}%"
+            f"  target {float(a.get('target_pct') or 0):5.1f}%"
+            f"  drift {float(a.get('drift_pct') or 0):+.1f}pp"
+            f" ({float(a.get('drift_eur') or 0):+,.2f} EUR)"
+        )
+
+    actions = data.get("actions") or []
+    if actions:
+        lines.append("\nSuggested moves:")
+        for act in actions:
+            lines.append(
+                f"  {(act.get('action') or '?').upper():5s}"
+                f" {act.get('asset_type') or '?':14s}"
+                f" {_fmt_currency(float(act.get('amount_eur') or 0))}"
+                f"  {act.get('reason') or ''}"
+            )
+    else:
+        lines.append("\nWithin tolerance — no moves suggested.")
+    lines.append(
+        "\nIgnores taxes: selling to rebalance can realise gains — run"
+        " wash_sale_check before selling anything at a loss."
+    )
+    return "\n".join(lines)
+
+
+@mcp.tool()
+def data_freshness(stale_days: int = 4) -> str:
+    """
+    How current pfm's price data is: when prices were last refreshed, the
+    latest price date, and which auto-priced held assets are stale or have never
+    been priced. Check this before quoting position values if in doubt.
+
+    Args:
+        stale_days: A price older than this many days counts as stale (default 4).
+    """
+    try:
+        data = _get("/api/v1/analytics/data-freshness", {"stale_days": stale_days})
+    except Exception as e:
+        return f"Error fetching data freshness: {e}"
+
+    lines = ["PRICE DATA FRESHNESS:"]
+    last = str(data.get("last_refresh") or "never")[:16].replace("T", " ")
+    age = data.get("refresh_age_hours")
+    age_str = f" ({float(age):.1f}h ago)" if age is not None else ""
+    lines.append(f"  Last price refresh: {last}{age_str}")
+    lines.append(f"  Prices as of:       {str(data.get('prices_as_of') or '?')[:10]}")
+
+    checked = data.get("checked") or 0
+    threshold = data.get("stale_days_threshold", stale_days)
+    stale = data.get("stale") or []
+    if not stale:
+        lines.append(f"\nAll {checked} priced assets are fresh (≤ {threshold} days).")
+        return "\n".join(lines)
+
+    lines.append(
+        f"\n{data.get('stale_count', len(stale))} of {checked} auto-priced assets need"
+        f" attention (older than {threshold} days, or never priced):"
+    )
+    for s in stale:
+        if s.get("age_days") is None:
+            detail = s.get("reason") or "no price data"
+        else:
+            detail = (
+                f"{s['age_days']}d old (last {str(s.get('price_date') or '?')[:10]})"
+            )
+        lines.append(f"  {s.get('symbol') or '?':12s} {detail}  {s.get('name') or ''}")
+    return "\n".join(lines)
+
+
+# ── Antiaplicación (Spanish wash-sale rule, art. 33.5.f/g LIRPF) ─────────────
+# A loss on selling securities is not deductible while homogeneous securities
+# bought within 2 months before or after the sale (listed) — or 1 year
+# (unlisted, e.g. most mutual-fund units) — are still held. Crypto is not
+# "valores homogéneos" in the usual reading, so it is left out, as are cash and
+# the synthetic MINTOS asset (P2P loan principal, not a security).
+_WASH_LISTED_MONTHS = 2
+_WASH_UNLISTED_MONTHS = 12
+_WASH_EXCLUDED_TYPES = {"crypto", "cash"}
+_WASH_EXCLUDED_SYMBOLS = {"MINTOS"}
+_FUND_NAME_WORDS = {"fund", "idx", "fondo", "fonds"}
+
+
+def _add_months(d: date, months: int) -> date:
+    """Shift a date by calendar months, clamping to the target month's end."""
+    index = d.year * 12 + (d.month - 1) + months
+    year, month0 = divmod(index, 12)
+    month = month0 + 1
+    return date(year, month, min(d.day, calendar.monthrange(year, month)[1]))
+
+
+def _parse_date(value: object) -> Optional[date]:
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except (TypeError, ValueError):
+        return None
+
+
+def _wash_window_months(asset: dict) -> int:
+    """1 year for unlisted fund units, 2 months for everything else.
+
+    pfm has no reliable fund type — heuristic imports store index funds as
+    "stock", and Indexa's funds are "etf" on the "Funds" exchange — so a fund is
+    recognised by type, by that exchange, or (for anything not typed etf) by a
+    fund word in its name. Erring towards the year is the safe side: a 2-month
+    answer where the law says a year costs the deduction.
+    """
+    asset_type = (asset.get("asset_type") or "").lower()
+    if asset_type == "mutual_fund" or asset.get("exchange") == "Funds":
+        return _WASH_UNLISTED_MONTHS
+    name = (asset.get("name") or "").lower()
+    words = set("".join(c if c.isalnum() else " " for c in name).split())
+    if asset_type != "etf" and words & _FUND_NAME_WORDS:
+        return _WASH_UNLISTED_MONTHS
+    return _WASH_LISTED_MONTHS
+
+
+def _wash_sale_analysis(
+    lots: list,
+    transactions: list,
+    assets: dict,
+    today: date,
+    symbol: Optional[str] = None,
+    holdings: Optional[list] = None,
+) -> dict:
+    """Classify loss sales and recent buys against the antiaplicación window.
+
+    Args:
+        lots: FIFO realised lots (tax-report ``realised_lots``) — each carries
+            symbol, sell_date, purchase_date and gain_loss_eur.
+        transactions: All transactions; only ``buy`` rows are used.
+        assets: symbol -> asset dict (asset_type, exchange, name), to pick the
+            window and skip what the rule does not cover.
+        today: Reference date.
+        symbol: Optional single-symbol filter (case-insensitive).
+        holdings: Optional current positions (symbol, pnl_amount). When given,
+            ``recent_buys`` is limited to positions still held, each flagged
+            with ``at_loss``.
+
+    Returns:
+        ``blocked``: loss sales with a repurchase inside the window. A buy
+        before the sale counts only if FIFO did not consume it for that sale
+        (its date is not one of the sale's lot purchase dates).
+        ``no_rebuy``: loss sales still inside their window with no repurchase
+        yet — buying before ``until`` would block the loss.
+        ``recent_buys``: symbols bought inside the last window — selling them
+        at a loss before ``until`` would be blocked.
+    """
+    wanted = symbol.upper() if symbol else None
+    by_symbol = {str(k).upper(): v or {} for k, v in assets.items()}
+
+    def covered(sym: str) -> bool:
+        asset_type = (by_symbol.get(sym, {}).get("asset_type") or "").lower()
+        return (
+            bool(sym)
+            and (wanted is None or sym == wanted)
+            and sym not in _WASH_EXCLUDED_SYMBOLS
+            and asset_type not in _WASH_EXCLUDED_TYPES
+        )
+
+    def window_months(sym: str) -> int:
+        return _wash_window_months(by_symbol.get(sym, {}))
+
+    buys: dict[str, list[tuple[date, float]]] = {}
+    names: dict[str, str] = {}
+    for t in transactions:
+        sym = str(t.get("symbol") or "").upper()
+        if str(t.get("transaction_type") or "").lower() != "buy" or not covered(sym):
+            continue
+        bought = _parse_date(t.get("transaction_date"))
+        if bought is None:
+            continue
+        buys.setdefault(sym, []).append((bought, float(t.get("quantity") or 0)))
+        names.setdefault(sym, t.get("name") or "")
+
+    # One sale can span several FIFO lots; judge the sale on their summed result.
+    sales: dict[tuple[str, date], dict] = {}
+    for lot in lots:
+        sym = str(lot.get("symbol") or "").upper()
+        sold = _parse_date(lot.get("sell_date"))
+        if not covered(sym) or sold is None:
+            continue
+        gain = lot.get("gain_loss_eur")
+        if gain is None:
+            gain = lot.get("gain_loss")
+        sale = sales.setdefault(
+            (sym, sold),
+            {
+                "result": 0.0,
+                "purchases": set(),
+                "name": lot.get("name") or names.get(sym, ""),
+            },
+        )
+        sale["result"] += float(gain or 0)
+        purchased = _parse_date(lot.get("purchase_date"))
+        if purchased:
+            sale["purchases"].add(purchased)
+
+    blocked, no_rebuy = [], []
+    for (sym, sold), sale in sorted(sales.items(), key=lambda kv: kv[0][1]):
+        if sale["result"] >= 0:
+            continue
+        window = window_months(sym)
+        start, end = _add_months(sold, -window), _add_months(sold, window)
+        blocking = sorted(
+            (d, q)
+            for d, q in buys.get(sym, [])
+            if start <= d <= end and d not in sale["purchases"]
+        )
+        base = {
+            "symbol": sym,
+            "name": sale["name"],
+            "sell_date": sold.isoformat(),
+            "loss_eur": round(sale["result"], 2),
+        }
+        if blocking:
+            base["blocking"] = [
+                {"date": d.isoformat(), "quantity": q} for d, q in blocking
+            ]
+            blocked.append(base)
+        elif end > today:
+            base["until"] = end.isoformat()
+            no_rebuy.append(base)
+    no_rebuy.sort(key=lambda n: n["until"])
+
+    # A recent buy only matters for a position still held; a symbol can sit in
+    # several portfolios, so its P&L is summed across them.
+    held: Optional[dict[str, float]] = None
+    if holdings is not None:
+        held = {}
+        for h in holdings:
+            sym = str(h.get("symbol") or "").upper()
+            held[sym] = held.get(sym, 0.0) + float(h.get("pnl_amount") or 0)
+
+    recent_buys = []
+    for sym, rows in buys.items():
+        if held is not None and sym not in held:
+            continue
+        last = max(d for d, _ in rows)
+        until = _add_months(last, window_months(sym))
+        if last <= today < until:
+            item = {
+                "symbol": sym,
+                "name": names.get(sym, ""),
+                "last_buy": last.isoformat(),
+                "until": until.isoformat(),
+            }
+            if held is not None:
+                item["at_loss"] = held[sym] < 0
+            recent_buys.append(item)
+    recent_buys.sort(key=lambda r: r["until"])
+    return {"blocked": blocked, "no_rebuy": no_rebuy, "recent_buys": recent_buys}
+
+
+@mcp.tool()
+def wash_sale_check(symbol: Optional[str] = None) -> str:
+    """
+    Spanish antiaplicación check (art. 33.5 LIRPF — the "2-month rule"): which
+    recent sales at a loss are blocked by a repurchase, which loss sales are
+    still inside their window (don't rebuy yet, with the date it becomes safe),
+    and which positions were bought recently (a sale at a loss now would be
+    blocked). Window: 2 months for listed securities, 1 year for unlisted fund
+    units; crypto not covered. Run this before advising a loss sale or a rebuy.
+
+    Args:
+        symbol: Optional ticker/ISIN to check just one position.
+    """
+    today = _today()
+    try:
+        lots: list = []
+        for year in (today.year - 1, today.year):
+            report = _get("/api/v1/analytics/tax-report", {"year": year})
+            lots += report.get("realised_lots") or []
+        transactions = _get("/api/v1/transactions/")
+        assets = _get("/api/v1/assets/")
+        holdings = _get("/api/v1/portfolios/holdings").get("holdings") or []
+    except Exception as e:
+        return f"Error fetching data for wash-sale check: {e}"
+
+    asset_map = {a["symbol"]: a for a in assets if a.get("symbol")}
+    out = _wash_sale_analysis(lots, transactions, asset_map, today, symbol, holdings)
+
+    def label(item: dict) -> str:
+        name = item.get("name")
+        return (
+            f"{item['symbol']} ({name})"
+            if name and name != item["symbol"]
+            else item["symbol"]
+        )
+
+    scope = f" for {symbol.upper()}" if symbol else ""
+    lines = [
+        f"WASH-SALE CHECK (antiaplicación, art. 33.5 LIRPF){scope} — as of {today.isoformat()}:"
+    ]
+    if out["blocked"]:
+        lines.append(
+            "\nLoss sales blocked by a repurchase (loss deferred while those units are held):"
+        )
+        for b in out["blocked"]:
+            bought = ", ".join(
+                f"{x['date']} ({x['quantity']:g} units)" for x in b["blocking"]
+            )
+            lines.append(
+                f"  {label(b)}: sold {b['sell_date']}, loss {_fmt_currency(b['loss_eur'])}"
+                f" — blocked by buy(s) on {bought}"
+            )
+    if out["no_rebuy"]:
+        lines.append("\nLoss sales still inside the window — don't rebuy yet:")
+        for n in out["no_rebuy"]:
+            lines.append(
+                f"  {label(n)}: sold {n['sell_date']}, loss {_fmt_currency(n['loss_eur'])}"
+                f" — buying it again before {n['until']} would block that loss"
+            )
+    if out["recent_buys"]:
+        lines.append(
+            "\nHeld positions bought recently — a sale at a loss would be blocked:"
+        )
+        for r in out["recent_buys"]:
+            loss_str = " (currently at a loss)" if r.get("at_loss") else ""
+            lines.append(
+                f"  {label(r)}{loss_str}: last bought {r['last_buy']}"
+                f" — a sale at a loss before {r['until']} is not deductible yet"
+            )
+    if not any(out.values()):
+        lines.append(
+            "  Nothing affected: no recent loss sales and no held position bought"
+            " inside an antiaplicación window."
+        )
+    lines.append(
+        "\nWindows: 2 months before/after the sale for listed securities; 1 year for"
+        ' unlisted fund units (typed mutual_fund, on the "Funds" exchange, or named'
+        " as a fund). Crypto, cash and Mintos P2P are excluded. Repurchases are"
+        " matched against FIFO lots — a screen, so confirm edge cases before filing."
+    )
     return "\n".join(lines)
 
 
