@@ -786,7 +786,7 @@ def research_compare() -> str:
         if sell_above:
             extra.append(f"sell>{_fmt_currency(sell_above, cur)}")
         if conviction:
-            extra.append(conviction)
+            extra.append(f"conviction {conviction}/5")
         extra_str = "  " + "  ".join(extra) if extra else ""
         lines.append(
             f"  {sym:12s}  {_fmt_currency(price, cur):>14s}  fv {fv_str:>14s}  {upside_str:>8s}{extra_str}"
