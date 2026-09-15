@@ -818,7 +818,7 @@ function setupChatPage() {
         const rows = transactions.map((tx, i) => `
             <tr>
                 <td><input class="form-check-input chat-tx-select" type="checkbox" checked data-idx="${i}"></td>
-                <td><input type="date" class="form-control form-control-sm chat-tx-date" data-idx="${i}" value="${escapeForAttr(tx.date || '')}"></td>
+                <td><input type="date" class="form-control form-control-sm chat-tx-date" data-idx="${i}" value="${escapeForAttr(txDateInputValue(tx.date))}"></td>
                 <td>
                     <input type="text" class="form-control form-control-sm chat-tx-symbol mb-1" data-idx="${i}" value="${escapeForAttr(tx.symbol || '')}" placeholder="Symbol">
                     <input type="text" class="form-control form-control-sm chat-tx-name" data-idx="${i}" value="${escapeForAttr(tx.asset_name || '')}" placeholder="Name">
@@ -867,7 +867,7 @@ function setupChatPage() {
                 name: f('chat-tx-name', i).value || f('chat-tx-symbol', i).value,
                 asset_type: 'stock',
                 tx_type: f('chat-tx-type', i).value,
-                date: f('chat-tx-date', i).value,
+                date: mergeTxDateTime(f('chat-tx-date', i).value, transactions[i] && transactions[i].date),
                 quantity: parseFloat(f('chat-tx-qty', i).value) || 0,
                 price: parseFloat(f('chat-tx-price', i).value) || 0,
                 currency: (f('chat-tx-currency', i).value || 'EUR').toUpperCase(),
@@ -1654,7 +1654,7 @@ function setupImportExportPage() {
             const rows = extractedText.map((tx, i) => `
                 <tr class="${tx.is_duplicate ? 'table-warning' : ''}">
                     <td><input class="form-check-input io-tx-select" type="checkbox" ${tx.is_duplicate ? '' : 'checked'} data-idx="${i}" data-dup="${tx.is_duplicate ? '1' : '0'}"></td>
-                    <td><input type="date" class="form-control form-control-sm" id="iotx_date_${i}" value="${escapeForAttr(tx.date || '')}">
+                    <td><input type="date" class="form-control form-control-sm" id="iotx_date_${i}" value="${escapeForAttr(txDateInputValue(tx.date))}">
                         ${tx.is_duplicate ? dupBadge : ''}</td>
                     <td>
                         <input type="text" class="form-control form-control-sm mb-1" id="iotx_symbol_${i}" value="${escapeForAttr(tx.symbol || '')}" placeholder="Symbol">
@@ -1698,7 +1698,7 @@ function setupImportExportPage() {
             name: document.getElementById(`iotx_name_${i}`).value || document.getElementById(`iotx_symbol_${i}`).value,
             asset_type: 'stock',
             tx_type: document.getElementById(`iotx_type_${i}`).value,
-            date: document.getElementById(`iotx_date_${i}`).value,
+            date: mergeTxDateTime(document.getElementById(`iotx_date_${i}`).value, extractedText[i] && extractedText[i].date),
             quantity: parseFloat(document.getElementById(`iotx_qty_${i}`).value) || 0,
             price: parseFloat(document.getElementById(`iotx_price_${i}`).value) || 0,
             currency: (document.getElementById(`iotx_currency_${i}`).value || 'EUR').toUpperCase(),
