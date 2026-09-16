@@ -2019,7 +2019,7 @@ async function loadAnalyticsDiversification() {
             { title: 'By Asset Class', data: d.by_asset_class, upper: true },
             { title: 'By Region (equity)', data: _labelRegions(d.by_region_equity), upper: false },
             { title: 'By Sector', data: d.by_sector, upper: false },
-            { title: 'By Currency Exposure', data: d.by_currency_exposure, upper: true },
+            { title: 'By Currency Exposure (approximate)', data: d.by_currency_exposure, upper: true },
             { title: 'By Asset Type', data: d.by_asset_type, upper: true },
             { title: 'By Country (direct)', data: d.by_country, upper: false }
         ];
