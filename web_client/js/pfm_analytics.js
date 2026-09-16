@@ -1934,11 +1934,11 @@ function renderCoverageBanner(coverage) {
         </div>`;
     }
     const links = unprofiled.map(f => `
-        <a href="#" class="fp-open" data-asset="${f.asset_id}" data-symbol="${esc(f.symbol)}"
+        <a href="#" class="fp-open" data-asset="${esc(f.asset_id)}" data-symbol="${esc(f.symbol)}"
            data-name="${esc(f.name || f.symbol)}">${esc(f.name || f.symbol)}</a>
         <span class="text-muted">(${Fmt.num(f.value_eur, 0)} EUR)</span>`).join(', ');
     const staleLinks = stale.map(f => `
-        <a href="#" class="fp-open" data-asset="${f.asset_id}" data-symbol="${esc(f.symbol)}"
+        <a href="#" class="fp-open" data-asset="${esc(f.asset_id)}" data-symbol="${esc(f.symbol)}"
            data-name="${esc(f.name || f.symbol)}">${esc(f.name || f.symbol)}</a>
         <span class="text-muted">(as of ${esc(f.as_of || '—')})</span>`).join(', ');
     return `<div class="alert alert-warning py-2 small mb-3">
@@ -1958,7 +1958,7 @@ function renderOverlapCard(groups) {
             <div class="d-flex justify-content-between align-items-start gap-2">
                 <div>
                     <span class="badge ${g.kind === 'consolidation_candidate' ? 'bg-warning text-dark' : 'bg-secondary'} me-1">${esc(overlapGroupLabel(g.kind))}</span>
-                    ${g.members.map(m => `<a href="#" class="fp-open" data-asset="${m.asset_id}" data-symbol="${esc(m.symbol)}" data-name="${esc(m.name)}">${esc(m.name)}</a> <span class="text-muted small">(${esc(m.portfolio_name)})</span>`).join(' + ')}
+                    ${g.members.map(m => `<a href="#" class="fp-open" data-asset="${esc(m.asset_id)}" data-symbol="${esc(m.symbol)}" data-name="${esc(m.name)}">${esc(m.name)}</a> <span class="text-muted small">(${esc(m.portfolio_name)})</span>`).join(' + ')}
                     <div class="small text-muted">${esc(g.reason)}${g.transferable ? ' Both are funds, so a traspaso can merge them without realising a gain.' : ''}</div>
                 </div>
                 <div class="text-nowrap small fw-semibold">${g.combined_pct.toFixed(1)}%</div>
