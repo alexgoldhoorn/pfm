@@ -115,6 +115,13 @@ class TestGatherDiversification:
         ):
             assert key in result
 
+    def test_includes_coverage_for_the_health_prompt(self):
+        from portf_manager.services.portfolio_advisor import gather_diversification
+
+        result = gather_diversification(_mock_db(), portfolio_id=None)
+        assert "coverage" in result
+        assert "by_region_equity" in result
+
 
 class TestGatherHoldingsFundamentals:
     def test_empty_returns_empty_list(self):
