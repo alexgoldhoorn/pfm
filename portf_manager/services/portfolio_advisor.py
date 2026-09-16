@@ -178,64 +178,16 @@ def _resolve_sector_country(db, asset: dict, _value: float = 0) -> tuple[str, st
 
 
 def gather_diversification(db, portfolio_id: Optional[int] = None) -> dict[str, Any]:
-    """Sector/country/currency/type breakdown and HHI. Fetches yfinance (cached 7d)."""
-    txns = db.get_all_transactions(portfolio_id=portfolio_id)
-    positions, _ = compute_positions(txns)
+    """Exposure breakdown for the health bundle, funds looked through.
 
-    by_type: dict[str, float] = {}
-    by_currency: dict[str, float] = {}
-    by_sector: dict[str, float] = {}
-    by_country: dict[str, float] = {}
-    by_position: dict[str, float] = {}
-    total = 0.0
+    Delegates to the exposure service: this and /analytics/diversification are
+    the same question and used to be two implementations of it.
+    """
+    from portf_manager.services.exposure import compute_exposure
 
-    for aid, pos in positions.items():
-        if pos["quantity"] <= 0:
-            continue
-        asset = db.get_asset(aid)
-        if not asset:
-            continue
-        cur = asset.get("currency", "EUR")
-        price_data = db.get_latest_price(aid)
-        price = float(price_data["price"]) if price_data else 0.0
-        value = pos["quantity"] * price * _fx(cur)
-        if value <= 0:
-            continue
-        sym = asset["symbol"]
-        total += value
-        by_position[sym] = by_position.get(sym, 0) + value
-        atype = asset.get("asset_type", "other")
-        by_type[atype] = by_type.get(atype, 0) + value
-        by_currency[cur] = by_currency.get(cur, 0) + value
-
-        sector, country = _resolve_sector_country(db, asset, value)
-        by_sector[sector] = by_sector.get(sector, 0) + value
-        by_country[country] = by_country.get(country, 0) + value
-
-    def pct_map(d: dict) -> dict:
-        return (
-            {
-                k: round(v / total * 100, 1)
-                for k, v in sorted(d.items(), key=lambda x: -x[1])
-            }
-            if total
-            else {}
-        )
-
-    hhi = (
-        round(sum((v / total) ** 2 for v in by_position.values()) * 10000, 0)
-        if total
-        else 0.0
-    )
-
-    return {
-        "total_value_eur": round(total, 2),
-        "by_asset_type": pct_map(by_type),
-        "by_currency": pct_map(by_currency),
-        "by_sector": pct_map(by_sector),
-        "by_country": pct_map(by_country),
-        "concentration_hhi": hhi,
-    }
+    result = compute_exposure(db, portfolio_id=portfolio_id, fx=_fx)
+    result.pop("funds", None)
+    return result
 
 
 def gather_fees_and_dividends(db, portfolio_id: Optional[int] = None) -> dict[str, Any]:
