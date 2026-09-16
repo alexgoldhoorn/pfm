@@ -66,7 +66,7 @@ persona (`~/agents/finance/persona.md`).
 ### Database
 SQLite by default (`portfolio.db`), PostgreSQL via `DATABASE_URL` env var. Use `portf_manager/database.py` for SQLite, `database_factory.py` for auto-detection.
 
-**Current schema version: 29.** Migrations run automatically on startup.
+**Current schema version: 30.** Migrations run automatically on startup.
 
 Migration history (condensed — see `_migrate_to_vN` for full schema detail):
 - v5: `bookings` table (deposits/withdrawals); `tax` on `transactions`
@@ -83,6 +83,7 @@ Migration history (condensed — see `_migrate_to_vN` for full schema detail):
 - v27: `spending_categories` (id, name UNIQUE, created_at) — lightweight category name registry, decoupled from `spending_transactions`/`spending_rules` (which keep storing `category` as a free string, no FK) so a category can exist with zero usages. See "Spending Tracking" section below.
 - v28: `spending_categories.parent_id`, `is_root` — hierarchical category tree rooted at fixed "Income" and "Spend" nodes. See "Spending Tracking" section below.
 - v29: `budgets` (id, name UNIQUE, description, is_active, created_at, updated_at), `budget_lines` (id, budget_id FK CASCADE, line_type [`income`|`spending`|`debt`|`investment`], ref_key, monthly_amount, overrides [JSON], link_id, notes, UNIQUE(budget_id, line_type, ref_key)) — named open-ended monthly budgets with budget-vs-actual variance. See "Budgeting" section below.
+- v30: `fund_profiles` (asset_id PK REFERENCES assets(id) ON DELETE CASCADE, benchmark_key, source [`benchmark`|`llm`|`manual`], asset_class/regions/sectors [JSON weight maps], currency_hedged, hedge_currency, as_of, notes, updated_at) — one row per fund-like asset (`etf`/`mutual_fund`/`index`), holding the weight maps that let a fund be "seen through" into asset class, region and sector instead of counted as one opaque line. Nothing is backfilled on migration — an asset with no row is reported as unclassified rather than guessed at. See "Fund look-through" section below.
 
 ⚠️ **New tables must appear in BOTH `_create_all_tables` (fresh DBs) AND `_migrate_to_vN` (existing DBs)** — migration-only adds break fresh installs/tests with "no such table".
 ⚠️ **CHECK constraint rebuilds** require `PRAGMA legacy_alter_table=ON` around the `RENAME` — see `_migrate_to_v13`.
@@ -190,7 +191,8 @@ Plain `def`; gathers 6 data bundles via `ThreadPoolExecutor` → LLM prompt → 
 - `GET /api/v1/analytics/networth-history` | `POST /api/v1/analytics/snapshot` | `POST /api/v1/analytics/backfill-snapshots[?force=]`
 - `period_return` is a **time-weighted return** (chains daily returns, removes contributions via cost-basis delta)
 - `GET /api/v1/analytics/tax-estimate?year=` — IRPF savings base (realised gains + dividends + interest); `irpf_savings_tax()` progressive brackets (19/21/23/27/28%)
-- `GET /api/v1/analytics/diversification` — sector/country/currency/type + Herfindahl HHI (slow, fetches yfinance)
+- `GET /api/v1/analytics/diversification` — sector/country/currency/type + Herfindahl HHI (slow, fetches yfinance), plus fund look-through: `by_region_equity`, `by_currency_exposure`, and a `coverage` block (`classified_pct`, `sector_classified_pct`, `unprofiled`, `stale_profiles`). See "Fund look-through" section below.
+- `GET /api/v1/analytics/fund-overlap` — held funds grouped by shared index family (`kind: "consolidation_candidate"`) or nesting (`kind: "informational"`), each group's `members`, `combined_pct`/`combined_value_eur`, `reason`, and `transferable` (both funds, so a Spanish `traspaso` avoids realising a gain). Plain `def`, same `compute_exposure()` call as `/diversification`.
 - `GET /api/v1/analytics/risk?benchmark=^GSPC` — max drawdown, volatility, Sharpe, `sortino_ratio`, `calmar_ratio`, `beta`, `alpha_pct`. Plain `def` (threadpool).
 - `GET /api/v1/analytics/fees` — plain `def` (blocking `_fx()` calls); amounts converted to EUR at **current** FX via `_fx()`
 - `GET /api/v1/analytics/tax-report?year=` — plain `def`; per-lot FIFO (full-history: prior-year sells consume lots, fees in amounts — see Spanish tax gotcha) + withholding; all amounts converted to EUR at **transaction-date FX** via `_fx_on()` (proceeds at sell-date, cost basis at purchase-date; dividends/withholding at dividend date); withholding counts the `tax` field on **both dividend and interest** rows (`dividend_withholding_eur` + `interest_withholding_eur`); response lot keys: `symbol`, `quantity`, `proceeds`, `cost_basis`, `gain_loss`, `proceeds_eur`, `cost_basis_eur`, `gain_loss_eur`, `purchase_date`; **`TaxTransaction` internal fields use `sell_quantity`/`sell_amount`/`purchase_amount` — different from response keys**
@@ -199,6 +201,74 @@ Plain `def`; gathers 6 data bundles via `ThreadPoolExecutor` → LLM prompt → 
 - `services/tax_rates.py` — IRPF brackets; `GET /api/v1/public/summary` off unless `PORTF_PUBLIC_VIEW=true`
 - Auth: `POST /api/v1/auth/login-key`
 - Cron: `portf-price-alerts.sh` (20:05), `portf-monthly-report.sh` (1st of month 09:00)
+
+### Fund look-through (`portf_manager/services/exposure.py` + `services/fund_profiles.py` + `services/benchmarks.py`, db v30)
+
+A fund or ETF used to count as one opaque line in every exposure breakdown —
+a global-equity fund and a US-only fund looked identical, and two funds
+tracking the same index couldn't be spotted as duplicates. `fund_profiles`
+(one row per `etf`/`mutual_fund`/`index` asset, see the v30 migration note
+above) stores a weight map that splits that fund's value across asset class,
+region and sector, so its underlying holdings — not just its own ticker —
+count toward the totals.
+
+- **Region weights come from `benchmarks.json` (`portf_manager/data/`), never
+  from yfinance.** yfinance has no geography for a fund — `fast_info`/
+  `get_info()` return a sector breakdown for a fund's *own* holdings at best,
+  and nothing at all for a UCITS share class. Region weights are instead
+  looked up by matching a fund to the closest tracked index (`benchmark_key`,
+  e.g. `msci_world`, `msci_em`, `sp500`) and copying that index's published
+  regional split. `benchmarks.json` is **hand-maintained**, each entry
+  carrying its own `as_of` date — index weights drift a few points a year, so
+  `fund_profiles.as_of` (copied from the benchmark at refresh time, or set by
+  hand on a manual/LLM profile) is what `is_stale()` checks against
+  `STALE_AFTER_DAYS` (365) to flag a profile worth refreshing.
+- Sectors, where available, **do** come from yfinance (a live ticker lookup
+  against the fund's own `ticker`), which is why a fund with no resolvable
+  ticker — for example, a UCITS share class Yahoo has no listing for — gets
+  full region/asset-class coverage from its benchmark but empty `sectors`.
+  That's expected, not a bug: don't chase empty sectors on such a fund by
+  inventing a ticker.
+- `POST /{asset_id}/refresh {"benchmark_key": "..."}` copies a benchmark's
+  `asset_class`/`regions` weights onto the fund's profile (plus a live sector
+  fetch if it has a ticker). `POST /{asset_id}/suggest` is the fallback for an
+  index not in `benchmarks.json`: an LLM drafts a weight map from the fund's
+  name/description for **manual review before saving** via `PUT` — never
+  auto-applied. A currency-hedged share class (e.g. "... Eur Hdg") needs a
+  manual `PUT` follow-up setting `currency_hedged: true` and
+  `hedge_currency`, since the benchmark table has no notion of a particular
+  share class being hedged — without it, a EUR-hedged global bond fund
+  reports as USD/JPY currency exposure.
+- **A fund with no profile is named, not folded into "Unknown".**
+  `coverage.unprofiled` lists each one (`asset_id`, `symbol`, `name`,
+  `value_eur`) so a gap in coverage is visible and actionable rather than
+  silently understating every breakdown; `classified_pct`/
+  `sector_classified_pct` are the EUR-weighted share of the portfolio that
+  *does* have a profile.
+- **`by_currency` (quote currency) and `by_currency_exposure` (look-through)
+  answer different questions and are not interchangeable.** `by_currency`
+  groups holdings by the currency their price is quoted in — a EUR-domiciled
+  UCITS ETF tracking the S&P 500 shows as EUR even though its underlying
+  companies earn and trade in USD. `by_currency_exposure` instead derives
+  currency from each fund's *region* weights (region → currency, e.g. North
+  America → USD, Japan → JPY; emerging markets have no single currency and
+  render as an `"EM basket"` bucket) unless the profile is marked
+  `currency_hedged`, in which case that fund's exposure is attributed to
+  `hedge_currency` instead. This is why `by_currency_exposure` is
+  **approximate** (region-to-currency is a coarse proxy, and per-fund FX
+  hedging beyond the explicit `currency_hedged` flag isn't modelled) and
+  usually shows far more USD than the quote-currency view for a portfolio
+  built from EUR-domiciled global-equity funds.
+- **One implementation backs both the endpoint and Portfolio Health.**
+  `exposure.compute_exposure(db, fx=...)` is called by both
+  `GET /api/v1/analytics/diversification` and
+  `portfolio_advisor.gather_diversification()` (which feeds the LLM-scored
+  Portfolio Health report), so the two can't disagree about a fund's
+  look-through breakdown — a repeat of the `dq_reconciliation`-vs-`/dq/*`
+  drift this pattern is meant to avoid elsewhere in the codebase.
+  `find_fund_overlaps()` (same module) groups the per-fund list from
+  `compute_exposure()` by shared `benchmark_key`/index family for
+  `/analytics/fund-overlap` and the `check_fund_exposure` Action Items check.
 
 ### Net Worth API (`portf_server/routers/networth.py`)
 - `GET /api/v1/networth/` — brokerage (live positions) + bank accounts (derived balances, see below) + manual assets/liabilities + **active** fixed deposits (principal only) → `net_worth_eur`. `net_worth_eur(db)` is the shared total-only helper — Goals imports it so the two pages can't drift apart.
@@ -456,7 +526,8 @@ lines still appear in their own section of the variance table.
 - Sync: `GET|PUT /api/v1/sync/pdt-config`, `POST pdt-pull`, `POST pdt-push`, `POST pdt-backup`. Resolution order for `spreadsheet_id`: query param → DB `app_settings` → `GOOGLE_SPREADSHEET_ID` env var.
 
 ### Action Items API (`portf_server/routers/action_items.py` + `services/action_items.py`)
-- `GET /api/v1/action-items/` — plain `def`; aggregates seven independent checks (each wrapped in try/except so one failure doesn't take down the rest), sorted by severity: stale broker imports (`import`, 60+ days no transaction/booking/spending activity — see below), data-quality summary (`data_quality`, reuses `dq_duplicates`/`dq_suspicious` in-process — **not** `dq_reconciliation`, which has no automatic pass/fail threshold, only informational implied-cash figures for manual comparison), price-update-run failures (`errors`, latest run's `error_count`/`error_symbols`), stale research on held positions (`errors`, no `research_notes` row in 90+ days — detects staleness, not past LLM-call failures, since only successful saves are persisted), off-track goals (`goals`, reuses `list_goals`'s `on_track`), watchlist/price-target alerts (`watchlist`, reuses `check_watchlist_alerts` and the extracted `compute_price_target_alerts`), budget overruns (`budget`, reuses `GET /api/v1/budgets/summary` in-process — see the Budgeting section). Response: `{"items": [...], "generated_at": "..."}`, each item `{id, category, severity, title, detail, link_page, context}`.
+- `GET /api/v1/action-items/` — plain `def`; aggregates eight independent checks (each wrapped in try/except so one failure doesn't take down the rest), sorted by severity: stale broker imports (`import`, 60+ days no transaction/booking/spending activity — see below), data-quality summary (`data_quality`, reuses `dq_duplicates`/`dq_suspicious` in-process — **not** `dq_reconciliation`, which has no automatic pass/fail threshold, only informational implied-cash figures for manual comparison), price-update-run failures (`errors`, latest run's `error_count`/`error_symbols`), stale research on held positions (`errors`, no `research_notes` row in 90+ days — detects staleness, not past LLM-call failures, since only successful saves are persisted), off-track goals (`goals`, reuses `list_goals`'s `on_track`), watchlist/price-target alerts (`watchlist`, reuses `check_watchlist_alerts` and the extracted `compute_price_target_alerts`), budget overruns (`budget`, reuses `GET /api/v1/budgets/summary` in-process — see the Budgeting section), and fund look-through gaps (`exposure`, `check_fund_exposure` — see below). Response: `{"items": [...], "generated_at": "..."}`, each item `{id, category, severity, title, detail, link_page, context}`.
+- **`check_fund_exposure`** (`exposure` category, `portf_manager/services/action_items.py`) calls `exposure.compute_exposure()` directly (same module the diversification/fund-overlap endpoints use) and turns its `coverage`/overlap output into items: `medium` for each `coverage.unprofiled` fund (no look-through profile — sector/region/currency all understate it), `low` for each `coverage.stale_profiles` fund (profile `as_of` over a year old), and `low` for each `consolidation_candidate` overlap group (two-plus held funds tracking the same index — the `informational`/nested kind is a legitimate tilt, not flagged). All three link to the Analytics page, where clicking through opens the `#fpModal` profile editor for the named fund(s).
 - **Net Worth gaps are deliberately NOT included server-side** — the frontend Action Items page fetches `GET /api/v1/networth/` + `/networth/cashflow` and runs the existing client-only `computeNetWorthChecklist()` against them, merging the result in via `mergeActionItems()` (`pfm_features.js`). Avoids maintaining the same checklist rules in two languages.
 - Web: new "Action Items" nav page (top-level, next to Dashboard). Dismissal via `localStorage["pfmDismissedActionItems"]`, same `{id, dismissed_at}` shape as the Diagnostics Data Quality tab's `pfmDismissedIssues`. Item ids are deterministic per entity (`import:portfolio:{id}`, `dq:duplicates`, `errors:price-update:{run_id}`, `goals:{goal_id}`, ...) so dismissing one doesn't hide a *new* occurrence (e.g. a later failing price-update run has a different `run_id`).
 - `research.py`'s `/alerts/check` endpoint delegates to `compute_price_target_alerts(db)`, a pure function extracted so the Action Items aggregator can reuse the same alert computation without re-triggering `send_alerts_push()` on every page load.
@@ -538,6 +609,8 @@ Single `index.html` + five JS files (no build step), **must load in order**: `he
 **Dashboard Action Items summary** (`dashActionItems` in `index.html`, `loadDashboardActionItems` in `pfm_features.js`) is a compact banner, directly below the existing Alerts banner, surfacing the same items the Action Items page lists in full: stale imports, data-quality issues, price-update errors, stale research, off-track goals, and the Net Worth setup checklist (via `getActionItems()` + `getNetworth()` + `getCashflow()` → `computeNetWorthChecklist()` → `mergeActionItems()`, the exact same pipeline `loadActionItemsPage()` uses, filtered by the same `pfmDismissedActionItems` localStorage list). The `watchlist` category (price-target/watchlist-alert items) is deliberately excluded here — it reuses the exact same `check_watchlist_alerts`/`compute_price_target_alerts` sources the Alerts banner above it already shows in full, so including it would duplicate those triggers. Hidden entirely when there are no (non-watchlist) items; otherwise shows severity-count badges, the first 3 item titles, and a link to the Action Items page. Independently dismissible via a `pfmDashActionItemsDismissed` localStorage signature hash of the current item-id set (same "reappears only if the set changed" pattern as the Alerts banner's own dismiss) — separate from `pfmDismissedActionItems`, which permanently dismisses an item everywhere including the full Action Items page.
 
 **Dashboard** (`pfm_pages.js`, `loadDashboardPage`) also renders three independent, non-blocking cards alongside the KPI/positions/donut/simulator content: **Bank Accounts** (`renderDashboardBankAccounts` in `pfm_analytics.js`, same `getNetworth().bank_accounts` source as the Net Worth page's card) and **Spending** (`loadDashboardSpending` in `pfm_features.js` — a Spent/Income/Transferred stat row via `renderDashboardSpendingStats` plus the top-5-categories bars via `renderDashboardTopCategories`, both from one `getSpendingSummary(days)` call, plain Bootstrap progress bars rather than Chart.js). The third is **Budget** (`loadDashboardBudget` in `pfm_features.js`, one `GET /api/v1/budgets/summary` call) — current-month planned-vs-actual progress bars per section plus a net line, hidden entirely when there's no active budget with lines. All three cards degrade independently of each other and of the simulator preview. The Spending card's time frame (7/30/90/365 days) is shared with the Spending page's own period selector via `localStorage['pfmSpendingSummaryDays']` (read/written through `getSpendingPeriodDays()`/`setSpendingPeriodDays()`) — picking a period on either page is reflected on the other the next time it loads. The Net Worth page's own "Actual (last 30 days)" comparison widget is separate and stays fixed at 30 days.
+
+**Analytics page — Diversification (fund look-through)** (`pfm_analytics.js`, `loadAnalyticsDiversification`): the existing By Asset Class/Sector/Currency/Type/Country bar blocks gained a By Region (equity) block (`d.by_region_equity`, region-coded labels via `regionLabel()`) and a By Currency Exposure block (`d.by_currency_exposure`, look-through — see the "Fund look-through" CLAUDE.md section above for how it differs from the existing quote-currency By Currency block). Above them, `renderCoverageBanner(coverage)` states the fund-classified share up front — a plain green "All holdings classified" line at ≥99.9% with no gaps, otherwise a warning naming every `coverage.unprofiled`/`stale_profiles` fund as a clickable link (`.fp-open`), because presenting a breakdown as complete when it isn't would be misleading. Below the bar grid, `renderOverlapCard(groups)` (fetched via a second, independently-failing `getFundOverlap()` call so a fund-overlap outage doesn't blank the whole section) lists `consolidation_candidate` groups up front and collapses `informational` (nested) ones behind a "Show N nested holdings" toggle, each group showing its combined %, its members (also `.fp-open` links), and — when `transferable` — a note that a `traspaso` can merge them tax-free. Clicking any `.fp-open` link calls `window.openFundProfileModal(assetId, symbol, name)`, opening **`#fpModal`** (`index.html`): editable region and asset-class weight sliders (`FP_REGION_KEYS`/`FP_CLASS_KEYS`, normalized on save via `normalizeWeights`), a read-only sector display (`_fpRenderSectors` — sectors come from yfinance and hand-entering a split would be busywork), and buttons to refresh from a benchmark or request an LLM `suggest`ed profile, then `PUT` the reviewed result. `fundProfileValidate(profile)` (module-scope, unit-tested) mirrors the server's own profile validation client-side before save.
 
 `window.METRIC_HELP` / `window.PAGE_HELP` in `help_text.js` — tooltip definitions and per-page help modal content. Add entries when adding new pages or non-obvious cards. `METRIC_HELP` is a flat `key: "plain string"` map used directly as a `title=` attribute — there's no shared helper function; the convention is inline `data-bs-toggle="tooltip" title="${METRIC_HELP.xxx}"` (optionally on a `<i class="bi bi-info-circle">` icon next to a label). Bootstrap tooltips need explicit init after dynamic rendering — call `initTooltips()` (defined in `pfm_analytics.js`, exposed as `window.initTooltips`) once after any table/card is (re)rendered with new tooltip-bearing elements; static tooltips already in `index.html` are covered by the `initTooltips()` call in `loadDashboardPage()`.
 
