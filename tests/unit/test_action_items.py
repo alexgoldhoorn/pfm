@@ -525,6 +525,29 @@ class TestFundExposure:
                 "combined_pct": 20.0,
                 "transferable": False,
             },
+            {
+                "kind": "similar",
+                "reason": "Region and sector weights are 97% alike.",
+                "members": [
+                    {
+                        "asset_id": 5,
+                        "symbol": "IE0000000005",
+                        "name": "Example Unbenchmarked Fund A",
+                        "portfolio_name": "A",
+                        "value_eur": 1000.0,
+                    },
+                    {
+                        "asset_id": 6,
+                        "symbol": "IE0000000006",
+                        "name": "Example Unbenchmarked Fund B",
+                        "portfolio_name": "B",
+                        "value_eur": 1000.0,
+                    },
+                ],
+                "combined_value_eur": 2000.0,
+                "combined_pct": 20.0,
+                "transferable": False,
+            },
         ]
         with (
             patch(
@@ -538,6 +561,8 @@ class TestFundExposure:
         ):
             items = action_items.check_fund_exposure(MagicMock())
         ids = [i["id"] for i in items]
+        # Only the consolidation_candidate group raises an item — informational
+        # (a legitimate tilt) and similar (no shared benchmark to act on) do not.
         assert ids == ["exposure:overlap:1,2"]
 
     def test_clean_portfolio_produces_nothing(self):
