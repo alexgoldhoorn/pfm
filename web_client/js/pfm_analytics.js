@@ -2158,7 +2158,20 @@ window.openFundProfileModal = async function (assetId, symbol, name) {
         const key = document.getElementById('fpBenchmark').value;
         if (!key) { document.getElementById('fpProblems').textContent = 'Pick a benchmark first.'; return; }
         try {
-            const filled = await window.apiClient.refreshFundProfile(assetId, key, true);
+            let filled;
+            try {
+                // Never force on the first attempt: a hand-edited profile
+                // (source='manual') must not be clobbered by a stray click.
+                filled = await window.apiClient.refreshFundProfile(assetId, key, false);
+            } catch (err) {
+                if (err.status !== 409) throw err;
+                const proceed = window.confirm(
+                    'This fund has a hand-edited profile. Replacing it with benchmark ' +
+                    'data will overwrite your edits, including resetting any currency-hedged flag. Continue?'
+                );
+                if (!proceed) { document.getElementById('fpProblems').textContent = ''; return; }
+                filled = await window.apiClient.refreshFundProfile(assetId, key, true);
+            }
             _fpWeightRows('fpRegions', FP_REGION_KEYS, filled.regions, regionLabel);
             _fpWeightRows('fpAssetClass', FP_CLASS_KEYS, filled.asset_class, k => k);
             sectors = filled.sectors || {};
