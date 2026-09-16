@@ -86,6 +86,8 @@ def ancestors(key: str) -> list[str]:
 def validate_benchmarks(data: dict) -> list[str]:
     """Return a list of problems with *data*, empty when it is valid."""
     problems: list[str] = []
+    if not data:
+        problems.append("table is empty: no benchmark entries")
     for key, entry in data.items():
         for field in ("label", "family", "asset_class", "regions", "as_of"):
             if field not in entry:

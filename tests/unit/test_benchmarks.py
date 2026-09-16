@@ -68,6 +68,11 @@ class TestValidation:
         }
         assert any("parent" in p for p in bm.validate_benchmarks(bad))
 
+    def test_reports_empty_table(self):
+        problems = bm.validate_benchmarks({})
+        assert len(problems) > 0
+        assert any("empty" in p for p in problems)
+
 
 class TestAncestors:
     def test_walks_the_parent_chain(self):
