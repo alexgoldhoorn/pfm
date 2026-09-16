@@ -102,7 +102,7 @@ def validate_profile(profile: dict) -> list[str]:
     return problems
 
 
-def build_from_benchmark(db, asset: dict, benchmark_key: str) -> dict:
+def build_from_benchmark(db: Any, asset: dict, benchmark_key: str) -> dict:
     """Build a profile: regions from the benchmark, the rest from yfinance."""
     entry = benchmarks.get_benchmark(benchmark_key)
     if entry is None:
