@@ -293,3 +293,86 @@ def get_fundamentals(db, symbol: str, max_age: float = 21600) -> dict:
     if cached:
         return {**cached, "source": "cache", "stale": True}
     return {"symbol": sym, "error": "no data available", "stale": True}
+
+
+# yfinance reports fund sector weights under lowercase compact keys; direct
+# stocks report Title Case names. Both feed one breakdown, so they must agree.
+_YF_SECTOR_NAMES: dict[str, str] = {
+    "basic_materials": "Basic Materials",
+    "communication_services": "Communication Services",
+    "consumer_cyclical": "Consumer Cyclical",
+    "consumer_defensive": "Consumer Defensive",
+    "energy": "Energy",
+    "financial_services": "Financial Services",
+    "healthcare": "Healthcare",
+    "industrials": "Industrials",
+    "realestate": "Real Estate",
+    "technology": "Technology",
+    "utilities": "Utilities",
+}
+
+_YF_ASSET_CLASSES: dict[str, str] = {
+    "stockPosition": "equity",
+    "bondPosition": "bond",
+    "cashPosition": "cash",
+    "preferredPosition": "other",
+    "convertiblePosition": "other",
+    "otherPosition": "other",
+}
+
+
+def _fetch_funds_data(symbol: str):
+    """Live yfinance ``funds_data`` accessor. Patched in tests."""
+    return yf.Ticker(symbol).funds_data
+
+
+def get_fund_composition(db, symbol: str, max_age: float = 7 * 86400) -> dict:
+    """Sector weights and the equity/bond/cash split for a fund.
+
+    yfinance has no country or region data for funds, so geography does not
+    come from here — it comes from the benchmark index the fund tracks. A
+    failed fetch returns empty maps and ``stale``, never zeros, so the caller
+    can report the gap instead of presenting it as a real composition.
+    """
+    sym = symbol.strip().upper()
+    key = f"mkt:fundcomp:{sym}"
+    try:
+        hit = db.cache_get(key)
+    except Exception:
+        hit = None
+    if hit:
+        return {**hit, "source": "cache", "stale": False}
+
+    try:
+        fd = _fetch_funds_data(sym)
+        raw_sectors = fd.sector_weightings or {}
+        raw_classes = fd.asset_classes or {}
+    except Exception as e:
+        logger.warning(f"Could not fetch fund composition for {sym}: {e}")
+        return {
+            "symbol": sym,
+            "sectors": {},
+            "asset_class": {},
+            "error": str(e),
+            "stale": True,
+        }
+
+    sectors = {
+        _YF_SECTOR_NAMES.get(k, k.replace("_", " ").title()): round(float(v), 4)
+        for k, v in raw_sectors.items()
+        if v
+    }
+    asset_class: dict[str, float] = {}
+    for raw_key, value in raw_classes.items():
+        if not value:
+            continue
+        mapped = _YF_ASSET_CLASSES.get(raw_key, "other")
+        asset_class[mapped] = round(asset_class.get(mapped, 0.0) + float(value), 4)
+
+    data = {"symbol": sym, "sectors": sectors, "asset_class": asset_class}
+    if sectors or asset_class:
+        try:
+            db.cache_set(key, data, max_age)
+        except Exception as e:
+            logger.warning(f"fund composition cache_set failed for {sym}: {e}")
+    return {**data, "source": "live", "stale": False}
