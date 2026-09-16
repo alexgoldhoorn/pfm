@@ -2480,6 +2480,68 @@ function createAPIClient() {
             return resp.json();
         },
 
+        async getFundOverlap() {
+            const resp = await fetch(this.baseURL + '/api/v1/analytics/fund-overlap', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async getFundProfiles() {
+            const resp = await fetch(this.baseURL + '/api/v1/fund-profiles/', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error('Failed to load fund profiles');
+            return resp.json();
+        },
+
+        async getBenchmarks() {
+            const resp = await fetch(this.baseURL + '/api/v1/fund-profiles/benchmarks', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error('Failed to load benchmarks');
+            return resp.json();
+        },
+
+        async getFundProfile(assetId) {
+            const resp = await fetch(this.baseURL + '/api/v1/fund-profiles/' + assetId, {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (resp.status === 404) return null;
+            if (!resp.ok) throw new Error('Failed to load fund profile');
+            return resp.json();
+        },
+
+        async saveFundProfile(assetId, payload) {
+            const resp = await fetch(this.baseURL + '/api/v1/fund-profiles/' + assetId, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(payload)
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to save profile');
+            return resp.json();
+        },
+
+        async refreshFundProfile(assetId, benchmarkKey, force = false) {
+            const resp = await fetch(this.baseURL + '/api/v1/fund-profiles/' + assetId + '/refresh', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify({ benchmark_key: benchmarkKey, force })
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to refresh profile');
+            return resp.json();
+        },
+
+        async suggestFundProfile(assetId) {
+            const resp = await fetch(this.baseURL + '/api/v1/fund-profiles/' + assetId + '/suggest', {
+                method: 'POST',
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Suggestion failed');
+            return resp.json();
+        },
+
         async getRisk(benchmark) {
             const params = benchmark ? `?benchmark=${encodeURIComponent(benchmark)}` : '';
             const resp = await fetch(this.baseURL + '/api/v1/analytics/risk' + params, {

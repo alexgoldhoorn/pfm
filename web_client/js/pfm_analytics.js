@@ -1857,6 +1857,64 @@ async function loadTaxOptimizer() {
     }
 }
 
+// Region keys as the API returns them, and how they read in the UI.
+const REGION_LABELS = {
+    north_america: 'North America',
+    europe_ex_uk: 'Europe ex-UK',
+    uk: 'United Kingdom',
+    japan: 'Japan',
+    pacific_ex_japan: 'Pacific ex-Japan',
+    emerging: 'Emerging Markets',
+    unknown: 'Unclassified'
+};
+
+function regionLabel(key) {
+    return REGION_LABELS[key] || key;
+}
+
+function overlapGroupLabel(kind) {
+    return {
+        consolidation_candidate: 'Consolidation candidate',
+        similar: 'Similar exposure',
+        informational: 'Nested (informational)'
+    }[kind] || kind;
+}
+
+// Form inputs are percentages; the API stores fractions.
+function normalizeWeights(map) {
+    const out = {};
+    Object.entries(map || {}).forEach(([key, raw]) => {
+        const value = parseFloat(raw);
+        if (!isFinite(value) || value === 0) return;
+        out[key] = Math.round(value) / 100;
+    });
+    return out;
+}
+
+// Mirrors the server's validate_profile so the form fails before the request.
+function fundProfileValidate(profile) {
+    const problems = [];
+    const sum = (map) => Object.values(map || {}).reduce((a, b) => a + parseFloat(b || 0), 0);
+    const regions = profile.regions || {};
+    if (!Object.keys(regions).length || Math.abs(sum(regions) - 1) >= 0.005) {
+        problems.push(`Region weights must total 100% (currently ${(sum(regions) * 100).toFixed(1)}%).`);
+    }
+    const classes = profile.asset_class || {};
+    if (!Object.keys(classes).length || Math.abs(sum(classes) - 1) >= 0.005) {
+        problems.push(`Asset class weights must total 100% (currently ${(sum(classes) * 100).toFixed(1)}%).`);
+    }
+    const sectors = profile.sectors || {};
+    if (Object.keys(sectors).length && Math.abs(sum(sectors) - 1) >= 0.005) {
+        problems.push(`Sector weights must total 100% or be left empty (currently ${(sum(sectors) * 100).toFixed(1)}%).`);
+    }
+    return problems;
+}
+
+window.regionLabel = regionLabel;
+window.overlapGroupLabel = overlapGroupLabel;
+window.normalizeWeights = normalizeWeights;
+window.fundProfileValidate = fundProfileValidate;
+
 // Wire the two "Load diversification" triggers (header + inline) once.
 function _wireDiversificationButtons() {
     const btn = document.getElementById('anDiversificationBtn');
