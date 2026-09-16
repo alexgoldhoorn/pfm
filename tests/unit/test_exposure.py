@@ -86,6 +86,14 @@ COIN = {
     "currency": "EUR",
     "ticker": None,
 }
+GOLD = {
+    "id": 4,
+    "symbol": "GOLD",
+    "name": "Example Gold ETC",
+    "asset_type": "commodity",
+    "currency": "EUR",
+    "ticker": "GOLD.AS",
+}
 
 
 class TestRegions:
@@ -124,6 +132,17 @@ class TestRegions:
         assert out["by_asset_class"]["crypto"] == 100.0
         assert out["by_region"] == {}
         assert out["by_sector"] == {}
+
+    def test_direct_commodity_is_not_filed_as_equity(self, monkeypatch):
+        monkeypatch.setattr(
+            exposure,
+            "_resolve_sector_country",
+            lambda db, a: ("Unknown", "Global"),
+        )
+        db = _db([GOLD], {4: 100.0})
+        out = exposure.compute_exposure(db, fx=lambda c: 1.0, today=date(2026, 9, 16))
+        assert out["by_asset_class"]["commodity"] == 100.0
+        assert "equity" not in out["by_asset_class"]
 
 
 class TestCoverage:
