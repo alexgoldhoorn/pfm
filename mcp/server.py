@@ -541,8 +541,9 @@ def dividends() -> str:
 @mcp.tool()
 def diversification() -> str:
     """
-    Portfolio diversification breakdown by asset type, sector, currency,
-    and country. Includes concentration Herfindahl index and largest position.
+    Portfolio exposure with funds looked through: asset class, region, sector,
+    country and currency, plus concentration, how much of the book is actually
+    classified, and any funds holding the same exposure.
     """
     try:
         data = _get("/api/v1/analytics/diversification")
@@ -567,10 +568,63 @@ def diversification() -> str:
     hhi = data.get("concentration_hhi")
     if hhi is not None:
         lines.append(f"Concentration HHI: {hhi:.0f}  (10 000 = single asset)")
-    lines += fmt_map("By asset type", data.get("by_asset_type", {}))
-    lines += fmt_map("By currency", data.get("by_currency", {}))
+
+    coverage = data.get("coverage") or {}
+    classified = coverage.get("classified_pct")
+    if classified is not None:
+        lines.append(
+            f"Coverage: {classified:.1f}% of value classified by region, "
+            f"{coverage.get('sector_classified_pct', 0):.1f}% by sector"
+        )
+    for fund in coverage.get("unprofiled", []):
+        lines.append(
+            f"  ! No look-through profile: {fund['name']} "
+            f"({_fmt_currency(fund['value_eur'])})"
+        )
+
+    lines += fmt_map(
+        "By asset class (funds looked through)", data.get("by_asset_class", {})
+    )
+    lines += fmt_map(
+        "By region (equity, funds looked through)", data.get("by_region_equity", {})
+    )
+    lines += fmt_map("By region (all)", data.get("by_region", {}))
     lines += fmt_map("By sector", data.get("by_sector", {}))
-    lines += fmt_map("By country", data.get("by_country", {}))
+    lines += fmt_map(
+        "By currency exposure (approximate)", data.get("by_currency_exposure", {})
+    )
+    lines += fmt_map("By quote currency", data.get("by_currency", {}))
+    lines += fmt_map("By asset type", data.get("by_asset_type", {}))
+    lines += fmt_map("By country (direct holdings)", data.get("by_country", {}))
+
+    # Overlap is a second call, and a useful breakdown must not be lost if it
+    # fails.
+    try:
+        overlap = _get("/api/v1/analytics/fund-overlap")
+    except Exception as e:
+        lines.append(f"\nFund overlap unavailable: {e}")
+        return "\n".join(lines)
+
+    groups = overlap.get("groups", [])
+    if groups:
+        lines.append("\nFunds holding the same exposure:")
+        for group in groups:
+            names = " + ".join(m["name"] for m in group["members"])
+            tag = {
+                "consolidation_candidate": "consolidation candidate",
+                "similar": "similar",
+                "informational": "nested, informational",
+            }.get(group["kind"], group["kind"])
+            lines.append(
+                f"  [{tag}] {names} — {_fmt_currency(group['combined_value_eur'])} "
+                f"({group['combined_pct']:.1f}%)"
+            )
+            lines.append(f"      {group['reason']}")
+            if group.get("transferable"):
+                lines.append(
+                    "      Both are funds: a traspaso can merge them without "
+                    "realising a gain."
+                )
     return "\n".join(lines)
 
 
