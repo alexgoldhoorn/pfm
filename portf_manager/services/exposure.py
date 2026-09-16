@@ -289,3 +289,125 @@ def compute_exposure(
         },
         "funds": funds,
     }
+
+
+# Two profile-less funds count as the same exposure above this cosine
+# similarity of their region+sector weights.
+SIMILARITY_THRESHOLD = 0.95
+
+
+def _member(fund: dict) -> dict:
+    return {
+        "asset_id": fund["asset_id"],
+        "symbol": fund["symbol"],
+        "name": fund["name"],
+        "portfolio_name": fund["portfolio_name"],
+        "value_eur": fund["value_eur"],
+    }
+
+
+def _group(kind: str, reason: str, members: list[dict], total_value_eur: float) -> dict:
+    combined = sum(f["value_eur"] for f in members)
+    return {
+        "kind": kind,
+        "reason": reason,
+        "members": [_member(f) for f in members],
+        "combined_value_eur": round(combined, 2),
+        "combined_pct": (
+            round(combined / total_value_eur * 100, 1) if total_value_eur else 0.0
+        ),
+        # Consolidating mutual funds can go through a traspaso, which defers the
+        # tax; selling an ETF realises the gain.
+        "transferable": all(f["asset_type"] == "mutual_fund" for f in members),
+    }
+
+
+def _cosine(left: dict, right: dict) -> float:
+    """Cosine similarity of two weight maps, 0.0 when either is empty."""
+    keys = set(left) | set(right)
+    dot = sum(left.get(k, 0.0) * right.get(k, 0.0) for k in keys)
+    norm_l = sum(v * v for v in left.values()) ** 0.5
+    norm_r = sum(v * v for v in right.values()) ** 0.5
+    if not norm_l or not norm_r:
+        return 0.0
+    return dot / (norm_l * norm_r)
+
+
+def find_fund_overlaps(funds: list[dict], total_value_eur: float) -> list[dict]:
+    """Group held funds that hold the same thing.
+
+    Three rules, in the order they are reported: funds tracking the same index
+    family (worth consolidating), a narrower fund nested inside a broader one
+    (informational — a deliberate tilt is legitimate), and, for funds with no
+    benchmark, near-identical region and sector weights.
+    """
+    from portf_manager.services.benchmarks import ancestors, get_benchmark
+
+    groups: list[dict] = []
+    seen_member_sets: set[frozenset] = set()
+
+    def _emit(kind: str, reason: str, members: list[dict]) -> None:
+        key = frozenset(f["asset_id"] for f in members)
+        if len(key) < 2 or key in seen_member_sets:
+            return
+        seen_member_sets.add(key)
+        groups.append(_group(kind, reason, members, total_value_eur))
+
+    # 1. Same index family.
+    by_family: dict[str, list[dict]] = {}
+    for fund in funds:
+        entry = get_benchmark(fund.get("benchmark_key") or "")
+        if entry and entry.get("family"):
+            by_family.setdefault(entry["family"], []).append(fund)
+    for family, members in by_family.items():
+        if len(members) > 1:
+            labels = {get_benchmark(f["benchmark_key"])["label"] for f in members}
+            _emit(
+                "consolidation_candidate",
+                f"Both track the same exposure ({', '.join(sorted(labels))}).",
+                members,
+            )
+
+    # 2. Nesting: one fund's index sits inside another's.
+    for outer in funds:
+        outer_key = outer.get("benchmark_key")
+        if not outer_key:
+            continue
+        nested = [
+            inner
+            for inner in funds
+            if inner is not outer
+            and inner.get("benchmark_key")
+            and outer_key in ancestors(inner["benchmark_key"])
+        ]
+        for inner in nested:
+            outer_label = get_benchmark(outer_key)["label"]
+            inner_label = get_benchmark(inner["benchmark_key"])["label"]
+            _emit(
+                "informational",
+                f"{inner_label} is already part of {outer_label}.",
+                [outer, inner],
+            )
+
+    # 3. Similar weights, for funds with no benchmark on either side.
+    unbenchmarked = [f for f in funds if not f.get("benchmark_key")]
+    for i, left in enumerate(unbenchmarked):
+        for right in unbenchmarked[i + 1 :]:
+            if set(left["asset_class"]) != set(right["asset_class"]):
+                continue
+            region_sim = _cosine(left["regions"], right["regions"])
+            sector_sim = _cosine(left["sectors"], right["sectors"])
+            combined = (
+                region_sim
+                if not left["sectors"] or not right["sectors"]
+                else ((region_sim + sector_sim) / 2)
+            )
+            if combined >= SIMILARITY_THRESHOLD:
+                _emit(
+                    "similar",
+                    f"Region and sector weights are {combined * 100:.0f}% alike.",
+                    [left, right],
+                )
+
+    order = {"consolidation_candidate": 0, "similar": 1, "informational": 2}
+    return sorted(groups, key=lambda g: (order[g["kind"]], -g["combined_value_eur"]))
