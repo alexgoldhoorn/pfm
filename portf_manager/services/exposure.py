@@ -77,6 +77,17 @@ VIA_FUNDS_LABEL = "Via funds (see regions)"
 
 UNKNOWN = "unknown"
 
+# Direct-holding asset_type -> by_asset_class bucket. Crypto and the fund
+# types (etf/index/mutual_fund) never reach this map — they are handled
+# earlier, by their own branches. Every other AssetType member must appear
+# here explicitly, or it silently falls into "equity".
+_ASSET_CLASS_BY_TYPE: dict[str, str] = {
+    "stock": "equity",
+    "bond": "bond",
+    "cash": "cash",
+    "commodity": "commodity",
+}
+
 
 def _default_fx(currency: str) -> float:
     """EUR conversion rate. Lazy import, same shim the other services use."""
@@ -131,12 +142,25 @@ def compute_exposure(
             continue
         asset = db.get_asset(asset_id)
         if not asset:
+            # Dropping this position shrinks `total`, the denominator of
+            # classified_pct — a missing asset must not read as "no gap".
+            logger.warning(
+                f"Exposure: skipping asset_id={asset_id}, held quantity "
+                f"{pos['quantity']} but no matching asset row"
+            )
             continue
         price_row = db.get_latest_price(asset_id)
         price = float(price_row["price"]) if price_row else 0.0
         currency = asset.get("currency", "EUR")
         value = pos["quantity"] * price * fx(currency)
         if value <= 0:
+            # Same denominator effect as above, from a missing/zero price or
+            # FX rate rather than a missing asset row.
+            logger.warning(
+                f"Exposure: skipping asset_id={asset_id} "
+                f"symbol={asset.get('symbol')}, non-positive value "
+                f"({pos['quantity']} qty * {price} price * fx({currency}))"
+            )
             continue
 
         symbol = asset["symbol"]
@@ -241,7 +265,7 @@ def compute_exposure(
         _add(by_region, region, value)
         if region != UNKNOWN:
             region_known += value
-        _add(by_class, "bond" if atype == "bond" else "equity", value)
+        _add(by_class, _ASSET_CLASS_BY_TYPE.get(atype, "other"), value)
         _add(by_currency_exposure, currency, value)
 
     def pct_map(source: dict) -> dict:
