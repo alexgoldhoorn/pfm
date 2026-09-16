@@ -2529,7 +2529,13 @@ function createAPIClient() {
                 headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
                 body: JSON.stringify({ benchmark_key: benchmarkKey, force })
             });
-            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to refresh profile');
+            if (!resp.ok) {
+                const err = new Error((await resp.json().catch(() => ({}))).detail || 'Failed to refresh profile');
+                // Callers need to tell "hand-edited profile, needs confirmation"
+                // (409) apart from every other failure mode.
+                err.status = resp.status;
+                throw err;
+            }
             return resp.json();
         },
 
