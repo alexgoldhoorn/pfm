@@ -368,26 +368,36 @@ class TestGetActionItems:
         assert get_action_items(test_database) == []
 
     def test_one_failing_check_does_not_take_down_others(self, test_database):
-        test_database.record_price_update_run(
-            started_at="2026-07-15T20:00:00",
-            duration_seconds=1.0,
-            updated_count=0,
-            skipped_count=0,
-            error_count=1,
-            error_symbols=["AAPL"],
-            source="cron",
-        )
-
+        # _CHECKS is a module-level tuple of function objects, resolved once
+        # at import time — patching a check by name (e.g.
+        # "action_items.check_data_quality") no longer reaches the
+        # aggregator's loop, since the tuple already holds the original
+        # reference. Patch the registry itself instead: a small tuple of one
+        # raising check and one sentinel-returning check, neither of which
+        # touches the database, so this test doesn't depend on any real
+        # check's behaviour.
         def _raise(db):
             raise RuntimeError("boom")
 
+        sentinel_item = {
+            "id": "test:sentinel",
+            "category": "test",
+            "severity": "low",
+            "title": "sentinel",
+            "detail": "",
+            "link_page": "dashboard",
+            "context": {},
+        }
+
+        def _sentinel(db):
+            return [sentinel_item]
+
         with patch(
-            "portf_manager.services.action_items.check_data_quality",
-            new=_raise,
+            "portf_manager.services.action_items._CHECKS",
+            new=(_raise, _sentinel),
         ):
             items = get_action_items(test_database)
-        assert items
-        assert any(i["id"].startswith("errors:price-update:") for i in items)
+        assert items == [sentinel_item]
 
 
 class TestActionItemsEndpoint:
