@@ -385,8 +385,10 @@ def build_analysis_prompt(bundle: dict) -> str:
 - Asset types: {json.dumps(div_data.get('by_asset_type', _empty))}
 - Sectors: {json.dumps(div_data.get('by_sector', _empty))}
 - Countries: {json.dumps(div_data.get('by_country', _empty))}
+- Regions (equity, funds looked through): {json.dumps(div_data.get('by_region_equity', _empty))}
 - Currencies: {json.dumps(div_data.get('by_currency', _empty))}
 - Concentration HHI: {div_data.get('concentration_hhi', 'N/A')} / 10000 (>2500 = high)
+- Data coverage: {div_data.get('coverage', _empty).get('classified_pct', 0)}% of value is classified by region, {div_data.get('coverage', _empty).get('sector_classified_pct', 0)}% by sector. Below 90%, say so in the diversification reason and do not score it confidently — unclassified value is unknown exposure, not absent exposure.
 
 ### Top Holdings
 {holdings_str}
