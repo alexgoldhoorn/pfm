@@ -1922,15 +1922,23 @@ function _labelRegions(map) {
     return out;
 }
 
-// Coverage is stated before any breakdown: below 100%, none of them is complete.
+// Coverage is stated before any breakdown, but the calm state is defined by
+// whether anything is actionable (unprofiled/stale funds), not by hitting a
+// percentage threshold — classified_pct can sit below 100% forever with
+// nothing left to fix, since direct holdings with no country in our data
+// (e.g. the synthetic P2P line, bond ISINs) land in region "unknown" by
+// design and are not a fund-coverage gap. See "Fund look-through" in
+// CLAUDE.md.
 function renderCoverageBanner(coverage) {
     if (!coverage) return '';
     const pct = parseFloat(coverage.classified_pct || 0);
     const unprofiled = coverage.unprofiled || [];
     const stale = coverage.stale_profiles || [];
-    if (pct >= 99.9 && !unprofiled.length && !stale.length) {
+    if (!unprofiled.length && !stale.length) {
         return `<div class="alert alert-success py-2 small mb-3">
-            All holdings classified. Sector coverage ${parseFloat(coverage.sector_classified_pct || 0).toFixed(0)}%.
+            All held funds have a look-through profile. ${pct.toFixed(0)}% of value classified by region,
+            ${parseFloat(coverage.sector_classified_pct || 0).toFixed(0)}% by sector — the remainder is
+            holdings with no region in our data, such as direct bonds.
         </div>`;
     }
     const links = unprofiled.map(f => `
