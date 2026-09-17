@@ -38,6 +38,22 @@ def test_order_independent_of_input_ordering():
     assert round(pos[1]["cost"], 2) == 1500.0
 
 
+def test_same_day_ties_use_time_of_day_when_present():
+    # A same-day buy that happened EARLIER but was imported with a HIGHER id
+    # than the sell (the real Coinbase shape: its CSV export lists rows
+    # newest-first, so sequential import assigns ids in reverse chronological
+    # order for same-day trades). Date-only ties break on id and would
+    # process the sell first, understating realised P&L. A full ISO
+    # timestamp in transaction_date sorts correctly regardless of id order.
+    txs = [
+        _tx(10, "2026-01-01T20:54:56", "sell", 5, 60),  # lower id, later time
+        _tx(11, "2026-01-01T20:38:06", "buy", 5, 50),  # higher id, earlier time
+    ]
+    pos, realised = compute_positions(txs)
+    assert pos[1]["quantity"] == 0
+    assert round(realised, 2) == 10.0  # 60 proceeds - 50 cost, not silently 0
+
+
 def test_stock_split_scales_quantity_keeps_cost():
     # Buy 10@100 (cost 1000), 2-for-1 split → 20 shares, cost unchanged.
     txs = [

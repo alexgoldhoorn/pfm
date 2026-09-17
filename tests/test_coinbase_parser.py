@@ -43,6 +43,16 @@ def test_trade_still_imported_and_crypto_transfer_skipped():
     assert all(b["currency"] == "EUR" for b in r.bookings)  # no crypto bookings
 
 
+def test_trade_date_keeps_time_of_day():
+    # Coinbase's export lists rows newest-first, so two same-day trades get
+    # DB ids in the opposite order from when they actually happened.
+    # compute_positions/dq_suspicious break same-day ties by id, so the date
+    # must carry the time-of-day or same-day ordering silently inverts.
+    r = parse_coinbase_csv(CSV)
+    buy = next(t for t in r.importable if t.symbol == "BTC")
+    assert buy.date == "2025-08-25T20:34:04"
+
+
 STAKING_CSV = (
     "Transactions\nuser@example.com\n"
     + HEADER
