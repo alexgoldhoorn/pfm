@@ -196,11 +196,16 @@ class CoinbaseCSVParser:
             theoretical_subtotal = coinbase_unit_price * quantity
             fees_amount = abs(total_amount - theoretical_subtotal)
 
-        # Parse timestamp to date format
+        # Parse timestamp to date format. Keep the time-of-day: Coinbase's
+        # export lists rows newest-first, so same-day trades get DB ids in
+        # the opposite order from when they actually happened. compute_positions
+        # / dq_suspicious break same-day ties by id, so a date-only value
+        # silently reorders same-day buy/sell pairs and can misfire a
+        # "negative position" warning or drop realised P&L for the trade.
         try:
             # Parse Coinbase timestamp format: "2025-08-25 20:34:04 UTC"
             dt = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S UTC")
-            iso_date = dt.strftime("%Y-%m-%d")
+            iso_date = dt.strftime("%Y-%m-%dT%H:%M:%S")
         except ValueError:
             raise ValueError(f"Invalid timestamp format: {timestamp_str}")
 
