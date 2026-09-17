@@ -1857,6 +1857,131 @@ async function loadTaxOptimizer() {
     }
 }
 
+// Region keys as the API returns them, and how they read in the UI.
+const REGION_LABELS = {
+    north_america: 'North America',
+    europe_ex_uk: 'Europe ex-UK',
+    uk: 'United Kingdom',
+    japan: 'Japan',
+    pacific_ex_japan: 'Pacific ex-Japan',
+    emerging: 'Emerging Markets',
+    unknown: 'Unclassified'
+};
+
+function regionLabel(key) {
+    return REGION_LABELS[key] || key;
+}
+
+function overlapGroupLabel(kind) {
+    return {
+        consolidation_candidate: 'Consolidation candidate',
+        similar: 'Similar exposure',
+        informational: 'Nested (informational)'
+    }[kind] || kind;
+}
+
+// Form inputs are percentages; the API stores fractions.
+function normalizeWeights(map) {
+    const out = {};
+    Object.entries(map || {}).forEach(([key, raw]) => {
+        const value = parseFloat(raw);
+        if (!isFinite(value) || value === 0) return;
+        out[key] = Math.round(value) / 100;
+    });
+    return out;
+}
+
+// Mirrors the server's validate_profile so the form fails before the request.
+function fundProfileValidate(profile) {
+    const problems = [];
+    const sum = (map) => Object.values(map || {}).reduce((a, b) => a + parseFloat(b || 0), 0);
+    const regions = profile.regions || {};
+    if (!Object.keys(regions).length || Math.abs(sum(regions) - 1) >= 0.005) {
+        problems.push(`Region weights must total 100% (currently ${(sum(regions) * 100).toFixed(1)}%).`);
+    }
+    const classes = profile.asset_class || {};
+    if (!Object.keys(classes).length || Math.abs(sum(classes) - 1) >= 0.005) {
+        problems.push(`Asset class weights must total 100% (currently ${(sum(classes) * 100).toFixed(1)}%).`);
+    }
+    const sectors = profile.sectors || {};
+    if (Object.keys(sectors).length && Math.abs(sum(sectors) - 1) >= 0.005) {
+        problems.push(`Sector weights must total 100% or be left empty (currently ${(sum(sectors) * 100).toFixed(1)}%).`);
+    }
+    return problems;
+}
+
+window.regionLabel = regionLabel;
+window.overlapGroupLabel = overlapGroupLabel;
+window.normalizeWeights = normalizeWeights;
+window.fundProfileValidate = fundProfileValidate;
+
+// by_region_equity keys are region codes; the bars want display labels.
+function _labelRegions(map) {
+    const out = {};
+    Object.entries(map || {}).forEach(([key, pct]) => { out[regionLabel(key)] = pct; });
+    return out;
+}
+
+// Coverage is stated before any breakdown, but the calm state is defined by
+// whether anything is actionable (unprofiled/stale funds), not by hitting a
+// percentage threshold — classified_pct can sit below 100% forever with
+// nothing left to fix, since direct holdings with no country in our data
+// (e.g. the synthetic P2P line, bond ISINs) land in region "unknown" by
+// design and are not a fund-coverage gap. See "Fund look-through" in
+// CLAUDE.md.
+function renderCoverageBanner(coverage) {
+    if (!coverage) return '';
+    const pct = parseFloat(coverage.classified_pct || 0);
+    const unprofiled = coverage.unprofiled || [];
+    const stale = coverage.stale_profiles || [];
+    if (!unprofiled.length && !stale.length) {
+        return `<div class="alert alert-success py-2 small mb-3">
+            All held funds have a look-through profile. ${pct.toFixed(0)}% of value classified by region,
+            ${parseFloat(coverage.sector_classified_pct || 0).toFixed(0)}% by sector — the remainder is
+            holdings with no region in our data, such as direct bonds.
+        </div>`;
+    }
+    const links = unprofiled.map(f => `
+        <a href="#" class="fp-open" data-asset="${esc(f.asset_id)}" data-symbol="${esc(f.symbol)}"
+           data-name="${esc(f.name || f.symbol)}">${esc(f.name || f.symbol)}</a>
+        <span class="text-muted">(${Fmt.num(f.value_eur, 0)} EUR)</span>`).join(', ');
+    const staleLinks = stale.map(f => `
+        <a href="#" class="fp-open" data-asset="${esc(f.asset_id)}" data-symbol="${esc(f.symbol)}"
+           data-name="${esc(f.name || f.symbol)}">${esc(f.name || f.symbol)}</a>
+        <span class="text-muted">(as of ${esc(f.as_of || '—')})</span>`).join(', ');
+    return `<div class="alert alert-warning py-2 small mb-3">
+        <strong>${pct.toFixed(0)}% of value classified</strong> by region,
+        ${parseFloat(coverage.sector_classified_pct || 0).toFixed(0)}% by sector.
+        ${unprofiled.length ? `<div class="mt-1">No look-through profile: ${links}</div>` : ''}
+        ${stale.length ? `<div class="mt-1">Profile over a year old: ${staleLinks}</div>` : ''}
+    </div>`;
+}
+
+function renderOverlapCard(groups) {
+    if (!groups || !groups.length) return '';
+    const primary = groups.filter(g => g.kind !== 'informational');
+    const nested = groups.filter(g => g.kind === 'informational');
+    const row = (g) => `
+        <div class="border rounded p-2 mb-2">
+            <div class="d-flex justify-content-between align-items-start gap-2">
+                <div>
+                    <span class="badge ${g.kind === 'consolidation_candidate' ? 'bg-warning text-dark' : 'bg-secondary'} me-1">${esc(overlapGroupLabel(g.kind))}</span>
+                    ${g.members.map(m => `<a href="#" class="fp-open" data-asset="${esc(m.asset_id)}" data-symbol="${esc(m.symbol)}" data-name="${esc(m.name)}">${esc(m.name)}</a> <span class="text-muted small">(${esc(m.portfolio_name)})</span>`).join(' + ')}
+                    <div class="small text-muted">${esc(g.reason)}${g.transferable ? ' Both are funds, so a traspaso can merge them without realising a gain.' : ''}</div>
+                </div>
+                <div class="text-nowrap small fw-semibold">${g.combined_pct.toFixed(1)}%</div>
+            </div>
+        </div>`;
+    return `
+        <h6 class="fw-semibold small text-muted text-uppercase mt-4 mb-2">Funds holding the same exposure</h6>
+        ${primary.map(row).join('')}
+        ${nested.length ? `
+            <button class="btn btn-sm btn-link p-0" type="button" data-bs-toggle="collapse" data-bs-target="#anOverlapNested">
+                Show ${nested.length} nested holding${nested.length > 1 ? 's' : ''} (informational)
+            </button>
+            <div class="collapse mt-2" id="anOverlapNested">${nested.map(row).join('')}</div>` : ''}`;
+}
+
 // Wire the two "Load diversification" triggers (header + inline) once.
 function _wireDiversificationButtons() {
     const btn = document.getElementById('anDiversificationBtn');
@@ -1891,10 +2016,12 @@ async function loadAnalyticsDiversification() {
         const largest = parseFloat(d.largest_position_pct || 0);
 
         const blocks = [
-            { title: 'By Asset Type', data: d.by_asset_type, upper: true },
-            { title: 'By Currency', data: d.by_currency, upper: true },
+            { title: 'By Asset Class', data: d.by_asset_class, upper: true },
+            { title: 'By Region (equity)', data: _labelRegions(d.by_region_equity), upper: false },
             { title: 'By Sector', data: d.by_sector, upper: false },
-            { title: 'By Country', data: d.by_country, upper: false }
+            { title: 'By Currency Exposure (approximate)', data: d.by_currency_exposure, upper: true },
+            { title: 'By Asset Type', data: d.by_asset_type, upper: true },
+            { title: 'By Country (direct)', data: d.by_country, upper: false }
         ];
         const cols = blocks.map(b => `
             <div class="col-12 col-md-6 col-lg-3">
@@ -1902,7 +2029,18 @@ async function loadAnalyticsDiversification() {
                 ${renderDiversificationBars(b.data, b.upper)}
             </div>`).join('');
 
+        // Fetched alongside the main call so a failure here degrades to a
+        // note instead of blanking the whole diversification section.
+        let overlapHtml = '';
+        try {
+            const overlap = await window.apiClient.getFundOverlap();
+            overlapHtml = renderOverlapCard(overlap.groups);
+        } catch (err) {
+            overlapHtml = `<div class="text-muted small mt-3">Fund overlap unavailable: ${esc(err.message)}</div>`;
+        }
+
         body.innerHTML = `
+            ${renderCoverageBanner(d.coverage)}
             <div class="row g-3 mb-3">
                 <div class="col-6 col-md-4">
                     <div class="border rounded p-3 h-100">
@@ -1925,7 +2063,16 @@ async function loadAnalyticsDiversification() {
                 </div>
             </div>
             <p class="text-muted small mb-3">${METRIC_HELP.diversification}</p>
-            <div class="row g-4">${cols}</div>`;
+            <div class="row g-4">${cols}</div>
+            ${overlapHtml}`;
+
+        body.querySelectorAll('.fp-open').forEach(a => {
+            a.addEventListener('click', (e) => {
+                e.preventDefault();
+                window.openFundProfileModal(
+                    parseInt(a.dataset.asset, 10), a.dataset.symbol, a.dataset.name);
+            });
+        });
     } catch (err) {
         body.innerHTML = `<div class="text-danger small">Error loading diversification: ${err.message}</div>`;
     }
@@ -1956,6 +2103,125 @@ function renderDiversificationBars(map, upper) {
             </div>`;
     }).join('');
 }
+
+const FP_REGION_KEYS = ['north_america', 'europe_ex_uk', 'uk', 'japan', 'pacific_ex_japan', 'emerging'];
+const FP_CLASS_KEYS = ['equity', 'bond', 'cash', 'other'];
+
+function _fpWeightRows(containerId, keys, weights, labelFn) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = keys.map(key => `
+        <div class="d-flex align-items-center gap-2 mb-1">
+            <label class="small flex-grow-1">${esc(labelFn(key))}</label>
+            <input type="number" min="0" max="100" step="0.1" class="form-control form-control-sm fp-weight"
+                   style="max-width:6rem" data-key="${key}" value="${((weights[key] || 0) * 100).toFixed(1)}">
+        </div>`).join('');
+}
+
+function _fpCollect(containerId) {
+    const map = {};
+    document.getElementById(containerId).querySelectorAll('.fp-weight').forEach(input => {
+        map[input.dataset.key] = parseFloat(input.value || 0);
+    });
+    return normalizeWeights(map);
+}
+
+// Sectors come from Yahoo Finance and are shown read-only: hand-entering a
+// sector split is busywork, and an empty one is honest about a failed fetch.
+function _fpRenderSectors(sectors) {
+    const entries = Object.entries(sectors || {});
+    document.getElementById('fpSectors').innerHTML = entries.length
+        ? entries.map(([k, v]) => `${esc(k)} ${(v * 100).toFixed(1)}%`).join(' · ')
+        : 'No sector data (normal for a bond fund, or Yahoo Finance had none).';
+}
+
+window.openFundProfileModal = async function (assetId, symbol, name) {
+    const modal = new bootstrap.Modal(document.getElementById('fpModal'));
+    document.getElementById('fpModalTitle').textContent = `${name || symbol} — fund profile`;
+    document.getElementById('fpProblems').textContent = '';
+    let sectors = {};
+
+    const { benchmarks } = await window.apiClient.getBenchmarks();
+    document.getElementById('fpBenchmark').innerHTML =
+        '<option value="">(none — no index)</option>' +
+        benchmarks.map(b => `<option value="${esc(b.key)}">${esc(b.label)}</option>`).join('');
+
+    const profile = await window.apiClient.getFundProfile(assetId);
+    document.getElementById('fpBenchmark').value = (profile && profile.benchmark_key) || '';
+    document.getElementById('fpAsOf').value = (profile && profile.as_of) || new Date().toISOString().slice(0, 10);
+    document.getElementById('fpHedged').checked = !!(profile && profile.currency_hedged);
+    _fpWeightRows('fpRegions', FP_REGION_KEYS, (profile && profile.regions) || {}, regionLabel);
+    _fpWeightRows('fpAssetClass', FP_CLASS_KEYS, (profile && profile.asset_class) || {}, k => k);
+    sectors = (profile && profile.sectors) || {};
+    _fpRenderSectors(sectors);
+
+    document.getElementById('fpRefreshBtn').onclick = async () => {
+        const key = document.getElementById('fpBenchmark').value;
+        if (!key) { document.getElementById('fpProblems').textContent = 'Pick a benchmark first.'; return; }
+        try {
+            let filled;
+            try {
+                // Never force on the first attempt: a hand-edited profile
+                // (source='manual') must not be clobbered by a stray click.
+                filled = await window.apiClient.refreshFundProfile(assetId, key, false);
+            } catch (err) {
+                if (err.status !== 409) throw err;
+                const proceed = window.confirm(
+                    'This fund has a hand-edited profile. Replacing it with benchmark ' +
+                    'data will overwrite your edits, including resetting any currency-hedged flag. Continue?'
+                );
+                if (!proceed) { document.getElementById('fpProblems').textContent = ''; return; }
+                filled = await window.apiClient.refreshFundProfile(assetId, key, true);
+            }
+            _fpWeightRows('fpRegions', FP_REGION_KEYS, filled.regions, regionLabel);
+            _fpWeightRows('fpAssetClass', FP_CLASS_KEYS, filled.asset_class, k => k);
+            sectors = filled.sectors || {};
+            _fpRenderSectors(sectors);
+            document.getElementById('fpAsOf').value = filled.as_of || '';
+            document.getElementById('fpProblems').textContent = '';
+        } catch (err) {
+            document.getElementById('fpProblems').textContent = err.message;
+        }
+    };
+
+    document.getElementById('fpSuggestBtn').onclick = async () => {
+        document.getElementById('fpProblems').textContent = 'Asking the model…';
+        try {
+            const { suggestion, problems } = await window.apiClient.suggestFundProfile(assetId);
+            _fpWeightRows('fpRegions', FP_REGION_KEYS, suggestion.regions, regionLabel);
+            _fpWeightRows('fpAssetClass', FP_CLASS_KEYS, suggestion.asset_class, k => k);
+            sectors = suggestion.sectors || {};
+            _fpRenderSectors(sectors);
+            // A draft, never saved on its own — review it, then Save.
+            document.getElementById('fpProblems').textContent =
+                (problems || []).join(' ') + ' Review these values before saving.';
+        } catch (err) {
+            document.getElementById('fpProblems').textContent = err.message;
+        }
+    };
+
+    document.getElementById('fpSaveBtn').onclick = async () => {
+        const payload = {
+            benchmark_key: document.getElementById('fpBenchmark').value || null,
+            regions: _fpCollect('fpRegions'),
+            asset_class: _fpCollect('fpAssetClass'),
+            sectors,
+            currency_hedged: document.getElementById('fpHedged').checked,
+            hedge_currency: document.getElementById('fpHedged').checked ? 'EUR' : null,
+            as_of: document.getElementById('fpAsOf').value
+        };
+        const problems = fundProfileValidate(payload);
+        if (problems.length) { document.getElementById('fpProblems').textContent = problems.join(' '); return; }
+        try {
+            await window.apiClient.saveFundProfile(assetId, payload);
+            modal.hide();
+            loadAnalyticsDiversification();
+        } catch (err) {
+            document.getElementById('fpProblems').textContent = err.message;
+        }
+    };
+
+    modal.show();
+};
 
 // f) Risk section
 async function loadAnalyticsRisk() {

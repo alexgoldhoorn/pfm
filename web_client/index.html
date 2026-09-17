@@ -1115,13 +1115,13 @@
                     <div class="card mb-4">
                         <div class="card-header fw-semibold d-flex justify-content-between align-items-center flex-wrap gap-2">
                             <span><i class="bi bi-pie-chart-fill me-2 text-primary"></i>Diversification &amp; Concentration</span>
-                            <button class="btn btn-sm btn-outline-primary" id="anDiversificationBtn" title="Fetches sector/country data from Yahoo Finance — takes ~20-30s">
+                            <button class="btn btn-sm btn-outline-primary" id="anDiversificationBtn" title="Exposure with funds looked through. Fetches live data for direct holdings — takes ~20-30s">
                                 <i class="bi bi-arrow-clockwise me-1"></i>Load
                             </button>
                         </div>
                         <div class="card-body" id="anDiversificationBody">
                             <div class="text-center text-muted py-4">
-                                Sector / country breakdown is fetched live from Yahoo Finance and takes ~20-30s.
+                                Exposure with funds looked through. Fetches live data for direct holdings — takes ~20-30s.
                                 <div class="mt-2"><button class="btn btn-sm btn-primary" id="anDiversificationLoadInline"><i class="bi bi-pie-chart me-1"></i>Load diversification</button></div>
                             </div>
                         </div>
@@ -4443,6 +4443,62 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                 </div>
             </div>
         </div>
+    </div>
+
+    <!-- Fund Profile Modal -->
+    <div class="modal fade" id="fpModal" tabindex="-1">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="fpModalTitle">Fund profile</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+          </div>
+          <div class="modal-body">
+            <p class="text-muted small">
+              A fund's region weights come from the index it tracks; sector weights come from Yahoo Finance.
+              Edit anything here and it is kept as a manual profile.
+            </p>
+            <div class="row g-3">
+              <div class="col-md-6">
+                <label class="form-label small fw-semibold">Benchmark index</label>
+                <select class="form-select form-select-sm" id="fpBenchmark"></select>
+              </div>
+              <div class="col-md-3">
+                <label class="form-label small fw-semibold">Data as of</label>
+                <input type="date" class="form-control form-control-sm" id="fpAsOf">
+              </div>
+              <div class="col-md-3 d-flex align-items-end">
+                <div class="form-check">
+                  <input class="form-check-input" type="checkbox" id="fpHedged">
+                  <label class="form-check-label small" for="fpHedged">Currency hedged</label>
+                </div>
+              </div>
+            </div>
+            <div class="row g-3 mt-1">
+              <div class="col-md-6">
+                <h6 class="small fw-semibold text-uppercase text-muted">Regions (%)</h6>
+                <div id="fpRegions"></div>
+              </div>
+              <div class="col-md-6">
+                <h6 class="small fw-semibold text-uppercase text-muted">Asset class (%)</h6>
+                <div id="fpAssetClass"></div>
+                <h6 class="small fw-semibold text-uppercase text-muted mt-3">Sectors (%)</h6>
+                <div id="fpSectors" class="small text-muted"></div>
+              </div>
+            </div>
+            <div id="fpProblems" class="text-danger small mt-3"></div>
+          </div>
+          <div class="modal-footer">
+            <button class="btn btn-outline-secondary btn-sm" id="fpSuggestBtn">
+              <i class="bi bi-stars me-1"></i>Suggest (AI)
+            </button>
+            <button class="btn btn-outline-primary btn-sm" id="fpRefreshBtn">
+              <i class="bi bi-arrow-clockwise me-1"></i>Fill from benchmark
+            </button>
+            <button class="btn btn-primary btn-sm" id="fpSaveBtn">Save</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <script src="js/pfm_core.js?v=1788463269"></script>

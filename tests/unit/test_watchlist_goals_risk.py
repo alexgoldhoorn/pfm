@@ -99,7 +99,38 @@ class TestFeesRiskDiversification:
         )
         assert resp.status_code == status.HTTP_200_OK
         d = resp.json()
-        assert "by_asset_type" in d and "concentration_hhi" in d
+        # The keys ~/mcp/scripts/finance_review.py reads must not move.
+        for key in (
+            "by_asset_type",
+            "by_currency",
+            "by_sector",
+            "by_country",
+            "concentration_hhi",
+            "largest_position_pct",
+            "largest_position_name",
+        ):
+            assert key in d
+        # New look-through fields.
+        for key in (
+            "by_asset_class",
+            "by_region",
+            "by_region_equity",
+            "by_currency_exposure",
+            "coverage",
+        ):
+            assert key in d
+        assert "classified_pct" in d["coverage"]
+        assert "unprofiled" in d["coverage"]
+
+    @pytest.mark.asyncio
+    async def test_fund_overlap_empty_portfolio(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        resp = await async_test_client.get(
+            "/api/v1/analytics/fund-overlap", headers=auth_headers
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.json()["groups"] == []
 
 
 class TestLoginKey:

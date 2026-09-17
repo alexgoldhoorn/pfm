@@ -35,6 +35,7 @@ def _is_rate_limited(exc: Exception) -> bool:
 # Fields pulled from yfinance Ticker.info
 _FUNDAMENTAL_FIELDS = [
     "shortName",
+    "currency",
     "sector",
     "industry",
     "country",
@@ -68,13 +69,45 @@ _FUNDAMENTAL_FIELDS = [
 ]
 
 
+# yfinance quotes UK-listed securities in GBp (pence) while pfm stores the
+# asset in GBP, so a caller comparing `current_price` against `previousClose`
+# from the same payload sees a 100x error — that is how GAW.L came to report a
+# -99% day in the finance digest. Only the per-share quote fields carry pence:
+# marketCap, revenue, cashflow and EPS come back in pounds already. Verified on
+# GAW.L — trailingPE 29.58 == 184 GBP / 6.22 trailingEps, and marketCap 6.08bn
+# == 32.8M shares x 184 GBP. Dividing those too would swap one wrong number for
+# another. Mirrors the ÷100 in api_client.fetch_latest_prices.
+_GBP_PENCE_FIELDS = (
+    "currentPrice",
+    "previousClose",
+    "fiftyTwoWeekLow",
+    "fiftyTwoWeekHigh",
+    "targetMeanPrice",
+)
+
+
+def _normalize_gbp_fundamentals(data: dict[str, Any]) -> dict[str, Any]:
+    """Convert GBp (pence) quote fields to GBP in place and relabel the currency.
+
+    Returns *data* untouched unless yfinance explicitly marked it ``GBp``.
+    """
+    if (data.get("currency") or "") != "GBp":
+        return data
+    for key in _GBP_PENCE_FIELDS:
+        val = data.get(key)
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            data[key] = val / 100.0
+    data["currency"] = "GBP"
+    return data
+
+
 def _fetch_fundamentals_live(symbol: str) -> dict[str, Any]:
     """Uncached yfinance fundamentals fetch (shared with portf_manager.market)."""
     try:
         info = yf.Ticker(symbol).info
         data = {k: info.get(k) for k in _FUNDAMENTAL_FIELDS if info.get(k) is not None}
         data["symbol"] = symbol
-        return data
+        return _normalize_gbp_fundamentals(data)
     except Exception as e:
         logger.warning(f"Could not fetch fundamentals for {symbol}: {e}")
         return {"symbol": symbol}

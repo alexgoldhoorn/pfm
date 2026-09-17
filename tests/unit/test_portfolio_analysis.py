@@ -115,6 +115,13 @@ class TestGatherDiversification:
         ):
             assert key in result
 
+    def test_includes_coverage_for_the_health_prompt(self):
+        from portf_manager.services.portfolio_advisor import gather_diversification
+
+        result = gather_diversification(_mock_db(), portfolio_id=None)
+        assert "coverage" in result
+        assert "by_region_equity" in result
+
 
 class TestGatherHoldingsFundamentals:
     def test_empty_returns_empty_list(self):
@@ -216,3 +223,23 @@ class TestPromptAndParse:
 
         result = parse_analysis_response("not json")
         assert "error" in result
+
+
+class TestAnalysisPromptCoverage:
+    def test_prompt_states_how_much_is_classified(self):
+        from portf_manager.services.portfolio_advisor import build_analysis_prompt
+
+        bundle = {
+            "diversification": {
+                "by_asset_type": {"etf": 100.0},
+                "by_sector": {},
+                "by_country": {},
+                "by_currency": {},
+                "by_region_equity": {"north_america": 100.0},
+                "coverage": {"classified_pct": 42.0, "sector_classified_pct": 10.0},
+                "concentration_hhi": 1000,
+            }
+        }
+        prompt = build_analysis_prompt(bundle)
+        assert "42.0%" in prompt
+        assert "classified" in prompt.lower()

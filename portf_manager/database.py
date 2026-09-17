@@ -10,11 +10,11 @@ import sqlite3
 import logging
 from contextlib import contextmanager
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Set
 from pathlib import Path
 
 # Database version for migration tracking
-DATABASE_VERSION = 29
+DATABASE_VERSION = 30
 
 
 # black
@@ -695,6 +695,31 @@ class Database:
             """
         )
 
+        # Fund look-through profiles: one row per fund-like asset holding
+        # the weight maps that break it down into asset class, region and
+        # sector. Nothing is backfilled -- a fund without a profile is
+        # reported as unclassified rather than guessed at. See
+        # _migrate_to_v30.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS fund_profiles (
+                asset_id        INTEGER PRIMARY KEY
+                                    REFERENCES assets(id) ON DELETE CASCADE,
+                benchmark_key   TEXT,
+                source          TEXT NOT NULL DEFAULT 'benchmark'
+                                    CHECK (source IN ('benchmark', 'llm', 'manual')),
+                asset_class     TEXT NOT NULL DEFAULT '{}',
+                regions         TEXT NOT NULL DEFAULT '{}',
+                sectors         TEXT NOT NULL DEFAULT '{}',
+                currency_hedged INTEGER NOT NULL DEFAULT 0,
+                hedge_currency  TEXT,
+                as_of           TEXT,
+                notes           TEXT,
+                updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
         # Create triggers for updated_at timestamps
         for table in [
             "entities",
@@ -773,6 +798,8 @@ class Database:
             self._migrate_to_v28(conn)
         if current_version < 29:
             self._migrate_to_v29(conn)
+        if current_version < 30:
+            self._migrate_to_v30(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -1681,6 +1708,117 @@ class Database:
             """
         )
         conn.commit()
+
+    def _migrate_to_v30(self, conn: sqlite3.Connection) -> None:
+        """Migrate from v29 to v30 — fund look-through profiles.
+
+        Adds fund_profiles: one row per fund-like asset holding the weight maps
+        that break it down into asset class, region and sector. Nothing is
+        backfilled; a fund without a profile is reported as unclassified rather
+        than guessed at.
+        """
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS fund_profiles (
+                asset_id        INTEGER PRIMARY KEY
+                                    REFERENCES assets(id) ON DELETE CASCADE,
+                benchmark_key   TEXT,
+                source          TEXT NOT NULL DEFAULT 'benchmark'
+                                    CHECK (source IN ('benchmark', 'llm', 'manual')),
+                asset_class     TEXT NOT NULL DEFAULT '{}',
+                regions         TEXT NOT NULL DEFAULT '{}',
+                sectors         TEXT NOT NULL DEFAULT '{}',
+                currency_hedged INTEGER NOT NULL DEFAULT 0,
+                hedge_currency  TEXT,
+                as_of           TEXT,
+                notes           TEXT,
+                updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.commit()
+
+    # ── Fund look-through profiles ──────────────────────────────────────────
+
+    def get_fund_profile(self, asset_id: int) -> Optional[Dict]:
+        """Get one fund profile by asset id. JSON columns are returned raw."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM fund_profiles WHERE asset_id = ?", (asset_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def list_fund_profiles(self) -> List[Dict]:
+        """Every fund profile, joined to its asset's symbol and name."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT f.*, a.symbol, a.name, a.asset_type, a.ticker, a.exchange
+                FROM fund_profiles f
+                JOIN assets a ON a.id = f.asset_id
+                ORDER BY a.symbol
+                """
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def upsert_fund_profile(
+        self,
+        asset_id: int,
+        benchmark_key: Optional[str],
+        source: str,
+        asset_class: str,
+        regions: str,
+        sectors: str,
+        currency_hedged: int,
+        hedge_currency: Optional[str],
+        as_of: str,
+        notes: Optional[str] = None,
+    ) -> Dict:
+        """Insert or replace a fund profile. Weight maps arrive as JSON text."""
+        with self.get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO fund_profiles (
+                    asset_id, benchmark_key, source, asset_class, regions,
+                    sectors, currency_hedged, hedge_currency, as_of, notes,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(asset_id) DO UPDATE SET
+                    benchmark_key = excluded.benchmark_key,
+                    source = excluded.source,
+                    asset_class = excluded.asset_class,
+                    regions = excluded.regions,
+                    sectors = excluded.sectors,
+                    currency_hedged = excluded.currency_hedged,
+                    hedge_currency = excluded.hedge_currency,
+                    as_of = excluded.as_of,
+                    notes = excluded.notes,
+                    updated_at = CURRENT_TIMESTAMP
+                """,
+                (
+                    asset_id,
+                    benchmark_key,
+                    source,
+                    asset_class,
+                    regions,
+                    sectors,
+                    int(currency_hedged),
+                    hedge_currency,
+                    as_of,
+                    notes,
+                ),
+            )
+            conn.commit()
+        return self.get_fund_profile(asset_id)
+
+    def delete_fund_profile(self, asset_id: int) -> bool:
+        """Delete a fund profile. Returns False when there was none."""
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                "DELETE FROM fund_profiles WHERE asset_id = ?", (asset_id,)
+            )
+            conn.commit()
+            return cur.rowcount > 0
 
     # ── App settings (persistent key/value) ────────────────────────────────
 
@@ -3866,19 +4004,78 @@ class Database:
         sell_above: Optional[float] = None,
         fair_value: Optional[float] = None,
         notes: Optional[str] = None,
+        clear: Optional[Set[str]] = None,
     ) -> None:
-        """Create or update price targets for an asset."""
+        """Create or update price targets for an asset.
+
+        Manual/partial saves (the UI's target edit form, a saved research
+        note) pass ``None`` for any field left untouched. That is a COALESCE
+        no-op: the existing stored value is kept, so editing one field can't
+        clobber the others.
+
+        ``clear`` says the opposite: "this field was evaluated and is
+        explicitly empty", which ``None`` cannot express on its own. It
+        exists for the automated/bulk research writer — an LLM run that
+        declines to set e.g. ``fair_value`` on a corrected re-run must be
+        able to remove a previously-written bad value, not silently leave it
+        in place (COALESCE would otherwise treat the decline exactly like an
+        untouched field). Name the columns to null in ``clear``; whatever
+        value is passed for a cleared column is ignored.
+
+        Args:
+            asset_id: Asset to upsert the price target row for.
+            buy_below: New buy-below price, or ``None`` to leave unchanged
+                (unless the column is also named in ``clear``).
+            sell_above: New sell-above price, or ``None`` to leave unchanged.
+            fair_value: New fair-value estimate, or ``None`` to leave
+                unchanged.
+            notes: New notes text, or ``None`` to leave unchanged.
+            clear: Column names (subset of ``buy_below``, ``sell_above``,
+                ``fair_value``, ``notes``) to explicitly null instead of
+                leaving untouched.
+
+        Raises:
+            ValueError: If ``clear`` names a column this table doesn't have.
+        """
+        clear = clear or set()
+        valid_columns = {"buy_below", "sell_above", "fair_value", "notes"}
+        unknown = clear - valid_columns
+        if unknown:
+            raise ValueError(
+                f"upsert_price_target: unknown clear field(s): {sorted(unknown)}"
+            )
+
+        # A cleared column always writes NULL, regardless of what (if
+        # anything) was passed in for it.
+        values = {
+            "buy_below": None if "buy_below" in clear else buy_below,
+            "sell_above": None if "sell_above" in clear else sell_above,
+            "fair_value": None if "fair_value" in clear else fair_value,
+            "notes": None if "notes" in clear else notes,
+        }
+        set_clauses = [
+            (
+                f"{col} = NULL"
+                if col in clear
+                else f"{col} = COALESCE(excluded.{col}, {col})"
+            )
+            for col in ("buy_below", "sell_above", "fair_value", "notes")
+        ]
+        set_clauses.append("updated_at = CURRENT_TIMESTAMP")
+
         with self.get_connection() as conn:
             conn.execute(
-                """INSERT INTO price_targets (asset_id, buy_below, sell_above, fair_value, notes)
+                f"""INSERT INTO price_targets (asset_id, buy_below, sell_above, fair_value, notes)
                    VALUES (?, ?, ?, ?, ?)
                    ON CONFLICT(asset_id) DO UPDATE SET
-                       buy_below = COALESCE(excluded.buy_below, buy_below),
-                       sell_above = COALESCE(excluded.sell_above, sell_above),
-                       fair_value = COALESCE(excluded.fair_value, fair_value),
-                       notes = COALESCE(excluded.notes, notes),
-                       updated_at = CURRENT_TIMESTAMP""",
-                (asset_id, buy_below, sell_above, fair_value, notes),
+                       {", ".join(set_clauses)}""",
+                (
+                    asset_id,
+                    values["buy_below"],
+                    values["sell_above"],
+                    values["fair_value"],
+                    values["notes"],
+                ),
             )
             conn.commit()
 

@@ -368,26 +368,36 @@ class TestGetActionItems:
         assert get_action_items(test_database) == []
 
     def test_one_failing_check_does_not_take_down_others(self, test_database):
-        test_database.record_price_update_run(
-            started_at="2026-07-15T20:00:00",
-            duration_seconds=1.0,
-            updated_count=0,
-            skipped_count=0,
-            error_count=1,
-            error_symbols=["AAPL"],
-            source="cron",
-        )
-
+        # _CHECKS is a module-level tuple of function objects, resolved once
+        # at import time — patching a check by name (e.g.
+        # "action_items.check_data_quality") no longer reaches the
+        # aggregator's loop, since the tuple already holds the original
+        # reference. Patch the registry itself instead: a small tuple of one
+        # raising check and one sentinel-returning check, neither of which
+        # touches the database, so this test doesn't depend on any real
+        # check's behaviour.
         def _raise(db):
             raise RuntimeError("boom")
 
+        sentinel_item = {
+            "id": "test:sentinel",
+            "category": "test",
+            "severity": "low",
+            "title": "sentinel",
+            "detail": "",
+            "link_page": "dashboard",
+            "context": {},
+        }
+
+        def _sentinel(db):
+            return [sentinel_item]
+
         with patch(
-            "portf_manager.services.action_items.check_data_quality",
-            new=_raise,
+            "portf_manager.services.action_items._CHECKS",
+            new=(_raise, _sentinel),
         ):
             items = get_action_items(test_database)
-        assert items
-        assert any(i["id"].startswith("errors:price-update:") for i in items)
+        assert items == [sentinel_item]
 
 
 class TestActionItemsEndpoint:
@@ -402,3 +412,176 @@ class TestActionItemsEndpoint:
         assert resp.status_code == 200
         data = resp.json()
         assert "items" in data and "generated_at" in data
+
+
+class TestFundExposure:
+    def _exposure(self, unprofiled=None, stale=None, funds=None):
+        return {
+            "total_value_eur": 10000.0,
+            "coverage": {
+                "classified_pct": 50.0,
+                "sector_classified_pct": 50.0,
+                "unprofiled": unprofiled or [],
+                "stale_profiles": stale or [],
+            },
+            "funds": funds or [],
+        }
+
+    def test_flags_a_fund_with_no_profile(self):
+        from unittest.mock import MagicMock, patch
+
+        from portf_manager.services import action_items
+
+        exposure = self._exposure(
+            unprofiled=[
+                {
+                    "asset_id": 4,
+                    "symbol": "IE0000000001",
+                    "name": "Example World Index Fund",
+                    "value_eur": 5000.0,
+                }
+            ]
+        )
+        with patch(
+            "portf_manager.services.exposure.compute_exposure", return_value=exposure
+        ):
+            items = action_items.check_fund_exposure(MagicMock())
+        assert items[0]["id"] == "exposure:profile:4"
+        assert items[0]["category"] == "exposure"
+        assert items[0]["severity"] == "medium"
+        assert "Example World Index Fund" in items[0]["title"]
+
+    def test_flags_a_stale_profile_as_low(self):
+        from unittest.mock import MagicMock, patch
+
+        from portf_manager.services import action_items
+
+        exposure = self._exposure(
+            stale=[
+                {
+                    "asset_id": 7,
+                    "symbol": "IE0000000002",
+                    "name": "Example EM Index Fund",
+                    "as_of": "2024-01-01",
+                }
+            ]
+        )
+        with patch(
+            "portf_manager.services.exposure.compute_exposure", return_value=exposure
+        ):
+            items = action_items.check_fund_exposure(MagicMock())
+        assert items[0]["id"] == "exposure:stale:7"
+        assert items[0]["severity"] == "low"
+
+    def test_flags_a_consolidation_candidate_only(self):
+        from unittest.mock import MagicMock, patch
+
+        from portf_manager.services import action_items
+
+        groups = [
+            {
+                "kind": "consolidation_candidate",
+                "reason": "Both track the same exposure (MSCI Emerging Markets).",
+                "members": [
+                    {
+                        "asset_id": 1,
+                        "symbol": "IE0000000001",
+                        "name": "Example EM Index Fund",
+                        "portfolio_name": "A",
+                        "value_eur": 1000.0,
+                    },
+                    {
+                        "asset_id": 2,
+                        "symbol": "IE0000000002",
+                        "name": "Example EM ETF",
+                        "portfolio_name": "B",
+                        "value_eur": 1000.0,
+                    },
+                ],
+                "combined_value_eur": 2000.0,
+                "combined_pct": 20.0,
+                "transferable": False,
+            },
+            {
+                "kind": "informational",
+                "reason": "S&P 500 is already part of MSCI World.",
+                "members": [
+                    {
+                        "asset_id": 3,
+                        "symbol": "IE0000000003",
+                        "name": "Example World Index Fund",
+                        "portfolio_name": "A",
+                        "value_eur": 1000.0,
+                    },
+                    {
+                        "asset_id": 4,
+                        "symbol": "IE0000000004",
+                        "name": "Example S&P 500 ETF",
+                        "portfolio_name": "A",
+                        "value_eur": 1000.0,
+                    },
+                ],
+                "combined_value_eur": 2000.0,
+                "combined_pct": 20.0,
+                "transferable": False,
+            },
+            {
+                "kind": "similar",
+                "reason": "Region and sector weights are 97% alike.",
+                "members": [
+                    {
+                        "asset_id": 5,
+                        "symbol": "IE0000000005",
+                        "name": "Example Unbenchmarked Fund A",
+                        "portfolio_name": "A",
+                        "value_eur": 1000.0,
+                    },
+                    {
+                        "asset_id": 6,
+                        "symbol": "IE0000000006",
+                        "name": "Example Unbenchmarked Fund B",
+                        "portfolio_name": "B",
+                        "value_eur": 1000.0,
+                    },
+                ],
+                "combined_value_eur": 2000.0,
+                "combined_pct": 20.0,
+                "transferable": False,
+            },
+        ]
+        with (
+            patch(
+                "portf_manager.services.exposure.compute_exposure",
+                return_value=self._exposure(),
+            ),
+            patch(
+                "portf_manager.services.exposure.find_fund_overlaps",
+                return_value=groups,
+            ),
+        ):
+            items = action_items.check_fund_exposure(MagicMock())
+        ids = [i["id"] for i in items]
+        # Only the consolidation_candidate group raises an item — informational
+        # (a legitimate tilt) and similar (no shared benchmark to act on) do not.
+        assert ids == ["exposure:overlap:1,2"]
+
+    def test_clean_portfolio_produces_nothing(self):
+        from unittest.mock import MagicMock, patch
+
+        from portf_manager.services import action_items
+
+        with (
+            patch(
+                "portf_manager.services.exposure.compute_exposure",
+                return_value=self._exposure(),
+            ),
+            patch(
+                "portf_manager.services.exposure.find_fund_overlaps", return_value=[]
+            ),
+        ):
+            assert action_items.check_fund_exposure(MagicMock()) == []
+
+    def test_is_registered(self):
+        from portf_manager.services import action_items
+
+        assert action_items.check_fund_exposure in action_items.checks_for_tests()

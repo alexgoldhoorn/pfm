@@ -50,7 +50,7 @@ class TestDatabase:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             result = cursor.fetchone()
-            assert result[0] == 29  # Current schema version
+            assert result[0] == 30  # Current schema version
 
     def test_v18_assets_have_ticker_column(self):
         """v18 adds the nullable ticker alias column to assets."""
@@ -1039,7 +1039,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 29
+            assert version == 30
 
             # Assert columns exist
             for table in ["entities", "portfolios", "transactions"]:
@@ -1069,7 +1069,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 29
+            assert version == 30
 
             # Check all tables exist
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -1140,7 +1140,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 29
+            assert version == 30
 
             # Check new tables exist
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -1606,7 +1606,7 @@ class TestSpendingCategories:
                         "SELECT name FROM sqlite_master WHERE type = 'table'"
                     )
                 }
-            assert version == 29
+            assert version == 30
             assert {"budgets", "budget_lines"} <= tables
 
             # Pre-existing spending data is untouched by the upgrade.
@@ -1824,3 +1824,117 @@ class TestSpendingCategories:
         tree = self.db.list_spending_categories_tree()
         vacation = next(c for c in tree if c["name"] == "Vacation")
         assert vacation["parent_id"] is None
+
+
+class TestFundProfilesV30:
+    """v30 adds fund_profiles for look-through exposure.
+
+    There is no shared `temp_db` fixture in this file -- every test here
+    builds its own on-disk database via `tmp_path`, matching the rest of
+    this module's style.
+    """
+
+    def test_fresh_database_has_fund_profiles(self, tmp_path):
+        db = Database(str(tmp_path / "test.db"))
+        with db.get_connection() as conn:
+            row = conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name='fund_profiles'"
+            ).fetchone()
+        assert row is not None
+
+    def test_upsert_then_get_roundtrips(self, tmp_path):
+        db = Database(str(tmp_path / "test.db"))
+        asset_id = db.create_asset(
+            symbol="IE0000000001", name="Example World Index Fund", asset_type="etf"
+        )
+        db.upsert_fund_profile(
+            asset_id=asset_id,
+            benchmark_key="msci_world",
+            source="benchmark",
+            asset_class='{"equity": 1.0}',
+            regions='{"north_america": 0.72, "europe_ex_uk": 0.28}',
+            sectors='{"Technology": 0.25}',
+            currency_hedged=0,
+            hedge_currency=None,
+            as_of="2026-09-01",
+        )
+        profile = db.get_fund_profile(asset_id)
+        assert profile["benchmark_key"] == "msci_world"
+        assert profile["source"] == "benchmark"
+        assert profile["regions"] == '{"north_america": 0.72, "europe_ex_uk": 0.28}'
+
+    def test_upsert_replaces_an_existing_profile(self, tmp_path):
+        db = Database(str(tmp_path / "test.db"))
+        asset_id = db.create_asset(
+            symbol="IE0000000002", name="Example EM Index Fund", asset_type="etf"
+        )
+        for source in ("benchmark", "manual"):
+            db.upsert_fund_profile(
+                asset_id=asset_id,
+                benchmark_key="msci_em",
+                source=source,
+                asset_class='{"equity": 1.0}',
+                regions='{"emerging": 1.0}',
+                sectors="{}",
+                currency_hedged=0,
+                hedge_currency=None,
+                as_of="2026-09-01",
+            )
+        assert db.get_fund_profile(asset_id)["source"] == "manual"
+        assert len(db.list_fund_profiles()) == 1
+
+    def test_delete_removes_it(self, tmp_path):
+        db = Database(str(tmp_path / "test.db"))
+        asset_id = db.create_asset(
+            symbol="IE0000000003", name="Example Bond Index Fund", asset_type="etf"
+        )
+        db.upsert_fund_profile(
+            asset_id=asset_id,
+            benchmark_key="global_agg_corp",
+            source="benchmark",
+            asset_class='{"bond": 1.0}',
+            regions='{"north_america": 1.0}',
+            sectors="{}",
+            currency_hedged=1,
+            hedge_currency="EUR",
+            as_of="2026-09-01",
+        )
+        assert db.delete_fund_profile(asset_id) is True
+        assert db.get_fund_profile(asset_id) is None
+        assert db.delete_fund_profile(asset_id) is False
+
+    def test_migrate_to_v30_adds_the_table(self, tmp_path):
+        # Hand-build a v29-shaped database stamped in the real
+        # `database_version` table (not `schema_version` -- that's what
+        # _get_database_version/_set_database_version actually read/write,
+        # see database.py) so constructing a real Database() against this
+        # file triggers _run_migrations and exercises the real upgrade
+        # path, the same pattern _build_v28_database uses above.
+        db_path = tmp_path / "v29.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            """
+            CREATE TABLE database_version (
+                version INTEGER PRIMARY KEY,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute("INSERT INTO database_version (version) VALUES (29)")
+        conn.commit()
+        conn.close()
+
+        from portf_manager.database import Database
+
+        db = Database(str(db_path))
+        with db.get_connection() as conn:
+            row = conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name='fund_profiles'"
+            ).fetchone()
+            version = conn.execute(
+                "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
+            ).fetchone()[0]
+        assert row is not None
+        assert version == 30

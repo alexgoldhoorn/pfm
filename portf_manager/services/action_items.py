@@ -386,7 +386,107 @@ def check_budget_overruns(db) -> list[dict]:
     return items
 
 
+def check_fund_exposure(db) -> list[dict]:
+    """Funds that cannot be seen through, and funds holding the same thing."""
+    from portf_manager.services import exposure as exposure_service
+
+    result = exposure_service.compute_exposure(db)
+    coverage = result.get("coverage", {})
+    items: list[dict] = []
+
+    for fund in coverage.get("unprofiled", []):
+        items.append(
+            {
+                "id": f"exposure:profile:{fund['asset_id']}",
+                "category": "exposure",
+                "severity": "medium",
+                "title": (
+                    f"{_name_code(fund.get('name'), fund['symbol'])} has no "
+                    f"look-through profile"
+                ),
+                "detail": (
+                    f"{fund['value_eur']:,.0f} EUR is unclassified, so sector, "
+                    f"region and currency exposure all understate it. Set its "
+                    f"benchmark on the Analytics page."
+                ),
+                "link_page": "analytics",
+                "context": {"asset_id": fund["asset_id"], "symbol": fund["symbol"]},
+            }
+        )
+
+    for fund in coverage.get("stale_profiles", []):
+        items.append(
+            {
+                "id": f"exposure:stale:{fund['asset_id']}",
+                "category": "exposure",
+                "severity": "low",
+                "title": (
+                    f"{_name_code(fund.get('name'), fund['symbol'])} profile is "
+                    f"over a year old"
+                ),
+                "detail": (
+                    f"Its index weights are as of {fund.get('as_of')}. Index "
+                    f"weights drift a few points a year — refresh when convenient."
+                ),
+                "link_page": "analytics",
+                "context": {"asset_id": fund["asset_id"], "symbol": fund["symbol"]},
+            }
+        )
+
+    groups = exposure_service.find_fund_overlaps(
+        result.get("funds", []), result.get("total_value_eur", 0.0)
+    )
+    for group in groups:
+        # Nesting is a legitimate tilt, so only same-exposure groups are nudges.
+        if group["kind"] != "consolidation_candidate":
+            continue
+        ids = ",".join(str(m["asset_id"]) for m in group["members"])
+        names = " + ".join(m["name"] for m in group["members"])
+        transfer = (
+            " They are both funds, so a traspaso can merge them without "
+            "realising a gain."
+            if group["transferable"]
+            else ""
+        )
+        items.append(
+            {
+                "id": f"exposure:overlap:{ids}",
+                "category": "exposure",
+                "severity": "low",
+                "title": f"{names} hold the same exposure",
+                "detail": (
+                    f"{group['reason']} Combined "
+                    f"{group['combined_value_eur']:,.0f} EUR "
+                    f"({group['combined_pct']}% of the portfolio).{transfer}"
+                ),
+                "link_page": "analytics",
+                "context": {"asset_ids": [m["asset_id"] for m in group["members"]]},
+            }
+        )
+
+    return items
+
+
 _SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+
+# Every registered check, run independently by get_action_items(). A
+# module-level tuple so checks_for_tests() and the aggregator read one
+# definition instead of two copies drifting apart.
+_CHECKS = (
+    check_stale_imports,
+    check_data_quality,
+    check_price_update_failures,
+    check_stale_research,
+    check_goals_off_track,
+    check_price_alerts,
+    check_budget_overruns,
+    check_fund_exposure,
+)
+
+
+def checks_for_tests() -> list:
+    """The registered checks, exposed so a test can assert one is wired in."""
+    return list(_CHECKS)
 
 
 def get_action_items(db) -> list[dict]:
@@ -394,17 +494,8 @@ def get_action_items(db) -> list[dict]:
     import logging
 
     logger = logging.getLogger(__name__)
-    checks = [
-        check_stale_imports,
-        check_data_quality,
-        check_price_update_failures,
-        check_stale_research,
-        check_goals_off_track,
-        check_price_alerts,
-        check_budget_overruns,
-    ]
     items = []
-    for check in checks:
+    for check in _CHECKS:
         try:
             items.extend(check(db))
         except Exception:
