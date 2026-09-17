@@ -5,7 +5,7 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-09-16
+Last updated: 2026-09-17
 
 **Recent (v2.5.61):** **Fund look-through exposure (db v30), backfilled against the live portfolio.** A held ETF or fund used to count as one opaque line in region/currency exposure — a global-equity fund and a US-only fund looked identical to the diversification view even though their actual country mix differs completely, and there was no way to see that several funds tracking the same index were doubling up. New `fund_profiles` table (one row per fund-like asset: `benchmark_key`, `source` [`benchmark`/`llm`/`manual`], `asset_class`/`regions`/`sectors` weight maps, `currency_hedged`/`hedge_currency`, `as_of`) and `portf_manager/services/exposure.py` as the single computation both `GET /api/v1/analytics/diversification` and Portfolio Health now call, so the two can't disagree. `/analytics/diversification` gained `by_region_equity`, `by_currency_exposure` (look-through, approximate — distinct from the existing quote-currency `by_currency`) and a `coverage` block (`classified_pct`, `sector_classified_pct`, `unprofiled`, `stale_profiles`); a fund with no profile is named rather than folded into "Unknown". New `GET /api/v1/analytics/fund-overlap` groups held funds by shared index family (real duplicates, nudging a `traspaso` consolidation) or nesting (informational). New `fund-profiles` router: `GET /benchmarks`, `GET /`, `GET|PUT /{asset_id}`, `POST /{asset_id}/refresh` (apply a benchmark's weights), `POST /{asset_id}/suggest` (LLM-drafted weights for an index not in the benchmark table, reviewed before saving). An eighth Action Items check, `check_fund_exposure` (`exposure` category), flags an unprofiled fund, a profile over a year old, and a consolidation-candidate overlap group. Web: a coverage banner and a fund-overlap card on the Analytics page's diversification section, and a `#fpModal` profile editor (region/asset-class weight sliders, read-only sector display, benchmark refresh/suggest buttons) opened from either.
   Backfilled against the live database (not a code change, so nothing here is in git): four assets a heuristic import had mistyped `stock` (2 iShares index funds with no ticker, corrected to `mutual_fund`; 2 real ETFs, corrected to `etf`) — until corrected, none of the four could hold a profile at all. All 19 held funds/ETFs got a profile via `/refresh` against their matching benchmark (`msci_world`, `msci_em`, `sp500`, `msci_japan`, `acwi_imi`, `msci_china_tech`, `msci_world_esg`, `msci_world_staples`, `stoxx_600_utilities`, `euro_gov_short`, `euro_corp`, `global_agg_gov`, `global_agg_corp`); the two EUR-hedged bond funds then got a manual `currency_hedged: true`/`hedge_currency: "EUR"` follow-up so they don't misreport as USD/JPY exposure. **Coverage: 37.4% → 98.5% classified by region (38.9% → 100% by sector), unprofiled list 15 → 0.** Fund overlap immediately surfaced two real consolidation candidates: a developed-world pair (iShares + Vanguard, both tracking the MSCI World family) at 36.5% combined portfolio value, and a 4-way emerging-markets group (Vanguard, Invesco, iShares Core MSCI EM IMI, iShares EM index fund) at 7.7% combined.
@@ -185,22 +185,28 @@ All are re-exported by the remote gateway (now 85 tools) and added to the financ
 - Interactive REPL with tab completion (`portf` wrapper script)
 
 ### Backend (`portf_server/`) — ✅ Working
-- FastAPI REST API with 25+ endpoints
+- FastAPI REST API, 40+ endpoints across routers: auth, assets, transactions,
+  portfolios, entities, sectors, llm, tax, analytics, research, rebalance,
+  networth, deposits, spending, budgets, action_items, watchlist, goals,
+  sync, exports, imports, fund_profiles, market
 - API key authentication
-- Routers: auth, assets, transactions, portfolios, entities, sectors, LLM, tax
 - Docker support with docker-compose
 
 ### Frontend (`web_client/`) — ✅ Working, Actively Maintained
 - Bootstrap 5 + Chart.js, Vanilla JS, no build step
-- 14+ pages: dashboard, holdings, transactions, analytics (tabbed), research, net worth, goals, forecast, import/export, watchlist, chat, diagnostics, and more
+- 20+ pages: dashboard, assets (holdings + catalogue merged), transactions,
+  analytics (tabbed, with fund look-through), research, net worth, goals,
+  forecast (Wealth Simulator), rebalance, import/export, spending
+  (transactions/categories/rules/analytics tabs), budget (overview/edit/
+  scenarios), watchlist, action items, chat, diagnostics, and more
 - API key + password login, dark/light theme, sortable/filterable tables, privacy blur
 - PDT / Google Sheets sync, platform export (Yahoo Finance, Simply Wall St)
 - Actively maintained; tested with Node.js built-in test runner (`make test-js`)
 
 ### Database — ✅ Working
 - SQLite (default) + PostgreSQL support via database factory
-- Schema v24 with automatic migrations on startup
-- Tables: assets, transactions, portfolios, prices, bookings, dividends, watchlist, goals, research_notes, price_targets, networth snapshots, fixed_deposits, monthly_cashflow, app_settings, kv_cache, push_subscriptions, chat_sessions, price_update_runs, and more
+- Schema v30 with automatic migrations on startup
+- Tables: assets, transactions, portfolios, prices, bookings, dividends, watchlist, goals, research_notes, price_targets, networth snapshots, fixed_deposits, monthly_cashflow, app_settings, kv_cache, push_subscriptions, chat_sessions, price_update_runs, spending_transactions, spending_rules, spending_categories, budgets, budget_lines, fund_profiles, and more
 
 ### LLM Integration — ✅ Working
 - Provider-agnostic abstraction (`llm_client.py`)
@@ -212,9 +218,9 @@ All are re-exported by the remote gateway (now 85 tools) and added to the financ
 
 ## Test Status
 
-**721 passed, 0 failed, 6 skipped** (unit tests, excluding integration/e2e)
+**1241 passed, 0 failed, 6 skipped** (unit tests, excluding integration/e2e); JS: **116 passed, 0 failed**
 
-All tests passing as of 2026-07-04.
+All tests passing as of 2026-09-17.
 
 ## Recent Changes (main)
 
@@ -235,6 +241,8 @@ See `git log --oneline` for full history. Notable milestones: agentic chat (v2.5
 | Mintos | CSV account statement | `mintos_csv_parser.py` | ✅ Working |
 | Any broker | Generic CSV (canonical columns) | `generic_csv_parser.py` | ✅ Working |
 | Any broker | Free text (LLM) | `gemini_client.py` via `paste-transaction` | ✅ Working (needs API key or Ollama) |
+| Any bank (AEB43/Norma 43 fixed-width) | Bank statement, auto-detected | `aeb43_parser.py` | ✅ Working |
+| Any bank | Generic CSV bank statement | `generic_bank_csv_parser.py` | ✅ Working |
 
 ## Tax Reporting
 

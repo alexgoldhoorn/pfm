@@ -1,7 +1,7 @@
 # Fund look-through exposure — design
 
 Date: 2026-09-16
-Status: approved, not implemented
+Status: implemented (merged via PR #13, 2026-09-17)
 
 ## Problem
 
