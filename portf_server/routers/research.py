@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from portf_manager import market
 from portf_manager.positions import _sort_key, compute_positions
+from portf_manager.services.price_updater import _CRYPTO_YF_OVERRIDES
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
@@ -139,6 +140,29 @@ def _cost_evolution(db, asset: Optional[dict]) -> tuple[list, list]:
             }
         )
     return txns, series
+
+
+def _yf_symbol(asset: Optional[dict], symbol: str) -> str:
+    """The yfinance ticker for *symbol* — the same resolution the price updater
+    uses, so fundamentals and news describe the instrument the price came from.
+
+    An asset's ``symbol`` is what Alex sees, and is an ISIN for some holdings;
+    ``ticker`` is the Yahoo symbol actually queried. Fetching by the bare symbol
+    lands on a different security entirely for crypto — ``USDC`` resolves to
+    USDATA CORP (a $0.0012 penny stock) and ``SUI`` to Sun Communities. For
+    crypto the override map wins over ``ticker``, exactly as in
+    ``price_updater.run_price_update``: SUI's stored ticker (``SUI-EUR``) has no
+    yfinance data, while the override (``SUI20947-USD``) does.
+    """
+    if asset and asset.get("asset_type") == "crypto":
+        # Derive the pair from the ASSET's symbol, never the caller's string:
+        # callers may already pass a Yahoo pair ("BTC-EUR"), which would
+        # otherwise become "BTC-EUR-EUR".
+        base = (asset.get("symbol") or symbol).upper()
+        return _CRYPTO_YF_OVERRIDES.get(base, (f"{base}-EUR", "EUR"))[0]
+    if asset:
+        return (asset.get("ticker") or "").strip() or symbol
+    return symbol
 
 
 def _current_price(db, asset: Optional[dict], symbol: str) -> tuple[float, str]:
@@ -380,8 +404,9 @@ def generate_report(
     asset = db.get_asset_by_symbol(sym)  # may be None (research anything)
     pos = _position_stats(db, asset)
     current_price, currency = _current_price(db, asset, sym)
-    fundamentals = fetch_fundamentals(sym, db)
-    news = fetch_recent_news(sym, db=db)
+    yf_sym = _yf_symbol(asset, sym)
+    fundamentals = fetch_fundamentals(yf_sym, db)
+    news = fetch_recent_news(yf_sym, db=db)
 
     result = generate_valuation_report(
         symbol=sym,
@@ -424,6 +449,7 @@ def lookup(symbol: str, db=Depends(get_database), api_key_info: dict = Depends(_
     asset = db.get_asset_by_symbol(sym)
     pos = _position_stats(db, asset)
     price, currency = _current_price(db, asset, sym)
+    yf_sym = _yf_symbol(asset, sym)
     targets = db.get_price_target(asset["id"]) if asset else None
     notes = db.get_research_notes(sym)
     transactions, cost_evolution = _cost_evolution(db, asset)
@@ -457,8 +483,8 @@ def lookup(symbol: str, db=Depends(get_database), api_key_info: dict = Depends(_
         "realised_gain": round(pos["realised"], 2),
         "current_price": round(price, 4),
         "currency": currency,
-        "fundamentals": fetch_fundamentals(sym, db),
-        "news": fetch_recent_news(sym, db=db),
+        "fundamentals": fetch_fundamentals(yf_sym, db),
+        "news": fetch_recent_news(yf_sym, db=db),
         "targets": targets,
         "transactions": transactions,
         "cost_evolution": cost_evolution,
@@ -595,7 +621,7 @@ def _build_report(db, symbol: str) -> dict:
             "unrealised_gain": round(unrealised, 2),
             "realised_gain": round(pos["realised"], 2),
         },
-        "fundamentals": fetch_fundamentals(sym, db),
+        "fundamentals": fetch_fundamentals(_yf_symbol(asset, sym), db),
         "targets": db.get_price_target(asset["id"]) if asset else None,
         "latest_llm_report": report,
         "notes": notes,
@@ -809,8 +835,9 @@ def _run_bulk_research_refresh(db) -> None:
                 asset = db.get_asset(c["asset_id"]) if c["asset_id"] else None
                 pos = _position_stats(db, asset)
                 price, currency = _current_price(db, asset, sym)
-                fundamentals = fetch_fundamentals(sym, db)
-                news = fetch_recent_news(sym, db=db)
+                yf_sym = _yf_symbol(asset, sym)
+                fundamentals = fetch_fundamentals(yf_sym, db)
+                news = fetch_recent_news(yf_sym, db=db)
                 result = generate_valuation_report(
                     symbol=sym,
                     asset_name=c["name"],
@@ -854,12 +881,24 @@ def _run_bulk_research_refresh(db) -> None:
                     ),
                 )
                 if c["asset_id"]:
+                    # The LLM evaluates all three of these every run and can
+                    # explicitly decline any of them (null in its response).
+                    # A decline must clear a stale value from an earlier,
+                    # possibly-bad run rather than silently leave it in
+                    # place (COALESCE's usual "untouched" meaning, which
+                    # manual/partial saves still rely on elsewhere).
+                    clear_fields = {
+                        field
+                        for field in ("buy_below", "sell_above", "fair_value")
+                        if result.get(field) is None
+                    }
                     db.upsert_price_target(
                         asset_id=c["asset_id"],
                         buy_below=result.get("buy_below"),
                         sell_above=result.get("sell_above"),
                         fair_value=result.get("fair_value"),
                         notes=(result.get("rationale") or "")[:500] or None,
+                        clear=clear_fields,
                     )
                     # Cache the full LLM dossier too, same as the single-symbol
                     # /generate endpoint, so GET /{symbol} can serve it later.

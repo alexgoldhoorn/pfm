@@ -105,3 +105,86 @@ class TestResearch:
         data = resp.json()
         assert "alerts" in data
         assert "total" in data
+
+
+class TestUpsertPriceTargetClearSemantics:
+    """`upsert_price_target`'s COALESCE-vs-`clear` split (database.py).
+
+    Manual/partial saves keep passing ``None`` for an untouched field and
+    must keep the other stored fields exactly as they were (COALESCE
+    no-op). ``clear`` is the opposite signal — "this field was evaluated and
+    is explicitly empty" — and must write a real NULL. Only the
+    automated/bulk research writer (`research.py::_run_bulk_research_refresh`)
+    passes `clear`; see `tests/unit/test_research_bulk_refresh.py` for that
+    caller's own regression test.
+    """
+
+    def _asset(self, db, symbol="ZANDER"):
+        # Invented ticker/name — public repo, no real holdings in fixtures.
+        return db.create_asset(symbol, "Zander Testing Corp", "stock", currency="USD")
+
+    def test_partial_manual_upsert_leaves_other_fields_intact(self, test_database):
+        aid = self._asset(test_database)
+        test_database.upsert_price_target(
+            asset_id=aid,
+            buy_below=10.0,
+            sell_above=20.0,
+            fair_value=15.0,
+            notes="Initial manual note.",
+        )
+
+        # The manual UI's "edit one field" case: only buy_below is passed,
+        # everything else arrives as None.
+        test_database.upsert_price_target(asset_id=aid, buy_below=11.0)
+
+        target = test_database.get_price_target(aid)
+        assert target["buy_below"] == 11.0
+        assert target["sell_above"] == 20.0
+        assert target["fair_value"] == 15.0
+        assert target["notes"] == "Initial manual note."
+
+    def test_clear_nulls_only_the_named_field(self, test_database):
+        aid = self._asset(test_database)
+        test_database.upsert_price_target(
+            asset_id=aid, buy_below=10.0, sell_above=20.0, fair_value=15.0
+        )
+
+        test_database.upsert_price_target(asset_id=aid, clear={"fair_value"})
+
+        target = test_database.get_price_target(aid)
+        assert target["fair_value"] is None
+        assert target["buy_below"] == 10.0
+        assert target["sell_above"] == 20.0
+
+    def test_clear_overrides_a_value_passed_for_the_same_field(self, test_database):
+        aid = self._asset(test_database)
+        test_database.upsert_price_target(asset_id=aid, fair_value=15.0)
+
+        # A value passed alongside clear for the same column is ignored.
+        test_database.upsert_price_target(
+            asset_id=aid, fair_value=99.0, clear={"fair_value"}
+        )
+
+        assert test_database.get_price_target(aid)["fair_value"] is None
+
+    def test_clear_still_moves_updated_at(self, test_database):
+        aid = self._asset(test_database)
+        test_database.upsert_price_target(asset_id=aid, fair_value=15.0)
+        with test_database.get_connection() as conn:
+            conn.execute(
+                "UPDATE price_targets SET updated_at = '2020-01-01 00:00:00' "
+                "WHERE asset_id = ?",
+                (aid,),
+            )
+            conn.commit()
+
+        test_database.upsert_price_target(asset_id=aid, clear={"fair_value"})
+
+        assert (
+            test_database.get_price_target(aid)["updated_at"] != "2020-01-01 00:00:00"
+        )
+
+    def test_unknown_clear_field_raises(self, test_database):
+        aid = self._asset(test_database)
+        with pytest.raises(ValueError):
+            test_database.upsert_price_target(asset_id=aid, clear={"bogus_field"})

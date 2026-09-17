@@ -1,0 +1,124 @@
+{
+  "acwi_imi": {
+    "label": "MSCI ACWI IMI (All World)",
+    "family": "global_all_cap",
+    "asset_class": {"equity": 1.0},
+    "regions": {"north_america": 0.65, "europe_ex_uk": 0.12, "uk": 0.035,
+                "japan": 0.055, "pacific_ex_japan": 0.03, "emerging": 0.11},
+    "as_of": "2026-09-01",
+    "aliases": ["MSCI ACWI", "FTSE All-World", "Solactive GBS Global Markets"]
+  },
+  "msci_world": {
+    "label": "MSCI World (Developed)",
+    "family": "developed_global",
+    "parent": "acwi_imi",
+    "asset_class": {"equity": 1.0},
+    "regions": {"north_america": 0.72, "europe_ex_uk": 0.13, "uk": 0.04,
+                "japan": 0.06, "pacific_ex_japan": 0.03, "emerging": 0.02},
+    "as_of": "2026-09-01",
+    "aliases": ["MSCI World Index", "MSCI World IMI", "FTSE Developed",
+                "MSCI World All Cap"]
+  },
+  "msci_world_esg": {
+    "label": "MSCI World ESG Screened",
+    "family": "developed_global",
+    "parent": "acwi_imi",
+    "asset_class": {"equity": 1.0},
+    "regions": {"north_america": 0.73, "europe_ex_uk": 0.13, "uk": 0.04,
+                "japan": 0.055, "pacific_ex_japan": 0.025, "emerging": 0.02},
+    "as_of": "2026-09-01",
+    "aliases": ["ESG Developed World All Cap", "MSCI World SRI"]
+  },
+  "sp500": {
+    "label": "S&P 500",
+    "family": "us_large_cap",
+    "parent": "msci_world",
+    "asset_class": {"equity": 1.0},
+    "regions": {"north_america": 1.0},
+    "as_of": "2026-09-01",
+    "aliases": ["S&P 500 Index", "MSCI USA"]
+  },
+  "msci_japan": {
+    "label": "MSCI Japan",
+    "family": "japan_equity",
+    "parent": "msci_world",
+    "asset_class": {"equity": 1.0},
+    "regions": {"japan": 1.0},
+    "as_of": "2026-09-01",
+    "aliases": ["MSCI Japan IMI", "TOPIX"]
+  },
+  "msci_em": {
+    "label": "MSCI Emerging Markets",
+    "family": "emerging_equity",
+    "parent": "acwi_imi",
+    "asset_class": {"equity": 1.0},
+    "regions": {"emerging": 1.0},
+    "as_of": "2026-09-01",
+    "aliases": ["MSCI EM", "MSCI EM IMI", "FTSE Emerging All Cap",
+                "ESG Emerging Markets All Cap"]
+  },
+  "msci_china_tech": {
+    "label": "MSCI China Tech",
+    "family": "china_sector_equity",
+    "parent": "msci_em",
+    "asset_class": {"equity": 1.0},
+    "regions": {"emerging": 1.0},
+    "as_of": "2026-09-01",
+    "aliases": ["MSCI China Tech Index"]
+  },
+  "msci_world_staples": {
+    "label": "MSCI World Consumer Staples",
+    "family": "global_sector_equity",
+    "parent": "msci_world",
+    "asset_class": {"equity": 1.0},
+    "regions": {"north_america": 0.6, "europe_ex_uk": 0.2, "uk": 0.1,
+                "japan": 0.07, "pacific_ex_japan": 0.03},
+    "as_of": "2026-09-01",
+    "aliases": ["MSCI World Consumer Staples Index"]
+  },
+  "stoxx_600_utilities": {
+    "label": "STOXX Europe 600 Utilities",
+    "family": "europe_sector_equity",
+    "parent": "msci_world",
+    "asset_class": {"equity": 1.0},
+    "regions": {"europe_ex_uk": 0.85, "uk": 0.15},
+    "as_of": "2026-09-01",
+    "aliases": ["STOXX Europe 600 Utilities Index"]
+  },
+  "global_agg_gov": {
+    "label": "Global Aggregate Government Bond",
+    "family": "global_gov_bond",
+    "asset_class": {"bond": 1.0},
+    "regions": {"north_america": 0.45, "europe_ex_uk": 0.25, "uk": 0.05,
+                "japan": 0.2, "pacific_ex_japan": 0.05},
+    "as_of": "2026-09-01",
+    "aliases": ["FTSE World Government Bond", "JPM Global Government Bond",
+                "Bloomberg Global Aggregate Treasuries"]
+  },
+  "global_agg_corp": {
+    "label": "Global Aggregate Corporate Bond",
+    "family": "global_corp_bond",
+    "asset_class": {"bond": 1.0},
+    "regions": {"north_america": 0.55, "europe_ex_uk": 0.25, "uk": 0.07,
+                "japan": 0.08, "pacific_ex_japan": 0.05},
+    "as_of": "2026-09-01",
+    "aliases": ["Bloomberg Global Aggregate Corporate",
+                "Screened Global Corporate Bond"]
+  },
+  "euro_gov_short": {
+    "label": "Euro Government Bond 0-1Y",
+    "family": "euro_gov_bond",
+    "asset_class": {"bond": 1.0},
+    "regions": {"europe_ex_uk": 1.0},
+    "as_of": "2026-09-01",
+    "aliases": ["Euro Government Bond 0-1 Year", "Euro Government Bond"]
+  },
+  "euro_corp": {
+    "label": "Euro Corporate Bond",
+    "family": "euro_corp_bond",
+    "asset_class": {"bond": 1.0},
+    "regions": {"europe_ex_uk": 0.9, "uk": 0.1},
+    "as_of": "2026-09-01",
+    "aliases": ["Euro Corporate Bond 0-3Y", "Euro High Yield Corporate Bond"]
+  }
+}

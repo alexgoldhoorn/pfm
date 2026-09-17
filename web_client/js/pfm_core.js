@@ -123,6 +123,27 @@ function esc(s) {
 }
 window.esc = esc;
 
+// LLM extraction returns "YYYY-MM-DDTHH:MM:SS" when a statement shows an
+// execution time, but <input type="date"> silently renders any value that
+// isn't a bare "YYYY-MM-DD" as blank — so the preview looked like the date was
+// never extracted. Feed the input the date part only.
+function txDateInputValue(d) {
+    const m = /^(\d{4}-\d{2}-\d{2})(?:[T ]|$)/.exec(String(d || '').trim());
+    return m ? m[1] : '';
+}
+window.txDateInputValue = txDateInputValue;
+
+// Re-attach the extracted time on save (duplicate detection is time-aware, so
+// it tells same-day trades apart) — but only while the user left the date as
+// extracted; a hand-edited date no longer belongs to that time.
+function mergeTxDateTime(inputDate, originalDate) {
+    if (!inputDate) return '';
+    const orig = String(originalDate || '').trim();
+    const m = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2})?)/.exec(orig);
+    return m && m[1] === inputDate ? `${inputDate}T${m[2]}` : inputDate;
+}
+window.mergeTxDateTime = mergeTxDateTime;
+
 // Pure, DOM-free filter+sort for the dashboard Top Positions card (unit-tested
 // in web_client/js/tests/). Drops zero/negative-quantity positions, filters by
 // asset type, sorts by the chosen mode, then takes the top N.
@@ -2456,6 +2477,74 @@ function createAPIClient() {
                 headers: { 'X-API-Key': this.apiKey }
             });
             if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async getFundOverlap() {
+            const resp = await fetch(this.baseURL + '/api/v1/analytics/fund-overlap', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async getFundProfiles() {
+            const resp = await fetch(this.baseURL + '/api/v1/fund-profiles/', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error('Failed to load fund profiles');
+            return resp.json();
+        },
+
+        async getBenchmarks() {
+            const resp = await fetch(this.baseURL + '/api/v1/fund-profiles/benchmarks', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error('Failed to load benchmarks');
+            return resp.json();
+        },
+
+        async getFundProfile(assetId) {
+            const resp = await fetch(this.baseURL + '/api/v1/fund-profiles/' + assetId, {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (resp.status === 404) return null;
+            if (!resp.ok) throw new Error('Failed to load fund profile');
+            return resp.json();
+        },
+
+        async saveFundProfile(assetId, payload) {
+            const resp = await fetch(this.baseURL + '/api/v1/fund-profiles/' + assetId, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(payload)
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to save profile');
+            return resp.json();
+        },
+
+        async refreshFundProfile(assetId, benchmarkKey, force = false) {
+            const resp = await fetch(this.baseURL + '/api/v1/fund-profiles/' + assetId + '/refresh', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify({ benchmark_key: benchmarkKey, force })
+            });
+            if (!resp.ok) {
+                const err = new Error((await resp.json().catch(() => ({}))).detail || 'Failed to refresh profile');
+                // Callers need to tell "hand-edited profile, needs confirmation"
+                // (409) apart from every other failure mode.
+                err.status = resp.status;
+                throw err;
+            }
+            return resp.json();
+        },
+
+        async suggestFundProfile(assetId) {
+            const resp = await fetch(this.baseURL + '/api/v1/fund-profiles/' + assetId + '/suggest', {
+                method: 'POST',
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Suggestion failed');
             return resp.json();
         },
 

@@ -799,89 +799,33 @@ def get_tax_optimizer(
 
 @router.get("/diversification")
 def get_diversification(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
-    """Sector / country / currency / asset-type concentration + Herfindahl index.
+    """Exposure breakdown with funds looked through, plus concentration.
 
     Defined as a sync handler (not async) so FastAPI runs it in a threadpool:
-    the per-holding yfinance ``.info`` lookups are blocking and would freeze
-    the event loop — stalling every other request — if awaited inline.
+    the per-holding yfinance lookups for direct holdings are blocking and would
+    freeze the event loop if awaited inline.
+
+    The computation lives in ``portf_manager.services.exposure`` so this and
+    Portfolio Health cannot drift apart.
     """
-    positions, _ = _compute_positions(db)
+    from portf_manager.services.exposure import compute_exposure
 
-    by_type: dict[str, float] = {}
-    by_currency: dict[str, float] = {}
-    by_sector: dict[str, float] = {}
-    by_country: dict[str, float] = {}
-    # Per-holding values for the textbook concentration measure (HHI over
-    # individual positions, not asset-type buckets).
-    by_position: dict[str, float] = {}
-    position_names: dict[str, str] = {}
-    total = 0.0
+    result = compute_exposure(db, fx=_fx)
+    # The per-fund list is an input to fund-overlap, not part of this view.
+    result.pop("funds", None)
+    return result
 
-    for aid, pos in positions.items():
-        if pos["quantity"] <= 0:
-            continue
-        asset = db.get_asset(aid)
-        if not asset:
-            continue
-        cur = asset.get("currency", "EUR")
-        price_data = db.get_latest_price(aid)
-        price = float(price_data["price"]) if price_data else 0.0
-        value = pos["quantity"] * price * _fx(cur)
-        if value <= 0:
-            continue
-        total += value
-        sym = asset["symbol"]
-        by_position[sym] = by_position.get(sym, 0) + value
-        position_names[sym] = asset.get("name", sym)
-        by_type[asset.get("asset_type", "other")] = (
-            by_type.get(asset.get("asset_type", "other"), 0) + value
-        )
-        by_currency[cur] = by_currency.get(cur, 0) + value
 
-        # sector/country: use ticker when available so ISIN-keyed assets resolve
-        # correctly; crypto/bond short-circuited to hardcoded defaults.
-        from portf_manager.services.portfolio_advisor import _resolve_sector_country
+@router.get("/fund-overlap")
+def get_fund_overlap(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+    """Held funds that hold the same thing — same index family, or nested."""
+    from portf_manager.services.exposure import compute_exposure, find_fund_overlaps
 
-        sector, country = _resolve_sector_country(db, asset)
-        by_sector[sector] = by_sector.get(sector, 0) + value
-        by_country[country] = by_country.get(country, 0) + value
-
-    def pct_map(d):
-        return (
-            {
-                k: round(v / total * 100, 1)
-                for k, v in sorted(d.items(), key=lambda x: -x[1])
-            }
-            if total
-            else {}
-        )
-
-    def herfindahl(d):
-        if not total:
-            return 0.0
-        return round(sum((v / total) ** 2 for v in d.values()) * 10000, 0)
-
-    # Largest single holding (more meaningful than the biggest asset-type bucket)
-    largest_symbol = None
-    if by_position:
-        largest_symbol = max(by_position, key=by_position.get)
-    largest_pct = (
-        round(by_position[largest_symbol] / total * 100, 1)
-        if total and largest_symbol
-        else 0
-    )
-
+    result = compute_exposure(db, fx=_fx)
+    total = result["total_value_eur"]
     return {
-        "total_value_eur": round(total, 2),
-        "by_asset_type": pct_map(by_type),
-        "by_currency": pct_map(by_currency),
-        "by_sector": pct_map(by_sector),
-        "by_country": pct_map(by_country),
-        # HHI over individual holdings — the standard portfolio concentration index
-        "concentration_hhi": herfindahl(by_position),
-        "largest_position_pct": largest_pct,
-        "largest_position_symbol": largest_symbol,
-        "largest_position_name": position_names.get(largest_symbol, largest_symbol),
+        "groups": find_fund_overlaps(result["funds"], total),
+        "total_value_eur": total,
     }
 
 
