@@ -632,12 +632,12 @@ docker compose build web && docker stop portf_web && WEB_PORT=8080 docker compos
 `saveImportedTransactions(transactions, bookings = [], portfolioId = null)` — always pass bookings array (even if empty) so PDT bookings are saved alongside transactions.
 
 ## Testing
-- Unit tests: `uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e` (1122 passing, 6 skipped); JS: 106 passing
+- Unit tests: `uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e` (1241 passing, 6 skipped); JS: 116 passing
 - JS tests: `make test-js` (Node 24 no longer expands a bare directory passed to `--test`, so the target names `web_client/js/tests/*.test.mjs` explicitly — `node --test web_client/js/tests/` fails with a misleading `MODULE_NOT_FOUND`)
 - Pre-push hook runs full unit suite automatically.
 - F541 fixer: `uv run python scripts/fix_f541.py`
 - Reset LLM singleton: `from portf_manager.llm_client import reset_llm_client`
-- DB tests: `tests/test_database.py` — version assertion is `== 29` (bump with `DATABASE_VERSION`; it appears in four places in that file)
+- DB tests: `tests/test_database.py` — version assertion is `== 30` (bump with `DATABASE_VERSION`; it appears in five places in that file)
 
 ## Documentation (Default Behaviour)
 When adding or changing any feature, always update **both**:

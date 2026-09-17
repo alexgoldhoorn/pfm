@@ -38,7 +38,7 @@ RUN uv run playwright install --with-deps chromium firefox webkit
 
 COPY . .
 
-RUN chown -R appuser:appuser /app
+RUN chown -R appuser:appuser /app /home/appuser
 
 EXPOSE 8000
 
