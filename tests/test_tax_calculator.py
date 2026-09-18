@@ -872,3 +872,153 @@ class TestTaxCalculator(unittest.TestCase):
             summary["symbol_summaries"]["GOOG"]["short_term_gain_loss"], Decimal("-60")
         )
         self.assertEqual(summary["symbol_summaries"]["GOOG"]["transaction_count"], 1)
+
+
+class TestGetOpenLots(unittest.TestCase):
+    """``get_open_lots`` — the FIFO lot state as of now, with no date window.
+
+    It shares :meth:`TaxCalculator._replay_symbol_transactions` with
+    ``calculate_tax_report``, so these cases pin that the two really do agree
+    about which lots a past sell consumed: the report's realised rows and the
+    lots left over must describe the same split of the same shares.
+    """
+
+    # buy 10 @ 100, buy 10 @ 120, sell 15 → FIFO eats the first lot whole and
+    # 5 of the second, leaving 5 @ 120 open.
+    SHARED_FIXTURE = [
+        {
+            "id": 1,
+            "transaction_date": "2024-01-10",
+            "transaction_type": "buy",
+            "quantity": "10",
+            "price": "100",
+            "symbol": "EXA",
+            "portfolio_id": 1,
+        },
+        {
+            "id": 2,
+            "transaction_date": "2024-06-10",
+            "transaction_type": "buy",
+            "quantity": "10",
+            "price": "120",
+            "symbol": "EXA",
+            "portfolio_id": 1,
+        },
+        {
+            "id": 3,
+            "transaction_date": "2025-03-01",
+            "transaction_type": "sell",
+            "quantity": "15",
+            "price": "150",
+            "symbol": "EXA",
+            "portfolio_id": 1,
+        },
+    ]
+
+    def setUp(self):
+        self.db_manager = MockDBManager()
+        self.db_manager.get_all_transactions = lambda user_id=None: list(
+            self.SHARED_FIXTURE
+        )
+        self.calculator = TaxCalculator(self.db_manager)
+
+    def test_fifo_earliest_lot_is_consumed_first(self):
+        lots = self.calculator.get_open_lots("EXA")
+        self.assertEqual(len(lots), 1)
+        self.assertEqual(lots[0].remaining_quantity, Decimal("5"))
+        self.assertEqual(lots[0].price, Decimal("120"))
+        self.assertEqual(lots[0].purchase_date, date(2024, 6, 10))
+
+    def test_open_lots_agree_with_the_tax_report_on_the_same_data(self):
+        """The same 15 shares, told from both ends."""
+        report = self.calculator.calculate_tax_report(
+            user_id=1, start_date=date(2025, 1, 1), end_date=date(2025, 12, 31)
+        )
+        sold = sum(tx.sell_quantity for tx in report["EXA"])
+        open_qty = sum(
+            lot.remaining_quantity for lot in self.calculator.get_open_lots("EXA")
+        )
+        bought = Decimal("20")
+        self.assertEqual(sold, Decimal("15"))
+        self.assertEqual(open_qty, bought - sold)
+        # The report consumed the €100 lot entirely, so only the €120 one is
+        # left — the two views can't disagree about which.
+        self.assertEqual(
+            [tx.purchase_price for tx in report["EXA"]],
+            [Decimal("100"), Decimal("120")],
+        )
+
+    def test_a_fully_sold_position_has_no_open_lots(self):
+        rows = self.SHARED_FIXTURE[:1] + [
+            {
+                "id": 9,
+                "transaction_date": "2025-04-01",
+                "transaction_type": "sell",
+                "quantity": "10",
+                "price": "150",
+                "symbol": "EXA",
+                "portfolio_id": 1,
+            }
+        ]
+        self.db_manager.get_all_transactions = lambda user_id=None: rows
+        self.assertEqual(self.calculator.get_open_lots("EXA"), [])
+
+    def test_splits_scale_the_open_lot_without_changing_cost_basis(self):
+        rows = [
+            self.SHARED_FIXTURE[0],
+            {
+                "id": 5,
+                "transaction_date": "2024-03-01",
+                "transaction_type": "split",
+                "quantity": "2",
+                "price": "0",
+                "symbol": "EXA",
+                "portfolio_id": 1,
+            },
+        ]
+        self.db_manager.get_all_transactions = lambda user_id=None: rows
+        lots = self.calculator.get_open_lots("EXA")
+        self.assertEqual(lots[0].remaining_quantity, Decimal("20"))
+        self.assertEqual(lots[0].price, Decimal("50"))
+        self.assertEqual(lots[0].remaining_cost_basis, Decimal("1000"))
+
+    def test_other_symbols_are_ignored(self):
+        rows = list(self.SHARED_FIXTURE) + [
+            {
+                "id": 7,
+                "transaction_date": "2024-02-01",
+                "transaction_type": "buy",
+                "quantity": "3",
+                "price": "50",
+                "symbol": "EXB",
+                "portfolio_id": 1,
+            }
+        ]
+        self.db_manager.get_all_transactions = lambda user_id=None: rows
+        lots = self.calculator.get_open_lots("EXA")
+        self.assertEqual(len(lots), 1)
+        self.assertEqual(lots[0].price, Decimal("120"))
+
+    def test_portfolio_id_scopes_the_replay(self):
+        rows = [
+            dict(self.SHARED_FIXTURE[0], portfolio_id=1),
+            dict(self.SHARED_FIXTURE[1], portfolio_id=2),
+        ]
+        self.db_manager.get_transactions_by_portfolio = lambda pid: [
+            r for r in rows if r["portfolio_id"] == pid
+        ]
+        lots = self.calculator.get_open_lots("EXA", portfolio_id=2)
+        self.assertEqual(len(lots), 1)
+        self.assertEqual(lots[0].price, Decimal("120"))
+
+    def test_preloaded_transactions_skip_the_query(self):
+        """A caller that already holds the rows must not trigger another read."""
+
+        def boom(*args, **kwargs):
+            raise AssertionError("get_open_lots re-queried the transaction table")
+
+        self.db_manager.get_all_transactions = boom
+        lots = self.calculator.get_open_lots(
+            "EXA", transactions=list(self.SHARED_FIXTURE)
+        )
+        self.assertEqual(lots[0].remaining_quantity, Decimal("5"))

@@ -9,7 +9,7 @@ to calculate realized gains/losses for tax reporting purposes.
 
 from dataclasses import dataclass
 from datetime import datetime, date
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from decimal import Decimal
 import logging
 
@@ -150,29 +150,37 @@ class TaxCalculator:
 
         return tax_report
 
-    def _calculate_symbol_tax_transactions(
-        self, symbol: str, transactions: List[Dict], start_date: date, end_date: date
-    ) -> List[TaxTransaction]:
-        """
-        Calculate tax transactions for a specific symbol using FIFO.
+    def _replay_symbol_transactions(
+        self, symbol: str, transactions: List[Dict], collect_sales: bool = True
+    ) -> Tuple[List[TaxLot], List[Tuple[date, List[TaxTransaction]]]]:
+        """Replay every buy/sell/split for *symbol* against a FIFO lot list.
+
+        The one implementation of "consume this lot list against this
+        transaction list" — both :meth:`calculate_tax_report` (via
+        :meth:`_calculate_symbol_tax_transactions`) and :meth:`get_open_lots`
+        drive it, so a report and an open-lot query can never disagree about
+        which lots a past sell consumed.
 
         Args:
-            symbol: Stock symbol
-            transactions: All transactions for this symbol
-            start_date: Start date for sell transactions
-            end_date: End date for sell transactions
+            symbol: Stock symbol (only used for labelling the output rows).
+            transactions: All transactions for this symbol, any order.
+            collect_sales: When False, sells still consume lots but no
+                ``TaxTransaction`` rows (nor the asset/portfolio lookups they
+                need) are built — the open-lot path has no use for them.
 
         Returns:
-            List of tax transactions (realized gains/losses)
+            ``(tax_lots, sales)`` — ``tax_lots`` is the lot list after the last
+            transaction (a lot with ``remaining_quantity == 0`` is fully sold);
+            ``sales`` is one ``(sell_date, [TaxTransaction, ...])`` pair per
+            sell, in chronological order, empty when *collect_sales* is False.
         """
         # Sort transactions by date (FIFO requirement)
         sorted_transactions = sorted(
             transactions, key=lambda x: (x["transaction_date"], x["id"])
         )
 
-        # Track tax lots (purchases) using FIFO
-        tax_lots = []
-        tax_transactions = []
+        tax_lots: List[TaxLot] = []
+        sales: List[Tuple[date, List[TaxTransaction]]] = []
 
         for tx in sorted_transactions:
             tx_date = self._parse_date(tx["transaction_date"])
@@ -196,7 +204,7 @@ class TaxCalculator:
 
             elif tx_type == "sell":
                 # Every sell consumes lots (FIFO runs over the full history);
-                # only sells inside the report window are included in the output.
+                # the caller decides which of them it wants reported.
                 sell_transactions = self._process_sell_transaction(
                     symbol,
                     tx,
@@ -207,9 +215,10 @@ class TaxCalculator:
                     sell_fee_per_share=(
                         fees / quantity if quantity > 0 else Decimal("0")
                     ),
+                    collect=collect_sales,
                 )
-                if start_date <= tx_date <= end_date:
-                    tax_transactions.extend(sell_transactions)
+                if collect_sales:
+                    sales.append((tx_date, sell_transactions))
 
             elif tx_type == "split" and quantity > 0:
                 # Split ratio is stored in quantity (2-for-1 → 2). Scale every
@@ -221,7 +230,72 @@ class TaxCalculator:
                     lot.price /= quantity
                     lot.fee_per_share /= quantity
 
+        return tax_lots, sales
+
+    def _calculate_symbol_tax_transactions(
+        self, symbol: str, transactions: List[Dict], start_date: date, end_date: date
+    ) -> List[TaxTransaction]:
+        """
+        Calculate tax transactions for a specific symbol using FIFO.
+
+        Args:
+            symbol: Stock symbol
+            transactions: All transactions for this symbol
+            start_date: Start date for sell transactions
+            end_date: End date for sell transactions
+
+        Returns:
+            List of tax transactions (realized gains/losses)
+        """
+        _lots, sales = self._replay_symbol_transactions(symbol, transactions)
+        tax_transactions: List[TaxTransaction] = []
+        for sell_date, sell_transactions in sales:
+            if start_date <= sell_date <= end_date:
+                tax_transactions.extend(sell_transactions)
         return tax_transactions
+
+    def get_open_lots(
+        self,
+        symbol: str,
+        portfolio_id: Optional[int] = None,
+        transactions: Optional[List[Dict]] = None,
+    ) -> List[TaxLot]:
+        """FIFO lots for *symbol* that are still open as of the last transaction.
+
+        There is no date window: every ``buy``/``sell``/``split`` row is
+        replayed through :meth:`_replay_symbol_transactions` — the same lot
+        consumption :meth:`calculate_tax_report` performs — and what is left
+        holding shares is returned. "As of the last transaction in the DB" is
+        "as of today" by construction.
+
+        Args:
+            symbol: Stock symbol.
+            portfolio_id: Restrict to one portfolio, mirroring
+                :meth:`calculate_tax_report`'s own parameter. Ignored when
+                *transactions* is supplied.
+            transactions: Pre-loaded transaction rows to replay instead of
+                querying. They must already be scoped the way *portfolio_id*
+                would have scoped them; rows for other symbols are filtered out
+                here. Lets a caller that needs lots for many symbols load the
+                table once rather than once per symbol.
+
+        Returns:
+            The lots with ``remaining_quantity > 0``, oldest first.
+        """
+        if transactions is None:
+            if portfolio_id is not None:
+                transactions = self.db_manager.get_transactions_by_portfolio(
+                    portfolio_id
+                )
+            else:
+                transactions = self.db_manager.get_all_transactions(user_id=None)
+
+        wanted = symbol.upper()
+        rows = [tx for tx in transactions if (tx.get("symbol") or "").upper() == wanted]
+        lots, _sales = self._replay_symbol_transactions(
+            symbol, rows, collect_sales=False
+        )
+        return [lot for lot in lots if lot.remaining_quantity > 0]
 
     def _process_sell_transaction(
         self,
@@ -232,6 +306,7 @@ class TaxCalculator:
         sell_quantity: Decimal,
         sell_price: Decimal,
         sell_fee_per_share: Decimal = Decimal("0"),
+        collect: bool = True,
     ) -> List[TaxTransaction]:
         """
         Process a sell transaction using FIFO methodology.
@@ -246,19 +321,26 @@ class TaxCalculator:
             sell_fee_per_share: Sale fees spread over the shares sold; IRPF
                 transmission value is net of sale expenses, so this is
                 subtracted from the proceeds.
+            collect: When False, lots are consumed exactly as always but no
+                ``TaxTransaction`` is built and the asset/portfolio lookups
+                they need are skipped — the caller only wants the lot
+                mutation (see :meth:`get_open_lots`).
 
         Returns:
-            List of tax transactions for this sell
+            List of tax transactions for this sell (empty when *collect* is
+            False)
         """
         tax_transactions = []
         remaining_to_sell = sell_quantity
 
         # Get asset and portfolio information
-        asset_info = self.db_manager.get_asset_by_symbol(symbol)
-        portfolio_info = self.db_manager.get_portfolio(sell_tx["portfolio_id"])
-
-        asset_name = asset_info["name"] if asset_info else symbol
-        portfolio_name = portfolio_info["name"] if portfolio_info else "Unknown"
+        asset_name = symbol
+        portfolio_name = "Unknown"
+        if collect:
+            asset_info = self.db_manager.get_asset_by_symbol(symbol)
+            portfolio_info = self.db_manager.get_portfolio(sell_tx["portfolio_id"])
+            asset_name = asset_info["name"] if asset_info else symbol
+            portfolio_name = portfolio_info["name"] if portfolio_info else "Unknown"
 
         # Process tax lots in FIFO order
         for tax_lot in tax_lots:
@@ -271,39 +353,40 @@ class TaxCalculator:
             # Determine how much to sell from this lot
             quantity_from_lot = min(remaining_to_sell, tax_lot.remaining_quantity)
 
-            # Amounts follow the IRPF definitions: proceeds net of sale fees,
-            # cost basis including purchase fees (prices stay gross).
-            sell_amount = quantity_from_lot * (sell_price - sell_fee_per_share)
-            purchase_amount = quantity_from_lot * (
-                tax_lot.price + tax_lot.fee_per_share
-            )
-            gain_loss = sell_amount - purchase_amount
+            if collect:
+                # Amounts follow the IRPF definitions: proceeds net of sale
+                # fees, cost basis including purchase fees (prices stay gross).
+                sell_amount = quantity_from_lot * (sell_price - sell_fee_per_share)
+                purchase_amount = quantity_from_lot * (
+                    tax_lot.price + tax_lot.fee_per_share
+                )
+                gain_loss = sell_amount - purchase_amount
 
-            # Calculate holding period
-            holding_period_days = (sell_date - tax_lot.purchase_date).days
-            is_long_term = holding_period_days >= 365
+                # Calculate holding period
+                holding_period_days = (sell_date - tax_lot.purchase_date).days
+                is_long_term = holding_period_days >= 365
 
-            # Create tax transaction
-            tax_transaction = TaxTransaction(
-                symbol=symbol,
-                asset_name=asset_name,
-                sell_date=sell_date,
-                sell_quantity=quantity_from_lot,
-                sell_price=sell_price,
-                sell_amount=sell_amount,
-                purchase_date=tax_lot.purchase_date,
-                purchase_price=tax_lot.price,
-                purchase_amount=purchase_amount,
-                gain_loss=gain_loss,
-                holding_period_days=holding_period_days,
-                is_long_term=is_long_term,
-                sell_transaction_id=sell_tx["id"],
-                buy_transaction_id=tax_lot.transaction_id,
-                portfolio_name=portfolio_name,
-                description=sell_tx.get("description", ""),
-            )
+                # Create tax transaction
+                tax_transaction = TaxTransaction(
+                    symbol=symbol,
+                    asset_name=asset_name,
+                    sell_date=sell_date,
+                    sell_quantity=quantity_from_lot,
+                    sell_price=sell_price,
+                    sell_amount=sell_amount,
+                    purchase_date=tax_lot.purchase_date,
+                    purchase_price=tax_lot.price,
+                    purchase_amount=purchase_amount,
+                    gain_loss=gain_loss,
+                    holding_period_days=holding_period_days,
+                    is_long_term=is_long_term,
+                    sell_transaction_id=sell_tx["id"],
+                    buy_transaction_id=tax_lot.transaction_id,
+                    portfolio_name=portfolio_name,
+                    description=sell_tx.get("description", ""),
+                )
 
-            tax_transactions.append(tax_transaction)
+                tax_transactions.append(tax_transaction)
 
             # Update remaining quantities
             tax_lot.remaining_quantity -= quantity_from_lot
