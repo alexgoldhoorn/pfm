@@ -19,6 +19,7 @@ from portf_manager.services.analytics_service import (
     calmar_ratio,
     compute_beta_alpha,
     compute_cagr,
+    current_year_savings_base,
     dividend_income,
     dividend_ttm_enrichment,
     irpf_savings_tax,
@@ -641,7 +642,7 @@ def get_tax_estimate(
     all_txns = db.get_all_transactions()
     div_this_year, interest_this_year = _savings_income_eur(db, all_txns, yr)
 
-    savings_base = realised_gain + div_this_year + interest_this_year
+    savings_base = current_year_savings_base(db, year=yr)
     estimated_tax = irpf_savings_tax(savings_base)
 
     # Unrealised gains + tax-loss harvesting candidates
