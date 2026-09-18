@@ -6,12 +6,13 @@ functionality for the portfolio management application.
 """
 
 import hashlib
-import secrets
-import os
-from datetime import datetime, timedelta
-from typing import Optional, Dict
+import hmac
 import json
+import os
+import secrets
+from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Dict, Optional
 
 
 class AuthenticationError(Exception):
@@ -94,7 +95,7 @@ class AuthManager:
     def _verify_password(self, password: str, password_hash: str, salt: str) -> bool:
         """Verify password against hash."""
         computed_hash, _ = self._hash_password(password, salt)
-        return computed_hash == password_hash
+        return hmac.compare_digest(computed_hash, password_hash)
 
     def register_user(
         self, username: str, email: str, password: str, full_name: str = None

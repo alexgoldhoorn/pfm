@@ -291,12 +291,20 @@ class APIKeyBearer(HTTPBearer):
         Returns:
             dict or None: API key info if valid, None otherwise
         """
+        # Reuse per-request validation result when both router-level and
+        # endpoint-level dependencies ask for API key auth in the same request.
+        # This avoids duplicate DB lookups and duplicate last_used writes.
+        cached = getattr(request.state, "api_key_info", None)
+        if cached is not None:
+            return cached
+
         # Check for X-API-Key header first
         api_key = request.headers.get("X-API-Key")
 
         if api_key:
             key_info = self.api_key_manager.validate_api_key(api_key)
             if key_info:
+                request.state.api_key_info = key_info
                 return key_info
 
         # Fallback to Authorization header
@@ -304,6 +312,7 @@ class APIKeyBearer(HTTPBearer):
         if credentials:
             key_info = self.api_key_manager.validate_api_key(credentials.credentials)
             if key_info:
+                request.state.api_key_info = key_info
                 return key_info
 
         return None

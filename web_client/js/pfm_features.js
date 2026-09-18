@@ -58,7 +58,7 @@ function setupWatchlistPage() {
             form.reset();
             loadWatchlist();
         } catch (err) {
-            if (status) status.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`;
+            if (status) status.innerHTML = `<span class="text-danger">Error: ${esc(err.message)}</span>`;
         } finally {
             btn.disabled = false;
             btn.innerHTML = '<i class="bi bi-plus-lg me-1"></i>Add';
@@ -162,7 +162,7 @@ async function loadGoals() {
                 </div>`;
         }).join('');
     } catch (err) {
-        list.innerHTML = `<div class="col-12"><p class="text-danger small py-3 mb-0">Error loading goals: ${err.message}</p></div>`;
+        list.innerHTML = `<div class="col-12"><p class="text-danger small py-3 mb-0">Error loading goals: ${esc(err.message)}</p></div>`;
     }
 }
 
@@ -230,7 +230,7 @@ function setupEditGoalModal() {
             bootstrap.Modal.getInstance(document.getElementById('editGoalModal')).hide();
             loadGoals();
         } catch (err) {
-            document.getElementById('editGoalStatus').innerHTML = `<span class="text-danger small">Error: ${err.message}</span>`;
+            document.getElementById('editGoalStatus').innerHTML = `<span class="text-danger small">Error: ${esc(err.message)}</span>`;
         } finally {
             btn.disabled = false;
             btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save';
@@ -263,7 +263,7 @@ function setupGoalsPage() {
             document.getElementById('addGoalReturn').value = '6';
             loadGoals();
         } catch (err) {
-            if (status) status.innerHTML = `<span class="text-danger">Error: ${err.message}</span>`;
+            if (status) status.innerHTML = `<span class="text-danger">Error: ${esc(err.message)}</span>`;
         } finally {
             btn.disabled = false;
             btn.innerHTML = '<i class="bi bi-plus-lg me-1"></i>Add';
@@ -1937,7 +1937,7 @@ function setupImportExportPage() {
                 <tbody>${rows}</tbody>
             </table>`;
         } catch (err) {
-            container.innerHTML = `<p class="text-danger small p-3 mb-0">Error loading bookings: ${err.message}</p>`;
+            container.innerHTML = `<p class="text-danger small p-3 mb-0">Error loading bookings: ${esc(err.message)}</p>`;
         }
     }
 
@@ -2120,7 +2120,7 @@ function setupGoogleSheetsPage() {
             if (cfg.default_spreadsheet_id && syncSheetInput && !syncSheetInput.value)
                 syncSheetInput.value = cfg.default_spreadsheet_id;
         } catch (e) {
-            if (syncConfigInfo) syncConfigInfo.innerHTML = `<span class="text-danger small">${e.message}</span>`;
+            if (syncConfigInfo) syncConfigInfo.innerHTML = `<span class="text-danger small">${esc(e.message)}</span>`;
         }
     }
 
@@ -2172,7 +2172,7 @@ function setupGoogleSheetsPage() {
                 r.errors.length ? 'warning' : 'success'
             );
         } catch (err) {
-            setSyncStatus(`Pull failed: ${err.message}`, 'danger');
+            setSyncStatus(`Pull failed: ${esc(err.message)}`, 'danger');
         } finally {
             syncPullBtn.disabled = false;
             syncPullBtn.innerHTML = '<i class="bi bi-cloud-arrow-down me-2"></i>Pull from Sheet';
@@ -2214,7 +2214,7 @@ function setupGoogleSheetsPage() {
                 'success'
             );
         } catch (err) {
-            if (pushModalStatus) pushModalStatus.innerHTML += `<div class="alert alert-danger py-1 small mb-0">${err.message}</div>`;
+            if (pushModalStatus) pushModalStatus.innerHTML += `<div class="alert alert-danger py-1 small mb-0">${esc(err.message)}</div>`;
         } finally {
             pushConfirmBtn.disabled = false;
             pushConfirmBtn.innerHTML = '<i class="bi bi-cloud-arrow-up me-2"></i>Push';
@@ -2231,7 +2231,7 @@ function setupGoogleSheetsPage() {
             const bk = await window.apiClient.syncBackup(sheetId);
             setSyncStatus(`Backup tabs updated: <a href="${bk.backup_url}" target="_blank">open sheet</a>`, 'success');
         } catch (err) {
-            setSyncStatus(`Backup failed: ${err.message}`, 'danger');
+            setSyncStatus(`Backup failed: ${esc(err.message)}`, 'danger');
         } finally {
             syncBackupBtn.disabled = false;
             syncBackupBtn.innerHTML = '<i class="bi bi-copy me-2"></i>Backup Tabs';
@@ -2248,7 +2248,7 @@ function setupGoogleSheetsPage() {
             await window.apiClient.syncDownload(sheetId, 'xlsx');
             setSyncStatus('Excel file downloaded.', 'success');
         } catch (err) {
-            setSyncStatus(`Download failed: ${err.message}`, 'danger');
+            setSyncStatus(`Download failed: ${esc(err.message)}`, 'danger');
         } finally {
             syncDownloadBtn.disabled = false;
             syncDownloadBtn.innerHTML = '<i class="bi bi-file-earmark-arrow-down me-2"></i>Download as Excel';
@@ -2539,7 +2539,7 @@ function setupForecastPage() {
                     </label>
                 </div>`).join('');
         } catch (e) {
-            goalsListEl.innerHTML = `<span class="text-danger">Could not load goals: ${e.message}</span>`;
+            goalsListEl.innerHTML = `<span class="text-danger">Could not load goals: ${esc(e.message)}</span>`;
         }
     }
     function selectedForecastGoals() {
@@ -3328,7 +3328,7 @@ window.openResearchModal = async function(symbol, name) {
         if (targets && targets.sell_above !== undefined && targets.sell_above !== null && sellEl) sellEl.value = targets.sell_above;
         renderResearchReport(report);
     } catch (err) {
-        if (body) body.innerHTML = `<p class="text-danger text-center py-4 mb-0">Error: ${err.message}</p>`;
+        if (body) body.innerHTML = `<p class="text-danger text-center py-4 mb-0">Error: ${esc(err.message)}</p>`;
     }
 };
 
@@ -3347,7 +3347,7 @@ function setupResearchModal() {
                 const report = await window.apiClient.generateResearchReport(_researchSymbol);
                 renderResearchReport(report);
             } catch (err) {
-                if (body) body.innerHTML = `<p class="text-danger text-center py-4 mb-0">Error: ${err.message}</p>`;
+                if (body) body.innerHTML = `<p class="text-danger text-center py-4 mb-0">Error: ${esc(err.message)}</p>`;
             } finally {
                 genBtn.disabled = false;
                 genBtn.innerHTML = orig;

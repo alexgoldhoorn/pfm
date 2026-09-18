@@ -7,10 +7,13 @@ services:
       - prod
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-portf_user}
+      # Keep a dev-friendly fallback so running unrelated services (e.g. web)
+      # does not require exporting POSTGRES_PASSWORD just for compose parsing.
+      # Production should still override this via env/.env.production.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-portf_password}
       POSTGRES_DB: ${POSTGRES_DB:-portf_db}
     ports:
-      - "${POSTGRES_PORT:-5432}:5432"
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
