@@ -554,7 +554,7 @@ function createPageManager() {
                 } else {
                     tableBody.innerHTML = transactions.slice(0, 10).map(tx => {
                         const typeCls = tx.transaction_type === 'buy' ? 'success' : tx.transaction_type === 'sell' ? 'danger' : 'secondary';
-                        const txName = tx.name || tx.symbol || '';
+                        const txName = esc(tx.name || tx.symbol || '');
                         return `
                             <tr>
                                 <td class="ps-3">${Fmt.date(tx.transaction_date)}</td>

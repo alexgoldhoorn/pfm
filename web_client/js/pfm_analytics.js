@@ -66,7 +66,7 @@ async function loadNetworthPage() {
         _loadActualSpendingComparison();
         _renderChecklist(d, cf, d.bank_accounts || []);
     } catch (err) {
-        if (body) body.innerHTML = `<tr><td colspan="5" class="text-center text-danger py-3">${err.message}</td></tr>`;
+        if (body) body.innerHTML = `<tr><td colspan="5" class="text-center text-danger py-3">${esc(err.message)}</td></tr>`;
     }
 }
 window.loadNetworthPage = loadNetworthPage;
@@ -638,7 +638,7 @@ async function _loadCashflow() {
             </tr>`).join('');
         return d;
     } catch (err) {
-        body.innerHTML = `<tr><td colspan="5" class="text-center text-danger py-3">${err.message}</td></tr>`;
+        body.innerHTML = `<tr><td colspan="5" class="text-center text-danger py-3">${esc(err.message)}</td></tr>`;
         return null;
     }
 }
@@ -1049,7 +1049,7 @@ async function loadAnalyticsPerformance() {
                 </div>
             </div>`;
     } catch (err) {
-        body.innerHTML = `<div class="text-danger small">Error loading performance: ${err.message}</div>`;
+        body.innerHTML = `<div class="text-danger small">Error loading performance: ${esc(err.message)}</div>`;
     }
     initTooltips();
 }
@@ -1118,7 +1118,7 @@ async function loadAnalyticsNetworth() {
         if (seq !== _networthSeq) return;
         svg.style.display = 'none';
         placeholder.style.display = 'flex';
-        placeholder.innerHTML = `<span class="text-danger small">Error loading net worth history: ${err.message}</span>`;
+        placeholder.innerHTML = `<span class="text-danger small">Error loading net worth history: ${esc(err.message)}</span>`;
     }
 }
 
@@ -1426,7 +1426,7 @@ async function loadAnalyticsDividends() {
             ${forwardSection}`;
         initTooltips();
     } catch (err) {
-        body.innerHTML = `<div class="text-danger small">Error loading dividends: ${err.message}</div>`;
+        body.innerHTML = `<div class="text-danger small">Error loading dividends: ${esc(err.message)}</div>`;
     }
 }
 
@@ -1611,7 +1611,7 @@ async function loadAnalyticsTax() {
             ${d.note ? `<p class="text-muted small mb-0"><em>${d.note}</em></p>` : ''}`;
         initTooltips();
     } catch (err) {
-        body.innerHTML = `<div class="text-danger small">Error loading tax estimate: ${err.message}</div>`;
+        body.innerHTML = `<div class="text-danger small">Error loading tax estimate: ${esc(err.message)}</div>`;
     }
 }
 
@@ -1731,7 +1731,7 @@ async function loadAnalyticsGainLoss() {
                 <tbody>${realisedRows}</tbody>
             </table></div>`;
     } catch (err) {
-        body.innerHTML = `<div class="text-danger small">Error loading gain/loss: ${err.message}</div>`;
+        body.innerHTML = `<div class="text-danger small">Error loading gain/loss: ${esc(err.message)}</div>`;
     }
 }
 
@@ -1784,7 +1784,7 @@ async function loadAnalyticsTaxReport() {
             </table></div>
             ${d.note ? `<p class="text-muted small mb-0"><em>${esc(d.note)}</em></p>` : ''}`;
     } catch (err) {
-        body.innerHTML = `<div class="text-danger small">Error loading tax report: ${err.message}</div>`;
+        body.innerHTML = `<div class="text-danger small">Error loading tax report: ${esc(err.message)}</div>`;
     }
 }
 
@@ -1853,7 +1853,7 @@ async function loadTaxOptimizer() {
             ${d.note ? `<p class="text-muted small mb-0"><em>${d.note}</em></p>` : ''}`;
         initTooltips();
     } catch (err) {
-        body.innerHTML = `<div class="text-danger small">Error loading tax optimizer: ${err.message}</div>`;
+        body.innerHTML = `<div class="text-danger small">Error loading tax optimizer: ${esc(err.message)}</div>`;
     }
 }
 
@@ -2074,7 +2074,7 @@ async function loadAnalyticsDiversification() {
             });
         });
     } catch (err) {
-        body.innerHTML = `<div class="text-danger small">Error loading diversification: ${err.message}</div>`;
+        body.innerHTML = `<div class="text-danger small">Error loading diversification: ${esc(err.message)}</div>`;
     }
     initTooltips();
 }
@@ -2310,7 +2310,7 @@ async function loadAnalyticsRisk() {
                 </div>
             </div>`;
     } catch (err) {
-        body.innerHTML = `<div class="text-danger small">Error loading risk metrics: ${err.message}</div>`;
+        body.innerHTML = `<div class="text-danger small">Error loading risk metrics: ${esc(err.message)}</div>`;
     }
     initTooltips();
 
@@ -2416,7 +2416,7 @@ async function _loadCorrelationHeatmap(parentEl) {
             }
         });
     } catch (err) {
-        corrBody.innerHTML = `<div class="text-danger small">Error loading correlation: ${err.message}</div>`;
+        corrBody.innerHTML = `<div class="text-danger small">Error loading correlation: ${esc(err.message)}</div>`;
     }
 }
 
@@ -2491,7 +2491,7 @@ async function loadAnalyticsFees() {
                 </table>
             </div>`;
     } catch (err) {
-        body.innerHTML = `<div class="text-danger small">Error loading fees: ${err.message}</div>`;
+        body.innerHTML = `<div class="text-danger small">Error loading fees: ${esc(err.message)}</div>`;
     }
     initTooltips();
 }
@@ -2749,7 +2749,7 @@ async function loadPortfolioComparison() {
             });
         }
     } catch (err) {
-        body.innerHTML = `<div class="text-danger small">Error loading portfolio comparison: ${err.message}</div>`;
+        body.innerHTML = `<div class="text-danger small">Error loading portfolio comparison: ${esc(err.message)}</div>`;
     }
 }
 
@@ -2846,7 +2846,7 @@ async function loadWatchlist() {
         });
         _watchlistST.refresh();
     } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="8" class="text-danger small py-3 ps-3">Error loading watchlist: ${err.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="8" class="text-danger small py-3 ps-3">Error loading watchlist: ${esc(err.message)}</td></tr>`;
     }
 }
 

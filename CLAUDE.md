@@ -546,6 +546,14 @@ lines still appear in their own section of the variance table.
 ### Auth
 API key auth (`X-API-Key` header). `SERVER_API_KEY` env var is **auto-seeded** at startup (`app.py` lifespan) — no manual DB insert needed after container restart.
 
+Startup now fails fast in production if `PORTF_SECRET_KEY` is still the default
+placeholder or shorter than 32 characters.
+
+`APIKeyBearer` caches a successful validation on `request.state.api_key_info` for
+the lifetime of that request. This matters because data routers are protected at
+include-time **and** some endpoints still keep a local `_auth` dependency; with
+the cache, one request does one DB validation/`last_used` update instead of two.
+
 ### Portfolio Resolver
 `db.get_or_create_portfolio(name, base_currency="EUR")` — centralized helper; use instead of inline get/create pattern.
 
@@ -597,6 +605,15 @@ Single `index.html` + five JS files (no build step), **must load in order**: `he
 - `pfm_pages.js`: page/nav/auth, dashboard, transactions, assets (positions + catalogue merged, see below), help/resources
 - `pfm_analytics.js`: net-worth/dividend/analytics/diversification charts
 - `pfm_features.js`: watchlist, goals, chat, portfolios, import/export, forecast, rebalance, research, budget, settings + `DOMContentLoaded` bootstrap
+
+When rendering errors with `innerHTML`, always escape dynamic text first
+(`esc(err.message)` / `esc(e.message)`). Imported data and backend error details
+are untrusted input; interpolating them raw into HTML is an XSS sink.
+
+`web_client/nginx.conf` sets a CSP and basic browser hardening headers. Current
+CSP allows local assets plus jsDelivr (`cdn.jsdelivr.net`) for external
+Bootstrap/Chart.js/Marked dependencies and permits inline scripts/styles used by
+the current static app shell.
 
 `openChatWithContext(threadName, openingMessage)` — sets `window._chatPendingContext`, navigates to chat; used by Research ("Chat about this") and Portfolio Health ("Discuss with AI").
 
@@ -679,12 +696,20 @@ When writing tests, invent asset names (e.g. "Example Corp", "Global Bond Fund")
 ## Important Gotchas
 - **`_TX_COLS` uses f-strings**: queries in `database.py` are `f"""SELECT {self._TX_COLS}..."""`. The `f` prefix is load-bearing. Never run F541-fixers that touch triple-quoted strings on this file. Autoflake is safe; custom regex strippers are not.
 - **Black + regex**: `f""` matches the first two chars of `f"""..."""`. Limit F541-fixers to `[^\n]` single-line patterns.
-- **App always uses SQLite**: `app.py` falls back to `portfolio.db`. Container data at `/app/portfolio.db` inside `portf_backend_dev`.
+- **DB adapter comes from URL, no silent fallback**: app startup now calls
+  `database_factory.get_database_adapter(settings.database_url)`. sqlite URLs
+  (`sqlite:///...`) resolve to SQLite, `postgres://`/`postgresql://` to the
+  Postgres adapter, and unsupported formats raise instead of quietly using
+  `portfolio.db`.
 - **Linting**: `uv run flake8 portf_manager/ portf_server/ --max-line-length=88 --extend-ignore=E203,W503,E501`. flake8 currently reports 0 warnings — keep it that way.
 - **`sqlite3.Row` name collision**: never rely on `SELECT t.*, ..., COALESCE(t.col, other) AS col` — use explicit column list. First occurrence wins in dict.
 - **Spanish tax**: FIFO cost basis; stocks/ETFs/bonds/funds = IRPF Box 27 ("rendimientos del capital mobiliario"). `TaxCalculator` runs FIFO over the **full** history — out-of-window sells still consume lots; only in-window sells are reported. Fees follow IRPF: `purchase_amount` includes purchase fees, `sell_amount` is net of sale fees (allocated per share; `purchase_price`/`sell_price` stay gross). `calculate_tax_report`'s `user_id` param is **ignored** — transaction rows store `user_id` NULL, so filtering by it returns an empty report.
 - **PDT XLSX**: openpyxl writes to a file path, not BytesIO. Always clean up with `os.unlink()`.
 - **Env var prefixes**: `portf_server/settings.py` uses `PORTF_` prefix. Google vars (`GOOGLE_SERVICE_ACCOUNT_FILE`, `GOOGLE_SPREADSHEET_ID`) are NOT prefixed — read via `os.getenv()` in sync router and `pdt_sheets_sync.py`.
+- **Compose interpolates the whole file before service selection**: a required
+  var in one service can break `docker compose build web` even when `postgres`
+  is not targeted. Keep local-dev fallbacks for cross-service vars where
+  possible; enforce strict secrets in deployment envs.
 - **GBX normalization**: `portf_manager/currency_utils.normalize_gbx_amounts()` ÷100 on import (`imports.py` save + `sync.py` pull). Live price fetch normalizes separately in `api_client.py`, gated on `fast_info.currency == "GBp"` — a live yfinance call, so a single price-update run can (rarely) get an unexpected/missing `currency` value from Yahoo and silently skip the ÷100, storing every held GBP asset ~100x too high for just that one run (confirmed real incident: 2026-08-12, self-corrected the next run, isolated — see PROJECT_STATUS v2.5.50). Nothing currently guards against this automatically (no day-over-day sanity check on stored prices/snapshots) — if a net-worth chart ever shows an implausible one-day spike-and-revert, check `prices` for that date across GBP-currency assets first. Missing the ÷100 entirely (e.g. on import) → cost basis 100× too high.
 - **ISIN→ticker resolution currency guard** (`portf_manager/ticker_resolver.py`): OpenFIGI's mapping response has **no currency field**, so `_pick_best_ticker` infers a venue's currency from its exchange code (`_CURRENCY_BY_EXCHANGE`) and discards any candidate on a wrong-currency venue — a EUR ETF and an unrelated US stock routinely share a bare ticker string ("PRAB"), and a suffix-less Yahoo symbol resolves to the US one. `_verify_yf(sym, expected_currency)` is the second half: the quote's own `fast_info.currency` must match (GBX≈GBP; a missing currency field is *not* rejected). Net effect: the resolver returns **`None` rather than a wrong-currency ticker** when it can't find a verifiable same-currency listing — those assets need a manual `ticker` (via `PUT /api/v1/assets/{id}`). `_yf_ticker_for_exchange`'s `_SUFFIX` map now carries the real OpenFIGI Bloomberg codes (`GR`→`.DE`, `FP`→`.PA`, `NA`→`.AS`, …), not just the pretty aliases. Known gap: `_pick_best_ticker` returns a bare ticker string and the caller re-derives the exchange by first-match, so when the same ISIN lists on several right-currency venues the *first* one wins even if another has the better Yahoo listing.
 - **`auto_price` is a one-way trap without the update endpoint**: adding a manual price (`POST /assets/{id}/prices` with `source="manual"`, or a deposit import) sets `auto_price=0` and the daily cron then skips the asset forever. `AssetUpdateRequest` carries `auto_price` so `PUT /api/v1/assets/{id} {"auto_price": true}` turns it back on — `db.update_asset` already whitelisted the column; only the schema was missing it.

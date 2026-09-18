@@ -19,8 +19,8 @@ from fastapi import Depends, FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from portf_manager.database import Database
 from portf_manager.auth import AuthManager
+from portf_manager.database_factory import get_database_adapter
 from .auth_middleware import APIKeyManager
 from .settings import get_settings
 
@@ -82,6 +82,13 @@ async def lifespan(app: FastAPI):
     # Get settings
     settings = get_settings()
 
+    if settings.is_production:
+        weak_default = "your-secret-key-change-in-production"
+        if settings.secret_key == weak_default or len(settings.secret_key) < 32:
+            raise RuntimeError(
+                "Refusing to start in production with a weak PORTF_SECRET_KEY"
+            )
+
     # Configure logging based on settings
     log_level = getattr(logging, settings.log_level.upper())
     logging.getLogger().setLevel(log_level)
@@ -93,17 +100,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize database
     try:
-        # Extract database path/URL from settings
-        if settings.database_url.startswith("sqlite"):
-            # Extract path from sqlite URL
-            db_path = settings.database_url.replace("sqlite:///", "").replace(
-                "sqlite://", ""
-            )
-            database = Database(db_path)
-        else:
-            # For PostgreSQL and other databases, we'd need to update Database class
-            # For now, fall back to default
-            database = Database("portfolio.db")
+        database = get_database_adapter(settings.database_url)
         logger.info(f"Database initialized successfully ({settings.database_url})")
         # Register the DB handle for the cross-worker FX cache (kv_cache layer).
         portfolios.set_shared_db(database)

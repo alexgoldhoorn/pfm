@@ -4,16 +4,17 @@ Bookings Router for Portfolio Management API
 Manages deposit and withdrawal bookings imported from PDT format.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel
-from typing import List, Optional
+import logging
 from datetime import date
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 
 from ..dependencies import get_database
-from ..auth_middleware import APIKeyManager, require_api_key
-from ..dependencies import get_api_key_manager
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class BookingCreate(BaseModel):
@@ -34,18 +35,8 @@ class BookingResponse(BaseModel):
     currency: str
 
 
-async def _auth(
-    request: Request, api_key_manager: APIKeyManager = Depends(get_api_key_manager)
-) -> dict:
-    return await require_api_key(api_key_manager)(request)
-
-
 @router.post("/", response_model=BookingResponse, status_code=201)
-async def create_booking(
-    body: BookingCreate,
-    db=Depends(get_database),
-    api_key_info: dict = Depends(_auth),
-):
+def create_booking(body: BookingCreate, db=Depends(get_database)):
     """Create a manual deposit or withdrawal booking."""
     if body.action not in ("Deposit", "Withdrawal"):
         raise HTTPException(
@@ -61,34 +52,29 @@ async def create_booking(
         )
         booking = db.get_booking(booking_id)
         return BookingResponse(**booking)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error creating booking: {str(e)}")
+    except Exception:
+        logger.exception("Error creating booking")
+        raise HTTPException(status_code=500, detail="Error creating booking")
 
 
 @router.get("/", response_model=List[BookingResponse])
-async def list_bookings(
+def list_bookings(
     portfolio_id: Optional[int] = Query(
         default=None, description="Filter by portfolio ID"
     ),
     db=Depends(get_database),
-    api_key_info: dict = Depends(_auth),
 ):
     """Get all bookings (deposits and withdrawals)."""
     try:
         bookings = db.get_all_bookings(portfolio_id=portfolio_id)
         return [BookingResponse(**b) for b in bookings]
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Error retrieving bookings: {str(e)}"
-        )
+    except Exception:
+        logger.exception("Error retrieving bookings")
+        raise HTTPException(status_code=500, detail="Error retrieving bookings")
 
 
 @router.delete("/{booking_id}", response_model=dict)
-async def delete_booking(
-    booking_id: int,
-    db=Depends(get_database),
-    api_key_info: dict = Depends(_auth),
-):
+def delete_booking(booking_id: int, db=Depends(get_database)):
     """Delete a booking by ID."""
     try:
         booking = db.get_booking(booking_id)
@@ -98,5 +84,6 @@ async def delete_booking(
         return {"message": "Booking deleted", "id": booking_id}
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error deleting booking: {str(e)}")
+    except Exception:
+        logger.exception("Error deleting booking")
+        raise HTTPException(status_code=500, detail="Error deleting booking")

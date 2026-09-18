@@ -5,9 +5,9 @@ Selects between SQLite and PostgreSQL based on DATABASE_URL and provides
 a process-wide singleton via get_database().
 """
 
-import os
 import logging
-from typing import Union
+import os
+from typing import Optional, Union
 
 from .database import Database as SQLiteDatabase
 from .database_pg import PostgreSQLDatabase
@@ -15,10 +15,28 @@ from .database_pg import PostgreSQLDatabase
 logger = logging.getLogger(__name__)
 
 
-def get_database_adapter() -> Union[SQLiteDatabase, PostgreSQLDatabase]:
-    """Return the appropriate database adapter based on environment configuration."""
-    database_url = os.getenv("DATABASE_URL")
+def _sqlite_path_from_url(database_url: str) -> str:
+    """Extract a sqlite DB path from a sqlite URL."""
+    return database_url.replace("sqlite:///", "").replace("sqlite://", "")
+
+
+def get_database_adapter(
+    database_url: Optional[str] = None,
+) -> Union[SQLiteDatabase, PostgreSQLDatabase]:
+    """Return the database adapter for the configured URL/path.
+
+    Resolution order when ``database_url`` is omitted:
+    1) ``PORTF_DATABASE_URL``
+    2) ``DATABASE_URL``
+    3) ``SQLITE_DB_PATH`` (path only, defaults to ``portfolio.db``)
+    """
+    if database_url is None:
+        database_url = os.getenv("PORTF_DATABASE_URL") or os.getenv("DATABASE_URL")
+
     if database_url:
+        if database_url.startswith("sqlite://"):
+            logger.info("Using SQLite database adapter from URL")
+            return SQLiteDatabase(_sqlite_path_from_url(database_url))
         if database_url.startswith("postgresql://") or database_url.startswith(
             "postgres://"
         ):
