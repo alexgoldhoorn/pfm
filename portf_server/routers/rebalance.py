@@ -4,8 +4,8 @@ Rebalancing Router
 GET  /api/v1/rebalance/targets          — list allocation targets
 PUT  /api/v1/rebalance/targets          — bulk upsert targets
 GET  /api/v1/rebalance/analysis         — current vs target + actions needed
-POST /api/v1/rebalance/plan             — tax-aware trade plan (skeleton —
-                                           see portf_manager/services/rebalance_planner.py)
+POST /api/v1/rebalance/plan             — tax-aware trade plan (see
+                                           portf_manager/services/rebalance_planner.py)
 """
 
 import logging
@@ -234,13 +234,14 @@ def plan_rebalance(
     Tax-aware rebalance plan: current allocation vs. target, plus one plan
     per strategy (tax_minimal / closest_to_target / balanced).
 
-    Trade generation isn't implemented yet — every strategy comes back with
-    an empty trade list, a zeroed summary and a "not yet implemented"
-    warning (stated at the top level too, so a client reading only
-    ``warnings`` can't mistake a stub for a finished plan); only ``before``
-    and each summary's ``max_abs_drift_pct_after`` reflect real portfolio
-    data. Holdings with no price row or a stale FX rate are named in
-    ``warnings`` as well. See
+    Each plan proposes concrete symbol-level trades: sells taken from
+    overweight types and ranked by that strategy (lowest realised gain per
+    euro, largest drift, or a blend), then buys that spend the proceeds plus
+    any ``cash_budget_eur`` on the underweight types. Gains and tax are
+    **estimates** — latest stored prices, today's FX, Spanish IRPF savings
+    base only — and a constraint that blocks a full rebalance yields a
+    partial plan with warnings rather than an error. Holdings with no price
+    row, a stale FX rate or no FIFO lots are named in ``warnings``. See
     ``portf_manager/services/rebalance_planner.py``.
     """
     target_overrides = (
@@ -254,6 +255,12 @@ def plan_rebalance(
             portfolio_id=request.portfolio_id,
             min_trade_eur=request.min_trade_eur,
             target_overrides=target_overrides,
+            cash_budget_eur=request.cash_budget_eur,
+            allow_sells=request.allow_sells,
+            max_trades=request.max_trades,
+            max_sell_gain_eur=request.max_sell_gain_eur,
+            excluded_symbols=request.excluded_symbols,
+            locked_symbols=request.locked_symbols,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
