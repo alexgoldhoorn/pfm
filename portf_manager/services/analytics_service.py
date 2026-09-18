@@ -29,6 +29,102 @@ def irpf_savings_tax(base: float, jurisdiction: str = "ES") -> float:
     return progressive_tax(base, jurisdiction)
 
 
+def current_year_savings_components(db, year: Optional[int] = None) -> dict[str, Any]:
+    """The Spanish IRPF savings base for *year*, plus the legs it is made of.
+
+    One pass over the FIFO tax report and the transaction list produces every
+    figure ``GET /analytics/tax-estimate`` reports about the savings base, so
+    the endpoint's ``realised_gain_eur``/``dividend_income_eur``/
+    ``interest_income_eur`` and its ``savings_base_eur`` can never come from
+    two separate runs of the same logic and disagree.
+    :func:`current_year_savings_base` is the single-value entry point for
+    callers that only need the total (e.g. the tax-aware rebalance planner).
+
+    Lazily imports the analytics router's private EUR-conversion helpers
+    (``_lot_eur_amounts``, ``_savings_income_eur``) to avoid a circular
+    import — ``portf_server/routers/analytics.py`` imports this module at
+    load time, so importing it back at module scope here would fail. Same
+    lazy-import pattern as ``portfolio_advisor.py``'s ``_fx()``.
+
+    Args:
+        db: Database instance.
+        year: Tax year; defaults to the current year.
+
+    Returns:
+        ``{"year", "realised_gain_eur", "dividend_income_eur",
+        "interest_income_eur", "savings_base_eur", "realised_by_symbol"}``.
+        The three income/gain legs and the base are unrounded EUR floats and
+        ``savings_base_eur`` is exactly their sum; ``realised_by_symbol`` is
+        the per-symbol realised-gain breakdown
+        (``{"symbol", "name", "realised_eur"}``, rounded for display, sorted
+        worst-first) that the endpoint surfaces.
+        A failure in the realised-gains calculation is logged and treated as
+        zero realised gain, matching the endpoint's existing behaviour.
+    """
+    from portf_manager.tax_calculator import TaxCalculator
+    from portf_server.routers.analytics import _lot_eur_amounts, _savings_income_eur
+
+    yr = year or date.today().year
+    start = date(yr, 1, 1)
+    end = date(yr, 12, 31)
+
+    calc = TaxCalculator(db)
+    realised_gain = 0.0
+    realised_by_symbol: list[dict[str, Any]] = []
+    try:
+        report = calc.calculate_tax_report(user_id=1, start_date=start, end_date=end)
+        for sym, txns in report.items():
+            a = db.get_asset_by_symbol(sym)
+            currency = ((a or {}).get("currency") or "EUR").upper()
+            sym_total_eur = 0.0
+            for t in txns:
+                proceeds_eur, cost_eur = _lot_eur_amounts(db, currency, t)
+                sym_total_eur += proceeds_eur - cost_eur
+            realised_gain += sym_total_eur
+            realised_by_symbol.append(
+                {
+                    "symbol": sym,
+                    "name": (a or {}).get("name", sym),
+                    "realised_eur": round(sym_total_eur, 2),
+                }
+            )
+        realised_by_symbol.sort(key=lambda x: x["realised_eur"])
+    except Exception as e:
+        logger.warning(f"Tax report calc failed: {e}")
+
+    all_txns = db.get_all_transactions()
+    div_this_year, interest_this_year = _savings_income_eur(db, all_txns, yr)
+
+    return {
+        "year": yr,
+        "realised_gain_eur": realised_gain,
+        "dividend_income_eur": div_this_year,
+        "interest_income_eur": interest_this_year,
+        "savings_base_eur": realised_gain + div_this_year + interest_this_year,
+        "realised_by_symbol": realised_by_symbol,
+    }
+
+
+def current_year_savings_base(db, year: Optional[int] = None) -> float:
+    """Spanish IRPF taxable savings base for *year*: realised gains (FIFO,
+    via ``TaxCalculator``) plus dividend/interest income, all in EUR.
+
+    Thin single-value wrapper over :func:`current_year_savings_components` —
+    the public entry point for callers that need only the total. A caller
+    that also wants the legs (as ``GET /analytics/tax-estimate`` does) must
+    call the components function once rather than both, so the parts and the
+    total always come from the same pass.
+
+    Args:
+        db: Database instance.
+        year: Tax year; defaults to the current year.
+
+    Returns:
+        Unrounded savings base in EUR (realised gain + dividends + interest).
+    """
+    return float(current_year_savings_components(db, year=year)["savings_base_eur"])
+
+
 def _parse_date(value: Any) -> Optional[date]:
     if isinstance(value, date):
         return value

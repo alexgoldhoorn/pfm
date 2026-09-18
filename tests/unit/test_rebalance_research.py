@@ -4,6 +4,8 @@ import pytest
 from httpx import AsyncClient
 from fastapi import status
 
+from portf_manager.services.rebalance_planner import STUB_PLAN_NOTICE, STUB_WARNING
+
 
 class TestRebalance:
     @pytest.mark.asyncio
@@ -51,6 +53,145 @@ class TestRebalance:
             headers=auth_headers,
         )
         assert resp.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
+class TestRebalancePlan:
+    """POST /api/v1/rebalance/plan — Task 2 skeleton.
+
+    Every strategy's ``trades`` list is stubbed empty in this task (see
+    ``portf_manager/services/rebalance_planner.py``); these tests cover the
+    end-to-end response shape and request validation only, not real trade
+    generation (Task 3's job).
+    """
+
+    async def _set_targets(self, client: AsyncClient, headers: dict, targets: list):
+        resp = await client.put(
+            "/api/v1/rebalance/targets", json=targets, headers=headers
+        )
+        assert resp.status_code == status.HTTP_200_OK
+
+    @pytest.mark.asyncio
+    async def test_plan_shape(self, async_test_client: AsyncClient, auth_headers):
+        # No target_overrides in the request => the planner must fall back
+        # to saved allocation targets, so seed a valid (summing to 100) set
+        # first.
+        await self._set_targets(
+            async_test_client,
+            auth_headers,
+            [
+                {"asset_type": "stock", "target_pct": 60.0},
+                {"asset_type": "etf", "target_pct": 40.0},
+            ],
+        )
+
+        resp = await async_test_client.post(
+            "/api/v1/rebalance/plan", json={}, headers=auth_headers
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        data = resp.json()
+
+        assert "generated_at" in data
+        assert "inputs" in data
+        assert data["inputs"]["strategy"] == "balanced"
+        assert data["inputs"]["max_trades"] == 12
+
+        assert "before" in data
+        assert "total_value_eur" in data["before"]
+        assert isinstance(data["before"]["allocations"], list)
+
+        # The top-level list must carry the stub notice too — a client that
+        # only checks `warnings` must not read a stubbed plan as clean.
+        # Compared against the constant, not a literal, so Task 3's rewording
+        # can't leave this assertion silently verifying nothing.
+        assert isinstance(data["warnings"], list)
+        assert data["warnings"][0] == STUB_PLAN_NOTICE
+
+        plans = data["plans"]
+        assert {p["strategy"] for p in plans} == {
+            "tax_minimal",
+            "closest_to_target",
+            "balanced",
+        }
+        for plan in plans:
+            assert plan["trades"] == []
+            summary = plan["summary"]
+            assert summary["trade_count"] == 0
+            assert summary["buy_total_eur"] == 0.0
+            assert summary["sell_total_eur"] == 0.0
+            assert summary["estimated_realized_gain_eur"] == 0.0
+            assert summary["estimated_tax_delta_eur"] == 0.0
+            assert "max_abs_drift_pct_after" in summary
+            assert plan["warnings"][0] == STUB_WARNING
+
+    @pytest.mark.asyncio
+    async def test_plan_validation(self, async_test_client: AsyncClient, auth_headers):
+        # Invalid strategy value.
+        resp = await async_test_client.post(
+            "/api/v1/rebalance/plan",
+            json={"strategy": "not_a_real_strategy"},
+            headers=auth_headers,
+        )
+        assert resp.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+        # max_trades out of range.
+        resp = await async_test_client.post(
+            "/api/v1/rebalance/plan", json={"max_trades": 0}, headers=auth_headers
+        )
+        assert resp.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+        resp = await async_test_client.post(
+            "/api/v1/rebalance/plan", json={"max_trades": 101}, headers=auth_headers
+        )
+        assert resp.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+        # min_trade_eur negative.
+        resp = await async_test_client.post(
+            "/api/v1/rebalance/plan",
+            json={"min_trade_eur": -1},
+            headers=auth_headers,
+        )
+        assert resp.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+        # target_overrides summing outside 99.5..100.5 — a service/route-level
+        # check (it merges with DB-stored targets), still a 422 like the
+        # Pydantic-enforced cases above, for a consistent client contract.
+        resp = await async_test_client.post(
+            "/api/v1/rebalance/plan",
+            json={
+                "target_overrides": [
+                    {"asset_type": "stock", "target_pct": 60.0},
+                    {"asset_type": "etf", "target_pct": 60.0},
+                ]
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+        assert "detail" in resp.json()
+
+    @pytest.mark.asyncio
+    async def test_plan_buy_only_mode(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        # allow_sells=false must be accepted — real buy-only behavior is
+        # Task 3's job, this only confirms the field doesn't 422/500 and the
+        # stub shape still comes back.
+        resp = await async_test_client.post(
+            "/api/v1/rebalance/plan",
+            json={
+                "allow_sells": False,
+                "target_overrides": [
+                    {"asset_type": "stock", "target_pct": 55.0},
+                    {"asset_type": "etf", "target_pct": 45.0},
+                ],
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        data = resp.json()
+        assert data["inputs"]["allow_sells"] is False
+        assert len(data["plans"]) == 3
+        for plan in data["plans"]:
+            assert plan["trades"] == []
 
 
 class TestResearch:
