@@ -19,7 +19,7 @@ from portf_manager.services.analytics_service import (
     calmar_ratio,
     compute_beta_alpha,
     compute_cagr,
-    current_year_savings_base,
+    current_year_savings_components,
     dividend_income,
     dividend_ttm_enrichment,
     irpf_savings_tax,
@@ -610,39 +610,17 @@ def get_tax_estimate(
 ):
     """Spanish IRPF savings-base estimate: realised gains + dividends YTD, unrealised, harvest candidates."""
     yr = year or date.today().year
-    start = date(yr, 1, 1)
-    end = date(yr, 12, 31)
 
-    # Realised capital gains via FIFO (all portfolios), broken down per symbol
-    calc = TaxCalculator(db)
-    realised_gain = 0.0
-    realised_by_symbol: list = []
-    try:
-        report = calc.calculate_tax_report(user_id=1, start_date=start, end_date=end)
-        for sym, txns in report.items():
-            a = db.get_asset_by_symbol(sym)
-            currency = ((a or {}).get("currency") or "EUR").upper()
-            sym_total_eur = 0.0
-            for t in txns:
-                proceeds_eur, cost_eur = _lot_eur_amounts(db, currency, t)
-                sym_total_eur += proceeds_eur - cost_eur
-            realised_gain += sym_total_eur
-            realised_by_symbol.append(
-                {
-                    "symbol": sym,
-                    "name": (a or {}).get("name", sym),
-                    "realised_eur": round(sym_total_eur, 2),
-                }
-            )
-        realised_by_symbol.sort(key=lambda x: x["realised_eur"])
-    except Exception as e:
-        logger.warning(f"Tax report calc failed: {e}")
-
-    # Dividend + interest income this year, converted at transaction-date FX
-    all_txns = db.get_all_transactions()
-    div_this_year, interest_this_year = _savings_income_eur(db, all_txns, yr)
-
-    savings_base = current_year_savings_base(db, year=yr)
+    # Realised capital gains (FIFO, all portfolios, broken down per symbol) +
+    # dividend/interest income at transaction-date FX. ONE pass: the legs and
+    # the savings base they sum to come from the same computation, so they
+    # can't drift apart. See services/analytics_service.py.
+    components = current_year_savings_components(db, year=yr)
+    realised_gain = components["realised_gain_eur"]
+    realised_by_symbol = components["realised_by_symbol"]
+    div_this_year = components["dividend_income_eur"]
+    interest_this_year = components["interest_income_eur"]
+    savings_base = components["savings_base_eur"]
     estimated_tax = irpf_savings_tax(savings_base)
 
     # Unrealised gains + tax-loss harvesting candidates

@@ -165,7 +165,7 @@ Google Sheets API: `UNFORMATTED_VALUE + SERIAL_NUMBER` for reading (dates = floa
 `GET|POST /api/v1/bookings/`, `DELETE /api/v1/bookings/{id}`. Importable via PDT (sheet/XLSX), generic `bookings` CSV, LLM extraction (`POST /api/v1/llm/extract-bookings`), or manual form — the manual form exists in two places sharing the same `POST` call: the Import/Export page's Bookings tab (`#addBookingForm`) and an "Add Cash" button on the Transactions page (`#addCashModal`/`#addCashForm`, `setupAddCash()` in `pfm_features.js`).
 
 ### Rebalance API
-`GET /api/v1/rebalance/targets`, `PUT /api/v1/rebalance/targets` (`[{asset_type, target_pct}]`), `GET /api/v1/rebalance/analysis`.
+`GET /api/v1/rebalance/targets`, `PUT /api/v1/rebalance/targets` (`[{asset_type, target_pct}]`), `GET /api/v1/rebalance/analysis`. `POST /api/v1/rebalance/plan` — skeleton (Task 2 of the tax-aware rebalance planner, `docs/superpowers/plans/2026-09-18-tax-aware-rebalance-planner.md`): computes real current-vs-target drift from live positions, but always returns empty `trades: []` for all three strategies — trade generation lands in a later task. The request's `strategy` field currently has no effect (all three strategy views are always returned), and `min_trade_eur` doesn't reach the response either. Both `/analysis` and `/plan` build positions with `portf_manager.positions.compute_positions`, so they can't disagree on current allocation.
 
 ### Research API (`portf_server/routers/research.py` + `services/research.py`)
 

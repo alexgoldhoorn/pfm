@@ -4,6 +4,8 @@ import pytest
 from httpx import AsyncClient
 from fastapi import status
 
+from portf_manager.services.rebalance_planner import STUB_PLAN_NOTICE, STUB_WARNING
+
 
 class TestRebalance:
     @pytest.mark.asyncio
@@ -97,7 +99,12 @@ class TestRebalancePlan:
         assert "total_value_eur" in data["before"]
         assert isinstance(data["before"]["allocations"], list)
 
+        # The top-level list must carry the stub notice too — a client that
+        # only checks `warnings` must not read a stubbed plan as clean.
+        # Compared against the constant, not a literal, so Task 3's rewording
+        # can't leave this assertion silently verifying nothing.
         assert isinstance(data["warnings"], list)
+        assert data["warnings"][0] == STUB_PLAN_NOTICE
 
         plans = data["plans"]
         assert {p["strategy"] for p in plans} == {
@@ -114,10 +121,7 @@ class TestRebalancePlan:
             assert summary["estimated_realized_gain_eur"] == 0.0
             assert summary["estimated_tax_delta_eur"] == 0.0
             assert "max_abs_drift_pct_after" in summary
-            assert plan["warnings"] == [
-                "Trade generation not yet implemented for this strategy — "
-                "showing drift only."
-            ]
+            assert plan["warnings"][0] == STUB_WARNING
 
     @pytest.mark.asyncio
     async def test_plan_validation(self, async_test_client: AsyncClient, auth_headers):
