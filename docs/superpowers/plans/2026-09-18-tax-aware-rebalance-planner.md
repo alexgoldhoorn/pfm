@@ -86,6 +86,11 @@ Notes:
 - `excluded_symbols`: never appear in BUY or SELL.
 - `locked_symbols`: can be held/bought but never sold.
 - `max_sell_gain_eur`: optional guardrail for total estimated realized gain.
+- `strategy`: **undecided, and currently has no effect** — the response always
+  returns all three strategy views, so as of Task 2 this field only records
+  what the caller asked for. Whether it should filter `plans` down to one, or
+  merely mark the UI's default tab, must be settled before Task 3 builds real
+  trades per strategy.
 
 ### 4.2 Response
 

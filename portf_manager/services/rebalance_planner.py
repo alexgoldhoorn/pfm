@@ -10,9 +10,14 @@ Every strategy this module's ``build_plan`` returns has ``trades: []`` and a
 zeroed summary (see ``_stub_plan``); only ``before`` and
 ``summary.max_abs_drift_pct_after`` are computed from real DB data, since
 the latter needs only the current allocation, not any trades.
+
+The drift it does report is only as good as the prices behind it, so a
+holding with no price row (valued at €0) or one converted at a stale FX rate
+is named in ``warnings`` rather than quietly understating its own asset type
+and inflating everyone else's drift.
 """
 
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from portf_manager import market
 from portf_manager.positions import compute_positions
@@ -25,12 +30,26 @@ STUB_WARNING = (
     "Trade generation not yet implemented for this strategy — showing drift only."
 )
 
+# The top-level (whole-response) counterpart of STUB_WARNING. A client that
+# only reads `warnings` must not see a clean response while every plan is a
+# stub, so the notice is stated once at the top rather than repeated per plan.
+STUB_PLAN_NOTICE = (
+    "Trade generation not yet implemented — all strategies show drift only."
+)
 
-def _to_eur_converter(db):
+
+def _to_eur_converter(db, warnings: List[str]):
     """Same FX-conversion helper as ``get_rebalance_analysis``
     (``portf_server/routers/rebalance.py``) — duplicated rather than shared
     since it's ~10 lines and the two call sites don't need to stay in
     lockstep beyond the pattern itself.
+
+    Unlike that endpoint's copy, a **stale** rate (``market.get_fx_eur``'s
+    second return value: a cached or hard-coded fallback, not a live quote)
+    appends a warning instead of being discarded — a silently mispriced
+    holding understates its own asset type and inflates every other type's
+    apparent drift, which is exactly the kind of wrong number a planner must
+    not present as clean. One warning per currency, not per position.
     """
     fx_cache: Dict[str, float] = {}
 
@@ -38,23 +57,37 @@ def _to_eur_converter(db):
         if currency == "EUR" or amount == 0:
             return amount
         if currency not in fx_cache:
-            fx_cache[currency] = market.get_fx_eur(db, currency, max_age=1800)[0]
+            rate, stale = market.get_fx_eur(db, currency, max_age=1800)
+            fx_cache[currency] = rate
+            if stale:
+                warnings.append(
+                    f"Stale FX rate for {currency} — EUR values for "
+                    f"{currency}-priced holdings are approximate."
+                )
         return amount * fx_cache[currency]
 
     return to_eur
 
 
-def _current_type_values(db, transactions: List[dict]) -> Dict[str, float]:
-    """Per-asset-type EUR value of currently open positions.
+def _current_type_values(
+    db, transactions: List[dict]
+) -> Tuple[Dict[str, float], List[str]]:
+    """Per-asset-type EUR value of currently open positions, plus any
+    data-quality warnings raised while pricing them.
 
     Positions come from the shared ``compute_positions`` (handles stock
-    splits) rather than ``get_rebalance_analysis``'s own inline buy/sell
-    loop — Step A explicitly calls for the shared helper. The per-type
-    aggregation that follows mirrors that endpoint exactly, so the two can't
-    disagree about what "current allocation" means.
+    splits) rather than an inline buy/sell loop — Step A explicitly calls for
+    the shared helper, and ``get_rebalance_analysis`` was moved onto the same
+    helper so the two endpoints can't disagree about what "current
+    allocation" means. The per-type aggregation that follows mirrors that
+    endpoint exactly.
+
+    A held position with no price row is valued at 0 (as it always was) but
+    now says so: the totals stay usable while naming what they understate.
     """
     positions, _realised = compute_positions(transactions)
-    to_eur = _to_eur_converter(db)
+    warnings: List[str] = []
+    to_eur = _to_eur_converter(db, warnings)
 
     type_values: Dict[str, float] = {}
     for asset_id, pos in positions.items():
@@ -63,12 +96,20 @@ def _current_type_values(db, transactions: List[dict]) -> Dict[str, float]:
         asset = db.get_asset(asset_id)
         if not asset:
             continue
-        price_data = db.get_latest_price(asset_id)
-        price = float(price_data["price"]) if price_data else 0.0
-        value_eur = to_eur(pos["quantity"] * price, asset.get("currency", "EUR"))
         atype = asset.get("asset_type", "other")
+        price_data = db.get_latest_price(asset_id)
+        if price_data:
+            price = float(price_data["price"])
+        else:
+            price = 0.0
+            symbol = asset.get("symbol") or f"asset {asset_id}"
+            warnings.append(
+                f"No price data for {symbol} ({atype}) — it is valued at €0, "
+                f"so {atype} is understated and other types' drift overstated."
+            )
+        value_eur = to_eur(pos["quantity"] * price, asset.get("currency", "EUR"))
         type_values[atype] = type_values.get(atype, 0.0) + value_eur
-    return type_values
+    return type_values, warnings
 
 
 def merge_targets(db, target_overrides: Optional[List[dict]]) -> Dict[str, float]:
@@ -108,14 +149,17 @@ def validate_target_sum(targets: Dict[str, float]) -> None:
 
 def compute_before_state(
     db, portfolio_id: Optional[int], target_overrides: Optional[List[dict]]
-) -> Dict:
+) -> Tuple[Dict, List[str]]:
     """Step A (+ the drift half of Step B): current allocation vs. target.
 
-    Returns ``{"total_value_eur": float, "allocations": [...]}`` — the
-    ``allocations`` shape (``asset_type``/``current_value_eur``/
+    Returns ``({"total_value_eur": float, "allocations": [...]}, warnings)``
+    — the ``allocations`` shape (``asset_type``/``current_value_eur``/
     ``current_pct``/``target_pct``/``drift_pct``/``drift_eur``) is exactly
-    ``get_rebalance_analysis``'s, so the planner and the analysis endpoint
-    can't disagree about "current allocation".
+    ``get_rebalance_analysis``'s, and both now build positions with
+    ``compute_positions``, so the planner and the analysis endpoint can't
+    disagree about "current allocation". ``warnings`` names any holding
+    whose EUR value is unreliable (no price row, stale FX) — see
+    ``_current_type_values``.
 
     Raises:
         ValueError: the effective target set doesn't sum to ~100%
@@ -126,7 +170,7 @@ def compute_before_state(
     else:
         transactions = db.get_all_transactions()
 
-    type_values = _current_type_values(db, transactions)
+    type_values, warnings = _current_type_values(db, transactions)
     total_eur = sum(type_values.values())
 
     targets = merge_targets(db, target_overrides)
@@ -153,10 +197,13 @@ def compute_before_state(
             }
         )
 
-    return {
-        "total_value_eur": round(total_eur, 2),
-        "allocations": allocations,
-    }
+    return (
+        {
+            "total_value_eur": round(total_eur, 2),
+            "allocations": allocations,
+        },
+        warnings,
+    )
 
 
 def compute_gaps(allocations: List[dict], min_trade_eur: float) -> List[dict]:
@@ -184,11 +231,18 @@ def compute_gaps(allocations: List[dict], min_trade_eur: float) -> List[dict]:
     return gaps
 
 
-def _stub_plan(strategy: str, max_abs_drift_pct_after: float) -> Dict:
-    """A strategy's placeholder plan: no trades, zeroed summary, one warning.
+def _stub_plan(
+    strategy: str,
+    max_abs_drift_pct_after: float,
+    data_warnings: Optional[List[str]] = None,
+) -> Dict:
+    """A strategy's placeholder plan: no trades, zeroed summary, warnings.
 
     ``max_abs_drift_pct_after`` is the exception — trades don't move drift
     since there are none, so "after" is simply "before"'s own worst drift.
+    ``data_warnings`` (missing prices, stale FX) are repeated on every plan
+    because a client rendering one strategy's card in isolation still needs
+    to know the drift it shows is built on approximate values.
     """
     return {
         "strategy": strategy,
@@ -201,7 +255,7 @@ def _stub_plan(strategy: str, max_abs_drift_pct_after: float) -> Dict:
             "max_abs_drift_pct_after": max_abs_drift_pct_after,
         },
         "trades": [],
-        "warnings": [STUB_WARNING],
+        "warnings": [STUB_WARNING] + list(data_warnings or []),
     }
 
 
@@ -218,22 +272,33 @@ def build_plan(
     ``trades: []`` (see ``_stub_plan``) — Task 3 replaces the stub with
     real trade assignment per strategy.
 
-    Returns ``{"before": ..., "plans": [...], "warnings": []}``.
+    Returns ``{"before": ..., "plans": [...], "warnings": [...]}``. The
+    top-level ``warnings`` always leads with ``STUB_PLAN_NOTICE`` (so a
+    client reading only that list can't mistake a stubbed response for a
+    finished one) followed by any pricing/FX warnings from Step A.
 
     Raises:
         ValueError: the effective target set doesn't sum to ~100%
             (propagated from ``compute_before_state``).
     """
-    before = compute_before_state(db, portfolio_id, target_overrides)
-    # Step B. Not yet surfaced in the response — nothing consumes a gap
-    # without trade generation (Task 3) — but computed here so the request's
-    # min_trade_eur has real, testable meaning as of this task.
+    before, data_warnings = compute_before_state(db, portfolio_id, target_overrides)
+    # Step B. Its result is deliberately unused here: nothing consumes a gap
+    # without trade generation (Task 3, its first real consumer). The call
+    # stays so the function is exercised end-to-end on real data rather than
+    # only by its unit tests — it does NOT mean min_trade_eur affects the
+    # response yet; it currently does not.
     compute_gaps(before["allocations"], min_trade_eur)
 
     max_abs_drift = max(
         (abs(a["drift_pct"]) for a in before["allocations"]), default=0.0
     )
 
-    plans = [_stub_plan(strategy, max_abs_drift) for strategy in STRATEGIES]
+    plans = [
+        _stub_plan(strategy, max_abs_drift, data_warnings) for strategy in STRATEGIES
+    ]
 
-    return {"before": before, "plans": plans, "warnings": []}
+    return {
+        "before": before,
+        "plans": plans,
+        "warnings": [STUB_PLAN_NOTICE] + data_warnings,
+    }

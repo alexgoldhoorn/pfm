@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from portf_manager import market
+from portf_manager.positions import compute_positions
 from portf_manager.services import rebalance_planner
 
 from ..auth_middleware import APIKeyManager, require_api_key
@@ -39,7 +40,15 @@ class RebalanceAnalysis(BaseModel):
 
 class RebalancePlanRequest(BaseModel):
     portfolio_id: Optional[int] = None
-    strategy: Literal["tax_minimal", "closest_to_target", "balanced"] = "balanced"
+    strategy: Literal["tax_minimal", "closest_to_target", "balanced"] = Field(
+        "balanced",
+        description=(
+            "Currently has NO effect — every strategy view is always returned "
+            "in `plans`, whatever this is set to. Whether it should filter the "
+            "response to one plan or only pick a default for the UI is "
+            "undecided; to be resolved before Task 3 (trade generation)."
+        ),
+    )
     cash_budget_eur: Optional[float] = None
     allow_sells: bool = True
     max_trades: int = Field(12, ge=1, le=100)
@@ -134,23 +143,13 @@ def get_rebalance_analysis(
     buy/sell amounts needed to rebalance.
     """
     # ── 1. Get holdings ──────────────────────────────────────────────────────
+    # Shared position math (chronological, split-aware, cost clamped at 0) —
+    # the same helper the planner's compute_before_state uses, so /analysis
+    # and /plan can't disagree about the current allocation. This file used
+    # to carry its own inline buy/sell loop, which silently ignored `split`
+    # transactions.
     transactions = db.get_all_transactions()
-    positions: dict = {}
-    for tx in transactions:
-        aid = tx["asset_id"]
-        qty = float(tx["quantity"])
-        total = float(tx["total_amount"])
-        t = tx["transaction_type"].lower()
-        if aid not in positions:
-            positions[aid] = {"quantity": 0.0, "cost": 0.0}
-        if t == "buy":
-            positions[aid]["quantity"] += qty
-            positions[aid]["cost"] += total
-        elif t == "sell":
-            pos = positions[aid]
-            if pos["quantity"] > 0:
-                pos["cost"] *= (pos["quantity"] - qty) / pos["quantity"]
-            pos["quantity"] -= qty
+    positions, _realised = compute_positions(transactions)
 
     # ── 2. Build per-asset-type EUR values ───────────────────────────────────
     _fx: dict[str, float] = {}
@@ -237,8 +236,11 @@ def plan_rebalance(
 
     Trade generation isn't implemented yet — every strategy comes back with
     an empty trade list, a zeroed summary and a "not yet implemented"
-    warning; only ``before`` and each summary's ``max_abs_drift_pct_after``
-    reflect real portfolio data. See
+    warning (stated at the top level too, so a client reading only
+    ``warnings`` can't mistake a stub for a finished plan); only ``before``
+    and each summary's ``max_abs_drift_pct_after`` reflect real portfolio
+    data. Holdings with no price row or a stale FX rate are named in
+    ``warnings`` as well. See
     ``portf_manager/services/rebalance_planner.py``.
     """
     target_overrides = (
