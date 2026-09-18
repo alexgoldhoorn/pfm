@@ -4,15 +4,19 @@ Rebalancing Router
 GET  /api/v1/rebalance/targets          — list allocation targets
 PUT  /api/v1/rebalance/targets          — bulk upsert targets
 GET  /api/v1/rebalance/analysis         — current vs target + actions needed
+POST /api/v1/rebalance/plan             — tax-aware trade plan (skeleton —
+                                           see portf_manager/services/rebalance_planner.py)
 """
 
 import logging
-from typing import List
+from datetime import datetime, timezone
+from typing import List, Literal, Optional
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from portf_manager import market
+from portf_manager.services import rebalance_planner
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
@@ -31,6 +35,67 @@ class RebalanceAnalysis(BaseModel):
     allocations: List[dict]
     actions: List[dict]
     targets_sum_pct: float
+
+
+class RebalancePlanRequest(BaseModel):
+    portfolio_id: Optional[int] = None
+    strategy: Literal["tax_minimal", "closest_to_target", "balanced"] = "balanced"
+    cash_budget_eur: Optional[float] = None
+    allow_sells: bool = True
+    max_trades: int = Field(12, ge=1, le=100)
+    min_trade_eur: float = Field(100, ge=0)
+    max_sell_gain_eur: Optional[float] = None
+    excluded_symbols: List[str] = Field(default_factory=list)
+    locked_symbols: List[str] = Field(default_factory=list)
+    # Reuses AllocationTarget (same asset_type/target_pct shape) rather than
+    # redefining it — when omitted, the planner falls back to the saved
+    # allocation targets (db.get_allocation_targets()).
+    target_overrides: Optional[List[AllocationTarget]] = None
+
+
+class RebalanceTrade(BaseModel):
+    symbol: str
+    asset_id: int
+    asset_type: str
+    side: Literal["BUY", "SELL"]
+    quantity: float
+    price_eur: float
+    amount_eur: float
+    # Only meaningful for SELL trades; a BUY has no realised gain/tax.
+    estimated_gain_eur: Optional[float] = None
+    estimated_tax_eur: Optional[float] = None
+    reason: str
+
+
+class RebalancePlanSummary(BaseModel):
+    trade_count: int
+    buy_total_eur: float
+    sell_total_eur: float
+    estimated_realized_gain_eur: float
+    estimated_tax_delta_eur: float
+    max_abs_drift_pct_after: float
+
+
+class RebalancePlan(BaseModel):
+    strategy: str
+    summary: RebalancePlanSummary
+    trades: List[RebalanceTrade]
+    warnings: List[str]
+
+
+class RebalanceBeforeState(BaseModel):
+    total_value_eur: float
+    allocations: List[dict]
+
+
+class RebalancePlanResponse(BaseModel):
+    generated_at: str
+    # Echoes the effective request (defaults included) so the UI can show
+    # exactly what a plan was generated with.
+    inputs: RebalancePlanRequest
+    before: RebalanceBeforeState
+    plans: List[RebalancePlan]
+    warnings: List[str]
 
 
 async def _auth(
@@ -158,3 +223,43 @@ def get_rebalance_analysis(
         "actions": actions,
         "targets_sum_pct": round(targets_sum, 1),
     }
+
+
+@router.post("/plan", response_model=RebalancePlanResponse)
+def plan_rebalance(
+    request: RebalancePlanRequest,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """
+    Tax-aware rebalance plan: current allocation vs. target, plus one plan
+    per strategy (tax_minimal / closest_to_target / balanced).
+
+    Trade generation isn't implemented yet — every strategy comes back with
+    an empty trade list, a zeroed summary and a "not yet implemented"
+    warning; only ``before`` and each summary's ``max_abs_drift_pct_after``
+    reflect real portfolio data. See
+    ``portf_manager/services/rebalance_planner.py``.
+    """
+    target_overrides = (
+        [o.model_dump() for o in request.target_overrides]
+        if request.target_overrides is not None
+        else None
+    )
+    try:
+        result = rebalance_planner.build_plan(
+            db,
+            portfolio_id=request.portfolio_id,
+            min_trade_eur=request.min_trade_eur,
+            target_overrides=target_overrides,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    return RebalancePlanResponse(
+        generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        inputs=request,
+        before=result["before"],
+        plans=result["plans"],
+        warnings=result["warnings"],
+    )
