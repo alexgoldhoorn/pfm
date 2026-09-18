@@ -44,9 +44,11 @@ class RebalancePlanRequest(BaseModel):
         "balanced",
         description=(
             "Currently has NO effect — every strategy view is always returned "
-            "in `plans`, whatever this is set to. Whether it should filter the "
-            "response to one plan or only pick a default for the UI is "
-            "undecided; to be resolved before Task 3 (trade generation)."
+            "in `plans`, whatever this is set to, and each now carries real "
+            "trades. Whether it should filter the response to one plan or "
+            "only pick the UI's default tab is still undecided; settle it "
+            "when the Rebalance page is built (Task 4), which is the caller "
+            "that will actually need one behaviour or the other."
         ),
     )
     cash_budget_eur: Optional[float] = None
