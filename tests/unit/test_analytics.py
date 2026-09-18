@@ -9,6 +9,7 @@ from httpx import AsyncClient
 from fastapi import status
 
 from portf_manager.services.analytics_service import (
+    current_year_savings_base,
     irpf_savings_tax,
     dividend_income,
     money_weighted_irr,
@@ -582,3 +583,138 @@ class TestTaxEstimateFx:
         assert resp.status_code == 200
         # $100 at 0.5 → €50, not €100 (the old raw-sum bug).
         assert resp.json()["dividend_income_eur"] == pytest.approx(50.0)
+
+    @pytest.mark.asyncio
+    async def test_extracted_helper_matches_endpoint_savings_base(
+        self, async_test_client, auth_headers, monkeypatch, test_database
+    ):
+        """Regression guard for the current_year_savings_base extraction.
+
+        Same fixture as test_usd_dividend_converted_at_transaction_date_fx
+        (one USD dividend, FX pinned at 0.5): the endpoint's savings_base_eur
+        and a direct call to the extracted helper must agree, for the
+        extraction to be a true no-behavior-change refactor.
+        """
+        monkeypatch.setattr(
+            analytics_router,
+            "_fx_on",
+            lambda db, cur, d: 0.5 if cur.upper() == "USD" else 1.0,
+        )
+        p = await async_test_client.post(
+            "/api/v1/portfolios",
+            json={"name": "FX Div Broker 2", "base_currency": "EUR"},
+            headers=auth_headers,
+        )
+        portfolio_id = p.json()["id"]
+        a = await async_test_client.post(
+            "/api/v1/assets",
+            json={
+                "symbol": "FXDIV2",
+                "name": "Example Corp Two",
+                "asset_type": "stock",
+                "currency": "USD",
+            },
+            headers=auth_headers,
+        )
+        asset_id = a.json()["id"]
+        year = _date.today().year
+        r = await async_test_client.post(
+            "/api/v1/transactions",
+            json={
+                "asset_id": asset_id,
+                "transaction_type": "dividend",
+                "quantity": 1,
+                "price": 100.0,
+                "total_amount": 100.0,
+                "transaction_date": f"{year}-02-15",
+                "portfolio_id": portfolio_id,
+                "currency": "USD",
+                "user_id": 1,
+            },
+            headers=auth_headers,
+        )
+        assert r.status_code == 200
+
+        resp = await async_test_client.get(
+            f"/api/v1/analytics/tax-estimate?year={year}", headers=auth_headers
+        )
+        assert resp.status_code == 200
+        endpoint_savings_base = resp.json()["savings_base_eur"]
+
+        helper_savings_base = current_year_savings_base(test_database, year=year)
+
+        assert round(helper_savings_base, 2) == pytest.approx(endpoint_savings_base)
+        # And pinned to the known fixture value, not just self-consistent.
+        assert endpoint_savings_base == pytest.approx(50.0)
+
+    @pytest.mark.asyncio
+    async def test_savings_base_equals_sum_of_its_reported_components(
+        self, async_test_client, auth_headers, monkeypatch
+    ):
+        """The parts and the total come from one pass, so they must add up.
+
+        ``realised_gain_eur``/``dividend_income_eur``/``interest_income_eur``
+        and ``savings_base_eur`` used to be two separate runs of the same
+        FIFO/income logic (the inline block plus a second call into
+        ``current_year_savings_base``), which could silently drift apart.
+        They are now one ``current_year_savings_components`` call; this is
+        the invariant that keeps it that way.
+        """
+        monkeypatch.setattr(
+            analytics_router,
+            "_fx_on",
+            lambda db, cur, d: 0.5 if cur.upper() == "USD" else 1.0,
+        )
+        p = await async_test_client.post(
+            "/api/v1/portfolios",
+            json={"name": "Savings Base Broker", "base_currency": "EUR"},
+            headers=auth_headers,
+        )
+        portfolio_id = p.json()["id"]
+        a = await async_test_client.post(
+            "/api/v1/assets",
+            json={
+                "symbol": "SBCOMP",
+                "name": "Example Components Corp",
+                "asset_type": "stock",
+                "currency": "USD",
+            },
+            headers=auth_headers,
+        )
+        asset_id = a.json()["id"]
+        year = _date.today().year
+        # One dividend and one interest row, so at least two legs are nonzero.
+        for tx_type, amount in (("dividend", 100.0), ("interest", 40.0)):
+            r = await async_test_client.post(
+                "/api/v1/transactions",
+                json={
+                    "asset_id": asset_id,
+                    "transaction_type": tx_type,
+                    "quantity": 1,
+                    "price": amount,
+                    "total_amount": amount,
+                    "transaction_date": f"{year}-03-10",
+                    "portfolio_id": portfolio_id,
+                    "currency": "USD",
+                    "user_id": 1,
+                },
+                headers=auth_headers,
+            )
+            assert r.status_code == 200
+
+        resp = await async_test_client.get(
+            f"/api/v1/analytics/tax-estimate?year={year}", headers=auth_headers
+        )
+        assert resp.status_code == 200
+        d = resp.json()
+
+        assert d["dividend_income_eur"] == pytest.approx(50.0)
+        assert d["interest_income_eur"] == pytest.approx(20.0)
+        assert d["savings_base_eur"] == pytest.approx(
+            d["realised_gain_eur"]
+            + d["dividend_income_eur"]
+            + d["interest_income_eur"],
+            # Each field is independently rounded to 2dp in the response, so
+            # allow for that (never for a genuinely different computation).
+            abs=0.02,
+        )
