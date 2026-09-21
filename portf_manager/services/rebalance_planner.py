@@ -302,6 +302,40 @@ def fifo_gain_eur(lots: List[Dict], quantity: float, price_eur: float) -> float:
     return quantity * price_eur - cost
 
 
+def plan_sale(candidate: Dict, gap_eur: float) -> Dict:
+    """What selling *candidate* into a ``gap_eur`` hole would actually realise.
+
+    The single implementation of "how much of this position gets sold, and
+    what does that cost in tax" — :func:`build_sell_candidates` calls it with
+    the type's **initial** gap to derive the number
+    :func:`rank_sell_candidates` orders on, and
+    :func:`allocate_sell_trades` calls it again with whatever is **left** of
+    that gap to build the trade. Ranking and execution therefore describe the
+    same transaction.
+
+    That shared call is the point. Ranking on the *whole position's* gain
+    ratio, as an earlier version did, is a different number from the one the
+    trade realises whenever the lots are unevenly priced: a position that is
+    cheap on average can be expensive to sell a slice of, because FIFO eats
+    its oldest (often most expensive) lot first. ``tax_minimal`` ranked on the
+    average and could pick the more heavily taxed of two trades.
+
+    Returns:
+        ``{"amount_eur", "quantity", "gain_eur", "gain_ratio"}`` for a sale of
+        ``min(proceeds_eur, gap_eur)`` worth. ``gain_ratio`` is gain per euro
+        sold, and is 0.0 for a degenerate (zero-value) sale.
+    """
+    amount_eur = min(candidate["proceeds_eur"], max(gap_eur, 0.0))
+    quantity = amount_eur / candidate["price_eur"] if candidate["price_eur"] else 0.0
+    gain_eur = fifo_gain_eur(candidate["lots"], quantity, candidate["price_eur"])
+    return {
+        "amount_eur": amount_eur,
+        "quantity": quantity,
+        "gain_eur": gain_eur,
+        "gain_ratio": (gain_eur / amount_eur) if amount_eur > 0 else 0.0,
+    }
+
+
 def build_sell_candidates(
     db,
     holdings: List[Dict],
@@ -330,10 +364,12 @@ def build_sell_candidates(
 
     Returns:
         ``(candidates, warnings)``. Each candidate carries the open position
-        (``quantity``/``price_eur``/``proceeds_eur``), its full-sale
-        ``cost_basis_eur``/``gain_eur``/``gain_ratio``, its type's
-        ``gap_eur``/``drift_pct``, and the EUR-converted ``lots``
-        :func:`fifo_gain_eur` consumes.
+        (``quantity``/``price_eur``/``proceeds_eur``/``cost_basis_eur``/
+        ``gain_eur``, all describing a sale of *all* of it), its type's
+        ``gap_eur``/``drift_pct``, the EUR-converted ``lots``
+        :func:`fifo_gain_eur` consumes, and ``planned_gain_ratio`` — the gain
+        per euro of the sale that would really be made, which is the only one
+        of these :func:`rank_sell_candidates` may order on.
     """
     from portf_manager.tax_calculator import TaxCalculator
 
@@ -413,23 +449,29 @@ def build_sell_candidates(
                 "can be planned, and its gain estimate may be incomplete."
             )
 
-        gain_eur = proceeds_eur - cost_basis_eur
-        candidates.append(
-            {
-                "symbol": symbol,
-                "asset_id": h["asset_id"],
-                "asset_type": atype,
-                "quantity": open_quantity,
-                "price_eur": h["price_eur"],
-                "proceeds_eur": proceeds_eur,
-                "cost_basis_eur": cost_basis_eur,
-                "gain_eur": gain_eur,
-                "gain_ratio": gain_eur / proceeds_eur,
-                "gap_eur": overweight[atype],
-                "drift_pct": drift_by_type.get(atype, 0.0),
-                "lots": lots,
-            }
-        )
+        candidate = {
+            "symbol": symbol,
+            "asset_id": h["asset_id"],
+            "asset_type": atype,
+            # The whole open position, for context and display. Note these
+            # describe selling *all* of it, which is not what the plan does —
+            # ranking and the trade both use planned_* below.
+            "quantity": open_quantity,
+            "price_eur": h["price_eur"],
+            "proceeds_eur": proceeds_eur,
+            "cost_basis_eur": cost_basis_eur,
+            "gain_eur": proceeds_eur - cost_basis_eur,
+            "gap_eur": overweight[atype],
+            "drift_pct": drift_by_type.get(atype, 0.0),
+            "lots": lots,
+        }
+        # Gain per euro of the sale this candidate would actually produce if
+        # it were picked first — the number rank_sell_candidates orders on,
+        # from the same plan_sale() allocate_sell_trades builds the trade with.
+        candidate["planned_gain_ratio"] = plan_sale(candidate, abs(overweight[atype]))[
+            "gain_ratio"
+        ]
+        candidates.append(candidate)
 
     return candidates, warnings
 
@@ -445,14 +487,21 @@ def _normalize(value: float, low: float, high: float) -> float:
 def rank_sell_candidates(candidates: List[Dict], strategy: str) -> List[Dict]:
     """Order sell candidates for *strategy*; lowest score sells first.
 
-    - ``tax_minimal`` — ascending ``gain_eur / proceeds_eur``: realised losses
-      and small gains go first, whatever the drift.
+    Every gain figure here is ``planned_gain_ratio`` — the gain per euro of
+    the sale this candidate would **actually** produce (see :func:`plan_sale`),
+    not of its whole position. Those two differ whenever a position's lots are
+    unevenly priced, and ranking on the position average made ``tax_minimal``
+    able to choose the more heavily taxed of two trades.
+
+    - ``tax_minimal`` — ascending ``planned_gain_ratio``: realised losses and
+      small gains go first, whatever the drift.
     - ``closest_to_target`` — descending ``abs(gap_eur)`` of the candidate's
       asset type: whichever type is furthest from target is reduced first.
+      Per-symbol gain plays no part, so this one is unaffected by the above.
     - ``balanced`` — **an explicit design choice, not an obvious formula.**
       Both signals are min-max normalised across *all* candidates in this run:
 
-          tax_score   = (gain_ratio - min_ratio) / (max_ratio - min_ratio)
+          tax_score   = (ratio - min_ratio) / (max_ratio - min_ratio)
           drift_score = 1 - (abs(gap) - min_gap) / (max_gap - min_gap)
           score       = 0.5 * tax_score + 0.5 * drift_score
 
@@ -464,11 +513,11 @@ def rank_sell_candidates(candidates: List[Dict], strategy: str) -> List[Dict]:
     Ties break on symbol so the same input always produces the same order.
     """
     if strategy == "tax_minimal":
-        return sorted(candidates, key=lambda c: (c["gain_ratio"], c["symbol"]))
+        return sorted(candidates, key=lambda c: (c["planned_gain_ratio"], c["symbol"]))
     if strategy == "closest_to_target":
         return sorted(candidates, key=lambda c: (-abs(c["gap_eur"]), c["symbol"]))
 
-    ratios = [c["gain_ratio"] for c in candidates]
+    ratios = [c["planned_gain_ratio"] for c in candidates]
     gaps = [abs(c["gap_eur"]) for c in candidates]
     if not ratios:
         return []
@@ -476,25 +525,28 @@ def rank_sell_candidates(candidates: List[Dict], strategy: str) -> List[Dict]:
     lo_g, hi_g = min(gaps), max(gaps)
 
     def score(c: Dict) -> float:
-        tax_score = _normalize(c["gain_ratio"], lo_r, hi_r)
+        tax_score = _normalize(c["planned_gain_ratio"], lo_r, hi_r)
         drift_score = 1.0 - _normalize(abs(c["gap_eur"]), lo_g, hi_g)
         return 0.5 * tax_score + 0.5 * drift_score
 
     return sorted(candidates, key=lambda c: (score(c), c["symbol"]))
 
 
-def _sell_reason(candidate: Dict, strategy: str) -> str:
-    """Why this SELL is in the plan, in the strategy's own terms."""
-    head = (
-        f"{candidate['asset_type']} overweight by "
-        f"{abs(candidate['drift_pct']):.1f}%"
-    )
+def _sell_reason(candidate: Dict, strategy: str, sale: Dict) -> str:
+    """Why this SELL is in the plan, in the strategy's own terms.
+
+    The gain percentage quoted is *this trade's* (``sale``), not the whole
+    position's, so the sentence can never contradict the row's own
+    ``estimated_gain_eur``/``amount_eur``.
+    """
+    head = f"{candidate['asset_type']} overweight by {abs(candidate['drift_pct']):.1f}%"
+    ratio_pct = sale["gain_ratio"] * 100
     if strategy == "tax_minimal":
-        return f"{head}; lowest gain per € sold ({candidate['gain_ratio'] * 100:.1f}%)"
+        return f"{head}; lowest gain per € sold ({ratio_pct:.1f}%)"
     if strategy == "closest_to_target":
         return f"{head}; largest gap (€{abs(candidate['gap_eur']):,.0f} to cut)"
     return (
-        f"{head}; balanced score (gain {candidate['gain_ratio'] * 100:.1f}% "
+        f"{head}; balanced score (gain {ratio_pct:.1f}% "
         f"vs €{abs(candidate['gap_eur']):,.0f} gap)"
     )
 
@@ -534,13 +586,18 @@ def allocate_sell_trades(
 
     for index, c in enumerate(ranked):
         need = remaining_gap[c["asset_type"]]
-        if need < min_trade_eur:
+        # The `> 0` floors are not redundant with min_trade_eur: that is
+        # allowed to be 0, and then a type sitting exactly on target survives
+        # compute_gaps and would otherwise emit a zero-value, zero-quantity
+        # trade.
+        if need <= 0 or need < min_trade_eur:
             continue
-        amount_eur = min(c["proceeds_eur"], need)
-        if amount_eur < min_trade_eur:
+        sale = plan_sale(c, need)
+        amount_eur = sale["amount_eur"]
+        if amount_eur <= 0 or amount_eur < min_trade_eur:
             continue
-        quantity = amount_eur / c["price_eur"]
-        gain_eur = fifo_gain_eur(c["lots"], quantity, c["price_eur"])
+        quantity = sale["quantity"]
+        gain_eur = sale["gain_eur"]
 
         if (
             max_sell_gain_eur is not None
@@ -568,7 +625,7 @@ def allocate_sell_trades(
                 # Filled in by allocate_trade_taxes once the sell list (and so
                 # the progressive-bracket total) is final.
                 "estimated_tax_eur": 0.0,
-                "reason": _sell_reason(c, strategy),
+                "reason": _sell_reason(c, strategy, sale),
             }
         )
 
@@ -624,7 +681,17 @@ def allocate_buy_trades(
         target = sorted(eligible, key=lambda h: (-h["value_eur"], str(h["symbol"])))[0]
 
         needed = gap["gap_eur"]
+        # min_trade_eur is allowed to be 0, so a type sitting exactly on
+        # target survives compute_gaps; nothing to fund, and a €0 trade is not
+        # the answer.
+        if needed <= 0:
+            continue
         amount_eur = min(needed, cash)
+        if amount_eur <= 0:
+            warnings.append(
+                f"No cash left to fund {atype} — €{needed:,.2f} still needed."
+            )
+            continue
         if amount_eur < min_trade_eur:
             warnings.append(
                 f"Insufficient cash to fund {atype} — €{needed:,.2f} needed, "
@@ -664,7 +731,7 @@ def allocate_buy_trades(
 
 
 def truncate_trades(
-    trades: List[Dict], max_trades: int
+    trades: List[Dict], max_trades: Optional[int]
 ) -> Tuple[List[Dict], List[str]]:
     """Step E rule 3: keep the first *max_trades* of the combined list.
 
