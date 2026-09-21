@@ -201,6 +201,25 @@ class TestRebalancePlan:
         )
         assert resp.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
+        # cash_budget_eur negative — a negative budget would otherwise reach
+        # build_strategy_plan's available_cash computation and silently
+        # produce a sell-only plan instead of being rejected.
+        resp = await async_test_client.post(
+            "/api/v1/rebalance/plan",
+            json={"cash_budget_eur": -500.0},
+            headers=auth_headers,
+        )
+        assert resp.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+        # max_sell_gain_eur negative — same gap, a negative cap still "works"
+        # (every sell trips it immediately) rather than being rejected.
+        resp = await async_test_client.post(
+            "/api/v1/rebalance/plan",
+            json={"max_sell_gain_eur": -1.0},
+            headers=auth_headers,
+        )
+        assert resp.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
         # target_overrides summing outside 99.5..100.5 — a service/route-level
         # check (it merges with DB-stored targets), still a 422 like the
         # Pydantic-enforced cases above, for a consistent client contract.
