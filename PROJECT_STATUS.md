@@ -230,9 +230,9 @@ All are re-exported by the remote gateway (now 85 tools) and added to the financ
 
 ## Test Status
 
-**1241 passed, 0 failed, 6 skipped** (unit tests, excluding integration/e2e); JS: **116 passed, 0 failed**
+**1327 passed, 0 failed, 6 skipped** (unit tests, excluding integration/e2e); JS: **148 passed, 0 failed**
 
-All tests passing as of 2026-09-17.
+All tests passing as of 2026-09-21.
 
 ## Recent Changes (main)
 
