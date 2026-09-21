@@ -3221,6 +3221,265 @@ function setupRebalanceForm() {
 }
 
 // ---------------------------------------------------------------------------
+// Rebalance Trade Plan (Assets page, Rebalancing card)
+// ---------------------------------------------------------------------------
+
+const REBALANCE_STRATEGIES = ['tax_minimal', 'closest_to_target', 'balanced'];
+const REBALANCE_STRATEGY_LABELS = {
+    tax_minimal: 'Tax-minimal',
+    closest_to_target: 'Closest to target',
+    balanced: 'Balanced',
+};
+
+// Human label for a strategy code. Falls back to a title-cased version of an
+// unexpected value rather than throwing, and never returns undefined.
+function rebalanceStrategyLabel(strategy) {
+    if (REBALANCE_STRATEGY_LABELS[strategy]) return REBALANCE_STRATEGY_LABELS[strategy];
+    if (!strategy) return 'Unknown';
+    const s = String(strategy);
+    return s.charAt(0).toUpperCase() + s.slice(1);
+}
+window.rebalanceStrategyLabel = rebalanceStrategyLabel;
+
+// Same drift thresholds loadRebalanceAnalysis() already uses for the
+// Analysis table's drift column: green <2%, amber 2-5%, red >=5%.
+function rebalanceDriftClass(driftPct) {
+    const abs = Math.abs(driftPct || 0);
+    if (abs >= 5) return 'text-danger';
+    if (abs >= 2) return 'text-warning';
+    return 'text-success';
+}
+window.rebalanceDriftClass = rebalanceDriftClass;
+
+// Formats a EUR amount, or "—" (never "null"/"NaN") when the value is
+// missing — used for estimated_gain_eur/estimated_tax_eur, which the API
+// sends as null on every BUY trade (only meaningful for a SELL).
+function rebalanceFmtEur(v, decimals) {
+    if (v === null || v === undefined) return '—';
+    const d = decimals != null ? decimals : 2;
+    return Fmt.num(v, d, d) + ' €';
+}
+window.rebalanceFmtEur = rebalanceFmtEur;
+
+// Parses a comma/newline-separated symbol list from a textarea into a clean
+// array: trimmed, uppercased (matching how a typed symbol is normalised
+// elsewhere in this codebase, e.g. the watchlist add flow), empties dropped.
+function rebalanceParseSymbolList(text) {
+    return String(text || '')
+        .split(/[,\n]/)
+        .map(s => s.trim().toUpperCase())
+        .filter(Boolean);
+}
+window.rebalanceParseSymbolList = rebalanceParseSymbolList;
+
+// Builds the POST /api/v1/rebalance/plan request body from raw form field
+// values. An empty cash-budget field must become null (no budget), never 0
+// (an explicit zero budget) — same for max_trades/min_trade_eur falling
+// back to the API's own defaults when left blank.
+function buildRebalancePlanRequest(fields) {
+    fields = fields || {};
+    const strategy = REBALANCE_STRATEGIES.includes(fields.strategy) ? fields.strategy : 'balanced';
+    const cashBudget = String(fields.cashBudget == null ? '' : fields.cashBudget).trim();
+    const maxTrades = String(fields.maxTrades == null ? '' : fields.maxTrades).trim();
+    const minTradeEur = String(fields.minTradeEur == null ? '' : fields.minTradeEur).trim();
+    return {
+        strategy,
+        cash_budget_eur: cashBudget === '' ? null : parseFloat(cashBudget),
+        allow_sells: !!fields.allowSells,
+        max_trades: maxTrades === '' ? 12 : parseInt(maxTrades, 10),
+        min_trade_eur: minTradeEur === '' ? 100 : parseFloat(minTradeEur),
+        excluded_symbols: rebalanceParseSymbolList(fields.excludedSymbols),
+        locked_symbols: rebalanceParseSymbolList(fields.lockedSymbols),
+    };
+}
+window.buildRebalancePlanRequest = buildRebalancePlanRequest;
+
+// Renders a Bootstrap warning alert as a bullet list, or '' when there are
+// no warnings. Every warning string is server-echoed (it can carry back
+// user-supplied excluded_symbols/locked_symbols/asset_type text) so it MUST
+// be esc()'d before reaching innerHTML.
+function rebalanceWarningsHtml(warnings) {
+    const list = (warnings || []).filter(Boolean);
+    if (list.length === 0) return '';
+    return '<div class="alert alert-warning py-2 small mb-2"><ul class="mb-0 ps-3">'
+        + list.map(w => `<li>${esc(w)}</li>`).join('')
+        + '</ul></div>';
+}
+window.rebalanceWarningsHtml = rebalanceWarningsHtml;
+
+// Summary chips for one plan: drift after, trade count, estimated gain/tax.
+// Values are all numbers off the response (never raw user text), so no
+// esc() is needed on them — only the tooltip text, which is our own static
+// METRIC_HELP string, not server data.
+function rebalanceSummaryChipsHtml(summary) {
+    summary = summary || {};
+    const driftPct = summary.max_abs_drift_pct_after || 0;
+    const driftClass = rebalanceDriftClass(driftPct);
+    const tradeCount = summary.trade_count != null ? summary.trade_count : 0;
+    const taxHelp = (window.METRIC_HELP && window.METRIC_HELP.rebalanceTaxDelta) || '';
+    const chip = (label, valueHtml, extraAttrs) => `<span class="badge bg-light text-dark border me-1 mb-1"${extraAttrs || ''}>${label}: ${valueHtml}</span>`;
+    return '<div class="d-flex flex-wrap mb-2">'
+        + chip('Drift after', `<strong class="${driftClass}">${Fmt.num(driftPct, 1, 1)}%</strong>`)
+        + chip('Trades', `<strong>${tradeCount}</strong>`)
+        + chip('Est. gain', `<strong>${rebalanceFmtEur(summary.estimated_realized_gain_eur)}</strong>`)
+        + chip('Est. tax', `<strong>${rebalanceFmtEur(summary.estimated_tax_delta_eur)}</strong>`,
+               ` data-bs-toggle="tooltip" title="${esc(taxHelp)}" style="cursor:help;"`)
+        + '</div>';
+}
+window.rebalanceSummaryChipsHtml = rebalanceSummaryChipsHtml;
+
+// One trade row. Symbol, reason and the asset-type code are server-echoed
+// text (the type code can, in principle, carry an unbounded string — see
+// CLAUDE.md's rebalance section) so all three go through esc(); side is a
+// fixed BUY/SELL enum from the API.
+function rebalanceTradeRowHtml(trade) {
+    trade = trade || {};
+    const side = trade.side === 'SELL' ? 'SELL' : 'BUY';
+    const sideClass = side === 'SELL' ? 'text-danger' : 'text-success';
+    const typeCode = esc(String(trade.asset_type || '').toUpperCase());
+    const typeLabel = esc(rebalanceTypeLabel(trade.asset_type));
+    return `
+        <tr>
+            <td>${esc(trade.symbol)}</td>
+            <td><span class="badge bg-secondary me-1">${typeCode}</span>${typeLabel}</td>
+            <td class="${sideClass} fw-semibold">${side}</td>
+            <td class="text-end">${Fmt.num(trade.quantity, 0, 4)}</td>
+            <td class="text-end">${rebalanceFmtEur(trade.price_eur)}</td>
+            <td class="text-end">${rebalanceFmtEur(trade.amount_eur)}</td>
+            <td class="text-end">${rebalanceFmtEur(trade.estimated_gain_eur)}</td>
+            <td class="text-end">${rebalanceFmtEur(trade.estimated_tax_eur)}</td>
+            <td class="small text-muted">${esc(trade.reason)}</td>
+        </tr>`;
+}
+window.rebalanceTradeRowHtml = rebalanceTradeRowHtml;
+
+// Full trades table for one plan, or a muted empty-state line.
+function rebalanceTradesTableHtml(trades) {
+    trades = trades || [];
+    if (trades.length === 0) {
+        return '<p class="text-muted small mb-0">No trades proposed.</p>';
+    }
+    return '<div class="table-responsive"><table class="table table-sm table-hover mb-0">'
+        + '<thead><tr><th>Symbol</th><th>Type</th><th>Side</th>'
+        + '<th class="text-end">Qty</th><th class="text-end">Price</th>'
+        + '<th class="text-end">Amount</th><th class="text-end">Gain</th>'
+        + '<th class="text-end">Tax</th><th>Reason</th></tr></thead>'
+        + `<tbody>${trades.map(rebalanceTradeRowHtml).join('')}</tbody>`
+        + '</table></div>';
+}
+window.rebalanceTradesTableHtml = rebalanceTradesTableHtml;
+
+// Full content for one strategy's tab pane: summary chips, that plan's own
+// warnings, then its trades table.
+function rebalancePlanTabHtml(plan) {
+    plan = plan || {};
+    return rebalanceSummaryChipsHtml(plan.summary)
+        + rebalanceWarningsHtml(plan.warnings)
+        + rebalanceTradesTableHtml(plan.trades);
+}
+window.rebalancePlanTabHtml = rebalancePlanTabHtml;
+
+// Turns the raw text of a thrown fetch error (getRebalancePlan throws
+// new Error(await resp.text())) into a readable message. A 422 body is
+// either Pydantic's `{"detail": [...]}` array or the service-level
+// `{"detail": "<message>"}` string — handle both without crashing.
+function rebalancePlanErrorMessage(raw) {
+    if (!raw) return 'Error generating plan.';
+    let parsed;
+    try { parsed = JSON.parse(raw); } catch (e) { return String(raw); }
+    const detail = parsed && parsed.detail;
+    if (typeof detail === 'string') return detail;
+    if (Array.isArray(detail)) {
+        const msgs = detail.map(d => (d && (d.msg || d.message)) || JSON.stringify(d));
+        return msgs.length ? msgs.join('; ') : 'Invalid request.';
+    }
+    return String(raw);
+}
+window.rebalancePlanErrorMessage = rebalancePlanErrorMessage;
+
+// Renders the /plan response into the results area. Ruling: the form's
+// Strategy select only chooses which tab starts active — the backend
+// always returns all 3 plans in `plans` regardless of the request's
+// `strategy` field (see RebalancePlanRequest's own docstring), so all 3
+// tabs are rendered here every time, never filtered.
+function renderRebalancePlanResults(data, activeStrategy) {
+    data = data || {};
+    const resultsEl = document.getElementById('rbpResults');
+    const emptyHint = document.getElementById('rbpEmptyHint');
+    if (!resultsEl) return;
+    resultsEl.style.display = '';
+    if (emptyHint) emptyHint.style.display = 'none';
+
+    const topWarningsEl = document.getElementById('rbpWarnings');
+    if (topWarningsEl) topWarningsEl.innerHTML = rebalanceWarningsHtml(data.warnings);
+
+    const plansByStrategy = {};
+    (data.plans || []).forEach(p => { if (p && p.strategy) plansByStrategy[p.strategy] = p; });
+
+    const active = REBALANCE_STRATEGIES.includes(activeStrategy) ? activeStrategy : 'balanced';
+    REBALANCE_STRATEGIES.forEach(strategy => {
+        const pane = document.getElementById('rbpPane-' + strategy);
+        const tabBtn = document.getElementById('rbpTab-' + strategy);
+        if (pane) {
+            const plan = plansByStrategy[strategy];
+            pane.innerHTML = plan
+                ? rebalancePlanTabHtml(plan)
+                : '<p class="text-muted small mb-0">No plan returned for this strategy.</p>';
+            const isActive = strategy === active;
+            pane.classList.toggle('show', isActive);
+            pane.classList.toggle('active', isActive);
+        }
+        if (tabBtn) {
+            const isActive = strategy === active;
+            tabBtn.classList.toggle('active', isActive);
+            tabBtn.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        }
+    });
+
+    if (window.initTooltips) window.initTooltips();
+}
+window.renderRebalancePlanResults = renderRebalancePlanResults;
+
+// Wire up the Generate Plan form (called once at init).
+function setupRebalancePlanForm() {
+    const form = document.getElementById('rebalancePlanForm');
+    if (!form) return;
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const strategyEl = document.getElementById('rbpStrategy');
+        const strategy = strategyEl ? strategyEl.value : 'balanced';
+        const fields = {
+            strategy,
+            cashBudget: (document.getElementById('rbpCashBudget') || {}).value,
+            maxTrades: (document.getElementById('rbpMaxTrades') || {}).value,
+            minTradeEur: (document.getElementById('rbpMinTradeEur') || {}).value,
+            allowSells: !!(document.getElementById('rbpAllowSells') || {}).checked,
+            excludedSymbols: (document.getElementById('rbpExcludedSymbols') || {}).value,
+            lockedSymbols: (document.getElementById('rbpLockedSymbols') || {}).value,
+        };
+        const requestBody = buildRebalancePlanRequest(fields);
+
+        const btn = document.getElementById('rbpGenerateBtn');
+        const orig = btn ? btn.innerHTML : '';
+        if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Generating…'; }
+        const errorEl = document.getElementById('rbpError');
+        if (errorEl) errorEl.innerHTML = '';
+
+        try {
+            const data = await window.apiClient.getRebalancePlan(requestBody);
+            renderRebalancePlanResults(data, strategy);
+        } catch (err) {
+            if (errorEl) {
+                errorEl.innerHTML = `<div class="alert alert-danger py-2 small mb-0">${esc(rebalancePlanErrorMessage(err.message))}</div>`;
+            }
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+        }
+    });
+}
+window.setupRebalancePlanForm = setupRebalancePlanForm;
+
+// ---------------------------------------------------------------------------
 // Research / Valuation (Holdings page modal)
 // ---------------------------------------------------------------------------
 
@@ -4555,6 +4814,7 @@ document.addEventListener('DOMContentLoaded', function() {
     setupExportButtons();
     setupForecastPage();
     setupRebalanceForm();
+    setupRebalancePlanForm();
     setupResearchModal();
     setupWatchlistPage();
     setupGoalsPage();

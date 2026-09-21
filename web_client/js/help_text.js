@@ -36,6 +36,10 @@ window.METRIC_HELP = {
   budgetActual: "Actual: what really happened, from imported bank statements (spending and income) and broker deposits (contributions), excluding transfers between your own accounts.",
   budgetVariance: "Variance: planned minus actual, signed so positive is always the good direction — under budget on a cost, above plan on income or a contribution.",
   budgetUnbudgeted: "Not budgeted: real spending in categories your budget has no line for. Counted in the actual total, so \"under budget\" can't be an artifact of leaving half your spending out of the plan.",
+  rebalanceTaxMinimal: "Tax-minimal: ranks sells to minimise estimated realised gain and tax when choosing which lots to sell.",
+  rebalanceClosestToTarget: "Closest to target: ranks sells by drift, getting the allocation closest to target regardless of tax cost.",
+  rebalanceBalanced: "Balanced: blends tax cost and drift — a middle ground between the other two strategies.",
+  rebalanceTaxDelta: "Estimated Tax: Spanish IRPF savings-base tax on this plan's realised gains, based on current data and latest prices — an estimate, not a filing figure.",
 };
 
 // Per-page help: what's shown, where data comes from, how it's computed.

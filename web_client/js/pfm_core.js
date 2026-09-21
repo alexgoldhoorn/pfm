@@ -2323,6 +2323,16 @@ function createAPIClient() {
             return resp.json();
         },
 
+        async getRebalancePlan(requestBody) {
+            const resp = await fetch(this.baseURL + '/api/v1/rebalance/plan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(requestBody)
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
         async getResearchReport(symbol) {
             const resp = await fetch(this.baseURL + `/api/v1/research/${encodeURIComponent(symbol)}`, {
                 headers: { 'X-API-Key': this.apiKey }
