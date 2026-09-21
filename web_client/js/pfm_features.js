@@ -3139,10 +3139,11 @@ async function loadRebalanceAnalysis() {
     try {
         const data = await window.apiClient.getRebalanceAnalysis();
         const allocations = data.allocations || [];
-        // Wrapped in Fmt.amt so this table's euro figures blur under privacy
-        // mode like every other money value on the page (Task 5 fix — this
-        // table and the Trade Plan section below it were the two spots that
-        // hadn't caught up to that convention).
+        // Wrapped in Fmt.amt, matching Fmt.amt's blur-under-privacy-mode
+        // convention (Task 5 fix — this table and the Trade Plan section
+        // below it were two spots that hadn't caught up to it yet; not
+        // every money value on the page uses Fmt.amt, e.g. the Assets
+        // page's positions table).
         const fmtEur = (v) => Fmt.amt(parseFloat(v || 0).toLocaleString(Fmt.loc(), { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + ' €');
 
         if (allocations.length === 0) {
@@ -3259,8 +3260,8 @@ window.rebalanceDriftClass = rebalanceDriftClass;
 // missing — used for estimated_gain_eur/estimated_tax_eur, which the API
 // sends as null on every BUY trade (only meaningful for a SELL). The "—"
 // placeholder is left unwrapped (nothing to blur); a real figure is wrapped
-// in Fmt.amt so it blurs under privacy mode like every other money value on
-// the page, matching pfm_core.js's own convention.
+// in Fmt.amt, matching Fmt.amt's blur-under-privacy-mode convention (not
+// every money value on the page uses it — see pfm_core.js's `amt()`).
 function rebalanceFmtEur(v, decimals) {
     if (v === null || v === undefined) return '—';
     const d = decimals != null ? decimals : 2;

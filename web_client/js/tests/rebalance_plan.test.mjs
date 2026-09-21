@@ -46,6 +46,11 @@ test("rebalanceFmtEur formats a real number with the euro sign", () => {
     const out = win.rebalanceFmtEur(1234.5);
     assert.match(out, /1,234\.50/);
     assert.match(out, /€/);
+    // A real figure must be wrapped for privacy-mode blur (Fmt.amt's
+    // `<span class="pfm-amt">` convention) — this regression-guards the
+    // wrapper itself, since the two regexes above would still pass even if
+    // Fmt.amt were accidentally dropped from rebalanceFmtEur.
+    assert.match(out, /pfm-amt/);
 });
 
 test("rebalanceParseSymbolList trims, uppercases, drops empties, splits on comma or newline", () => {

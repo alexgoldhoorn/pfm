@@ -372,6 +372,14 @@ above). Each task should land as its own PR.
 
 - Cache FX rates and latest prices per request run.
 - Avoid N+1 asset/price queries where possible (batch if helper exists).
+  **Partially deferred (Task 5):** the FIFO-lot re-scan half of this was
+  fixed — `build_sell_candidates` now groups transactions by symbol once
+  instead of re-scanning per candidate. The asset/price half was not:
+  `build_holdings` still does one `db.get_asset(asset_id)` and one
+  `db.get_latest_price(asset_id)` per open position, because no batch-price
+  DB helper exists yet to do this in fewer calls. Left as-is — it's bounded
+  by the number of held positions, typically small, and adding a batch
+  helper is out of scope for this plan.
 - Keep deterministic output ordering for stable tests.
 - Return partial plans with warnings rather than 500 where possible.
 
@@ -405,3 +413,18 @@ Feature is done when all are true:
 - "New symbol buy" mode using watchlist/research targets
 - Scenario persistence (`rebalance_plans` table)
 - Action Items integration when drift exceeds threshold and no plan exists
+- Portfolio selector / broker column — the current UI always plans across
+  all portfolios combined with no way to scope to one broker, and the trades
+  table shows no per-trade portfolio/broker indicator, even though the API
+  itself already accepts an optional `portfolio_id`.
+- Wash-sale (art. 33.5 LIRPF) caveat — the planner cannot itself construct a
+  same-asset round trip (sells only leave overweight asset types, buys only
+  enter underweight ones, and a symbol has exactly one asset_type, so a sell
+  and a buy of the same symbol in one plan is structurally impossible), but
+  `tax_minimal`'s "sell the lowest-gain lot first" framing effectively
+  surfaces losers to sell without ever mentioning that repurchasing the same
+  security within 2 months (or 1 year for unlisted fund units) disallows
+  claiming that loss under Spanish tax law — a rule this same repo already
+  implements elsewhere (`wash_sale_check` in the MCP server). A one-line
+  UI/plan caveat near the existing "Tax fields are estimates based on
+  current data and latest prices" copy would be cheap insurance.
