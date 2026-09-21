@@ -3275,19 +3275,22 @@ window.rebalanceParseSymbolList = rebalanceParseSymbolList;
 // Builds the POST /api/v1/rebalance/plan request body from raw form field
 // values. An empty cash-budget field must become null (no budget), never 0
 // (an explicit zero budget) — same for max_trades/min_trade_eur falling
-// back to the API's own defaults when left blank.
+// back to the API's own defaults when left blank, and for max_sell_gain_eur
+// (empty = no cap, not a 0 cap).
 function buildRebalancePlanRequest(fields) {
     fields = fields || {};
     const strategy = REBALANCE_STRATEGIES.includes(fields.strategy) ? fields.strategy : 'balanced';
     const cashBudget = String(fields.cashBudget == null ? '' : fields.cashBudget).trim();
     const maxTrades = String(fields.maxTrades == null ? '' : fields.maxTrades).trim();
     const minTradeEur = String(fields.minTradeEur == null ? '' : fields.minTradeEur).trim();
+    const maxSellGain = String(fields.maxSellGainEur == null ? '' : fields.maxSellGainEur).trim();
     return {
         strategy,
         cash_budget_eur: cashBudget === '' ? null : parseFloat(cashBudget),
         allow_sells: !!fields.allowSells,
         max_trades: maxTrades === '' ? 12 : parseInt(maxTrades, 10),
         min_trade_eur: minTradeEur === '' ? 100 : parseFloat(minTradeEur),
+        max_sell_gain_eur: maxSellGain === '' ? null : parseFloat(maxSellGain),
         excluded_symbols: rebalanceParseSymbolList(fields.excludedSymbols),
         locked_symbols: rebalanceParseSymbolList(fields.lockedSymbols),
     };
@@ -3371,13 +3374,45 @@ window.rebalanceTradesTableHtml = rebalanceTradesTableHtml;
 
 // Full content for one strategy's tab pane: summary chips, that plan's own
 // warnings, then its trades table.
-function rebalancePlanTabHtml(plan) {
+//
+// The backend deliberately repeats every top-level `warnings` entry (missing
+// price, stale FX, ...) inside each plan's own `warnings` too, so a plan
+// rendered in isolation still carries that context. The UI already shows the
+// top-level list once above the tabs (see renderRebalancePlanResults), so a
+// plan's own warnings are filtered down to strings NOT already shown there —
+// otherwise every shared data-quality warning prints twice on screen.
+// `topLevelWarnings` defaults to [] so any genuinely plan-specific warning
+// still renders when called without it.
+function rebalancePlanTabHtml(plan, topLevelWarnings) {
     plan = plan || {};
+    const top = topLevelWarnings || [];
+    const ownWarnings = (plan.warnings || []).filter(w => !top.includes(w));
     return rebalanceSummaryChipsHtml(plan.summary)
-        + rebalanceWarningsHtml(plan.warnings)
+        + rebalanceWarningsHtml(ownWarnings)
         + rebalanceTradesTableHtml(plan.trades);
 }
 window.rebalancePlanTabHtml = rebalancePlanTabHtml;
+
+// One-line header rendered above the tabs on a successfully-rendered plan:
+// "Generated {time} · {strategy label} · max {max_trades} trades". Uses the
+// response's own `generated_at` + echoed `inputs` (the effective request,
+// defaults included) so a rendered plan is self-labeled with what produced
+// it — closing the same gap that made a stale plan hard to tell apart from a
+// fresh one. `inputs.strategy`/`inputs.max_trades` are constrained server
+// fields (enum / bounded int), but esc() anyway for the same reason every
+// other server-echoed value in this section is: cheap, and it costs nothing
+// to be consistent.
+function rebalancePlanHeaderHtml(data) {
+    data = data || {};
+    const inputs = data.inputs || {};
+    const parts = [];
+    if (data.generated_at) parts.push(`Generated ${esc(Fmt.date(data.generated_at))}`);
+    parts.push(esc(rebalanceStrategyLabel(inputs.strategy)));
+    if (inputs.max_trades != null) parts.push(`max ${esc(String(inputs.max_trades))} trades`);
+    if (parts.length === 0) return '';
+    return `<p class="text-muted small mb-2">${parts.join(' &middot; ')}</p>`;
+}
+window.rebalancePlanHeaderHtml = rebalancePlanHeaderHtml;
 
 // Turns the raw text of a thrown fetch error (getRebalancePlan throws
 // new Error(await resp.text())) into a readable message. A 422 body is
@@ -3410,8 +3445,12 @@ function renderRebalancePlanResults(data, activeStrategy) {
     resultsEl.style.display = '';
     if (emptyHint) emptyHint.style.display = 'none';
 
+    const headerEl = document.getElementById('rbpHeader');
+    if (headerEl) headerEl.innerHTML = rebalancePlanHeaderHtml(data);
+
+    const topWarnings = data.warnings || [];
     const topWarningsEl = document.getElementById('rbpWarnings');
-    if (topWarningsEl) topWarningsEl.innerHTML = rebalanceWarningsHtml(data.warnings);
+    if (topWarningsEl) topWarningsEl.innerHTML = rebalanceWarningsHtml(topWarnings);
 
     const plansByStrategy = {};
     (data.plans || []).forEach(p => { if (p && p.strategy) plansByStrategy[p.strategy] = p; });
@@ -3422,7 +3461,7 @@ function renderRebalancePlanResults(data, activeStrategy) {
         if (pane) {
             const plan = plansByStrategy[strategy];
             pane.innerHTML = plan
-                ? rebalancePlanTabHtml(plan)
+                ? rebalancePlanTabHtml(plan, topWarnings)
                 : '<p class="text-muted small mb-0">No plan returned for this strategy.</p>';
         }
     });
@@ -3449,8 +3488,23 @@ function renderRebalancePlanResults(data, activeStrategy) {
 }
 window.renderRebalancePlanResults = renderRebalancePlanResults;
 
+// Populates the 3 result tabs' label text from the same
+// REBALANCE_STRATEGY_LABELS mapping rebalanceStrategyLabel() reads, so the
+// tab button text isn't a fourth hand-written copy of the 3 strategy
+// labels (the <select> options in index.html are genuine static markup and
+// are left alone — this only touches the JS-owned label span inside each
+// tab button). Called once at init since the tab labels never change.
+function rebalanceInitTabLabels() {
+    REBALANCE_STRATEGIES.forEach(strategy => {
+        const labelEl = document.getElementById('rbpTabLabel-' + strategy);
+        if (labelEl) labelEl.textContent = rebalanceStrategyLabel(strategy);
+    });
+}
+window.rebalanceInitTabLabels = rebalanceInitTabLabels;
+
 // Wire up the Generate Plan form (called once at init).
 function setupRebalancePlanForm() {
+    rebalanceInitTabLabels();
     const form = document.getElementById('rebalancePlanForm');
     if (!form) return;
     form.addEventListener('submit', async (e) => {
@@ -3462,6 +3516,7 @@ function setupRebalancePlanForm() {
             cashBudget: (document.getElementById('rbpCashBudget') || {}).value,
             maxTrades: (document.getElementById('rbpMaxTrades') || {}).value,
             minTradeEur: (document.getElementById('rbpMinTradeEur') || {}).value,
+            maxSellGainEur: (document.getElementById('rbpMaxSellGainEur') || {}).value,
             allowSells: !!(document.getElementById('rbpAllowSells') || {}).checked,
             excludedSymbols: (document.getElementById('rbpExcludedSymbols') || {}).value,
             lockedSymbols: (document.getElementById('rbpLockedSymbols') || {}).value,
@@ -3478,6 +3533,15 @@ function setupRebalancePlanForm() {
             const data = await window.apiClient.getRebalancePlan(requestBody);
             renderRebalancePlanResults(data, strategy);
         } catch (err) {
+            // A failed/errored request must not leave the previous
+            // successful plan's results on screen next to the new error —
+            // the two would show state from two different moments. Hide
+            // the results area (and restore the "set options and generate"
+            // hint) alongside the error message.
+            const resultsEl = document.getElementById('rbpResults');
+            if (resultsEl) resultsEl.style.display = 'none';
+            const emptyHint = document.getElementById('rbpEmptyHint');
+            if (emptyHint) emptyHint.style.display = '';
             if (errorEl) {
                 errorEl.innerHTML = `<div class="alert alert-danger py-2 small mb-0">${esc(rebalancePlanErrorMessage(err.message))}</div>`;
             }

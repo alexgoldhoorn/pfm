@@ -826,6 +826,7 @@
                                         <p class="text-muted small mb-3">
                                             Planning output only. Review before placing orders.
                                             Tax fields are estimates based on current data and latest prices.
+                                            Covers all portfolios combined.
                                         </p>
                                         <div class="row g-4">
                                             <!-- Planner form -->
@@ -856,6 +857,12 @@
                                                         <label class="form-label small mb-1" for="rbpMinTradeEur">Min trade (€)</label>
                                                         <input type="number" class="form-control form-control-sm" id="rbpMinTradeEur" min="0" step="1" value="100">
                                                     </div>
+                                                    <div class="mb-2">
+                                                        <label class="form-label small mb-1" for="rbpMaxSellGainEur">Max sell gain (€, optional)
+                                                            <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip" title="Caps the total estimated realised gain from sells in the plan. Leave blank for no cap."></i>
+                                                        </label>
+                                                        <input type="number" class="form-control form-control-sm" id="rbpMaxSellGainEur" min="0" step="1" placeholder="none">
+                                                    </div>
                                                     <div class="form-check form-switch mb-2">
                                                         <input class="form-check-input" type="checkbox" role="switch" id="rbpAllowSells" checked>
                                                         <label class="form-check-label small" for="rbpAllowSells">Allow sells</label>
@@ -878,16 +885,17 @@
                                             <!-- Results -->
                                             <div class="col-12 col-lg-7">
                                                 <div id="rbpResults" style="display:none;">
+                                                    <div id="rbpHeader"></div>
                                                     <div id="rbpWarnings"></div>
                                                     <ul class="nav nav-tabs mb-2" id="rbpTabs">
                                                         <li class="nav-item">
-                                                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#rbpPane-tax_minimal" id="rbpTab-tax_minimal">Tax-minimal <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="Minimises estimated realised gain/tax when choosing which lots to sell."></i></button>
+                                                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#rbpPane-tax_minimal" id="rbpTab-tax_minimal"><span id="rbpTabLabel-tax_minimal">Tax-minimal</span> <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="Minimises estimated realised gain/tax when choosing which lots to sell."></i></button>
                                                         </li>
                                                         <li class="nav-item">
-                                                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#rbpPane-closest_to_target" id="rbpTab-closest_to_target">Closest to target <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="Ranks sells by drift, getting the allocation closest to target regardless of tax cost."></i></button>
+                                                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#rbpPane-closest_to_target" id="rbpTab-closest_to_target"><span id="rbpTabLabel-closest_to_target">Closest to target</span> <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="Ranks sells by drift, getting the allocation closest to target regardless of tax cost."></i></button>
                                                         </li>
                                                         <li class="nav-item">
-                                                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#rbpPane-balanced" id="rbpTab-balanced">Balanced <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="Blends tax cost and drift &mdash; a middle ground between the other two."></i></button>
+                                                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#rbpPane-balanced" id="rbpTab-balanced"><span id="rbpTabLabel-balanced">Balanced</span> <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="Blends tax cost and drift &mdash; a middle ground between the other two."></i></button>
                                                         </li>
                                                     </ul>
                                                     <div class="tab-content">
