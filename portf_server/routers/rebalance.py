@@ -51,11 +51,11 @@ class RebalancePlanRequest(BaseModel):
             "that will actually need one behaviour or the other."
         ),
     )
-    cash_budget_eur: Optional[float] = None
+    cash_budget_eur: Optional[float] = Field(None, ge=0)
     allow_sells: bool = True
     max_trades: int = Field(12, ge=1, le=100)
     min_trade_eur: float = Field(100, ge=0)
-    max_sell_gain_eur: Optional[float] = None
+    max_sell_gain_eur: Optional[float] = Field(None, ge=0)
     excluded_symbols: List[str] = Field(default_factory=list)
     locked_symbols: List[str] = Field(default_factory=list)
     # Reuses AllocationTarget (same asset_type/target_pct shape) rather than

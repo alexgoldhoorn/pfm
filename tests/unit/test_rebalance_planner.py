@@ -464,6 +464,104 @@ class TestMaxSellGainCap:
                 assert running <= cap + 1e-9, (cap, plan["trades"])
 
 
+class TestUnspentCashBudgetWarning:
+    """Review finding: ``allocate_buy_trades`` sizes each buy to Step B's gap
+    (computed *before* ``cash_budget_eur`` is added to the pool), so a budget
+    bigger than the total gap used to leave money unspent with no warning at
+    all — a €50,000 budget against a €3,000 gap silently "lost" €47,000.
+    """
+
+    def test_warns_when_the_budget_is_not_fully_needed(self):
+        db = _PlannerDB(THREE_TYPE_TARGETS, THREE_TYPE_HOLDINGS)
+        result = build_plan(db, allow_sells=False, cash_budget_eur=50_000.0)
+        for plan in result["plans"]:
+            assert _sides(plan) == [("BUY", "EXST", 3000.0)]
+            assert any(
+                "€47,000.00 of the cash budget was not needed to reach "
+                "target and was not spent." in w
+                for w in plan["warnings"]
+            ), plan["warnings"]
+
+    def test_no_warning_when_the_budget_is_fully_spent(self):
+        db = _PlannerDB(THREE_TYPE_TARGETS, THREE_TYPE_HOLDINGS)
+        # The stock gap is exactly €3,000 — there is nothing left over.
+        result = build_plan(db, allow_sells=False, cash_budget_eur=3000.0)
+        for plan in result["plans"]:
+            assert not any("was not needed" in w for w in plan["warnings"])
+
+    def test_no_warning_when_there_is_no_cash_budget(self):
+        db = _PlannerDB(THREE_TYPE_TARGETS, THREE_TYPE_HOLDINGS)
+        # Sells alone fund the buys almost exactly — no budget, no warning.
+        result = build_plan(db)
+        for plan in result["plans"]:
+            assert not any("was not needed" in w for w in plan["warnings"])
+
+
+class TestWholeTypeLockedOrExcludedWarns:
+    """Review finding: ``build_sell_candidates`` silently ``continue``s past a
+    locked/excluded symbol with no record kept, so a type where *every* held
+    symbol is filtered out produces zero sell candidates with nothing
+    explaining why — the only downstream symptom is an unrelated "no cash to
+    fund X" warning on some other, underweight, type.
+    """
+
+    def test_locking_every_symbol_in_an_overweight_type_warns(self):
+        db = _PlannerDB({"stock": 50.0, "etf": 50.0}, TWO_ETF_HOLDINGS)
+        result = build_plan(db, locked_symbols=["EXETFA", "EXETFZ"])
+        for plan in result["plans"]:
+            assert all(t["asset_type"] != "etf" for t in plan["trades"])
+            assert (
+                "etf is overweight but every held position in it is locked "
+                "or excluded — nothing to sell." in plan["warnings"]
+            )
+
+    def test_excluding_every_symbol_in_an_overweight_type_warns(self):
+        db = _PlannerDB({"stock": 50.0, "etf": 50.0}, TWO_ETF_HOLDINGS)
+        result = build_plan(db, excluded_symbols=["EXETFA", "EXETFZ"])
+        for plan in result["plans"]:
+            assert all(t["asset_type"] != "etf" for t in plan["trades"])
+            assert (
+                "etf is overweight but every held position in it is locked "
+                "or excluded — nothing to sell." in plan["warnings"]
+            )
+
+    def test_only_partially_locking_a_type_does_not_warn(self):
+        """One eligible symbol (EXETFZ) remains, so this is not the
+        whole-type case — already covered by TestExcludedAndLockedSymbols."""
+        db = _PlannerDB({"stock": 50.0, "etf": 50.0}, TWO_ETF_HOLDINGS)
+        result = build_plan(db, locked_symbols=["EXETFA"])
+        for plan in result["plans"]:
+            assert not any("nothing to sell" in w for w in plan["warnings"])
+
+
+class TestSellReasonUsesRemainingGapNotOriginal:
+    """Review finding: ``_sell_reason``'s quoted gap used to read the type's
+    original Step B gap even for a *second* sell into an already-partially-
+    reduced type, instead of what was actually still open when that specific
+    trade was generated.
+    """
+
+    TARGETS = {"stock": 80.0, "etf": 20.0}
+
+    def test_second_sell_into_the_same_type_quotes_the_remaining_gap(self):
+        db = _PlannerDB(self.TARGETS, TWO_ETF_HOLDINGS)
+        # etf is €4,000 overweight; both candidates tie on gap so
+        # closest_to_target falls to the symbol tie-break (EXETFA first).
+        plan = _plan_for(build_plan(db), "closest_to_target")
+        sells = [t for t in plan["trades"] if t["side"] == "SELL"]
+        assert [t["symbol"] for t in sells] == ["EXETFA", "EXETFZ"]
+
+        # First sell: nothing sold yet, so the remaining gap still equals
+        # the type's original €4,000 overweight.
+        assert "€4,000 to cut" in sells[0]["reason"]
+
+        # Second sell: the first trade already closed €3,000 of the €4,000
+        # gap, so only €1,000 remained when this trade was generated — not
+        # the stale original €4,000.
+        assert "€1,000 to cut" in sells[1]["reason"]
+        assert "€4,000 to cut" not in sells[1]["reason"]
+
+
 class TestPlanEdgeCases:
     def test_portfolio_already_on_target_produces_no_trades(self):
         """Nothing overweight is an empty sell list, not an error."""

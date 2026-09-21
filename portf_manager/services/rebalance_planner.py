@@ -399,6 +399,13 @@ def build_sell_candidates(
         return fx_on_cache[key]
 
     candidates: List[Dict] = []
+    # Per overweight type: did excluded_symbols/locked_symbols remove at
+    # least one of its held symbols, and did the type still end up with zero
+    # eligible candidates? If both, the only downstream symptom would
+    # otherwise be an unexplained "no cash to fund X" warning on some other
+    # (underweight) type — that names the symptom, not this cause.
+    types_with_filtered_symbol: set = set()
+    types_with_candidate: set = set()
     for h in holdings:
         atype = h["asset_type"]
         if atype not in overweight:
@@ -406,6 +413,7 @@ def build_sell_candidates(
         symbol = str(h["symbol"])
         upper = symbol.upper()
         if upper in excluded or upper in locked:
+            types_with_filtered_symbol.add(atype)
             continue
         if h["price_eur"] <= 0 or h["value_eur"] <= 0:
             warnings.append(
@@ -472,6 +480,13 @@ def build_sell_candidates(
             "gain_ratio"
         ]
         candidates.append(candidate)
+        types_with_candidate.add(atype)
+
+    for atype in sorted(types_with_filtered_symbol - types_with_candidate):
+        warnings.append(
+            f"{atype} is overweight but every held position in it is locked "
+            "or excluded — nothing to sell."
+        )
 
     return candidates, warnings
 
@@ -532,22 +547,29 @@ def rank_sell_candidates(candidates: List[Dict], strategy: str) -> List[Dict]:
     return sorted(candidates, key=lambda c: (score(c), c["symbol"]))
 
 
-def _sell_reason(candidate: Dict, strategy: str, sale: Dict) -> str:
+def _sell_reason(
+    candidate: Dict, strategy: str, sale: Dict, remaining_gap_eur: float
+) -> str:
     """Why this SELL is in the plan, in the strategy's own terms.
 
     The gain percentage quoted is *this trade's* (``sale``), not the whole
     position's, so the sentence can never contradict the row's own
-    ``estimated_gain_eur``/``amount_eur``.
+    ``estimated_gain_eur``/``amount_eur``. Likewise ``remaining_gap_eur`` is
+    what was still open in this asset type *when this trade was selected*
+    (``allocate_sell_trades``'s running ``remaining_gap``, i.e. the ``need``
+    passed to :func:`plan_sale` for this very trade) — not ``candidate``'s
+    ``gap_eur``, which is the type's original Step B gap and goes stale for
+    the second-and-later sell into an already-partially-reduced type.
     """
     head = f"{candidate['asset_type']} overweight by {abs(candidate['drift_pct']):.1f}%"
     ratio_pct = sale["gain_ratio"] * 100
     if strategy == "tax_minimal":
         return f"{head}; lowest gain per € sold ({ratio_pct:.1f}%)"
     if strategy == "closest_to_target":
-        return f"{head}; largest gap (€{abs(candidate['gap_eur']):,.0f} to cut)"
+        return f"{head}; largest gap (€{abs(remaining_gap_eur):,.0f} to cut)"
     return (
         f"{head}; balanced score (gain {ratio_pct:.1f}% "
-        f"vs €{abs(candidate['gap_eur']):,.0f} gap)"
+        f"vs €{abs(remaining_gap_eur):,.0f} gap)"
     )
 
 
@@ -625,7 +647,7 @@ def allocate_sell_trades(
                 # Filled in by allocate_trade_taxes once the sell list (and so
                 # the progressive-bracket total) is final.
                 "estimated_tax_eur": 0.0,
-                "reason": _sell_reason(c, strategy, sale),
+                "reason": _sell_reason(c, strategy, sale, need),
             }
         )
 
@@ -755,11 +777,18 @@ def allocate_trade_taxes(sell_trades: List[Dict], tax_delta_eur: float) -> None:
     year's total savings base, so no single trade "costs" a fixed amount of
     tax in isolation — the last euro of gain is taxed at a higher marginal
     rate than the first, and which trade is "last" is arbitrary. Each sell is
-    therefore attributed its share of the aggregate, weighted by its own gain,
-    purely so a UI can show a per-row figure that adds up to the plan total.
+    therefore attributed its share of the aggregate, weighted by its own gain
+    — so a UI can show a per-row figure that adds up to the plan total, but
+    only when the plan realises a net gain (``total_gain > 0``).
 
-    Trades are mutated in place. When the plan's total gain is zero or
-    negative there is nothing to apportion and every sell gets ``0.0``.
+    When the plan's total gain is zero or negative (a loss-harvesting plan)
+    there is nothing to apportion and every sell's ``estimated_tax_eur`` is
+    left at ``0.0`` — even though the summary's ``estimated_tax_delta_eur``
+    can still be a nonzero (negative, i.e. a benefit) figure against a
+    positive year-to-date baseline. In that case the rows do **not** sum to
+    the summary; see ``test_no_tax_is_apportioned_when_the_plan_realises_no_gain``.
+
+    Trades are mutated in place.
     """
     total_gain = sum(t["estimated_gain_eur"] or 0.0 for t in sell_trades)
     for t in sell_trades:
@@ -856,6 +885,21 @@ def build_strategy_plan(
             excluded_symbols=options["excluded_symbols"],
         )
         plan_warnings.extend(buy_warnings)
+        # Buys are sized to Step B's gaps, computed *before* cash_budget_eur
+        # is injected into the pool — so a budget larger than the total gap
+        # is never fully spent, and without this the leftover simply
+        # vanishes from the response with no indication. Gated on
+        # cash_budget > 0 since the message specifically names the budget;
+        # unspent *sell* proceeds alone are a different (and, absent an
+        # excluded/unfundable type, essentially zero-sum) situation already
+        # covered by the buy-side warnings above.
+        if cash_budget > 0:
+            unspent = available_cash - sum(t["amount_eur"] for t in buy_trades)
+            if unspent > min_trade_eur:
+                plan_warnings.append(
+                    f"€{unspent:,.2f} of the cash budget was not needed to "
+                    "reach target and was not spent."
+                )
 
     trades, truncation_warnings = truncate_trades(
         sell_trades + buy_trades, options["max_trades"]
