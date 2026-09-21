@@ -594,6 +594,23 @@ class TestPlanEdgeCases:
         assert all(t["symbol"] != "EXETFA" for t in plan["trades"])
         assert any("No price data for EXETFA" in w for w in plan["warnings"])
 
+    def test_compute_before_state_returns_the_same_holdings_build_holdings_would(self):
+        """Task 5 perf fix regression guard: ``compute_before_state`` now
+        hands back the ``holdings``/``transactions`` it already computed
+        internally instead of ``build_plan`` re-fetching transactions and
+        calling ``build_holdings`` a second time — this pins that what it
+        returns is identical to a direct ``build_holdings(db, transactions)``
+        call over the same transactions, not a different (and possibly
+        cheaper-but-wrong) shortcut."""
+        db = _PlannerDB(THREE_TYPE_TARGETS, THREE_TYPE_HOLDINGS)
+        before, warnings, holdings, transactions = compute_before_state(db, None, None)
+        expected_holdings, expected_warnings = build_holdings(
+            db, db.get_all_transactions()
+        )
+        assert holdings == expected_holdings
+        assert warnings == expected_warnings
+        assert transactions == db.get_all_transactions()
+
 
 class TestPureScoringHelpers:
     def _candidate(self, symbol, planned_gain_ratio, gap_eur):
@@ -741,13 +758,13 @@ class TestRankingUsesTheTradeThatWouldActuallyHappen:
         return db
 
     def _candidates(self, db):
-        before, _ = compute_before_state(db, None, None)
+        before, _, holdings, transactions = compute_before_state(db, None, None)
         gaps = compute_gaps(before["allocations"], 100.0)
         candidates, _ = build_sell_candidates(
             db,
-            build_holdings(db, db.get_all_transactions())[0],
+            holdings,
             gaps,
-            transactions=db.get_all_transactions(),
+            transactions=transactions,
         )
         return {c["symbol"]: c for c in candidates}
 
@@ -852,13 +869,13 @@ class TestPerLotHistoricalFx:
         return fake
 
     def _candidate(self, db):
-        before, _ = compute_before_state(db, None, None)
+        before, _, holdings, transactions = compute_before_state(db, None, None)
         gaps = compute_gaps(before["allocations"], 100.0)
         candidates, _ = build_sell_candidates(
             db,
-            build_holdings(db, db.get_all_transactions())[0],
+            holdings,
             gaps,
-            transactions=db.get_all_transactions(),
+            transactions=transactions,
         )
         return next(c for c in candidates if c["symbol"] == "EXUSD")
 

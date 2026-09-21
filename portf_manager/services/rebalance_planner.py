@@ -135,20 +135,23 @@ def build_holdings(db, transactions: List[dict]) -> Tuple[List[Dict], List[str]]
 
 def _current_type_values(
     db, transactions: List[dict]
-) -> Tuple[Dict[str, float], List[str]]:
+) -> Tuple[Dict[str, float], List[str], List[Dict]]:
     """Per-asset-type EUR value of currently open positions, plus any
-    data-quality warnings raised while pricing them.
+    data-quality warnings raised while pricing them, plus the per-symbol
+    ``holdings`` list those totals were aggregated from.
 
     A thin aggregation over :func:`build_holdings` so the type totals behind
     ``before`` and the per-symbol rows behind the trades can't be built from
-    two different walks of the same data.
+    two different walks of the same data — returning ``holdings`` here (and
+    from :func:`compute_before_state` in turn) is what lets callers actually
+    honour that, instead of walking the data a second time themselves.
     """
     holdings, warnings = build_holdings(db, transactions)
     type_values: Dict[str, float] = {}
     for h in holdings:
         atype = h["asset_type"]
         type_values[atype] = type_values.get(atype, 0.0) + h["value_eur"]
-    return type_values, warnings
+    return type_values, warnings, holdings
 
 
 def merge_targets(db, target_overrides: Optional[List[dict]]) -> Dict[str, float]:
@@ -188,17 +191,23 @@ def validate_target_sum(targets: Dict[str, float]) -> None:
 
 def compute_before_state(
     db, portfolio_id: Optional[int], target_overrides: Optional[List[dict]]
-) -> Tuple[Dict, List[str]]:
+) -> Tuple[Dict, List[str], List[Dict], List[dict]]:
     """Step A (+ the drift half of Step B): current allocation vs. target.
 
-    Returns ``({"total_value_eur": float, "allocations": [...]}, warnings)``
-    — the ``allocations`` shape (``asset_type``/``current_value_eur``/
+    Returns ``(before, warnings, holdings, transactions)`` where ``before``
+    is ``{"total_value_eur": float, "allocations": [...]}`` — the
+    ``allocations`` shape (``asset_type``/``current_value_eur``/
     ``current_pct``/``target_pct``/``drift_pct``/``drift_eur``) is exactly
     ``get_rebalance_analysis``'s, and both now build positions with
     ``compute_positions``, so the planner and the analysis endpoint can't
     disagree about "current allocation". ``warnings`` names any holding
     whose EUR value is unreliable (no price row, stale FX) — see
-    ``_current_type_values``.
+    ``_current_type_values``. ``holdings`` is the per-symbol list those
+    totals were aggregated from (:func:`build_holdings`'s own return) and
+    ``transactions`` is the raw rows fetched to build it — both are handed
+    back so a caller building Step C/D's per-symbol candidates (``build_plan``)
+    doesn't have to re-fetch the transaction table and call
+    :func:`build_holdings` a second time to get them.
 
     Raises:
         ValueError: the effective target set doesn't sum to ~100%
@@ -209,7 +218,7 @@ def compute_before_state(
     else:
         transactions = db.get_all_transactions()
 
-    type_values, warnings = _current_type_values(db, transactions)
+    type_values, warnings, holdings = _current_type_values(db, transactions)
     total_eur = sum(type_values.values())
 
     targets = merge_targets(db, target_overrides)
@@ -242,6 +251,8 @@ def compute_before_state(
             "allocations": allocations,
         },
         warnings,
+        holdings,
+        transactions,
     )
 
 
@@ -385,6 +396,18 @@ def build_sell_candidates(
     calc = TaxCalculator(db)
     fx_on_cache: Dict[Tuple[str, object], float] = {}
 
+    # One O(N) pass to group all transactions by symbol, instead of handing
+    # get_open_lots the full list on every held symbol — it filters down to
+    # the wanted symbol internally (its own docstring calls out grouping once
+    # as the intended usage for a multi-symbol caller like this one), so an
+    # unfiltered list here turns Step C into an O(candidates × N) scan for no
+    # reason. Same upper-casing convention get_open_lots itself uses, so its
+    # internal filter becomes a no-op over an already-correct subset.
+    transactions_by_symbol: Dict[str, List[dict]] = {}
+    for tx in transactions:
+        tx_symbol = (tx.get("symbol") or "").upper()
+        transactions_by_symbol.setdefault(tx_symbol, []).append(tx)
+
     def rate_on(currency: str, on_date) -> float:
         key = (currency, on_date)
         if key not in fx_on_cache:
@@ -421,7 +444,9 @@ def build_sell_candidates(
             )
             continue
 
-        open_lots = calc.get_open_lots(symbol, transactions=transactions)
+        open_lots = calc.get_open_lots(
+            symbol, transactions=transactions_by_symbol.get(upper, [])
+        )
         if not open_lots:
             warnings.append(
                 f"No open FIFO lots found for {symbol} — its cost basis is "
@@ -957,21 +982,10 @@ def build_plan(
         ValueError: the effective target set doesn't sum to ~100%
             (propagated from ``compute_before_state``).
     """
-    before, data_warnings = compute_before_state(db, portfolio_id, target_overrides)
-    gaps = compute_gaps(before["allocations"], min_trade_eur)
-
-    transactions = (
-        db.get_transactions_by_portfolio(portfolio_id)
-        if portfolio_id is not None
-        else db.get_all_transactions()
+    before, data_warnings, holdings, transactions = compute_before_state(
+        db, portfolio_id, target_overrides
     )
-    # Second pass over the same data: compute_before_state already ran
-    # build_holdings internally for its type totals, and its signature is
-    # Step A's tested contract, so the per-symbol rows are rebuilt here rather
-    # than threaded through it. The warnings are therefore identical to
-    # data_warnings and are dropped instead of repeated. Collapsing the two
-    # passes is the plan doc's §11 performance item (Task 5).
-    holdings, _duplicate_warnings = build_holdings(db, transactions)
+    gaps = compute_gaps(before["allocations"], min_trade_eur)
 
     drift_by_type = {a["asset_type"]: a["drift_pct"] for a in before["allocations"]}
 
