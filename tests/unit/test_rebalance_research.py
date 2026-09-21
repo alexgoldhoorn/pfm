@@ -4,7 +4,7 @@ import pytest
 from httpx import AsyncClient
 from fastapi import status
 
-from portf_manager.services.rebalance_planner import STUB_PLAN_NOTICE, STUB_WARNING
+from portf_manager.services.rebalance_planner import NO_CASH_WARNING
 
 
 class TestRebalance:
@@ -56,12 +56,15 @@ class TestRebalance:
 
 
 class TestRebalancePlan:
-    """POST /api/v1/rebalance/plan — Task 2 skeleton.
+    """POST /api/v1/rebalance/plan — end-to-end.
 
-    Every strategy's ``trades`` list is stubbed empty in this task (see
-    ``portf_manager/services/rebalance_planner.py``); these tests cover the
-    end-to-end response shape and request validation only, not real trade
-    generation (Task 3's job).
+    The planner's own ranking/constraint rules are unit-tested in
+    ``tests/unit/test_rebalance_planner.py``; these cover the HTTP contract:
+    that a real portfolio produces real trades through the route, and that
+    request validation still rejects what it should.
+
+    All fixture data is invented — round prices, made-up symbols, EUR only
+    (so nothing reaches a live FX lookup).
     """
 
     async def _set_targets(self, client: AsyncClient, headers: dict, targets: list):
@@ -70,11 +73,44 @@ class TestRebalancePlan:
         )
         assert resp.status_code == status.HTTP_200_OK
 
+    def _seed_portfolio(self, db):
+        """€1,000 of a stock and €1,000 of an ETF, both priced in EUR.
+
+        Against a 60/40 stock/etf target that is €200 underweight in stock
+        and €200 overweight in etf — above the €100 default ``min_trade_eur``,
+        so a real plan is one sell and one buy.
+        """
+        portfolio_id = db.create_portfolio("Example Broker", base_currency="EUR")
+        seeded = {}
+        for symbol, name, asset_type in (
+            ("EXST", "Example Industries", "stock"),
+            ("EXETF", "Example Global ETF", "etf"),
+        ):
+            asset_id = db.create_asset(
+                symbol=symbol, name=name, asset_type=asset_type, currency="EUR"
+            )
+            db.create_transaction(
+                asset_id=asset_id,
+                transaction_type="buy",
+                quantity=100.0,
+                price=8.0,
+                total_amount=800.0,
+                transaction_date="2024-03-01",
+                portfolio_id=portfolio_id,
+                currency="EUR",
+            )
+            db.create_price(asset_id, 10.0, "2026-09-17")
+            seeded[symbol] = asset_id
+        return seeded
+
     @pytest.mark.asyncio
-    async def test_plan_shape(self, async_test_client: AsyncClient, auth_headers):
+    async def test_plan_shape(
+        self, async_test_client: AsyncClient, auth_headers, test_database
+    ):
         # No target_overrides in the request => the planner must fall back
         # to saved allocation targets, so seed a valid (summing to 100) set
         # first.
+        self._seed_portfolio(test_database)
         await self._set_targets(
             async_test_client,
             auth_headers,
@@ -95,16 +131,12 @@ class TestRebalancePlan:
         assert data["inputs"]["strategy"] == "balanced"
         assert data["inputs"]["max_trades"] == 12
 
-        assert "before" in data
-        assert "total_value_eur" in data["before"]
+        assert data["before"]["total_value_eur"] == 2000.0
         assert isinstance(data["before"]["allocations"], list)
 
-        # The top-level list must carry the stub notice too — a client that
-        # only checks `warnings` must not read a stubbed plan as clean.
-        # Compared against the constant, not a literal, so Task 3's rewording
-        # can't leave this assertion silently verifying nothing.
-        assert isinstance(data["warnings"], list)
-        assert data["warnings"][0] == STUB_PLAN_NOTICE
+        # Clean fixture data: nothing is mispriced, so nothing is warned
+        # about at the top level.
+        assert data["warnings"] == []
 
         plans = data["plans"]
         assert {p["strategy"] for p in plans} == {
@@ -113,15 +145,32 @@ class TestRebalancePlan:
             "balanced",
         }
         for plan in plans:
-            assert plan["trades"] == []
+            trades = plan["trades"]
+            # One sell out of the overweight etf, one buy into the
+            # underweight stock — every strategy can see the same single
+            # candidate, so all three agree here.
+            assert [(t["side"], t["symbol"]) for t in trades] == [
+                ("SELL", "EXETF"),
+                ("BUY", "EXST"),
+            ]
+            sell, buy = trades
+            assert sell["amount_eur"] == 200.0
+            assert buy["amount_eur"] == 200.0
+            # Bought at 8, now 10 → a 20% gain on the €200 sold.
+            assert sell["estimated_gain_eur"] == 40.0
+            assert sell["estimated_tax_eur"] == pytest.approx(40.0 * 0.19, abs=0.01)
+            assert buy["estimated_gain_eur"] is None
+            assert buy["estimated_tax_eur"] is None
+            assert sell["reason"] and buy["reason"]
+
             summary = plan["summary"]
-            assert summary["trade_count"] == 0
-            assert summary["buy_total_eur"] == 0.0
-            assert summary["sell_total_eur"] == 0.0
-            assert summary["estimated_realized_gain_eur"] == 0.0
-            assert summary["estimated_tax_delta_eur"] == 0.0
-            assert "max_abs_drift_pct_after" in summary
-            assert plan["warnings"][0] == STUB_WARNING
+            assert summary["trade_count"] == len(trades)
+            assert summary["buy_total_eur"] == 200.0
+            assert summary["sell_total_eur"] == 200.0
+            assert summary["estimated_realized_gain_eur"] == 40.0
+            # Selling to target leaves the portfolio exactly on 60/40.
+            assert summary["max_abs_drift_pct_after"] == 0.0
+            assert plan["warnings"] == []
 
     @pytest.mark.asyncio
     async def test_plan_validation(self, async_test_client: AsyncClient, auth_headers):
@@ -152,6 +201,25 @@ class TestRebalancePlan:
         )
         assert resp.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
+        # cash_budget_eur negative — a negative budget would otherwise reach
+        # build_strategy_plan's available_cash computation and silently
+        # produce a sell-only plan instead of being rejected.
+        resp = await async_test_client.post(
+            "/api/v1/rebalance/plan",
+            json={"cash_budget_eur": -500.0},
+            headers=auth_headers,
+        )
+        assert resp.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+        # max_sell_gain_eur negative — same gap, a negative cap still "works"
+        # (every sell trips it immediately) rather than being rejected.
+        resp = await async_test_client.post(
+            "/api/v1/rebalance/plan",
+            json={"max_sell_gain_eur": -1.0},
+            headers=auth_headers,
+        )
+        assert resp.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
         # target_overrides summing outside 99.5..100.5 — a service/route-level
         # check (it merges with DB-stored targets), still a 422 like the
         # Pydantic-enforced cases above, for a consistent client contract.
@@ -170,11 +238,11 @@ class TestRebalancePlan:
 
     @pytest.mark.asyncio
     async def test_plan_buy_only_mode(
-        self, async_test_client: AsyncClient, auth_headers
+        self, async_test_client: AsyncClient, auth_headers, test_database
     ):
-        # allow_sells=false must be accepted — real buy-only behavior is
-        # Task 3's job, this only confirms the field doesn't 422/500 and the
-        # stub shape still comes back.
+        # allow_sells=false with no cash budget: nothing funds a buy, so the
+        # plan is empty *and says why* rather than looking like "no drift".
+        self._seed_portfolio(test_database)
         resp = await async_test_client.post(
             "/api/v1/rebalance/plan",
             json={
@@ -192,6 +260,37 @@ class TestRebalancePlan:
         assert len(data["plans"]) == 3
         for plan in data["plans"]:
             assert plan["trades"] == []
+            assert NO_CASH_WARNING in plan["warnings"]
+
+    @pytest.mark.asyncio
+    async def test_plan_buy_only_with_cash_budget(
+        self, async_test_client: AsyncClient, auth_headers, test_database
+    ):
+        """A cash budget funds buys without any sell, and grows the total."""
+        self._seed_portfolio(test_database)
+        resp = await async_test_client.post(
+            "/api/v1/rebalance/plan",
+            json={
+                "allow_sells": False,
+                "cash_budget_eur": 500.0,
+                "target_overrides": [
+                    {"asset_type": "stock", "target_pct": 60.0},
+                    {"asset_type": "etf", "target_pct": 40.0},
+                ],
+            },
+            headers=auth_headers,
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        for plan in resp.json()["plans"]:
+            assert [(t["side"], t["symbol"]) for t in plan["trades"]] == [
+                ("BUY", "EXST")
+            ]
+            # The stock gap is €200 and the budget covers it, so the whole
+            # gap is bought and nothing is realised.
+            assert plan["trades"][0]["amount_eur"] == 200.0
+            assert plan["summary"]["sell_total_eur"] == 0.0
+            assert plan["summary"]["estimated_realized_gain_eur"] == 0.0
+            assert NO_CASH_WARNING not in plan["warnings"]
 
 
 class TestResearch:
