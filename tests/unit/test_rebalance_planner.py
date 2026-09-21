@@ -601,12 +601,22 @@ class TestPlanEdgeCases:
         calling ``build_holdings`` a second time — this pins that what it
         returns is identical to a direct ``build_holdings(db, transactions)``
         call over the same transactions, not a different (and possibly
-        cheaper-but-wrong) shortcut."""
+        cheaper-but-wrong) shortcut.
+
+        A missing price row on EXETF (same trick ``test_unpriced_holding_is_
+        never_traded`` uses above) forces ``build_holdings`` to actually raise
+        a warning here — plain ``THREE_TYPE_HOLDINGS`` raises none, which
+        would make the ``warnings ==`` comparison below a vacuous ``[] ==
+        []`` that proves nothing about whether ``warnings`` is threaded
+        through correctly, only that the holdings/transactions halves are."""
         db = _PlannerDB(THREE_TYPE_TARGETS, THREE_TYPE_HOLDINGS)
+        db._prices[2] = None  # EXETF has no price row
         before, warnings, holdings, transactions = compute_before_state(db, None, None)
         expected_holdings, expected_warnings = build_holdings(
             db, db.get_all_transactions()
         )
+        assert warnings != []
+        assert any("No price data for EXETF" in w for w in warnings)
         assert holdings == expected_holdings
         assert warnings == expected_warnings
         assert transactions == db.get_all_transactions()
