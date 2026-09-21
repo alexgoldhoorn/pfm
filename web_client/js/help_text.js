@@ -157,7 +157,7 @@ window.PAGE_HELP = {
         <li><strong>Avg Price</strong> is your FIFO cost basis; <strong>Current Price</strong> is the latest Yahoo Finance quote, refreshed daily at 20:00 UTC.</li>
         <li><strong>P/L</strong> is unrealised gain/loss on positions you still hold. Quantity, cost and P/L are blank for assets you don't currently hold — tick <strong>"Show assets with no holding"</strong> to include them in the table.</li>
         <li><strong>Research</strong> opens an LLM-generated fair-value analysis from fundamentals — informational, not advice.</li>
-        <li><strong>Rebalancing</strong> compares your current allocation against your target percentages and suggests buys/sells to close the drift.</li>
+        <li><strong>Rebalancing</strong> compares your current allocation against your target percentages and suggests buys/sells to close the drift. Its <strong>Trade Plan</strong> section goes further: set constraints (cash budget, max trades, max sell gain, excluded/locked symbols) and generate an actual proposed trade list, shown as three strategies (tax-minimal, closest to target, balanced) covering all portfolios combined — planning output only, review before placing orders.</li>
       </ul>
       <p class="text-muted small mb-0">Prices from Yahoo Finance, refreshed daily at 20:00 UTC; converted to EUR at live FX rates.</p>`
   },

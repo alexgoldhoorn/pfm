@@ -43,12 +43,10 @@ class RebalancePlanRequest(BaseModel):
     strategy: Literal["tax_minimal", "closest_to_target", "balanced"] = Field(
         "balanced",
         description=(
-            "Currently has NO effect — every strategy view is always returned "
-            "in `plans`, whatever this is set to, and each now carries real "
-            "trades. Whether it should filter the response to one plan or "
-            "only pick the UI's default tab is still undecided; settle it "
-            "when the Rebalance page is built (Task 4), which is the caller "
-            "that will actually need one behaviour or the other."
+            "Has NO effect on which plan(s) are returned — every strategy "
+            "view is always returned in `plans`, whatever this is set to. "
+            "The Rebalance page (Task 4) uses this field only client-side, "
+            "to pick which of the 3 result tabs is shown as the default."
         ),
     )
     cash_budget_eur: Optional[float] = Field(None, ge=0)

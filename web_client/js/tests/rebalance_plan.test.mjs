@@ -63,6 +63,7 @@ test("buildRebalancePlanRequest: empty cash budget becomes null, not 0", () => {
     assert.equal(req.cash_budget_eur, null);
     assert.equal(req.max_trades, 12);
     assert.equal(req.min_trade_eur, 100);
+    assert.equal(req.max_sell_gain_eur, null);
     assert.deepEqual([...req.excluded_symbols], []);
     assert.deepEqual([...req.locked_symbols], []);
     assert.equal(req.allow_sells, true);
@@ -74,15 +75,26 @@ test("buildRebalancePlanRequest: an explicit 0 cash budget is preserved (not tre
     assert.equal(req.cash_budget_eur, 0);
 });
 
+test("buildRebalancePlanRequest: an empty max sell gain becomes null, not 0 (no cap, not a 0 cap)", () => {
+    const req = win.buildRebalancePlanRequest({ strategy: "balanced", maxSellGainEur: "" });
+    assert.equal(req.max_sell_gain_eur, null);
+});
+
+test("buildRebalancePlanRequest: an explicit 0 max sell gain is preserved (not treated as blank)", () => {
+    const req = win.buildRebalancePlanRequest({ strategy: "balanced", maxSellGainEur: "0" });
+    assert.equal(req.max_sell_gain_eur, 0);
+});
+
 test("buildRebalancePlanRequest: parses numeric fields and symbol lists", () => {
     const req = win.buildRebalancePlanRequest({
         strategy: "tax_minimal", cashBudget: "500", maxTrades: "20", minTradeEur: "50",
-        allowSells: false, excludedSymbols: "aapl,msft", lockedSymbols: "btc-eur",
+        maxSellGainEur: "1000", allowSells: false, excludedSymbols: "aapl,msft", lockedSymbols: "btc-eur",
     });
     assert.equal(req.strategy, "tax_minimal");
     assert.equal(req.cash_budget_eur, 500);
     assert.equal(req.max_trades, 20);
     assert.equal(req.min_trade_eur, 50);
+    assert.equal(req.max_sell_gain_eur, 1000);
     assert.equal(req.allow_sells, false);
     assert.deepEqual([...req.excluded_symbols], ["AAPL", "MSFT"]);
     assert.deepEqual([...req.locked_symbols], ["BTC-EUR"]);
@@ -200,6 +212,56 @@ test("rebalancePlanTabHtml combines chips + warnings + trades for one plan", () 
     assert.ok(html.includes('<table'));
 });
 
+test("rebalancePlanTabHtml de-dupes a warning already shown at the top level (each string renders once)", () => {
+    const shared = 'Missing price for MINTOS — treated as 0.';
+    const ownOnly = 'This strategy skipped a locked symbol.';
+    const html = win.rebalancePlanTabHtml(
+        { summary: {}, trades: [], warnings: [shared, ownOnly] },
+        [shared],
+    );
+    // The shared warning must not appear in this pane's own rendering at all
+    // (it's already shown once, above the tabs) — the plan-specific one still does.
+    assert.ok(!html.includes(shared));
+    assert.ok(html.includes(ownOnly));
+});
+
+test("rebalancePlanTabHtml renders all of a plan's own warnings when no top-level list is passed", () => {
+    const html = win.rebalancePlanTabHtml({ summary: {}, trades: [], warnings: ['only warning'] });
+    assert.ok(html.includes('only warning'));
+});
+
+test("rebalancePlanTabHtml renders nothing extra when a plan has no warnings beyond the shared ones", () => {
+    const shared = 'Stale FX rate used for USD.';
+    const html = win.rebalancePlanTabHtml({ summary: {}, trades: [], warnings: [shared] }, [shared]);
+    assert.ok(!html.includes('alert-warning'));
+});
+
+test("rebalancePlanHeaderHtml renders generated time, strategy label and max trades", () => {
+    const html = win.rebalancePlanHeaderHtml({
+        generated_at: '2026-09-18T14:32:05Z',
+        inputs: { strategy: 'tax_minimal', max_trades: 8 },
+    });
+    assert.match(html, /Generated/);
+    assert.match(html, /14:32/);
+    assert.ok(html.includes('Tax-minimal'));
+    assert.ok(html.includes('max 8 trades'));
+});
+
+test("rebalancePlanHeaderHtml escapes an attacker-controlled strategy value", () => {
+    const html = win.rebalancePlanHeaderHtml({
+        generated_at: '2026-09-18T14:32:05Z',
+        inputs: { strategy: '<script>alert(1)</script>', max_trades: 5 },
+    });
+    assert.ok(!html.includes('<script>alert(1)</script>'));
+    assert.ok(html.includes('&lt;script&gt;'));
+});
+
+test("rebalancePlanHeaderHtml tolerates missing generated_at/inputs without crashing", () => {
+    assert.equal(win.rebalancePlanHeaderHtml({}), win.rebalancePlanHeaderHtml({ inputs: {} }));
+    assert.doesNotThrow(() => win.rebalancePlanHeaderHtml(null));
+    assert.doesNotThrow(() => win.rebalancePlanHeaderHtml(undefined));
+});
+
 test("rebalancePlanErrorMessage reads a Pydantic-style detail array", () => {
     const raw = JSON.stringify({ detail: [{ loc: ['body', 'max_trades'], msg: 'ensure this value is <= 100', type: 'value_error' }] });
     assert.equal(win.rebalancePlanErrorMessage(raw), 'ensure this value is <= 100');
@@ -214,4 +276,8 @@ test("rebalancePlanErrorMessage doesn't crash on unparseable or empty input", ()
     assert.equal(win.rebalancePlanErrorMessage(''), 'Error generating plan.');
     assert.equal(win.rebalancePlanErrorMessage(undefined), 'Error generating plan.');
     assert.equal(win.rebalancePlanErrorMessage('not json'), 'not json');
+});
+
+test("rebalanceInitTabLabels runs without throwing (no matching DOM elements under test)", () => {
+    assert.doesNotThrow(() => win.rebalanceInitTabLabels());
 });
