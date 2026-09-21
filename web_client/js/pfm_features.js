@@ -3419,22 +3419,31 @@ function renderRebalancePlanResults(data, activeStrategy) {
     const active = REBALANCE_STRATEGIES.includes(activeStrategy) ? activeStrategy : 'balanced';
     REBALANCE_STRATEGIES.forEach(strategy => {
         const pane = document.getElementById('rbpPane-' + strategy);
-        const tabBtn = document.getElementById('rbpTab-' + strategy);
         if (pane) {
             const plan = plansByStrategy[strategy];
             pane.innerHTML = plan
                 ? rebalancePlanTabHtml(plan)
                 : '<p class="text-muted small mb-0">No plan returned for this strategy.</p>';
-            const isActive = strategy === active;
-            pane.classList.toggle('show', isActive);
-            pane.classList.toggle('active', isActive);
-        }
-        if (tabBtn) {
-            const isActive = strategy === active;
-            tabBtn.classList.toggle('active', isActive);
-            tabBtn.setAttribute('aria-selected', isActive ? 'true' : 'false');
         }
     });
+
+    // Same pattern used elsewhere in this codebase (e.g. setupSpendingPage's
+    // tab switch) for activating a Bootstrap tab from JS — bootstrap.Tab
+    // handles hiding whichever tab/pane was previously active, so we don't
+    // have to toggle 'show'/'active' by hand. Fall back to manual class
+    // toggling when bootstrap isn't loaded (e.g. under test).
+    const activeBtn = document.getElementById('rbpTab-' + active);
+    if (activeBtn && window.bootstrap && window.bootstrap.Tab) {
+        new window.bootstrap.Tab(activeBtn).show();
+    } else {
+        REBALANCE_STRATEGIES.forEach(strategy => {
+            const pane = document.getElementById('rbpPane-' + strategy);
+            const tabBtn = document.getElementById('rbpTab-' + strategy);
+            const isActive = strategy === active;
+            if (pane) { pane.classList.toggle('show', isActive); pane.classList.toggle('active', isActive); }
+            if (tabBtn) { tabBtn.classList.toggle('active', isActive); tabBtn.setAttribute('aria-selected', isActive ? 'true' : 'false'); }
+        });
+    }
 
     if (window.initTooltips) window.initTooltips();
 }
