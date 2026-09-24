@@ -16,7 +16,7 @@ import re
 import tempfile
 import os
 from io import StringIO
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from fastapi import (
     APIRouter,
@@ -150,6 +150,15 @@ class SaveResponse(BaseModel):
     duplicates_skipped: int = 0
     overwritten: int = 0
     errors: List[str]
+    # Detail for the "Import complete" summary. All optional/additive, so
+    # older clients that only read the counts above are unaffected.
+    by_type: Dict[str, int] = {}
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+    new_assets: List[str] = []
+    asset_types_corrected: List[str] = []
+    portfolios: List[str] = []
+    booking_totals: Dict[str, Dict[str, float]] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -716,6 +725,15 @@ async def save_imported_transactions(
     duplicates_skipped = 0
     overwritten = 0
     errors: List[str] = []
+    by_type: Dict[str, int] = {}
+    saved_dates: List[str] = []
+    new_assets: List[str] = []
+    asset_types_corrected: List[str] = []
+    portfolio_ids: set = set()
+    booking_totals: Dict[str, Dict[str, float]] = {}
+
+    def _label(name: Optional[str], sym: str) -> str:
+        return f"{name} ({sym})" if name and name != sym else sym
 
     # force=True is the legacy way to say "import duplicates anyway".
     action = "add" if body.force else body.duplicate_action
@@ -751,6 +769,10 @@ async def save_imported_transactions(
                     and tx.asset_type in _VALID_ASSET_TYPES
                 ):
                     db.update_asset(asset_id, asset_type=tx.asset_type)
+                    asset_types_corrected.append(
+                        f"{_label(tx.name, symbol)}: "
+                        f"{asset.get('asset_type')} → {tx.asset_type}"
+                    )
             else:
                 asset_id = db.create_asset(
                     symbol=symbol,
@@ -760,6 +782,7 @@ async def save_imported_transactions(
                     currency=currency,
                     description="Auto-created from broker file import",
                 )
+                new_assets.append(_label(tx.name, symbol))
 
             # Resolve portfolio: per-transaction broker is only a fallback when the
             # user has not explicitly selected a portfolio from the UI. If portfolio_id
@@ -804,6 +827,8 @@ async def save_imported_transactions(
                         description=tx.notes or None,
                     )
                     overwritten += 1
+                    if tx_portfolio_id:
+                        portfolio_ids.add(tx_portfolio_id)
                     continue
                 # action == "add": fall through and insert a second copy
 
@@ -821,6 +846,10 @@ async def save_imported_transactions(
                 description=tx.notes or None,
             )
             saved += 1
+            by_type[tx.tx_type] = by_type.get(tx.tx_type, 0) + 1
+            saved_dates.append(tx.date[:10])
+            if tx_portfolio_id:
+                portfolio_ids.add(tx_portfolio_id)
 
         except Exception as e:
             errors.append(f"{tx.symbol} ({tx.date}): {str(e)}")
@@ -857,6 +886,13 @@ async def save_imported_transactions(
                 portfolio_id=bk_portfolio_id,
             )
             saved_bookings += 1
+            ccy = (bk.currency or "EUR").upper()
+            per_ccy = booking_totals.setdefault(bk.action, {})
+            per_ccy[ccy] = round(per_ccy.get(ccy, 0.0) + float(bk.amount), 2)
+            if bk.date:
+                saved_dates.append(bk.date[:10])
+            if bk_portfolio_id:
+                portfolio_ids.add(bk_portfolio_id)
 
         except Exception as e:
             errors.append(f"Booking {bk.action} {bk.date}: {str(e)}")
@@ -896,6 +932,16 @@ async def save_imported_transactions(
             errors.append(f"Deposit '{dep.name}': {str(e)}")
             logger.warning(f"Failed to save deposit {dep.name!r}: {e}")
 
+    portfolios: List[str] = []
+    for pid in sorted(portfolio_ids):
+        try:
+            p = db.get_portfolio(pid)
+            if p and p.get("name"):
+                portfolios.append(p["name"])
+        except Exception:
+            # A name is only for the summary; never fail a save over it.
+            pass
+
     return SaveResponse(
         saved=saved,
         saved_bookings=saved_bookings,
@@ -903,6 +949,13 @@ async def save_imported_transactions(
         duplicates_skipped=duplicates_skipped,
         overwritten=overwritten,
         errors=errors,
+        by_type=by_type,
+        date_from=min(saved_dates) if saved_dates else None,
+        date_to=max(saved_dates) if saved_dates else None,
+        new_assets=new_assets,
+        asset_types_corrected=asset_types_corrected,
+        portfolios=portfolios,
+        booking_totals=booking_totals,
     )
 
 

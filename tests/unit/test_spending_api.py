@@ -1762,3 +1762,52 @@ def test_breakdown_uncategorized_excludes_income_rows(tmp_path):
     # row must not leak into the Spend chart's uncategorized bucket, same
     # as /summary's by_category_eur (which is spend-only, amt_eur < 0).
     assert by_name["uncategorized"]["amount_eur"] == 12.0
+
+
+def test_save_returns_import_summary(tmp_path):
+    """Spending save reports the span, money in/out, what is left to
+    categorise and the resulting balance, not just a row count."""
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    rows = [
+        {
+            "date": "2026-01-05",
+            "description": "SHOP",
+            "amount": -20.0,
+            "currency": "EUR",
+            "category": "uncategorized",
+            "balance": 980.0,
+        },
+        {
+            "date": "2026-01-09",
+            "description": "SALARY",
+            "amount": 1000.0,
+            "currency": "EUR",
+            "category": "uncategorized",
+            "balance": 1980.0,
+        },
+        {
+            "date": "2026-01-07",
+            "description": "CAFE",
+            "amount": -5.5,
+            "currency": "EUR",
+            "category": "uncategorized",
+            "balance": 974.5,
+        },
+    ]
+    r = client.post(
+        "/api/v1/spending/save",
+        json={"account_portfolio_id": pid, "rows": rows},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+    d = r.json()
+    assert d["saved"] == 3
+    assert d["account_name"] == "Example Bank"
+    assert d["date_from"] == "2026-01-05"
+    assert d["date_to"] == "2026-01-09"
+    assert d["money_in"] == {"EUR": 1000.0}
+    assert d["money_out"] == {"EUR": 25.5}
+    assert d["uncategorized"] == 3
+    assert d["latest_balance"] == 1980.0
+    assert d["latest_balance_date"] == "2026-01-09"
