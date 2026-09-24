@@ -212,50 +212,61 @@ function _renderBankAccounts(accounts) {
 }
 
 // Dashboard-only: same bank_accounts source as the Net Worth page's card
-// above, rendered into the Dashboard's own compact table instead.
+// above, rendered as a donut + value legend (same component as Allocation
+// by Type). Accounts without an imported balance, or with a negative one
+// (an overdrawn account can't be an arc), are listed under the legend.
 function renderDashboardBankAccounts(accounts) {
-    const tbody = document.querySelector('#dashBankAccountsTable tbody');
-    if (!tbody) return;
+    const area = document.getElementById('dashBankArea');
+    if (!area) return;
     if (!accounts.length) {
-        tbody.innerHTML = `<tr><td colspan="2" class="text-center text-muted py-3">
+        area.innerHTML = `<p class="text-muted small text-center mb-0 py-3">
             No bank accounts yet — add one on the
-            <a href="#" onclick="window.navigationManager.showPage('networth'); return false;">Net Worth</a> page.
-        </td></tr>`;
+            <a href="#" onclick="window.navigationManager.showPage('portfolios'); return false;">Brokers</a> page and import a statement on the Spending page.
+        </p>`;
         return;
     }
-    const total = accounts.reduce((s, a) => s + (parseFloat(a.balance_eur) || 0), 0);
-    // One "Balance" column: a EUR-denominated account just shows its EUR
-    // figure (no redundant native-currency duplicate); a foreign-currency
-    // account shows both, since the native amount is genuinely different info.
-    const rows = accounts.map(a => {
-        if (a.balance === null || a.balance === undefined) {
-            return `<tr><td class="ps-3">${esc(a.name)}</td><td class="text-end text-muted pe-3">No balance imported yet</td></tr>`;
+    const withBal = accounts.filter(a => a.balance !== null && a.balance !== undefined);
+    const noBal = accounts.filter(a => a.balance === null || a.balance === undefined);
+    const byName = {};
+    withBal.forEach(a => { byName[a.name] = a; });
+    const { slices, nonPositive } = donutSlices(withBal.map(a => [a.name, parseFloat(a.balance_eur) || 0]), 7);
+    const items = slices.map(([name, value, folded], i) => {
+        if (name === '__other__') {
+            return { key: 'other', label: `${folded.length} other accounts`, value, color: 'var(--viz-other)', detail: folded.join(', ') };
         }
-        const isEur = !a.currency || a.currency === 'EUR';
-        const balanceCell = isEur
-            ? Fmt.amt('€' + Fmt.num(a.balance_eur, 0, 0))
-            : `${Fmt.num(a.balance, 2, 2)} ${esc(a.currency)} <span class="text-muted">(≈ ${Fmt.amt('€' + Fmt.num(a.balance_eur, 0, 0))})</span>`;
-        return `
-            <tr>
-                <td class="ps-3">${esc(a.name)}</td>
-                <td class="text-end pe-3">${balanceCell}</td>
-            </tr>`;
-    }).join('');
-    tbody.innerHTML = rows + `
-        <tr class="table-light fw-semibold">
-            <td class="ps-3">Total</td>
-            <td class="text-end pe-3">${Fmt.amt('€' + Fmt.num(total, 0, 0))}</td>
-        </tr>`;
+        const acc = byName[name] || {};
+        const bits = [];
+        if (acc.currency && acc.currency !== 'EUR') bits.push(`${Fmt.num(acc.balance, 2, 2)} ${acc.currency}`);
+        if (acc.as_of) bits.push(`as of ${Fmt.date(acc.as_of)}`);
+        return { key: name, label: name, value, color: vizColor(i), detail: bits.join(' · ') };
+    });
+    const notes = [];
+    nonPositive.forEach(([name, v]) => notes.push(`${esc(name)}: ${Fmt.amt(esc(fmtEurWhole(v)))}`));
+    noBal.forEach(a => notes.push(`${esc(a.name)}: no balance imported yet`));
+    // Oldest as-of date among the plotted accounts: tells you how current
+    // the total is without opening each account.
+    const dates = withBal.map(a => a.as_of).filter(Boolean).sort();
+    const staleNote = dates.length ? `Oldest balance: ${esc(Fmt.date(dates[0]))}` : '';
+    const footer = (notes.length || staleNote)
+        ? `<div class="pfm-legend-note">${notes.map(n => `<div>${n}</div>`).join('')}${staleNote ? `<div class="mt-1">${staleNote}</div>` : ''}</div>`
+        : '';
+    const total = withBal.reduce((s, a) => s + (parseFloat(a.balance_eur) || 0), 0);
+    renderDonut(area, items, {
+        centerLabel: 'Total',
+        centerValue: _fmtEurCompact(total),
+        footerHtml: footer,
+        emptyHtml: `<p class="text-muted small text-center mb-0 py-3">No balances imported yet.</p>${footer}`,
+    });
 }
 
 async function loadDashboardBankAccounts() {
-    const tbody = document.querySelector('#dashBankAccountsTable tbody');
-    if (!tbody) return;
+    const area = document.getElementById('dashBankArea');
+    if (!area) return;
     try {
         const nw = await window.apiClient.getNetworth();
         renderDashboardBankAccounts(nw.bank_accounts || []);
     } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="2" class="text-center text-danger py-3">Could not load bank accounts.</td></tr>';
+        area.innerHTML = '<p class="text-center text-danger small mb-0 py-3">Could not load bank accounts.</p>';
     }
 }
 window.loadDashboardBankAccounts = loadDashboardBankAccounts;
@@ -266,9 +277,50 @@ window.loadDashboardBankAccounts = loadDashboardBankAccounts;
 // cash isn't tracked historically, hence "Portfolio Value" not "Net Worth"
 // in this card's title). Complements the Wealth Simulator card's *projected
 // future* with the actual past. Independent, non-blocking.
+// Range picker (3M/6M/YTD/1Y/All) is remembered per browser; the fetched
+// snapshots are cached so switching range doesn't refetch.
+let _dashHistorySnaps = null;
+function _dashHistoryRange() {
+    try { return localStorage.getItem('pfmDashHistoryRange') || '1y'; } catch (e) { return '1y'; }
+}
+
+// Pure: keep the snapshots inside the selected range (always at least the
+// last two points, so a sparse history still draws a line).
+function filterSnapshotsByRange(snaps, range, today) {
+    if (!snaps.length || range === 'all') return snaps.slice();
+    const now = today ? new Date(today) : new Date();
+    let from;
+    if (range === 'ytd') from = new Date(now.getFullYear(), 0, 1);
+    else {
+        const months = { '3m': 3, '6m': 6, '1y': 12 }[range] || 12;
+        from = new Date(now.getFullYear(), now.getMonth() - months, now.getDate());
+    }
+    const fromIso = from.getFullYear() + '-' + String(from.getMonth() + 1).padStart(2, '0') + '-' + String(from.getDate()).padStart(2, '0');
+    const out = snaps.filter(s => String(s.snapshot_date).slice(0, 10) >= fromIso);
+    return out.length >= 2 ? out : snaps.slice(-2);
+}
+window.filterSnapshotsByRange = filterSnapshotsByRange;
+
 async function loadDashboardNetworthHistory() {
     const area = document.getElementById('dashNetworthArea');
     if (!area) return;
+    const picker = document.getElementById('dashHistoryRange');
+    const syncPicker = () => {
+        if (!picker) return;
+        picker.querySelectorAll('[data-range]').forEach(b =>
+            b.classList.toggle('active', b.dataset.range === _dashHistoryRange()));
+    };
+    if (picker && !picker._wired) {
+        picker._wired = true;
+        picker.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-range]');
+            if (!btn) return;
+            try { localStorage.setItem('pfmDashHistoryRange', btn.dataset.range); } catch (err) { /* private mode */ }
+            syncPicker();
+            if (_dashHistorySnaps) renderDashboardNetworthSparkline(area, filterSnapshotsByRange(_dashHistorySnaps, _dashHistoryRange()));
+        });
+    }
+    syncPicker();
     try {
         const d = await window.apiClient.getNetworthHistory();
         const snaps = (d.snapshots || []).slice().sort(
@@ -278,7 +330,8 @@ async function loadDashboardNetworthHistory() {
             area.innerHTML = '<div class="text-muted small text-center py-4">Not enough history yet — snapshots are recorded daily.</div>';
             return;
         }
-        renderDashboardNetworthSparkline(area, snaps);
+        _dashHistorySnaps = snaps;
+        renderDashboardNetworthSparkline(area, filterSnapshotsByRange(snaps, _dashHistoryRange()));
     } catch (e) {
         area.innerHTML = '<div class="text-danger small text-center py-4">Could not load portfolio value history.</div>';
     }
@@ -293,86 +346,140 @@ function _fmtEurCompact(v) {
     return '€' + v.toFixed(0);
 }
 
+// "Nice" axis ticks (1/2/2.5/5 × 10^k steps) covering [min, max], so gridlines
+// land on round numbers (€150k, €160k …) instead of arbitrary quarters.
+function niceTicks(min, max, count) {
+    const target = count || 4;
+    if (!(max > min)) { const pad = Math.abs(max) * 0.05 || 1; min -= pad; max += pad; }
+    const raw = (max - min) / target;
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(st => st >= raw) || 10 * mag;
+    const lo = Math.floor(min / step) * step;
+    const hi = Math.ceil(max / step) * step;
+    const ticks = [];
+    for (let v = lo; v <= hi + step / 2; v += step) ticks.push(Math.round(v / step) * step);
+    return { lo, hi, step, ticks };
+}
+window.niceTicks = niceTicks;
+
+// Value (solid) and cost basis (dashed) of invested positions; the gap
+// between them is unrealised gain. Crosshair tooltip shows both plus the
+// gain for the hovered day.
 function renderDashboardNetworthSparkline(area, snaps) {
     const W = area.clientWidth || 600;
-    const H = 190;
-    // Left padding fits the widest y-axis label; bottom fits date labels.
-    const PAD = { top: 16, right: 12, bottom: 24, left: 56 };
+    const H = 230;
+    const PAD = { top: 12, right: 14, bottom: 26, left: 58 };
     const innerW = W - PAD.left - PAD.right;
     const innerH = H - PAD.top - PAD.bottom;
     const n = snaps.length;
 
-    // Tight min/max (not forced to include zero) — unlike the Analytics
-    // page's axis-labelled chart, a compact sparkline reads better scaled to
-    // its own data range rather than anchored to a distant 0 baseline.
     const values = snaps.map(s => parseFloat(s.total_value_eur || 0));
-    const maxVal = Math.max(...values);
-    const minVal = Math.min(...values);
-    const range = (maxVal - minVal) || 1;
+    const costs = snaps.map(s => parseFloat(s.total_cost_eur || 0));
+    const hasCost = costs.some(c => c > 0);
+    // Tight range (not forced to zero) so the trend stays visible; nice
+    // ticks round it outwards to readable gridline values.
+    const all = hasCost ? values.concat(costs) : values;
+    const nt = niceTicks(Math.min(...all), Math.max(...all), 4);
+    const range = (nt.hi - nt.lo) || 1;
 
     const xScale = i => PAD.left + (n === 1 ? 0 : (i / (n - 1)) * innerW);
-    const yScale = v => PAD.top + innerH - ((v - minVal) / range) * innerH;
-
-    const linePath = snaps.map((s, i) =>
-        (i === 0 ? 'M' : 'L') + xScale(i).toFixed(1) + ',' + yScale(parseFloat(s.total_value_eur || 0)).toFixed(1)
-    ).join(' ');
+    const yScale = v => PAD.top + innerH - ((v - nt.lo) / range) * innerH;
+    const pathOf = arr => arr.map((v, i) =>
+        (i === 0 ? 'M' : 'L') + xScale(i).toFixed(1) + ',' + yScale(v).toFixed(1)).join(' ');
+    const valuePath = pathOf(values);
     const baseline = (PAD.top + innerH).toFixed(1);
-    const areaPath = `${linePath} L${xScale(n - 1).toFixed(1)},${baseline} L${xScale(0).toFixed(1)},${baseline} Z`;
+    const areaPath = `${valuePath} L${xScale(n - 1).toFixed(1)},${baseline} L${xScale(0).toFixed(1)},${baseline} Z`;
 
     const first = values[0];
     const last = values[n - 1];
-    const changePct = first !== 0 ? ((last - first) / Math.abs(first)) * 100 : 0;
-    const changeCls = changePct >= 0 ? 'text-success' : 'text-danger';
-    const changeSign = changePct >= 0 ? '+' : '';
-    const lineColour = changePct >= 0 ? '#16a34a' : '#dc2626';
-    const fmtEur = v => '€' + v.toLocaleString(Fmt.loc(), { maximumFractionDigits: 0 });
-    const fmtDate = dStr => {
+    const lastCost = costs[n - 1];
+    const changeAbs = last - first;
+    const changePct = first !== 0 ? (changeAbs / Math.abs(first)) * 100 : 0;
+    const up = changeAbs >= 0;
+    const sign = up ? '+' : '−';
+    const fmtDate = (dStr, long) => {
         const dt = new Date(dStr);
-        return isNaN(dt) ? String(dStr) : dt.toLocaleDateString(Fmt.loc(), { month: 'short', year: '2-digit' });
+        if (isNaN(dt)) return String(dStr);
+        return long
+            ? dt.toLocaleDateString(Fmt.loc(), { day: 'numeric', month: 'short', year: 'numeric' })
+            : dt.toLocaleDateString(Fmt.loc(), { month: 'short', year: '2-digit' });
     };
 
-    // Y-axis: dashed gridlines + compact value labels at 4 even steps.
-    const Y_TICKS = 4;
-    const yGrid = [];
-    for (let i = 0; i <= Y_TICKS; i++) {
-        const v = minVal + range * (i / Y_TICKS);
-        yGrid.push({ v, y: yScale(v) });
-    }
-    // X-axis: ~4 evenly spaced date labels, always including the last point.
+    // X-axis: ~5 evenly spaced date labels, always including the last point.
     const xStep = Math.max(1, Math.floor((n - 1) / 4));
     const xGrid = [];
     for (let i = 0; i < n; i += xStep) xGrid.push(i);
+    if (n - 1 - xGrid[xGrid.length - 1] < xStep / 2 && xGrid.length > 1) xGrid.pop();
     if (xGrid[xGrid.length - 1] !== n - 1) xGrid.push(n - 1);
 
-    // Gridlines/labels use currentColor so they pick up the theme's ambient
-    // text color (light/dark) automatically, no separate dark-mode CSS rule.
-    const yGridLines = yGrid.map(g =>
-        `<line x1="${PAD.left}" y1="${g.y.toFixed(1)}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${g.y.toFixed(1)}" stroke="currentColor" stroke-opacity="0.15" stroke-dasharray="3 3"/>`
+    const yGridLines = nt.ticks.map(v =>
+        `<line x1="${PAD.left}" y1="${yScale(v).toFixed(1)}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${yScale(v).toFixed(1)}" stroke="currentColor" stroke-opacity="0.12"/>`
     ).join('');
-    const yLabels = yGrid.map(g =>
-        `<text x="${(PAD.left - 8).toFixed(1)}" y="${(g.y + 3.5).toFixed(1)}" font-size="10" text-anchor="end" fill="currentColor" fill-opacity="0.6">${esc(_fmtEurCompact(g.v))}</text>`
+    // Enough decimals that adjacent ticks never print the same label.
+    const fmtTick = v => {
+        const abs = Math.abs(v);
+        if (abs >= 1e6) return '€' + (v / 1e6).toFixed(nt.step % 1e5 ? 2 : 1) + 'M';
+        if (abs >= 1e3) return '€' + (v / 1e3).toFixed(nt.step % 1e3 ? 1 : 0) + 'k';
+        return '€' + v.toFixed(0);
+    };
+    const yLabels = nt.ticks.map(v =>
+        `<text x="${(PAD.left - 8).toFixed(1)}" y="${(yScale(v) + 3.5).toFixed(1)}" font-size="11" text-anchor="end" fill="currentColor" fill-opacity="0.65">${esc(fmtTick(v))}</text>`
     ).join('');
-    const xGridLines = xGrid.map(i =>
-        `<line x1="${xScale(i).toFixed(1)}" y1="${PAD.top}" x2="${xScale(i).toFixed(1)}" y2="${baseline}" stroke="currentColor" stroke-opacity="0.1" stroke-dasharray="3 3"/>`
-    ).join('');
-    const xLabels = xGrid.map(i =>
-        `<text x="${xScale(i).toFixed(1)}" y="${H - 6}" font-size="10" text-anchor="middle" fill="currentColor" fill-opacity="0.6">${esc(fmtDate(snaps[i].snapshot_date))}</text>`
-    ).join('');
+    const xLabels = xGrid.map((i, k) => {
+        const anchor = k === 0 ? 'start' : (i === n - 1 ? 'end' : 'middle');
+        return `<text x="${xScale(i).toFixed(1)}" y="${H - 7}" font-size="11" text-anchor="${anchor}" fill="currentColor" fill-opacity="0.65">${esc(fmtDate(snaps[i].snapshot_date))}</text>`;
+    }).join('');
 
     area.innerHTML = `
-        <div class="d-flex justify-content-between align-items-baseline mb-1">
-            <span class="fs-5 fw-bold">${fmtEur(last)}</span>
-            <span class="small ${changeCls}">${changeSign}${changePct.toFixed(1)}% since ${esc(fmtDate(snaps[0].snapshot_date))}</span>
+        <div class="d-flex justify-content-between align-items-end flex-wrap gap-2 mb-2">
+            <div>
+                <div class="fs-4 fw-bold lh-1 font-tabular">${Fmt.amt(esc(fmtEurWhole(last)))}</div>
+                <div class="small text-muted mt-1">Invested value on ${esc(fmtDate(snaps[n - 1].snapshot_date, true))}</div>
+            </div>
+            <div class="text-end small font-tabular">
+                <div class="fw-semibold" style="color:${up ? 'var(--viz-good)' : 'var(--viz-bad)'}">
+                    <i class="bi bi-arrow-${up ? 'up' : 'down'}-right"></i>
+                    ${sign}${Fmt.amt(esc(fmtEurWhole(Math.abs(changeAbs))))} (${sign}${Math.abs(changePct).toFixed(1)}%)
+                </div>
+                <div class="text-muted">since ${esc(fmtDate(snaps[0].snapshot_date, true))}</div>
+            </div>
         </div>
-        <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;">
-            ${xGridLines}
+        <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;display:block;overflow:visible;" role="img" aria-label="Portfolio value history">
             ${yGridLines}
-            <path d="${areaPath}" fill="${lineColour}" opacity="0.12" stroke="none"/>
-            <path d="${linePath}" fill="none" stroke="${lineColour}" stroke-width="2"/>
-            <circle cx="${xScale(n - 1).toFixed(1)}" cy="${yScale(last).toFixed(1)}" r="3" fill="${lineColour}"/>
+            <path d="${areaPath}" style="fill:var(--viz-1)" opacity="0.10" stroke="none"/>
+            ${hasCost ? `<path d="${pathOf(costs)}" fill="none" style="stroke:var(--viz-cost)" stroke-width="1.5" stroke-dasharray="5 4"/>` : ''}
+            <path d="${valuePath}" fill="none" style="stroke:var(--viz-1)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+            <circle cx="${xScale(n - 1).toFixed(1)}" cy="${yScale(last).toFixed(1)}" r="3.5" style="fill:var(--viz-1)"/>
             ${yLabels}
             ${xLabels}
-        </svg>`;
+        </svg>
+        <div class="d-flex gap-3 small text-muted mt-1">
+            <span><span class="pfm-swatch" style="background:var(--viz-1);height:3px;width:14px;vertical-align:middle;"></span> Value</span>
+            ${hasCost ? `<span><span class="pfm-swatch" style="background:var(--viz-cost);height:2px;width:14px;vertical-align:middle;"></span> Cost basis (dashed) · gap = unrealised gain ${Fmt.amt(esc(fmtEurWhole(last - lastCost)))}</span>` : ''}
+        </div>`;
+
+    const svg = area.querySelector('svg');
+    const series = [{ y: i => yScale(values[i]), color: 'var(--viz-1)' }];
+    if (hasCost) series.push({ y: i => yScale(costs[i]), color: 'var(--viz-cost)' });
+    attachLineHover(svg, {
+        W, top: PAD.top, bottom: PAD.top + innerH, left: PAD.left, right: PAD.left + innerW,
+        xs: snaps.map((_, i) => xScale(i)),
+        series,
+        html: i => {
+            const rows = [{ label: 'Value', value: fmtEurWhole(values[i]), color: 'var(--viz-1)' }];
+            if (hasCost) {
+                const gain = values[i] - costs[i];
+                const gainPct = costs[i] ? (gain / costs[i]) * 100 : 0;
+                rows.push({ label: 'Cost basis', value: fmtEurWhole(costs[i]), color: 'var(--viz-cost)', dashed: true });
+                rows.push({ label: 'Unrealised', value: `${gain >= 0 ? '+' : '−'}${fmtEurWhole(Math.abs(gain))} (${gain >= 0 ? '+' : '−'}${Math.abs(gainPct).toFixed(1)}%)` });
+            }
+            if (i > 0) {
+                const d = values[i] - first;
+                rows.push({ label: 'vs start', value: `${d >= 0 ? '+' : '−'}${fmtEurWhole(Math.abs(d))}` });
+            }
+            return chartTipHtml(fmtDate(snaps[i].snapshot_date, true), rows);
+        },
+    });
 }
 
 function escapeForAttr(s) {
@@ -909,10 +1016,12 @@ async function loadDashboardReturn(period) {
         const cagrEl = document.getElementById('dashCagrLine');
         if (cagrEl) {
             if (d.cagr_pct != null) {
+                // Plain white text: the tile itself is already green/red, so a
+                // text-success span here was green-on-green and unreadable.
                 const cagrN = parseFloat(d.cagr_pct);
-                const cagrCls = cagrN >= 0 ? 'text-success' : 'text-danger';
                 const cagrSign = cagrN >= 0 ? '+' : '';
-                cagrEl.innerHTML = 'CAGR: <span class="fw-semibold ' + cagrCls + '">' + cagrSign + cagrN.toFixed(1) + '%/yr</span>';
+                cagrEl.innerHTML = 'CAGR <span class="fw-semibold">' + cagrSign + cagrN.toFixed(1) + '%/yr</span>';
+                cagrEl.title = 'Compound annual growth rate since your first investment';
             } else {
                 cagrEl.textContent = '';
             }

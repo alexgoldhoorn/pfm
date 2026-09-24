@@ -51,7 +51,8 @@ window.PAGE_HELP = {
         <li><strong>Cash</strong> combines uninvested cash in your brokerage accounts (deposits/withdrawals/sells/dividends/interest not yet reinvested) with your bank account balances into one figure — not part of Portfolio Value. See the Bank Accounts card for the per-account breakdown.</li>
         <li><strong>Return</strong> defaults to lifetime (cost-basis) return. Switching to YTD / 1Y uses daily snapshots, so it only covers the period since snapshots began.</li>
         <li><strong>Top Positions</strong> and the <strong>allocation donut</strong> reflect current open positions by EUR value, plus a Cash slice.</li>
-        <li>The <strong>action items</strong> banner (when shown) summarizes open items from the Action Items page — stale imports, data-quality issues, price-update errors, stale research, off-track goals, and the Net Worth setup checklist. Watchlist/price-target alerts are shown separately, in the alerts banner above it.</li>
+        <li>The <strong>Needs attention</strong> strip below the KPI tiles combines two groups: <em>price signals</em> (price targets crossed, watchlist buy zones, stale price data) and <em>to-dos</em> from the Action Items page (stale imports, data-quality issues, price-update errors, stale research, off-track goals, Net Worth setup). Click a group to expand it; the × hides it until something changes.</li>
+        <li>Hover any chart for exact values — the history chart shows value, cost basis and unrealised gain for each day; donuts show the amount and share of each slice.</li>
         <li><strong>Portfolio Value History</strong> plots actual daily snapshots (past) — cash isn't tracked historically, so it's positions-only, same as Portfolio Value above. The <strong>Wealth Simulator</strong> card below it is a projection of the future, not history.</li>
       </ul>
       <p class="text-muted small mb-0">Prices come from Yahoo Finance and are refreshed daily at 20:00 UTC.</p>`

@@ -335,8 +335,7 @@ const ACTIONITEMS_SEVERITY_BADGE = {
 // visible without navigating there deliberately. Independent, non-blocking
 // (wired into loadDashboardPage alongside Bank Accounts/Spending).
 async function loadDashboardActionItems() {
-    const box = document.getElementById('dashActionItems');
-    if (!box) return;
+    if (!document.getElementById('dashActionItems')) return;
     try {
         const [backendData, nwData, cfData] = await Promise.all([
             window.apiClient.getActionItems(),
@@ -351,50 +350,40 @@ async function loadDashboardActionItems() {
         // same triggers.
         const items = mergeActionItems(backendData.items, nwResult, dismissed)
             .filter(i => i.category !== 'watchlist');
-        if (!items.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+        if (!items.length) { dashAttentionSet('dashActionItems', null); return; }
 
         // Dismissal keyed by the item-id set, same "reappear only if the set
-        // changed" behavior as the Alerts banner's own dismiss.
+        // changed" behavior as the price-signal group's own dismiss.
         const sig = hashStr(items.map(i => i.id).join(','));
         if (localStorage.getItem('pfmDashActionItemsDismissed') === sig) {
-            box.style.display = 'none'; box.innerHTML = ''; return;
+            dashAttentionSet('dashActionItems', null); return;
         }
 
         const counts = { high: 0, medium: 0, low: 0 };
         items.forEach(i => { counts[i.severity] = (counts[i.severity] || 0) + 1; });
         const countBadges = ['high', 'medium', 'low']
             .filter(s => counts[s])
-            .map(s => `<span class="badge ${ACTIONITEMS_SEVERITY_BADGE[s]} me-1">${counts[s]} ${s}</span>`)
+            .map(s => `<span class="badge ${ACTIONITEMS_SEVERITY_BADGE[s]}">${counts[s]} ${s}</span>`)
             .join('');
 
-        const PREVIEW_N = 3;
+        const PREVIEW_N = 6;
         const preview = items.slice(0, PREVIEW_N).map(i =>
             `<li class="mb-1"><span class="badge ${ACTIONITEMS_SEVERITY_BADGE[i.severity] || 'text-bg-secondary'} me-2">${esc(i.severity)}</span>${esc(i.title)}</li>`
         ).join('');
         const more = items.length > PREVIEW_N
-            ? `<div class="small text-muted mt-1">+${items.length - PREVIEW_N} more</div>` : '';
+            ? `<div class="small text-muted">+${items.length - PREVIEW_N} more</div>` : '';
 
-        box.style.display = '';
-        box.innerHTML = `
-            <div class="alert alert-secondary alert-dismissible mb-0">
-                <button type="button" class="btn-close" id="dashActionItemsClose" aria-label="Dismiss"></button>
-                <div class="d-flex align-items-center flex-wrap gap-2 mb-2">
-                    <span class="fw-semibold"><i class="bi bi-list-check me-2"></i>${items.length} action item${items.length > 1 ? 's' : ''}</span>
-                    ${countBadges}
-                </div>
-                <ul class="list-unstyled mb-0 small">${preview}</ul>
+        dashAttentionSet('dashActionItems', {
+            summaryHtml: `<span>${items.length} to-do${items.length > 1 ? 's' : ''}</span>${countBadges}`,
+            detailHtml: `
+                <div class="fw-semibold mb-1">Action items</div>
+                <ul class="list-unstyled mb-1 small">${preview}</ul>
                 ${more}
-                <div class="text-end mt-2">
-                    <a href="#" class="small" onclick="window.navigationManager.showPage('actionitems'); return false;">View all <i class="bi bi-arrow-right"></i></a>
-                </div>
-            </div>`;
-        const closeBtn = document.getElementById('dashActionItemsClose');
-        if (closeBtn) closeBtn.addEventListener('click', () => {
-            localStorage.setItem('pfmDashActionItemsDismissed', sig);
-            box.style.display = 'none'; box.innerHTML = '';
+                <a href="#" class="small" data-page="actionitems">Open Action Items <i class="bi bi-arrow-right"></i></a>`,
+            onDismiss: () => localStorage.setItem('pfmDashActionItemsDismissed', sig),
         });
     } catch (e) {
-        box.style.display = 'none';
+        dashAttentionSet('dashActionItems', null);
     }
 }
 window.loadDashboardActionItems = loadDashboardActionItems;
@@ -2926,9 +2915,9 @@ function setupForecastPage() {
 // (those stay exclusive to the full Wealth Simulator page).
 function renderDashboardForecastChart(container, data, years) {
     const W = container.clientWidth || 240;
-    const H = 170;
+    const H = 190;
     // Left padding fits the widest y-axis label; bottom fits year labels.
-    const PAD = { top: 26, right: 12, bottom: 20, left: 52 };
+    const PAD = { top: 10, right: 12, bottom: 22, left: 52 };
     const innerW = W - PAD.left - PAD.right;
     const innerH = H - PAD.top - PAD.bottom;
 
@@ -2980,26 +2969,41 @@ function renderDashboardForecastChart(container, data, years) {
         `<text x="${xScale(t).toFixed(1)}" y="${H - 5}" font-size="10" text-anchor="middle" fill="currentColor" fill-opacity="0.6">${t === 0 ? 'Now' : '+' + t + 'y'}</text>`
     ).join('');
 
+    const endPoint = data[years];
     container.innerHTML = `
-        <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;display:block;">
-            <defs>
-                <linearGradient id="dashFcBandGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stop-color="#93c5fd" stop-opacity="0.35"/>
-                    <stop offset="100%" stop-color="#93c5fd" stop-opacity="0.05"/>
-                </linearGradient>
-            </defs>
+        <div class="d-flex justify-content-between align-items-end mb-1 font-tabular">
+            <div>
+                <div class="small text-muted">Expected in ${years}y</div>
+                <div class="fs-5 fw-bold lh-1">${Fmt.amt(esc(fmtEurWhole(endVal)))}</div>
+            </div>
+            <div class="small text-muted text-end">range<br>${Fmt.amt(esc(fmtCompact(endPoint.netWorthLow)))} – ${Fmt.amt(esc(fmtCompact(endPoint.netWorthHigh)))}</div>
+        </div>
+        <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;display:block;overflow:visible;" role="img" aria-label="Wealth projection">
             ${xGridLines}
             ${yGridLines}
-            <path d="${bandPath}" fill="url(#dashFcBandGrad)" stroke="none"/>
-            <path d="${pathD('netWorth')}" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-            <circle cx="${xScale(0).toFixed(1)}" cy="${yScale(startVal).toFixed(1)}" r="3.5" fill="#64748b"/>
-            <circle cx="${xScale(years).toFixed(1)}" cy="${yScale(endVal).toFixed(1)}" r="4" fill="#2563eb" stroke="white" stroke-width="1.5"/>
-            <text x="${xScale(0).toFixed(1)}" y="${(PAD.top - 10).toFixed(1)}" font-size="10" fill="#64748b">Now: ${fmtCompact(startVal)}</text>
-            <text x="${xScale(years).toFixed(1)}" y="${(PAD.top - 10).toFixed(1)}" text-anchor="end" font-size="10" fill="#2563eb" font-weight="bold">${fmtCompact(endVal)} in ${years}y</text>
+            <path d="${bandPath}" style="fill:var(--viz-1)" opacity="0.14" stroke="none"/>
+            <path d="${pathD('netWorth')}" fill="none" style="stroke:var(--viz-1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <circle cx="${xScale(0).toFixed(1)}" cy="${yScale(startVal).toFixed(1)}" r="3.5" style="fill:var(--viz-neutral)"/>
+            <circle cx="${xScale(years).toFixed(1)}" cy="${yScale(endVal).toFixed(1)}" r="4" style="fill:var(--viz-1)"/>
             ${yLabels}
             ${xLabels}
         </svg>
     `;
+    const svg = container.querySelector('svg');
+    attachLineHover(svg, {
+        W, top: PAD.top, bottom: PAD.top + innerH, left: PAD.left, right: PAD.left + innerW,
+        xs: data.map(p => xScale(p.year)),
+        series: [{ y: i => yScale(data[i].netWorth), color: 'var(--viz-1)' }],
+        html: i => {
+            const p = data[i];
+            const yr = new Date().getFullYear() + Math.round(p.year);
+            return chartTipHtml(p.year === 0 ? 'Now' : `Year ${Math.round(p.year)} (${yr})`, [
+                { label: 'Expected', value: fmtEurWhole(p.netWorth), color: 'var(--viz-1)' },
+                { label: 'Low', value: fmtEurWhole(p.netWorthLow) },
+                { label: 'High', value: fmtEurWhole(p.netWorthHigh) },
+            ]);
+        },
+    });
 }
 
 // Defaults mirror the Forecast page's hardcoded HTML input values
@@ -4875,6 +4879,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     applyTheme();
     applyPrivacy();
+    applyChartJsDefaults();
     applyDefaultCurrency();
     setupSidebarSections();
     setupSettings();
@@ -5607,52 +5612,47 @@ async function openSpCategoryTransactionsModal(categoryName, days) {
 }
 window.openSpCategoryTransactionsModal = openSpCategoryTransactionsModal;
 
-// Dashboard-only: top-5 categories as a compact bar list (no Chart.js, kept
-// consistent with the Dashboard's hand-rolled SVG donut rather than pulling
-// in the heavier chart widget used on the Spending page).
+// Dashboard-only: spending by top-level category as a donut + value legend
+// (same component as Allocation by Type and Bank accounts). Categories are
+// already rolled up to their top Spend group server-side; past six slices
+// the rest fold into "Other" so no generated colours appear.
 function renderDashboardTopCategories(byCategoryEur) {
     const area = document.getElementById('dashTopCategoriesArea');
     if (!area) return;
-    const entries = Object.entries(byCategoryEur || {}).sort((a, b) => b[1] - a[1]).slice(0, 5);
-    if (!entries.length) {
-        area.innerHTML = '<p class="text-muted small mb-0 text-center py-3">No spending imported yet.</p>';
-        return;
-    }
-    const maxVal = entries[0][1];
-    area.innerHTML = entries.map(([cat, amt]) => {
-        // pct clamps to 0 for a zero/negative net category (e.g. a refund-heavy month) rather than a negative or NaN width
-        const pct = maxVal > 0 ? Math.round((amt / maxVal) * 100) : 0;
-        return `
-            <div class="mb-2">
-                <div class="d-flex justify-content-between small mb-1">
-                    <span>${esc(cat)}</span>
-                    <span class="text-muted">${Fmt.amt('€' + Fmt.num(amt, 0, 0))}</span>
-                </div>
-                <div class="progress" style="height:6px;">
-                    <div class="progress-bar bg-danger" role="progressbar" style="width:${pct}%"></div>
-                </div>
-            </div>`;
-    }).join('');
+    const { slices } = donutSlices(Object.entries(byCategoryEur || {}), 7);
+    const items = slices.map(([cat, amt, folded], i) => cat === '__other__'
+        ? { key: 'other', label: `Other (${folded.length})`, value: amt, color: 'var(--viz-other)', detail: folded.slice(0, 8).join(', ') + (folded.length > 8 ? '…' : '') }
+        : { key: cat, label: cat, value: amt, color: vizColor(i) });
+    renderDonut(area, items, {
+        centerLabel: 'Spent',
+        centerValue: _fmtEurCompact(items.reduce((s, it) => s + it.value, 0)),
+        emptyHtml: '<p class="text-muted small mb-0 text-center py-3">No spending imported for this period.</p>',
+    });
 }
 
-// Compact Spent/Income/Transferred row above the category bars — same
-// summary object as the bars below, so one fetch drives both.
+// Compact Spent/Income/Net/Transferred row above the donut — same summary
+// object as the donut, so one fetch drives both.
 function renderDashboardSpendingStats(summary) {
     const area = document.getElementById('dashSpendingStatsArea');
     if (!area) return;
-    const eur = v => Fmt.amt('€' + Fmt.num(v, 0, 0));
+    const eur = v => Fmt.amt(esc(fmtEurWhole(v)));
+    const net = (parseFloat(summary.income_eur) || 0) - (parseFloat(summary.spent_eur) || 0);
     area.innerHTML = `
         <div>
             <div class="small text-muted">Spent</div>
-            <div class="fw-bold text-danger">${eur(summary.spent_eur)}</div>
+            <div class="fw-bold">${eur(summary.spent_eur)}</div>
         </div>
         <div>
             <div class="small text-muted">Income</div>
-            <div class="fw-bold text-success">${eur(summary.income_eur)}</div>
+            <div class="fw-bold">${eur(summary.income_eur)}</div>
         </div>
-        <div>
+        <div title="Income minus spending, transfers excluded">
+            <div class="small text-muted">Net</div>
+            <div class="fw-bold" style="color:${net >= 0 ? 'var(--viz-good)' : 'var(--viz-bad)'}">${net >= 0 ? '+' : '−'}${eur(Math.abs(net))}</div>
+        </div>
+        <div title="Moves between your own accounts — excluded from spending">
             <div class="small text-muted">Transferred</div>
-            <div class="fw-bold">${eur(summary.transferred_eur)}</div>
+            <div class="fw-bold text-muted">${eur(summary.transferred_eur)}</div>
         </div>
     `;
 }
