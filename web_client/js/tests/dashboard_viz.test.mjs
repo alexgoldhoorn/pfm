@@ -154,3 +154,28 @@ test("importResultText is readable in chat", () => {
     assert.ok(t.startsWith("Import complete: 1 transaction."));
     assert.ok(t.includes("Breakdown: 1 buy"));
 });
+
+test("projectionAxisMax caps a wide band at 2.5x the expected path", () => {
+    const data = [0, 10, 20].map((y) => ({ year: y, netWorth: 100 + y * 10, netWorthHigh: (100 + y * 10) * (1 + y / 2) }));
+    const wide = win.projectionAxisMax(data, 2.5);
+    assert.equal(wide.clipped, true);
+    assert.equal(wide.max, 300 * 2.5);
+    const narrow = data.map((p) => ({ ...p, netWorthHigh: p.netWorth * 1.5 }));
+    const ok = win.projectionAxisMax(narrow, 2.5);
+    assert.equal(ok.clipped, false);
+    assert.equal(ok.max, 450);
+});
+
+test("Fmt.money formats known currencies and falls back safely", () => {
+    win.PREFS.numberLocale = "en-US";
+    assert.equal(win.Fmt.money(1234.5, "EUR", 2), "€1,234.50");
+    assert.equal(win.Fmt.money(1234.5, "usd", 0), "$1,235");
+    assert.equal(win.Fmt.money(null, "EUR"), "—");
+    // Non-ISO / pence / crypto codes keep the code, escaped for innerHTML.
+    assert.equal(win.Fmt.money(10, "GBX", 2), "10.00 GBX");
+    assert.equal(win.Fmt.money(1, "BTC-EUR", 2), "1.00 BTC-EUR");
+    assert.equal(win.Fmt.money(1, "<b>", 2), "1.00 &lt;B&gt;");
+    win.PREFS.numberLocale = "es-ES";
+    assert.ok(win.Fmt.money(1234.5, "EUR", 2).includes("€"));
+    delete win.PREFS.numberLocale;
+});

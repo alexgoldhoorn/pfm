@@ -36,7 +36,7 @@ async function loadNetworthPage() {
     if (body) body.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm me-2"></span>Loading…</td></tr>';
     try {
         const d = await window.apiClient.getNetworth();
-        const eur = v => Fmt.amt('€' + Fmt.num(v, 0, 0));
+        const eur = v => Fmt.amt(Fmt.money(v, 'EUR', 0));
         $('nwBrokerage').innerHTML = eur(d.brokerage_eur);
         $('nwAssets').innerHTML = eur(d.manual_assets_eur);
         if ($('nwDeposits')) $('nwDeposits').innerHTML = eur(d.deposits_eur || 0);
@@ -55,9 +55,9 @@ async function loadNetworthPage() {
                     <td class="ps-3"><strong>${escapeForAttr(it.name)}</strong>${it.notes ? `<br><small class="text-muted">${escapeForAttr(it.notes)}</small>` : ''}${_updatedLine(it)}</td>
                     <td><span class="badge ${it.is_liability ? 'bg-danger' : 'bg-secondary'}">${NW_CATEGORY_LABELS[it.category] || it.category}</span></td>
                     <td class="text-end" id="nwAmtCell${it.id}" data-amount="${it.amount}" data-currency="${escapeForAttr(it.currency || 'EUR')}">
-                        <span class="nw-amt-display" style="cursor:pointer;" title="Click to update balance" onclick="window.editManualAssetAmount(${it.id})">${Fmt.num(it.amount, 2, 2)} ${it.currency || ''} <i class="bi bi-pencil-square text-muted" style="font-size:0.75em;"></i></span>
+                        <span class="nw-amt-display" style="cursor:pointer;" title="Click to update balance" onclick="window.editManualAssetAmount(${it.id})">${Fmt.money(it.amount, it.currency, 2)} <i class="bi bi-pencil-square text-muted" style="font-size:0.75em;"></i></span>
                     </td>
-                    <td class="text-end ${it.is_liability ? 'text-danger' : ''}">${it.is_liability ? '−' : ''}${Fmt.amt('€' + Fmt.num(it.amount_eur, 0, 0))}</td>
+                    <td class="text-end ${it.is_liability ? 'text-danger' : ''}">${it.is_liability ? '−' : ''}${Fmt.amt(Fmt.money(it.amount_eur, 'EUR', 0))}</td>
                     <td class="pe-3 text-end"><button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteManualAsset(${it.id})"><i class="bi bi-trash"></i></button></td>
                 </tr>`).join('');
         }
@@ -204,8 +204,8 @@ function _renderBankAccounts(accounts) {
         return `
             <tr>
                 <td class="ps-3">${esc(a.name)}</td>
-                <td class="text-end">${Fmt.num(a.balance, 2, 2)} ${esc(a.currency || '')}</td>
-                <td class="text-end">${Fmt.amt('€' + Fmt.num(a.balance_eur, 0, 0))}</td>
+                <td class="text-end">${Fmt.money(a.balance, a.currency, 2)}</td>
+                <td class="text-end">${Fmt.amt(Fmt.money(a.balance_eur, 'EUR', 0))}</td>
                 <td class="text-muted small">${Fmt.date(a.as_of)}</td>
             </tr>`;
     }).join('');
@@ -236,7 +236,7 @@ function renderDashboardBankAccounts(accounts) {
         }
         const acc = byName[name] || {};
         const bits = [];
-        if (acc.currency && acc.currency !== 'EUR') bits.push(`${Fmt.num(acc.balance, 2, 2)} ${acc.currency}`);
+        if (acc.currency && acc.currency !== 'EUR') bits.push(`${Fmt.money(acc.balance, acc.currency, 2)}`);
         if (acc.as_of) bits.push(`as of ${Fmt.date(acc.as_of)}`);
         return { key: name, label: name, value, color: vizColor(i), detail: bits.join(' · ') };
     });
@@ -406,7 +406,8 @@ function renderDashboardNetworthSparkline(area, snaps) {
     };
 
     // X-axis: ~5 evenly spaced date labels, always including the last point.
-    const xStep = Math.max(1, Math.floor((n - 1) / 4));
+    // Fewer date labels on a narrow (phone) chart so they don't collide.
+    const xStep = Math.max(1, Math.floor((n - 1) / (W < 480 ? 2 : 4)));
     const xGrid = [];
     for (let i = 0; i < n; i += xStep) xGrid.push(i);
     if (n - 1 - xGrid[xGrid.length - 1] < xStep / 2 && xGrid.length > 1) xGrid.pop();
@@ -594,10 +595,10 @@ function _renderDeposits(deposits) {
         return `<tr>
             <td class="ps-3"><strong>${escapeForAttr(d.name)}</strong>${d.notes ? `<br><small class="text-muted">${escapeForAttr(d.notes)}</small>` : ''}</td>
             <td>${d.portfolio_id ? escapeForAttr(String(d.portfolio_id)) : '<span class="text-muted">—</span>'}</td>
-            <td class="text-end">${Fmt.num(d.principal, 2, 2)} ${d.currency}</td>
+            <td class="text-end">${Fmt.money(d.principal, d.currency, 2)}</td>
             <td class="text-end">${Fmt.num(d.interest_rate, 2, 2)}%</td>
             <td>${Fmt.date(d.maturity_date)}</td>
-            <td class="text-end">${Fmt.num(d.projected_interest, 2, 2)} ${d.currency}</td>
+            <td class="text-end">${Fmt.money(d.projected_interest, d.currency, 2)}</td>
             <td>${statusBadge}</td>
             <td class="pe-3 text-end">${matureBtn}<button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteDeposit(${d.id})"><i class="bi bi-trash"></i></button></td>
         </tr>`;
@@ -714,7 +715,7 @@ async function _loadCashflow() {
     const body = document.getElementById('cfItemsBody');
     if (!body) return null;
     body.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-3"><span class="spinner-border spinner-border-sm me-2"></span>Loading…</td></tr>';
-    const eur = v => Fmt.amt('€' + Fmt.num(v, 0, 0));
+    const eur = v => Fmt.amt(Fmt.money(v, 'EUR', 0));
     try {
         const d = await window.apiClient.getCashflow();
         const el = id => document.getElementById(id);
@@ -733,8 +734,8 @@ async function _loadCashflow() {
             <tr>
                 <td class="ps-3"><strong>${escapeForAttr(it.label)}</strong>${it.notes ? `<br><small class="text-muted">${escapeForAttr(it.notes)}</small>` : ''}</td>
                 <td><span class="badge ${CF_INCOME_CATS.has(it.category) ? 'bg-success' : 'bg-danger'}">${CF_CATEGORY_LABELS[it.category] || it.category}</span></td>
-                <td class="text-end">${Fmt.num(it.amount, 2, 2)} ${it.currency || ''}</td>
-                <td class="text-end ${CF_INCOME_CATS.has(it.category) ? 'text-success' : 'text-danger'}">${CF_INCOME_CATS.has(it.category) ? '' : '−'}${Fmt.amt('€' + Fmt.num(it.amount_eur, 0, 0))}</td>
+                <td class="text-end">${Fmt.money(it.amount, it.currency, 2)}</td>
+                <td class="text-end ${CF_INCOME_CATS.has(it.category) ? 'text-success' : 'text-danger'}">${CF_INCOME_CATS.has(it.category) ? '' : '−'}${Fmt.amt(Fmt.money(it.amount_eur, 'EUR', 0))}</td>
                 <td class="pe-3 text-end"><button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteCashflow(${it.id})"><i class="bi bi-trash"></i></button></td>
             </tr>`).join('');
         return d;
@@ -750,7 +751,7 @@ async function _loadActualSpendingComparison() {
     try {
         const s = await window.apiClient.getSpendingSummary(30);
         if (!s || (s.spent_eur === 0 && s.income_eur === 0 && s.transferred_eur === 0)) return;
-        const eur = v => Fmt.amt('€' + Fmt.num(v, 0, 0));
+        const eur = v => Fmt.amt(Fmt.money(v, 'EUR', 0));
         const el = id => document.getElementById(id);
         if (el('cfActualIncome')) el('cfActualIncome').innerHTML = eur(s.income_eur);
         if (el('cfActualSpent')) el('cfActualSpent').innerHTML = eur(s.spent_eur);
@@ -1032,12 +1033,12 @@ async function loadDashboardReturn(period) {
 
 // Compact euro formatter, no decimals (matches dashboard / forecast style)
 function anFmtEur(val) {
-    return Fmt.amt(Fmt.num(val, 0, 0) + ' €');
+    return Fmt.amt(Fmt.money(val, 'EUR', 0));
 }
 
 // Euro formatter with 2 decimals, used for dividend / tax detail figures
 function anFmtEur2(val) {
-    return Fmt.amt(Fmt.num(val, 2, 2) + ' €');
+    return Fmt.amt(Fmt.money(val, 'EUR', 2));
 }
 
 function anFmtPct(val) {
@@ -1276,7 +1277,7 @@ function renderNetworthChart(snaps) {
 
     // X-axis: ~5 date labels, always including the last point, without a
     // near-duplicate label crammed next to it.
-    const step = Math.max(1, Math.floor((n - 1) / 5));
+    const step = Math.max(1, Math.floor((n - 1) / (W < 480 ? 2 : 5)));
     const xIdx = [];
     for (let i = 0; i < n; i += step) xIdx.push(i);
     if (xIdx.length > 1 && n - 1 - xIdx[xIdx.length - 1] < step / 2) xIdx.pop();
@@ -1963,7 +1964,7 @@ function renderCoverageBanner(coverage) {
     const links = unprofiled.map(f => `
         <a href="#" class="fp-open" data-asset="${esc(f.asset_id)}" data-symbol="${esc(f.symbol)}"
            data-name="${esc(f.name || f.symbol)}">${esc(f.name || f.symbol)}</a>
-        <span class="text-muted">(${Fmt.num(f.value_eur, 0)} EUR)</span>`).join(', ');
+        <span class="text-muted">(${Fmt.money(f.value_eur, 'EUR', 0)})</span>`).join(', ');
     const staleLinks = stale.map(f => `
         <a href="#" class="fp-open" data-asset="${esc(f.asset_id)}" data-symbol="${esc(f.symbol)}"
            data-name="${esc(f.name || f.symbol)}">${esc(f.name || f.symbol)}</a>
@@ -2684,7 +2685,7 @@ async function loadPortfolioComparison() {
         // Horizontal bar chart: total return % per portfolio.
         const chartHtml = '<canvas id="portfolioComparisonChart" style="max-height:300px"></canvas>';
         // Build card grid HTML for per-portfolio detail.
-        const fmtEur = v => '€' + Fmt.num(v, 0, 0);
+        const fmtEur = v => Fmt.money(v, 'EUR', 0);
         const fmtPct = v => (v != null ? (v >= 0 ? '+' : '') + Fmt.num(v, 2, 2) + '%' : '—');
         const cards = data.map(p => {
             const retCls = p.total_return_pct >= 0 ? 'text-success' : 'text-danger';

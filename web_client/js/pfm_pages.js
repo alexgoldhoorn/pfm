@@ -47,11 +47,11 @@ function renderDashTopPositions() {
         const name = h.name || h.symbol || '';
         return `
         <tr>
-            <td class="ps-3" style="max-width:220px;">
+            <td class="ps-3 dash-pos-name">
                 <div class="fw-semibold text-truncate" title="${esc(name)}">${esc(name)}</div>
                 <div class="small text-muted">${esc(h.symbol || '')} ${assetLinks(h.symbol)}</div>
             </td>
-            <td><span class="d-inline-flex align-items-center gap-1 small"><span class="pfm-swatch" style="background:${vizTypeColor(h.asset_type)}"></span>${esc(vizTypeLabel(h.asset_type))}</span></td>
+            <td class="d-none d-sm-table-cell"><span class="d-inline-flex align-items-center gap-1 small"><span class="pfm-swatch" style="background:${vizTypeColor(h.asset_type)}"></span>${esc(vizTypeLabel(h.asset_type))}</span></td>
             <td class="text-end" title="${esc(fmtEurCents(valEur))}">${Fmt.amt(esc(fmtEurWhole(valEur)))}</td>
             <td class="text-end d-none d-sm-table-cell">${investedTotal > 0 ? `<span class="pfm-weight"><span class="small">${(valEur / investedTotal * 100).toFixed(1)}%</span><span class="pfm-weight-bar"><span style="width:${Math.min(100, (valEur / investedTotal) / maxWeight * 100).toFixed(0)}%"></span></span></span>` : '—'}</td>
             <td class="text-end pe-3 ${cls} fw-semibold">${txt}</td>
@@ -541,9 +541,9 @@ function createPageManager() {
                                     <div class="small text-muted">${esc(tx.symbol || '')}</div>
                                 </td>
                                 <td><span class="badge bg-${typeCls}">${(tx.transaction_type || '').toUpperCase()}</span></td>
-                                <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(Fmt.loc(), { maximumFractionDigits: 4 })}</td>
-                                <td class="text-end">${fmtPrice(tx.price, tx.currency)}</td>
-                                <td class="text-end pe-3">${fmtPrice(tx.total_amount, tx.currency)}</td>
+                                <td class="text-end d-none d-md-table-cell">${parseFloat(tx.quantity || 0).toLocaleString(Fmt.loc(), { maximumFractionDigits: 4 })}</td>
+                                <td class="text-end d-none d-md-table-cell">${fmtPrice(tx.price, tx.currency)}</td>
+                                <td class="text-end pe-3 text-nowrap">${Fmt.amt(fmtPrice(tx.total_amount, tx.currency))}</td>
                             </tr>
                         `;
                     }).join('');
@@ -813,7 +813,7 @@ function createPageManager() {
                     (nw.bank_accounts || []).forEach(b => { bankById[b.portfolio_id] = b; });
                 } catch (e) { /* bank balances optional */ }
 
-                const eur = n => Fmt.amt('€' + Fmt.num(Math.round(n), 0, 0));
+                const eur = n => Fmt.amt(Fmt.money(Math.round(n), 'EUR', 0));
                 const pnlCell = v => {
                     if (!v) return '<td class="text-end text-muted">—</td>';
                     const cls = v.pnl_eur >= 0 ? 'text-success' : 'text-danger';
