@@ -75,3 +75,23 @@ test("vizTypeColor is stable per asset type", () => {
     assert.equal(win.vizTypeColor("something-new"), "var(--viz-other)");
     assert.equal(win.vizTypeLabel("mutual_fund"), "Mutual fund");
 });
+
+test("notifyLevel classifies messages", () => {
+    assert.equal(win.notifyLevel("Error saving: boom"), "danger");
+    assert.equal(win.notifyLevel("Backfill failed: timeout"), "danger");
+    assert.equal(win.notifyLevel("Goal not found"), "danger");
+    assert.equal(win.notifyLevel("Asset created successfully!"), "success");
+    assert.equal(win.notifyLevel("Please select a broker."), "warning");
+    assert.equal(win.notifyLevel("Pattern and category cannot be empty."), "warning");
+    assert.equal(win.notifyLevel("Asset, type, date and a positive quantity are required."), "warning");
+    assert.equal(win.notifyLevel("No data selected."), "warning");
+    assert.equal(win.notifyLevel("Open the Tax tab first."), "warning");
+    assert.equal(win.notifyLevel("Imported 12 rows"), "success");
+});
+
+test("fmtEurTick never prints two equal adjacent labels", () => {
+    assert.equal(win.fmtEurTick(152500, 2500), "€152.5k");
+    assert.equal(win.fmtEurTick(160000, 20000), "€160k");
+    assert.equal(win.fmtEurTick(1250000, 250000), "€1.25M");
+    assert.equal(win.fmtEurTick(2000000, 500000), "€2.0M");
+});

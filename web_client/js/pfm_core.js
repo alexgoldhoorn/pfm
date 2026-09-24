@@ -409,6 +409,20 @@ const chartTip = {
 };
 window.chartTip = chartTip;
 
+// Charts rendered as HTML strings can't attach listeners per mark, so any
+// element carrying data-chart-tip (escaped chartTipHtml markup) gets the
+// shared tooltip through one delegated listener.
+if (typeof document !== 'undefined' && document.addEventListener) {
+    document.addEventListener('mousemove', (e) => {
+        const el = e.target && e.target.closest ? e.target.closest('[data-chart-tip]') : null;
+        if (el) chartTip.show(el.getAttribute('data-chart-tip'), e.clientX, e.clientY);
+    });
+    document.addEventListener('mouseout', (e) => {
+        const el = e.target && e.target.closest ? e.target.closest('[data-chart-tip]') : null;
+        if (el && !(e.relatedTarget && el.contains(e.relatedTarget))) chartTip.hide();
+    });
+}
+
 // Tooltip body: a title line plus [swatch] label ..... value rows.
 function chartTipHtml(title, rows) {
     return `<div class="pfm-chart-tip-title">${esc(title)}</div>` + rows.map(r => `
@@ -576,6 +590,11 @@ function applyChartJsDefaults() {
             Chart.overrides[t].interaction = { mode: 'nearest', intersect: true };
         }
     });
+    // Chart.js ships light-mode greys (rgba(0,0,0,.1) grid, #666 text) that
+    // all but vanish on the dark theme; follow the active theme instead.
+    const dark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+    Chart.defaults.color = dark ? 'rgba(222,226,230,0.75)' : 'rgba(33,37,41,0.7)';
+    Chart.defaults.borderColor = dark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.08)';
     Chart.defaults.plugins.tooltip.padding = 10;
     Chart.defaults.plugins.tooltip.boxPadding = 4;
     Chart.defaults.plugins.tooltip.usePointStyle = true;
@@ -1179,7 +1198,7 @@ async function loadDataQualityTab(force = false) {
                             _dqDismiss('dup', key);
                             await _loadDupsCard();
                         } catch (e) {
-                            alert('Failed to delete: ' + e.message);
+                            notify('Failed to delete: ' + e.message);
                         }
                     });
                 });
@@ -1272,7 +1291,7 @@ async function loadDataQualityTab(force = false) {
                             await window.apiClient.deleteTransaction(id);
                             await _loadSuspCard();
                         } catch (e) {
-                            alert('Failed to delete: ' + e.message);
+                            notify('Failed to delete: ' + e.message);
                         }
                     });
                 });
@@ -1369,6 +1388,8 @@ function applyTheme() {
         t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
     }
     document.documentElement.setAttribute('data-bs-theme', t);
+    // Charts created after a theme switch pick up matching axis colours.
+    if (document.body) applyChartJsDefaults();
 }
 function applyPrivacy() {
     if (document.body) document.body.classList.toggle('pfm-privacy', !!window.PREFS.privacy);
@@ -3034,7 +3055,7 @@ function createModalManager() {
                 const descEl     = document.getElementById('assetDescription');
 
                 if (!symbolEl || !nameEl || !typeEl) {
-                    alert('Form elements not found. Please refresh the page.');
+                    notify('Form elements not found. Please refresh the page.');
                     return;
                 }
 
@@ -3049,13 +3070,13 @@ function createModalManager() {
                 };
 
                 if (!assetData.symbol || !assetData.name || !assetData.asset_type) {
-                    alert('Please fill in all required fields (Symbol, Name, Asset Type)');
+                    notify('Please fill in all required fields (Symbol, Name, Asset Type)');
                     return;
                 }
 
                 try {
                     await window.apiClient.createAsset(assetData);
-                    alert('Asset created successfully!');
+                    notify('Asset created successfully!');
 
                     const modal = bootstrap.Modal.getInstance(document.getElementById('addAssetModal'));
                     if (modal) modal.hide();
@@ -3067,7 +3088,7 @@ function createModalManager() {
                     form.reset();
                 } catch (error) {
                     console.error('Asset creation failed:', error);
-                    alert('Error creating asset: ' + error.message);
+                    notify('Error creating asset: ' + error.message);
                 }
             });
         }
@@ -3328,8 +3349,8 @@ function setupFileImportModal() {
     parseBtn.addEventListener('click', async () => {
         const broker = brokerSelect.value;
         const file = fileInput.files[0];
-        if (!broker) { alert('Please select a broker.'); return; }
-        if (!file) { alert('Please select a file.'); return; }
+        if (!broker) { notify('Please select a broker.'); return; }
+        if (!file) { notify('Please select a file.'); return; }
 
         parseBtn.disabled = true;
         parseBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Parsing...';
@@ -3340,7 +3361,7 @@ function setupFileImportModal() {
             parsedDeposits = data.deposits || [];
             showStep2(parsedTransactions, parsedBookings, data.skipped_count || 0, parsedDeposits);
         } catch (err) {
-            alert('Error parsing file: ' + err.message);
+            notify('Error parsing file: ' + err.message);
         } finally {
             parseBtn.disabled = false;
             parseBtn.innerHTML = '<i class="bi bi-search me-2"></i>Parse File';
@@ -3357,7 +3378,7 @@ function setupFileImportModal() {
             });
         const selectedDeps = Array.from(document.querySelectorAll('.file-dep-select:checked'))
             .map(cb => parsedDeposits[parseInt(cb.dataset.idx)]);
-        if (selected.length === 0 && parsedBookings.length === 0 && selectedDeps.length === 0) { alert('No data selected.'); return; }
+        if (selected.length === 0 && parsedBookings.length === 0 && selectedDeps.length === 0) { notify('No data selected.'); return; }
 
         saveBtn.disabled = true;
         saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving...';
@@ -3371,12 +3392,12 @@ function setupFileImportModal() {
             const msg = result.errors.length > 0
                 ? `Saved ${result.saved}${bkMsg}${depMsg}. Errors:\n${result.errors.join('\n')}`
                 : `Successfully imported ${result.saved} transaction(s)${bkMsg}${depMsg}.`;
-            alert(msg);
+            notify(msg);
             window.pageManager.loadTransactionsPage();
         } catch (err) {
             saveBtn.disabled = false;
             saveBtn.innerHTML = '<i class="bi bi-check-lg me-2"></i>Save Selected';
-            alert('Error saving: ' + err.message);
+            notify('Error saving: ' + err.message);
         }
     });
 }
@@ -3469,7 +3490,7 @@ function setupLlmImportModal() {
 
     extractBtn.addEventListener('click', async () => {
         const text = textarea.value.trim();
-        if (!text) { alert('Please paste some broker statement text first.'); return; }
+        if (!text) { notify('Please paste some broker statement text first.'); return; }
 
         extractBtn.disabled = true;
         extractBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Extracting...';
@@ -3479,7 +3500,7 @@ function setupLlmImportModal() {
             extractedTransactions = data.transactions || [];
             showStep2(extractedTransactions);
         } catch (err) {
-            alert('Error extracting transactions: ' + err.message);
+            notify('Error extracting transactions: ' + err.message);
         } finally {
             extractBtn.disabled = false;
             extractBtn.innerHTML = '<i class="bi bi-magic me-2"></i>Extract Transactions';
@@ -3490,7 +3511,7 @@ function setupLlmImportModal() {
         const checked = Array.from(document.querySelectorAll('.tx-select:checked'))
             .map(cb => extractedTransactions[parseInt(cb.dataset.idx)]);
 
-        if (checked.length === 0) { alert('No transactions selected.'); return; }
+        if (checked.length === 0) { notify('No transactions selected.'); return; }
 
         // Normalise LLM transactions to the import/save schema
         const normalized = checked.map(tx => ({
@@ -3518,23 +3539,74 @@ function setupLlmImportModal() {
             const msg = result.errors.length > 0
                 ? `Saved ${result.saved}${result.duplicates_skipped ? `, ${result.duplicates_skipped} duplicate(s) skipped` : ''}. Errors:\n${result.errors.filter(e => !e.startsWith('DUPLICATE')).join('\n')}`
                 : `Successfully imported ${result.saved} transaction(s)${result.duplicates_skipped ? `, ${result.duplicates_skipped} duplicate(s) skipped` : ''}.`;
-            alert(msg);
+            notify(msg);
             window.pageManager.loadTransactionsPage();
         } catch (err) {
             saveBtn.disabled = false;
             saveBtn.innerHTML = '<i class="bi bi-check-lg me-2"></i>Save All';
-            alert('Error saving: ' + err.message);
+            notify('Error saving: ' + err.message);
         }
     });
 }
 
-window.showToast = function(msg, type) {
-    const toastEl = document.getElementById('toast');
-    const toastBody = document.getElementById('toastBody');
-    if (!toastEl || !toastBody) return;
-    toastBody.textContent = msg;
-    bootstrap.Toast.getOrCreateInstance(toastEl).show();
+// Non-blocking notifications (replaces native notify(), which froze the page
+// and couldn't be styled). Toasts stack top-right; errors stay longer and
+// never auto-hide while hovered. level: success | info | warning | danger.
+function notifyLevel(msg) {
+    const m = String(msg || '').toLowerCase();
+    // Validation nudges first: "... cannot be empty" is a form hint, not a failure.
+    if (/(required|cannot be empty|at least one|please |first\.$)/.test(m) && !/\berror\b|\bfailed\b/.test(m)) return 'warning';
+    if (/\b(error|failed|failure|could not|couldn't|cannot|can't|invalid|not found)\b/.test(m)) return 'danger';
+    if (/\b(success|successfully|saved|created|imported|updated|deleted|done)\b/.test(m)) return 'success';
+    if (/^(please|no |nothing|select|paste|open |choose|enter )/.test(m.trim())) return 'warning';
+    return 'info';
+}
+window.notifyLevel = notifyLevel;
+
+const NOTIFY_STYLE = {
+    success: { icon: 'bi-check-circle-fill', cls: 'text-success', title: 'Done', delay: 4000 },
+    info:    { icon: 'bi-info-circle-fill', cls: 'text-info', title: 'Info', delay: 6000 },
+    warning: { icon: 'bi-exclamation-triangle-fill', cls: 'text-warning', title: 'Check this', delay: 7000 },
+    danger:  { icon: 'bi-x-octagon-fill', cls: 'text-danger', title: 'Something went wrong', delay: 12000 },
 };
+
+function notify(msg, level) {
+    const lvl = NOTIFY_STYLE[level] ? level : notifyLevel(msg);
+    const st = NOTIFY_STYLE[lvl];
+    let host = document.getElementById('pfmToastStack');
+    if (!host) {
+        host = document.createElement('div');
+        host.id = 'pfmToastStack';
+        host.className = 'toast-container position-fixed top-0 end-0 p-3';
+        host.style.zIndex = '2100';
+        host.setAttribute('aria-live', 'polite');
+        document.body.appendChild(host);
+    }
+    const el = document.createElement('div');
+    el.className = `toast pfm-toast pfm-toast-${lvl}`;
+    el.setAttribute('role', lvl === 'danger' ? 'alert' : 'status');
+    el.innerHTML = `
+        <div class="toast-header">
+            <i class="bi ${st.icon} ${st.cls} me-2"></i>
+            <strong class="me-auto">${st.title}</strong>
+            <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+        </div>
+        <div class="toast-body" style="white-space:pre-line;"></div>`;
+    el.querySelector('.toast-body').textContent = String(msg == null ? '' : msg);
+    host.appendChild(el);
+    // Keep at most 4 on screen; the oldest goes first.
+    while (host.children.length > 4) host.removeChild(host.firstChild);
+    if (typeof bootstrap !== 'undefined' && bootstrap.Toast) {
+        const t = new bootstrap.Toast(el, { delay: st.delay, autohide: true });
+        el.addEventListener('hidden.bs.toast', () => el.remove());
+        t.show();
+    } else {
+        setTimeout(() => el.remove(), st.delay);
+    }
+}
+window.notify = notify;
+// Kept for existing callers; type now actually selects the style.
+window.showToast = function(msg, type) { notify(msg, type === 'error' ? 'danger' : type); };
 
 // Navigate to the chat page with a pre-loaded context (thread name + opening message).
 // Called from Research workbench and Portfolio Health panel.
