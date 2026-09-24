@@ -662,7 +662,9 @@ docker compose build web && docker stop portf_web && WEB_PORT=8080 docker compos
 `saveImportedTransactions(transactions, bookings = [], portfolioId = null)` — always pass bookings array (even if empty) so PDT bookings are saved alongside transactions.
 
 ## Testing
-- Unit tests: `uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e` (1337 passing, 6 skipped — passes as root too); JS: 165 passing
+- Unit tests: `uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e` (1336 passing, 12 skipped — passes as root too); JS: 165 passing
+- `pytest.ini` must start with `[pytest]` — it said `[tool:pytest]` (the `setup.cfg` spelling) until 2026-09-24, so pytest silently applied none of it (`addopts`, `timeout`, `filterwarnings = error`). `--strict-config` doesn't catch unknown keys here: `PytestConfigWarning` is a `UserWarning`, which `filterwarnings` ignores — check with `-W default`. `timeout = 300` needs the `pytest-timeout` dev dep.
+- Live-network tests (`tests/test_api_client.py`: real yfinance + exchangerate-api) are skipped unless `PFM_LIVE_NETWORK_TESTS=1`. They were the two slowest tests (~21s of a 79s run, mostly 1–3s retry-backoff sleeps) and passed even when every call failed. Mocked coverage lives in `tests/test_api_client_unit.py`; new network-touching tests go there, mocked.
 - JS tests: `make test-js` (Node 24 no longer expands a bare directory passed to `--test`, so the target names `web_client/js/tests/*.test.mjs` explicitly — `node --test web_client/js/tests/` fails with a misleading `MODULE_NOT_FOUND`)
 - Pre-push hook runs full unit suite automatically.
 - F541 fixer: `uv run python scripts/fix_f541.py`
