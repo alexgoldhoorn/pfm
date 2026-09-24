@@ -179,6 +179,12 @@ class TestAPIClient:
         price = self.client.get_price("INVALID")
         assert price is None
 
+    @patch("portf_manager.api_client.yf.download")
+    def test_fetch_latest_prices_empty_list(self, mock_download):
+        """An empty symbol list returns {} without touching the network."""
+        assert self.client.fetch_latest_prices([]) == {}
+        mock_download.assert_not_called()
+
     @patch("portf_manager.api_client.yf.Ticker")
     @patch("portf_manager.api_client.yf.download")
     def test_fetch_latest_prices_fast_info_fallback(self, mock_download, mock_ticker):

@@ -139,7 +139,7 @@ pytest --cov=portf_server --cov=portf_manager --cov-report=xml
 Key configuration options in `pytest.ini`:
 
 ```ini
-[tool:pytest]
+[pytest]
 # Test discovery
 testpaths = tests tests/unit tests/integration tests/e2e
 python_files = test_*.py *_test.py
