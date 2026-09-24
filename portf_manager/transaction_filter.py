@@ -56,10 +56,13 @@ class TransactionFilterService:
         if not current_user:
             raise ValueError("Unable to retrieve current user information")
 
-        # Get all transactions for current user
-        transaction_dicts = self.db_adapter.get_all_transactions(
-            user_id=current_user["id"]
-        )
+        # Imported rows are stored with user_id NULL (see the tax-report
+        # gotcha in CLAUDE.md), so keep those alongside the user's own rows.
+        transaction_dicts = [
+            tx
+            for tx in self.db_adapter.get_all_transactions()
+            if tx.get("user_id") in (None, current_user["id"])
+        ]
 
         if not transaction_dicts:
             print("⚠️  No transactions found for current user")

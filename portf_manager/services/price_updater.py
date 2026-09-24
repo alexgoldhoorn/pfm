@@ -117,8 +117,8 @@ def run_price_update(
             db_sym = yf_to_db[yf_sym]
             converted = _to_eur(price, yf_quote_ccy.get(yf_sym))
             if converted is None:
+                # Left out of prices_data, so the loop below counts it as skipped
                 ccy = yf_quote_ccy.get(yf_sym, "?")
-                skipped_symbols.append(db_sym)
                 api_errors.append(f"FX rate unavailable for {ccy}; skipped {db_sym}")
             else:
                 prices_data[db_sym] = converted
