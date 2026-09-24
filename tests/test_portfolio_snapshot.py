@@ -244,10 +244,14 @@ def test_utility_functions(temp_db):
     assert "Current Portfolio" in context
 
 
-def test_error_handling():
-    """Test error handling with invalid database path"""
-    # Test with non-existent database
-    context = get_portfolio_context_for_chat("/non/existent/path.db")
+def test_error_handling(tmp_path):
+    """Test error handling with an unusable database path."""
+    # A path under a regular file can't be opened even as root (a merely
+    # non-existent directory can be created by root, which made this test
+    # fail whenever the suite ran as root).
+    not_a_dir = tmp_path / "plain_file"
+    not_a_dir.write_text("x")
+    context = get_portfolio_context_for_chat(str(not_a_dir / "path.db"))
     assert "Error loading portfolio data" in context
 
 

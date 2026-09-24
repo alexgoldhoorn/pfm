@@ -2311,6 +2311,19 @@ window.computeGoalOverlays = computeGoalOverlays;
 // Module-scope (not trapped in setupForecastPage's closure) so the
 // Dashboard's Wealth Simulator preview card can reuse it without duplicating
 // the math — see loadDashboardForecastPreview().
+// Upper edge of a projection chart's y-axis. A wide confidence band (95% over
+// 30 years reaches ~6x the expected value) would otherwise flatten the
+// expected path against the baseline, so the axis stops at `factor` times
+// the highest expected value and the band is clipped (and labelled) above it.
+function projectionAxisMax(data, factor, extraVals) {
+    const f = factor || 2.5;
+    const meanMax = Math.max(0, ...data.map(p => p.netWorth), ...(extraVals || []));
+    const bandMax = Math.max(0, ...data.map(p => p.netWorthHigh), ...(extraVals || []));
+    const cap = meanMax * f;
+    return (meanMax > 0 && bandMax > cap) ? { max: cap, clipped: true } : { max: bandMax, clipped: false };
+}
+window.projectionAxisMax = projectionAxisMax;
+
 function projectAccount(startAmount, annualRatePct, volatility, years, sigma, monthlyContribution) {
     const r = annualRatePct / 100;
     const contribution = monthlyContribution || 0;
@@ -2473,7 +2486,7 @@ function setupForecastPage() {
         const n = Math.round(val);
         if (n >= 1000000) return '€' + (n / 1000000).toFixed(2) + 'M';
         if (n >= 1000)    return '€' + (n / 1000).toFixed(1) + 'k';
-        return '€' + Fmt.num(n, 0, 0);
+        return Fmt.money(n, 'EUR', 0);
     }
 
     // Load stocks starting value from holdings API
@@ -2559,7 +2572,8 @@ function setupForecastPage() {
         const innerH = H - PAD.top - PAD.bottom;
 
         const allVals = data.flatMap(p => [p.netWorthHigh, p.netWorthLow, p.mortgage, 0]);
-        const naturalMax = Math.max(...allVals);
+        const axisCap = projectionAxisMax(data, 2.5, data.map(p => p.mortgage));
+        const naturalMax = axisCap.max;
         const naturalMin = Math.min(...allVals, 0);
 
         const overlays = computeGoalOverlays(goals, naturalMin, naturalMax, years);
@@ -2657,7 +2671,14 @@ function setupForecastPage() {
         svg.setAttribute('height', H);
         svg.style.display = 'block';
 
+        const confPct = { '0.674': '50%', '1.0': '68%', '1.96': '95%', '2.576': '99%' }[String(confSelect.value)] || '';
+        const clipNote = axisCap.clipped
+            ? `<text x="${(PAD.left + innerW - 4).toFixed(1)}" y="${(PAD.top + 12).toFixed(1)}" text-anchor="end" font-size="10" fill="currentColor" fill-opacity="0.6">${confPct} range continues above ${esc(yTickFmt(maxVal))} — hover for its top</text>`
+            : '';
         svg.innerHTML = `
+            <defs>
+                <clipPath id="fcPlotClip"><rect x="${PAD.left}" y="${PAD.top}" width="${innerW}" height="${innerH}"/></clipPath>
+            </defs>
 
             <!-- Grid lines -->
             ${yTicks.map(t => `
@@ -2667,7 +2688,8 @@ function setupForecastPage() {
 
             ${zeroLine}
 
-            <!-- Confidence band -->
+            <!-- Confidence band (clipped to the plot when the axis is capped) -->
+            <g clip-path="url(#fcPlotClip)">
             <path d="${bandPath}" style="fill:var(--viz-1)" opacity="0.14" stroke="none"/>
 
             <!-- Under net-worth-line fill -->
@@ -2677,6 +2699,8 @@ function setupForecastPage() {
             <!-- Band edges (dashed) -->
             <path d="${pathD('netWorthHigh')}" fill="none" style="stroke:var(--viz-1)" stroke-opacity="0.5" stroke-width="1" stroke-dasharray="4 3"/>
             <path d="${pathD('netWorthLow')}"  fill="none" style="stroke:var(--viz-1)" stroke-opacity="0.5" stroke-width="1" stroke-dasharray="4 3"/>
+            </g>
+            ${clipNote}
 
             <!-- Net worth mean line -->
             <path d="${pathD('netWorth')}" fill="none" style="stroke:var(--viz-1)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -2726,7 +2750,7 @@ function setupForecastPage() {
                 const p = data[i];
                 const rows = [
                     { label: 'Expected', value: fmtEurWhole(p.netWorth), color: 'var(--viz-1)' },
-                    { label: 'Range', value: `${fmtEurWhole(p.netWorthLow)} – ${fmtEurWhole(p.netWorthHigh)}` },
+                    { label: `${confPct} range`.trim(), value: `${fmtEurWhole(p.netWorthLow)} – ${fmtEurWhole(p.netWorthHigh)}` },
                 ];
                 if (hasMortgage) rows.push({ label: 'Mortgage left', value: fmtEurWhole(p.mortgage), color: 'var(--viz-8)', dashed: true });
                 if (i > 0) rows.push({ label: 'vs today', value: (p.netWorth - data[0].netWorth >= 0 ? '+' : '−') + fmtEurWhole(Math.abs(p.netWorth - data[0].netWorth)) });
@@ -2921,7 +2945,7 @@ function renderDashboardForecastChart(container, data, years) {
     const innerH = H - PAD.top - PAD.bottom;
 
     const allVals = data.flatMap(p => [p.netWorthHigh, p.netWorthLow]);
-    const maxVal = Math.max(...allVals, 0);
+    const maxVal = projectionAxisMax(data, 2.5).max;
     const minVal = Math.min(...allVals, 0);
     const range = (maxVal - minVal) || 1;
 
@@ -2975,12 +2999,13 @@ function renderDashboardForecastChart(container, data, years) {
                 <div class="small text-muted">Expected in ${years}y</div>
                 <div class="fs-5 fw-bold lh-1">${Fmt.amt(esc(fmtEurWhole(endVal)))}</div>
             </div>
-            <div class="small text-muted text-end">range<br>${Fmt.amt(esc(fmtCompact(endPoint.netWorthLow)))} – ${Fmt.amt(esc(fmtCompact(endPoint.netWorthHigh)))}</div>
+            <div class="small text-muted text-end" title="Half of simulated outcomes land inside this range">likely range (50%)<br>${Fmt.amt(esc(fmtCompact(endPoint.netWorthLow)))} – ${Fmt.amt(esc(fmtCompact(endPoint.netWorthHigh)))}</div>
         </div>
         <svg viewBox="0 0 ${W} ${H}" style="width:100%;height:${H}px;display:block;overflow:visible;" role="img" aria-label="Wealth projection">
+            <defs><clipPath id="dashFcClip"><rect x="${PAD.left}" y="${PAD.top}" width="${innerW}" height="${innerH}"/></clipPath></defs>
             ${xGridLines}
             ${yGridLines}
-            <path d="${bandPath}" style="fill:var(--viz-1)" opacity="0.14" stroke="none"/>
+            <path d="${bandPath}" style="fill:var(--viz-1)" opacity="0.14" stroke="none" clip-path="url(#dashFcClip)"/>
             <path d="${pathD('netWorth')}" fill="none" style="stroke:var(--viz-1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
             <circle cx="${xScale(0).toFixed(1)}" cy="${yScale(startVal).toFixed(1)}" r="3.5" style="fill:var(--viz-neutral)"/>
             <circle cx="${xScale(years).toFixed(1)}" cy="${yScale(endVal).toFixed(1)}" r="4" style="fill:var(--viz-1)"/>
@@ -2998,8 +3023,8 @@ function renderDashboardForecastChart(container, data, years) {
             const yr = new Date().getFullYear() + Math.round(p.year);
             return chartTipHtml(p.year === 0 ? 'Now' : `Year ${Math.round(p.year)} (${yr})`, [
                 { label: 'Expected', value: fmtEurWhole(p.netWorth), color: 'var(--viz-1)' },
-                { label: 'Low', value: fmtEurWhole(p.netWorthLow) },
-                { label: 'High', value: fmtEurWhole(p.netWorthHigh) },
+                { label: 'Likely low (25th pct)', value: fmtEurWhole(p.netWorthLow) },
+                { label: 'Likely high (75th pct)', value: fmtEurWhole(p.netWorthHigh) },
             ]);
         },
     });
@@ -3034,7 +3059,9 @@ function loadDashboardForecastPreview(stocksTotalValue) {
     const mortRate      = parseFloat(cfg.mortgageRate)      || 0;
     const mortPayment   = parseFloat(cfg.monthlyPayment)    || 0;
     const years  = Math.max(1, parseInt(cfg.years, 10) || 30);
-    const sigma  = parseFloat(cfg.confidence) || 1.96;
+    // The preview always shows the 50% "likely range": a wider band at this
+    // card size leaves the expected path as a flat line along the bottom.
+    const sigma  = 0.674;
 
     const totalStarting = cashAmt + stocksAmt + bondsAmt;
     if (totalStarting <= 0) {
@@ -3147,7 +3174,7 @@ async function loadRebalanceAnalysis() {
         // below it were two spots that hadn't caught up to it yet; not
         // every money value on the page uses Fmt.amt, e.g. the Assets
         // page's positions table).
-        const fmtEur = (v) => Fmt.amt(parseFloat(v || 0).toLocaleString(Fmt.loc(), { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + ' €');
+        const fmtEur = (v) => Fmt.amt(Fmt.money(parseFloat(v || 0), 'EUR', 0));
 
         if (allocations.length === 0) {
             tbody.innerHTML = '<tr><td colspan="5" class="text-center text-muted small">No allocation data.</td></tr>';
@@ -3268,7 +3295,7 @@ window.rebalanceDriftClass = rebalanceDriftClass;
 function rebalanceFmtEur(v, decimals) {
     if (v === null || v === undefined) return '—';
     const d = decimals != null ? decimals : 2;
-    return Fmt.amt(Fmt.num(v, d, d) + ' €');
+    return Fmt.amt(Fmt.money(v, 'EUR', d));
 }
 window.rebalanceFmtEur = rebalanceFmtEur;
 
@@ -4026,7 +4053,7 @@ function setupResearchPage() {
     page.dataset.wired = '1';
     setupPortfolioHealth();
     const $ = id => document.getElementById(id);
-    const money = (v, cur) => (v == null ? '—' : Fmt.num(v, 2, 2) + (cur ? ' ' + cur : ''));
+    const money = (v, cur) => (v == null ? '—' : (cur ? Fmt.money(v, cur, 2) : Fmt.num(v, 2, 2)));
     let R = { symbol: null, currency: '', price: 0, fundamentals: {}, llm: null };
     // Autocomplete suggestions: {symbol, name, currency, source, acronym, aliases}
     // — populated on page open.
@@ -4312,7 +4339,7 @@ function setupResearchPage() {
             ${markers}
             <circle cx="${x(n - 1).toFixed(1)}" cy="${y(pts[n - 1].avg_cost).toFixed(1)}" r="3.5" style="fill:var(--viz-1)"/>
             <text x="${PAD.l}" y="${H - 4}" font-size="10" fill="currentColor" fill-opacity="0.65">avg cost (line) · ● buy · ■ sell · dashed = current price · hover for details</text>`;
-        const money2 = v => sym ? sym + Fmt.num(v, 2, 2) : Fmt.num(v, 2, 2) + ' ' + (cur || '');
+        const money2 = v => Fmt.money(v, cur || 'EUR', 2);
         attachLineHover(svg, {
             W, top: PAD.t, bottom: PAD.t + iH, left: PAD.l, right: PAD.l + iW,
             xs: pts.map((_, i) => x(i)),
@@ -5317,7 +5344,7 @@ async function _refreshSpendingData() {
             window.apiClient.getSpendingCategoryTree(),
             window.apiClient.getSpendingRules(),
         ]);
-        const eur = v => Fmt.amt('€' + Fmt.num(v, 0, 0));
+        const eur = v => Fmt.amt(Fmt.money(v, 'EUR', 0));
         const el = id => document.getElementById(id);
         if (el('spSpent')) el('spSpent').innerHTML = eur(summary.spent_eur);
         if (el('spIncome')) el('spIncome').innerHTML = eur(summary.income_eur);
@@ -5372,7 +5399,7 @@ async function _renderSpTrendChart() {
         }
         _spTrendChartInstance = new Chart(canvas, {
             data: {
-                labels: months.map(m => m.month),
+                labels: months.map(m => monthKeyLabel(m.month)),
                 datasets: [
                     {
                         type: 'bar',
@@ -5398,8 +5425,8 @@ async function _renderSpTrendChart() {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: { legend: { display: true, position: 'top' } },
-                scales: { y: { ticks: { callback: v => '€' + v } } },
+                plugins: { legend: { display: true, position: 'top' }, tooltip: { callbacks: chartEurTooltip } },
+                scales: { y: { ticks: { callback: v => Fmt.money(v, 'EUR', 0) } } },
             },
         });
     } catch (err) {
@@ -5542,7 +5569,7 @@ function _renderSpendingCategoryChart(byCategoryEur) {
                             label(item) {
                                 const total = values.reduce((s, v) => s + v, 0);
                                 const pct = total > 0 ? (item.raw / total * 100).toFixed(1) : '0.0';
-                                return ` ${item.label}: €${Fmt.num(item.raw, 0, 0)} (${pct}%)`;
+                                return ` ${item.label}: ${Fmt.money(item.raw, 'EUR', 0)} (${pct}%)`;
                             }
                         }
                     }
@@ -5571,14 +5598,14 @@ function _renderSpendingCategoryChart(byCategoryEur) {
                     legend: { display: false },
                     tooltip: {
                         callbacks: {
-                            label(item) { return ` €${Fmt.num(item.raw, 0, 0)}`; }
+                            label(item) { return ` ${Fmt.money(item.raw, 'EUR', 0)}`; }
                         }
                     }
                 },
                 scales: {
                     x: {
                         title: { display: true, text: 'EUR (30d)' },
-                        ticks: { callback: v => '€' + v }
+                        ticks: { callback: v => Fmt.money(v, 'EUR', 0) }
                     }
                 }
             }
@@ -5618,7 +5645,7 @@ async function openSpCategoryTransactionsModal(categoryName, days) {
             <tr>
                 <td>${Fmt.date(r.date)}</td>
                 <td>${esc(r.description)}</td>
-                <td class="text-end ${r.amount < 0 ? 'text-danger' : 'text-success'}">${Fmt.num(r.amount, 2, 2)} ${r.currency || ''}</td>
+                <td class="text-end ${r.amount < 0 ? 'text-danger' : 'text-success'}">${Fmt.money(r.amount, r.currency, 2)}</td>
             </tr>`).join('') : '<tr><td colspan="3" class="text-center text-muted py-2">No transactions in this period.</td></tr>';
     }
     if (linkEl) {
@@ -5808,7 +5835,7 @@ async function _fetchAndRenderSpendingTable() {
                     ${esc(r.category)}
                     ${r.is_transfer ? '<span class="badge bg-info ms-1">Transfer</span>' : ''}
                 </td>
-                <td class="text-end ${r.amount < 0 ? 'text-danger' : 'text-success'}">${Fmt.num(r.amount, 2, 2)} ${r.currency || ''}</td>
+                <td class="text-end ${r.amount < 0 ? 'text-danger' : 'text-success'}">${Fmt.money(r.amount, r.currency, 2)}</td>
                 <td class="pe-3"></td>
             </tr>`).join('') : '<tr><td colspan="7" class="text-center text-muted py-3">No transactions match the current filters.</td></tr>';
     }
@@ -6718,7 +6745,7 @@ function _renderSpImportPreview(result, ids) {
                         <tr class="${r.is_duplicate ? 'table-warning' : ''}">
                             <td>${esc(r.date)}</td>
                             <td>${esc(r.description)}</td>
-                            <td class="text-end">${Fmt.num(r.amount, 2, 2)} ${esc(r.currency)}</td>
+                            <td class="text-end">${Fmt.money(r.amount, r.currency, 2)}</td>
                             <td>${esc(r.category)}${r.is_duplicate ? ' <span class="badge bg-warning text-dark">dup</span>' : ''}</td>
                         </tr>`).join('')}
                 </tbody>
@@ -6912,7 +6939,7 @@ function _bgStatus(message, kind = 'muted') {
 }
 
 function _bgEur(value) {
-    return Fmt.amt('€' + Fmt.num(Number(value) || 0, 0, 0));
+    return Fmt.amt(Fmt.money(Number(value) || 0, 'EUR', 0));
 }
 
 /** Signed euro amount with the colour its favourability implies. */
@@ -6920,7 +6947,7 @@ function _bgVarianceCell(varianceEur, favourable) {
     const amount = Number(varianceEur) || 0;
     const cls = amount === 0 ? 'text-muted' : (favourable ? 'text-success' : 'text-danger');
     const sign = amount > 0 ? '+' : (amount < 0 ? '−' : '');
-    return `<span class="${cls}">${sign}${Fmt.amt('€' + Fmt.num(Math.abs(amount), 0, 0))}</span>`;
+    return `<span class="${cls}">${sign}${Fmt.amt(Fmt.money(Math.abs(amount), 'EUR', 0))}</span>`;
 }
 
 const BG_BAR_CLASS = { good: 'bg-success', near: 'bg-secondary', bad: 'bg-danger' };
@@ -7067,7 +7094,7 @@ function _renderBgNetBreakdown() {
     el.innerHTML = `<i class="bi bi-calculator me-1"></i>`
         + `Income ${_bgEur(b.income)} − Spending ${_bgEur(b.spending)} `
         + `− Debt ${_bgEur(b.debt)} − Investments ${_bgEur(b.investment)} `
-        + `= <strong class="${cls}">${sign}${Fmt.amt('€' + Fmt.num(Math.abs(b.cashFlow), 0, 0))}</strong> cash flow.`
+        + `= <strong class="${cls}">${sign}${Fmt.amt(Fmt.money(Math.abs(b.cashFlow), 'EUR', 0))}</strong> cash flow.`
         + keptNote;
 }
 
@@ -7391,7 +7418,7 @@ function _renderBgTrendChart() {
         if (errorEl) errorEl.style.display = 'none';
         _bgTrendChartInstance = new Chart(canvas, {
             data: {
-                labels: months,
+                labels: months.map(monthKeyLabel),
                 datasets: [
                     { type: 'bar', label: 'Actual spend', data: actualByMonth, backgroundColor: SP_CATEGORY_CHART_COLORS[3] },
                     { type: 'line', label: 'Planned spend', data: plannedByMonth, borderColor: SP_CATEGORY_CHART_COLORS[0], borderDash: [5, 4], fill: false, tension: 0.1 },
@@ -7400,8 +7427,8 @@ function _renderBgTrendChart() {
             options: {
                 responsive: true,
                 maintainAspectRatio: false,
-                plugins: { legend: { display: true, position: 'top' } },
-                scales: { y: { beginAtZero: true, ticks: { callback: v => '€' + v } } },
+                plugins: { legend: { display: true, position: 'top' }, tooltip: { callbacks: chartEurTooltip } },
+                scales: { y: { beginAtZero: true, ticks: { callback: v => Fmt.money(v, 'EUR', 0) } } },
             },
         });
     } catch (err) {

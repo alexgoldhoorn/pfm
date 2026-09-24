@@ -27,7 +27,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-matrix@2.0.1/dist/chartjs-chart-matrix.min.js"></script>
 
     <!-- Custom CSS -->
-    <link href="css/styles.css?v=1790500000" rel="stylesheet">
+    <link href="css/styles.css?v=1790600000" rel="stylesheet">
     <style>
         /* Privacy mode: blur monetary amounts until hovered */
         body.pfm-privacy .pfm-amt { filter: blur(0.45em); transition: filter .12s ease; user-select: none; }
@@ -295,10 +295,10 @@
                             <!-- Price-data freshness chip (populated by loadDataFreshness) -->
                             <span id="dataFreshness" class="badge rounded-pill bg-secondary" style="display:none; cursor:default;"></span>
                             <button class="btn btn-sm btn-outline-primary" id="refreshPricesBtn" onclick="triggerPriceUpdate()" title="Fetch latest prices from Yahoo Finance">
-                                <i class="bi bi-graph-up-arrow me-1" id="refreshPricesIcon"></i><span id="refreshPricesLabel">Refresh prices</span>
+                                <i class="bi bi-graph-up-arrow me-sm-1" id="refreshPricesIcon"></i><span id="refreshPricesLabel" class="d-none d-sm-inline">Refresh prices</span>
                             </button>
-                            <button class="btn btn-sm btn-outline-secondary" id="refreshTransactions" title="Refresh dashboard data">
-                                <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                            <button class="btn btn-sm btn-outline-secondary" id="refreshTransactions" title="Refresh dashboard data" aria-label="Refresh dashboard data">
+                                <i class="bi bi-arrow-clockwise me-sm-1"></i><span class="d-none d-sm-inline">Refresh</span>
                             </button>
                         </div>
                     </div>
@@ -490,7 +490,7 @@
                                             <thead>
                                                 <tr>
                                                     <th class="ps-3">Name</th>
-                                                    <th>Type</th>
+                                                    <th class="d-none d-sm-table-cell">Type</th>
                                                     <th class="text-end">Value</th>
                                                     <th class="text-end d-none d-sm-table-cell" data-bs-toggle="tooltip" title="Share of your invested portfolio value (excluding cash).">Weight</th>
                                                     <th class="text-end pe-3" id="dashTopPnlHeader" data-bs-toggle="tooltip" title="P/L (Profit &amp; Loss): current value minus cost basis.">P&amp;L %</th>
@@ -614,8 +614,8 @@
                                                     <th class="ps-3">Date</th>
                                                     <th>Asset</th>
                                                     <th>Type</th>
-                                                    <th class="text-end">Qty</th>
-                                                    <th class="text-end">Price</th>
+                                                    <th class="text-end d-none d-md-table-cell">Qty</th>
+                                                    <th class="text-end d-none d-md-table-cell">Price</th>
                                                     <th class="text-end pe-3">Total</th>
                                                 </tr>
                                             </thead>
@@ -1989,8 +1989,9 @@
                                     <div class="mb-3">
                                         <label class="form-label" for="fcConfidence">Confidence Interval</label>
                                         <select class="form-select form-select-sm" id="fcConfidence">
+                                            <option value="0.674" selected>50% — likely range (25th–75th percentile)</option>
                                             <option value="1.0">68% — 1 Standard Deviation</option>
-                                            <option value="1.96" selected>95% — 2 Standard Deviations</option>
+                                            <option value="1.96">95% — 2 Standard Deviations</option>
                                             <option value="2.576">99% — 3 Standard Deviations</option>
                                         </select>
                                     </div>
@@ -4491,7 +4492,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
 
     <!-- Centralized help text (must load before the app scripts) -->
-    <script src="js/help_text.js?v=1790500000"></script>
+    <script src="js/help_text.js?v=1790600000"></script>
 
     <!-- App scripts: portfolio_debug.js was split into these four classic
          scripts. They share one global scope and MUST load in this order:
@@ -4634,10 +4635,10 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
       </div>
     </div>
 
-    <script src="js/pfm_core.js?v=1790500000"></script>
-    <script src="js/pfm_pages.js?v=1790500000"></script>
-    <script src="js/pfm_analytics.js?v=1790500000"></script>
-    <script src="js/pfm_features.js?v=1790500000"></script>
+    <script src="js/pfm_core.js?v=1790600000"></script>
+    <script src="js/pfm_pages.js?v=1790600000"></script>
+    <script src="js/pfm_analytics.js?v=1790600000"></script>
+    <script src="js/pfm_features.js?v=1790600000"></script>
     <script>
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('/sw.js');
