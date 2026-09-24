@@ -629,3 +629,24 @@ body {
 .pfm-weight-bar { width: 48px; height: 5px; border-radius: 3px; background: var(--bs-tertiary-bg); overflow: hidden; }
 .pfm-weight-bar > span { display: block; height: 100%; background: var(--viz-1); border-radius: 3px; }
 .pfm-attn .badge { font-size: .72rem; font-weight: 600; padding: .3em .5em; }
+
+/* Dialogs: result box (see showResultDialog in pfm_core.js) */
+.pfm-stats { display: flex; flex-wrap: wrap; gap: .5rem; }
+.pfm-stat {
+    flex: 1 1 90px; min-width: 90px; padding: .5rem .6rem; border-radius: .5rem;
+    background: var(--bs-tertiary-bg); border-left: 3px solid var(--bs-border-color);
+    font-variant-numeric: tabular-nums;
+}
+.pfm-stat-value { font-size: 1.35rem; font-weight: 700; line-height: 1.1; }
+.pfm-stat-label { font-size: .75rem; color: var(--bs-secondary-color); }
+.pfm-stat-good { border-left-color: var(--viz-good); }
+.pfm-stat-bad { border-left-color: var(--viz-bad); }
+.pfm-stat-warn { border-left-color: var(--bs-warning); }
+.pfm-stat-info { border-left-color: var(--viz-1); }
+.pfm-stat-muted { border-left-color: var(--viz-neutral); }
+.pfm-facts { font-size: .875rem; }
+.pfm-fact { display: flex; justify-content: space-between; gap: 1rem; padding: .3rem 0; border-bottom: 1px dashed var(--bs-border-color); }
+.pfm-fact:last-child { border-bottom: 0; }
+.pfm-result-list { max-height: 220px; overflow: auto; }
+.pfm-chev { transition: transform .15s ease; }
+[aria-expanded="true"] > .pfm-chev { transform: rotate(90deg); }
