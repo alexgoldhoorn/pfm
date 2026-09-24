@@ -376,6 +376,16 @@ class TestTaxRatesAndReport:
         assert "dividend_withholding_eur" in d
         assert "realised_gain_total" in d
 
+    @pytest.mark.asyncio
+    async def test_tax_report_pdf_endpoint(self, async_test_client, auth_headers):
+        resp = await async_test_client.get(
+            "/api/v1/analytics/tax-report/pdf?year=2026", headers=auth_headers
+        )
+        assert resp.status_code == 200
+        assert resp.headers["content-type"] == "application/pdf"
+        assert resp.content.startswith(b"%PDF")
+        assert "irpf_tax_report_2026.pdf" in resp.headers["content-disposition"]
+
 
 class TestHistoricalFxHelpers:
     @pytest.fixture(autouse=True)

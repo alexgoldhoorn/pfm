@@ -12,7 +12,7 @@ from typing import Optional
 
 import pandas as pd
 import yfinance as yf
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
 from portf_manager.services.analytics_service import (
@@ -999,18 +999,15 @@ def get_fees(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
 # ── Tax report: per-lot realised gains + withholding ──────────────────────────
 
 
-@router.get("/tax-report")
-def get_tax_report(
-    year: Optional[int] = Query(None, description="Tax year (default current)"),
-    db=Depends(get_database),
-    api_key_info: dict = Depends(_auth),
-):
+def _build_tax_report_data(db, yr: int) -> dict:
     """Per-lot realised gains (FIFO) + dividend withholding summary for a year.
 
+    Pure data builder shared by the JSON endpoint and the PDF export below —
+    see the "One implementation backs both" convention used elsewhere in this
+    module (e.g. ``compute_exposure``) so the two representations can't drift.
     Reuses the FIFO engine in TaxCalculator. Amounts are in each transaction's
     own currency as stored; withholding sums the per-transaction ``tax`` field.
     """
-    yr = year or date.today().year
     start = date(yr, 1, 1)
     end = date(yr, 12, 31)
 
@@ -1083,6 +1080,53 @@ def get_tax_report(
             "the tax already paid at source on dividends and interest."
         ),
     }
+
+
+@router.get("/tax-report")
+def get_tax_report(
+    year: Optional[int] = Query(None, description="Tax year (default current)"),
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Per-lot realised gains (FIFO) + dividend withholding summary for a year."""
+    yr = year or date.today().year
+    return _build_tax_report_data(db, yr)
+
+
+@router.get("/tax-report/pdf")
+def get_tax_report_pdf(
+    year: Optional[int] = Query(None, description="Tax year (default current)"),
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Filing-ready Spanish IRPF tax report as a PDF.
+
+    Same data as ``GET /tax-report`` (so the two can't disagree), plus the
+    savings-base estimated tax from ``current_year_savings_components`` /
+    ``irpf_savings_tax`` — the same numbers the Tax Estimate tab shows.
+    """
+    from portf_manager.services.pdf_reports import build_tax_report_pdf
+
+    yr = year or date.today().year
+    data = _build_tax_report_data(db, yr)
+
+    try:
+        components = current_year_savings_components(db, year=yr)
+        estimated_tax = {
+            "savings_base_eur": round(components["savings_base_eur"], 2),
+            "estimated_tax_eur": irpf_savings_tax(components["savings_base_eur"]),
+        }
+    except Exception as e:
+        logger.warning(f"Tax report PDF: savings-base estimate failed: {e}")
+        estimated_tax = None
+
+    pdf_bytes = build_tax_report_pdf(data, estimated_tax)
+    filename = f"irpf_tax_report_{yr}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @router.get("/data-freshness")
