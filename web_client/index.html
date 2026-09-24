@@ -3041,6 +3041,11 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                 <i class="bi bi-shield-check me-1"></i>Data Quality
                             </button>
                         </li>
+                        <li class="nav-item">
+                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#diagLogs" id="diagTabLogs">
+                                <i class="bi bi-journal-text me-1"></i>Logs
+                            </button>
+                        </li>
                     </ul>
 
                     <div class="tab-content">
@@ -3146,6 +3151,29 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                             </div>
 
                         </div><!-- /diagDataQuality -->
+
+                        <!-- Logs tab: app_logs (warnings/errors + every LLM call) -->
+                        <div class="tab-pane fade" id="diagLogs">
+                            <div class="card">
+                                <div class="card-header d-flex flex-wrap gap-2 justify-content-between align-items-center">
+                                    <span><i class="bi bi-journal-text me-1"></i>Application log</span>
+                                    <select class="form-select form-select-sm w-auto" id="diagLogFilter" aria-label="Log filter">
+                                        <option value="problems">Warnings &amp; errors</option>
+                                        <option value="llm">LLM calls</option>
+                                        <option value="all">Everything</option>
+                                    </select>
+                                </div>
+                                <div class="card-body p-0">
+                                    <p class="text-muted small px-3 pt-2 mb-2">Kept for 30 days. LLM calls show provider, attempts and any errors, including retries that later succeeded.</p>
+                                    <div class="table-responsive">
+                                        <table class="table table-sm mb-0 align-middle">
+                                            <thead><tr><th>Time</th><th>Level</th><th>Source</th><th>What happened</th></tr></thead>
+                                            <tbody id="diagLogBody"><tr><td colspan="4" class="text-muted small p-3">Open this tab to load the log.</td></tr></tbody>
+                                        </table>
+                                    </div>
+                                </div>
+                            </div>
+                        </div><!-- /diagLogs -->
 
                     </div><!-- /tab-content -->
                 </div>

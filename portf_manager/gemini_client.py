@@ -3,10 +3,32 @@ from datetime import datetime
 from typing import List, Optional
 import logging
 
-from .llm_client import LLMClient, get_llm_client
+from .llm_client import LLMClient, LLMError, LLMResponseError, get_llm_client
 from .llm_types import LLMTransaction
 
 logger = logging.getLogger(__name__)
+
+
+def _json_from_reply(reply: str, what: str):
+    """Parse an LLM reply as JSON, tolerating a surrounding markdown fence.
+
+    Raises:
+        LLMResponseError: The reply isn't JSON. The message quotes only the
+            start of the reply, since it can echo the user's statement.
+    """
+    text = (reply or "").strip()
+    if text.startswith("```"):
+        text = "\n".join(
+            ln for ln in text.split("\n") if not ln.strip().startswith("```")
+        )
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        snippet = text[:120] + ("…" if len(text) > 120 else "")
+        raise LLMResponseError(
+            f"The model's reply to the {what} request wasn't valid JSON "
+            f"(starts: {snippet!r}). Try again, or a different model."
+        ) from None
 
 
 def _normalize_booking_date(raw: object) -> str:
@@ -87,19 +109,16 @@ class GeminiClient:
             text: Raw broker statement text
 
         Returns:
-            List of LLMTransaction objects extracted from the text
+            List of LLMTransaction objects extracted from the text. Rows that
+            fail validation are skipped.
+
+        Raises:
+            LLMError: The LLM call failed (after retries).
+            LLMResponseError: The reply wasn't JSON.
         """
-        try:
-            prompt = self._build_extraction_prompt(text)
-            response_text = self.llm.generate(prompt)
-
-            # Parse the JSON response
-            transactions = self._parse_response(response_text, text)
-            return transactions
-
-        except Exception as e:
-            logger.error(f"Error extracting transactions: {str(e)}")
-            return []
+        prompt = self._build_extraction_prompt(text)
+        response_text = self.llm.generate(prompt)
+        return self._parse_response(response_text, text)
 
     def _build_extraction_prompt(self, text: str) -> str:
         """
@@ -260,70 +279,39 @@ Now extract transactions from this broker statement:
             List of LLMTransaction objects
         """
         transactions = []
+        transaction_data = _json_from_reply(response_text, "transaction extraction")
 
-        try:
-            # Clean the response text to extract just the JSON
-            response_text = response_text.strip()
+        # Handle both single object and array responses
+        if isinstance(transaction_data, dict):
+            transaction_data = [transaction_data]
+        if not isinstance(transaction_data, list):
+            raise LLMResponseError(
+                "The model's reply to the transaction extraction request was "
+                f"JSON but not a list ({type(transaction_data).__name__})."
+            )
 
-            # Handle cases where the response might have markdown formatting
-            if response_text.startswith("```"):
-                lines = response_text.split("\n")
-                json_lines = []
-                in_json = False
+        for tx_dict in transaction_data:
+            try:
+                transaction = LLMTransaction(
+                    tx_type=tx_dict.get("tx_type", "").lower(),
+                    symbol=tx_dict.get("symbol", ""),
+                    asset_name=tx_dict.get("asset_name", ""),
+                    quantity=float(tx_dict.get("quantity", 0)),
+                    price=float(tx_dict.get("price", 0)),
+                    date=tx_dict.get("date", ""),
+                    currency=tx_dict.get("currency", ""),
+                    fees=float(tx_dict.get("fees", 0)),
+                    raw_text=tx_dict.get("raw_text", ""),
+                )
+            except (AttributeError, ValueError, TypeError) as e:
+                logger.warning(f"Skipping unreadable extracted transaction: {e}")
+                continue
 
-                for line in lines:
-                    if line.strip().startswith("```"):
-                        in_json = not in_json
-                        continue
-                    if in_json:
-                        json_lines.append(line)
-
-                response_text = "\n".join(json_lines)
-
-            # Parse the JSON
-            transaction_data = json.loads(response_text)
-
-            # Handle both single object and array responses
-            if isinstance(transaction_data, dict):
-                transaction_data = [transaction_data]
-
-            # Convert each dict to LLMTransaction
-            for tx_dict in transaction_data:
-                try:
-                    transaction = LLMTransaction(
-                        tx_type=tx_dict.get("tx_type", "").lower(),
-                        symbol=tx_dict.get("symbol", ""),
-                        asset_name=tx_dict.get("asset_name", ""),
-                        quantity=float(tx_dict.get("quantity", 0)),
-                        price=float(tx_dict.get("price", 0)),
-                        date=tx_dict.get("date", ""),
-                        currency=tx_dict.get("currency", ""),
-                        fees=float(tx_dict.get("fees", 0)),
-                        raw_text=tx_dict.get("raw_text", ""),
-                    )
-
-                    # Validate the transaction
-                    validation_error = transaction.validate()
-                    if validation_error:
-                        logger.warning(
-                            f"Transaction validation failed: {validation_error}"
-                        )
-                        continue
-
-                    transactions.append(transaction)
-
-                except (ValueError, TypeError) as e:
-                    logger.warning(
-                        f"Error converting transaction dict to LLMTransaction: {e}"
-                    )
-                    continue
-
-        except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON response: {e}")
-            logger.error(f"Response text: {response_text}")
-
-        except Exception as e:
-            logger.error(f"Unexpected error parsing response: {e}")
+            validation_error = transaction.validate()
+            if validation_error:
+                logger.warning(f"Transaction validation failed: {validation_error}")
+                continue
+            transactions.append(transaction)
 
         return transactions
 
@@ -418,50 +406,41 @@ Now extract cash movements from this text:
 
 {text}
 """
-        try:
-            response_text = self.llm.generate(prompt).strip()
-            if response_text.startswith("```"):
-                lines = response_text.split("\n")
-                response_text = "\n".join(
-                    ln for ln in lines if not ln.strip().startswith("```")
-                )
-            data = json.loads(response_text)
-            bookings = []
-            for item in data if isinstance(data, list) else []:
-                action = str(item.get("action", "")).strip().capitalize()
-                if action not in ("Deposit", "Withdrawal"):
-                    continue
-                try:
-                    amount = abs(float(item.get("amount")))
-                except (TypeError, ValueError):
-                    continue
-                if amount <= 0:
-                    continue
-                # A real cash movement with no date in the source text (e.g. a
-                # notification email with no body date) still gets returned,
-                # with an empty date the caller can prompt the user to fill in
-                # — mirrors how extracted transactions handle a blank date.
-                date_str = _normalize_booking_date(item.get("date"))
-                bookings.append(
-                    {
-                        "broker": item.get("broker") or None,
-                        "date": date_str,
-                        "action": action,
-                        "amount": amount,
-                        "currency": (item.get("currency") or "EUR").upper()[:3],
-                    }
-                )
-            return bookings
-        except Exception as e:
-            logger.error(f"Error extracting bookings: {str(e)}")
-            return []
+        data = _json_from_reply(self.llm.generate(prompt), "cash movement")
+        bookings = []
+        for item in data if isinstance(data, list) else []:
+            action = str(item.get("action", "")).strip().capitalize()
+            if action not in ("Deposit", "Withdrawal"):
+                continue
+            try:
+                amount = abs(float(item.get("amount")))
+            except (TypeError, ValueError):
+                continue
+            if amount <= 0:
+                continue
+            # A real cash movement with no date in the source text (e.g. a
+            # notification email with no body date) still gets returned,
+            # with an empty date the caller can prompt the user to fill in
+            # — mirrors how extracted transactions handle a blank date.
+            date_str = _normalize_booking_date(item.get("date"))
+            bookings.append(
+                {
+                    "broker": item.get("broker") or None,
+                    "date": date_str,
+                    "action": action,
+                    "amount": amount,
+                    "currency": (item.get("currency") or "EUR").upper()[:3],
+                }
+            )
+        return bookings
 
     def extract_deposits(self, text: str) -> list:
         """Extract fixed-deposit records from a bank statement or overview text.
 
         Returns a list of dicts with keys: name, principal, currency,
         interest_rate (annual %), start_date, maturity_date.
-        Returns [] on any failure.
+        Raises LLMError when the call fails and LLMResponseError when the
+        reply isn't JSON; malformed individual rows are skipped.
         """
         prompt = f"""
 You extract FIXED-TERM DEPOSITS (depósitos a plazo fijo) from a bank statement
@@ -494,33 +473,23 @@ Now extract deposits from this text:
 
 {text}
 """
-        try:
-            response_text = self.llm.generate(prompt).strip()
-            if response_text.startswith("```"):
-                lines = response_text.split("\n")
-                response_text = "\n".join(
-                    ln for ln in lines if not ln.strip().startswith("```")
+        data = _json_from_reply(self.llm.generate(prompt), "deposit")
+        deposits = []
+        for item in data if isinstance(data, list) else []:
+            try:
+                deposits.append(
+                    {
+                        "name": str(item.get("name", "")).strip(),
+                        "principal": float(item.get("principal", 0)),
+                        "currency": str(item.get("currency", "EUR")).upper(),
+                        "interest_rate": float(item.get("interest_rate", 0)),
+                        "start_date": str(item.get("start_date", "")),
+                        "maturity_date": str(item.get("maturity_date", "")),
+                    }
                 )
-            data = json.loads(response_text)
-            deposits = []
-            for item in data if isinstance(data, list) else []:
-                try:
-                    deposits.append(
-                        {
-                            "name": str(item.get("name", "")).strip(),
-                            "principal": float(item.get("principal", 0)),
-                            "currency": str(item.get("currency", "EUR")).upper(),
-                            "interest_rate": float(item.get("interest_rate", 0)),
-                            "start_date": str(item.get("start_date", "")),
-                            "maturity_date": str(item.get("maturity_date", "")),
-                        }
-                    )
-                except (TypeError, ValueError):
-                    continue
-            return deposits
-        except Exception:
-            logger.exception("extract_deposits failed")
-            return []
+            except (TypeError, ValueError):
+                continue
+        return deposits
 
     def chat(self, prompt: str) -> str:
         """
@@ -537,5 +506,7 @@ Now extract deposits from this text:
         """
         try:
             return self.llm.generate(prompt)
+        except LLMError:
+            raise
         except Exception as e:
             raise RuntimeError(f"Chat generation failed: {str(e)}")

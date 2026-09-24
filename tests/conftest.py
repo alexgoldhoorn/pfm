@@ -42,6 +42,12 @@ def _isolated_home(tmp_path_factory, monkeypatch):
     return home
 
 
+@pytest.fixture(autouse=True)
+def _no_llm_retry_sleep(monkeypatch):
+    """LLM retries keep their attempts but don't wait between them."""
+    monkeypatch.setenv("PORTF_LLM_RETRY_DELAY", "0")
+
+
 class RealNetworkCall(ConnectionError):
     """Raised in place of a real outbound HTTP request during tests."""
 

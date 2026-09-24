@@ -1,4 +1,4 @@
-"""System administration endpoints: DB restore."""
+"""System administration endpoints: DB restore and the application log."""
 
 import contextlib
 import gzip
@@ -8,7 +8,9 @@ import sqlite3
 import tempfile
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from typing import Literal, Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 
 from portf_manager.database import DATABASE_VERSION, Database
 from ..dependencies import get_database
@@ -33,6 +35,32 @@ def _auto_backup(db: Database, backup_dir: str) -> str | None:
         with dst:
             src.backup(dst)
     return out
+
+
+@router.get("/logs")
+def list_logs(
+    limit: int = Query(200, ge=1, le=1000),
+    level: Optional[Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]] = Query(
+        None, description="Lowest level to include, e.g. WARNING"
+    ),
+    event: Optional[str] = Query(
+        None, description="Event name, or a prefix ending in * (llm.*)"
+    ),
+    source: Optional[str] = Query(None, description="Logger-name prefix"),
+    db: Database = Depends(get_database),
+) -> dict:
+    """Recent application log entries, newest first.
+
+    Holds pfm warnings/errors and every LLM call (``event="llm.call"``, with
+    provider, model, attempts, duration and errors in ``details``).
+    """
+    if not hasattr(db, "list_logs"):
+        raise HTTPException(
+            status_code=501, detail="This database backend has no log store"
+        )
+    return {
+        "items": db.list_logs(limit=limit, min_level=level, event=event, source=source)
+    }
 
 
 @router.post("/restore")

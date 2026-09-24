@@ -295,7 +295,7 @@ def get_portfolio_analysis(
     except Exception as e:
         logger.error(f"LLM call failed for portfolio analysis: {e}")
         return {
-            "error": "Analysis unavailable — LLM error. Try again.",
+            "error": f"Analysis unavailable: {e}",
             "data_warnings": data_warnings,
         }
 
@@ -418,6 +418,11 @@ def generate_report(
         fundamentals=fundamentals,
         news=news,
     )
+
+    if result.get("error"):
+        raise HTTPException(
+            status_code=502, detail=f"Analysis for {sym} failed: {result['error']}"
+        )
 
     # Cache the LLM report only for assets we actually hold/track.
     if asset:
@@ -856,8 +861,8 @@ def _run_bulk_research_refresh(db) -> None:
                     _BULK_RESEARCH["results"].append(
                         {
                             "symbol": sym,
-                            "status": "no_data",
-                            "detail": result.get("summary", ""),
+                            "status": "failed" if result.get("error") else "no_data",
+                            "detail": result.get("error") or result.get("summary", ""),
                         }
                     )
                     continue

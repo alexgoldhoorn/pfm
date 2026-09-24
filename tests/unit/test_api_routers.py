@@ -380,6 +380,17 @@ class _FakeLLM:
         return self.reply
 
 
+class _FailingLLM:
+    """A provider that is down: every call raises LLMError after 3 attempts."""
+
+    model_name = "test-model"
+
+    def generate(self, prompt: str) -> str:
+        from portf_manager.llm_client import LLMError
+
+        raise LLMError("Test", self.model_name, "generate", 3, RuntimeError("503"))
+
+
 class TestLLMRouter:
     """LLM endpoints, with the provider replaced by a fake (no API calls)."""
 
@@ -416,7 +427,7 @@ class TestLLMRouter:
         assert text in fake.prompts[0]
 
     @pytest.mark.asyncio
-    async def test_extract_transactions_unparseable_reply_is_empty(
+    async def test_extract_transactions_unparseable_reply_is_502(
         self, async_test_client: AsyncClient, auth_headers, monkeypatch
     ):
         fake = _FakeLLM("sorry, I can't help with that")
@@ -428,8 +439,141 @@ class TestLLMRouter:
             headers=auth_headers,
         )
 
+        assert response.status_code == status.HTTP_502_BAD_GATEWAY
+        assert "wasn't valid JSON" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "path,label",
+        [
+            ("/api/v1/llm/extract-transactions", "Transaction extraction"),
+            ("/api/v1/llm/extract-bookings", "Cash movement extraction"),
+            ("/api/v1/llm/extract-deposits", "Deposit extraction"),
+        ],
+    )
+    async def test_provider_failure_is_502_with_the_reason(
+        self, async_test_client: AsyncClient, auth_headers, monkeypatch, path, label
+    ):
+        monkeypatch.setattr(
+            "portf_server.routers.llm.get_llm_client", lambda: _FailingLLM()
+        )
+
+        response = await async_test_client.post(
+            path, json={"text": "statement"}, headers=auth_headers
+        )
+
+        assert response.status_code == status.HTTP_502_BAD_GATEWAY
+        detail = response.json()["detail"]
+        assert detail.startswith(f"{label} failed:")
+        assert "after 3 attempts" in detail and "503" in detail
+
+    def test_async_extraction_job_reports_the_failure(self, monkeypatch):
+        from portf_server.routers import llm as llm_router
+
+        monkeypatch.setattr(llm_router, "get_llm_client", lambda: _FailingLLM())
+        llm_router._EXTRACT_JOBS["job1"] = {"status": "pending"}
+        try:
+            llm_router._run_extraction_job("job1", "statement")
+            job = llm_router._EXTRACT_JOBS["job1"]
+            assert job["status"] == "error"
+            assert "Extraction failed" in job["error"] and "503" in job["error"]
+        finally:
+            llm_router._EXTRACT_JOBS.pop("job1", None)
+
+    @pytest.mark.asyncio
+    async def test_chat_llm_failure_is_502_and_leaves_history_clean(
+        self, async_test_client: AsyncClient, auth_headers, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "portf_server.routers.llm.get_llm_client", lambda: _FailingLLM()
+        )
+        monkeypatch.setattr("portf_server.routers.llm._enhanced_chat_engine", None)
+        created = await async_test_client.post(
+            "/api/v1/llm/chat/sessions", json={"name": "t"}, headers=auth_headers
+        )
+        session_id = created.json()["id"]
+
+        response = await async_test_client.post(
+            "/api/v1/llm/chat",
+            json={"message": "hello there", "session_id": session_id},
+            headers=auth_headers,
+        )
+
+        assert response.status_code == status.HTTP_502_BAD_GATEWAY
+        assert "failed after 3 attempts" in response.json()["detail"]
+        history = await async_test_client.get(
+            f"/api/v1/llm/chat/sessions/{session_id}/messages", headers=auth_headers
+        )
+        # No canned apology stored as if the assistant had said it
+        assert history.json() == {"messages": []}
+
+    def test_symbol_extraction_skips_pronouns_and_acronyms(self, monkeypatch):
+        from portf_server.routers.llm import EnhancedChatEngine
+
+        monkeypatch.setattr(
+            "portf_server.routers.llm.get_llm_client", lambda: _FakeLLM("x")
+        )
+        engine = EnhancedChatEngine()
+        message = (
+            "What do I own? A question: is my ETF in EUR better than AAPL or MSFT?"
+        )
+        assert engine._extract_symbols(message) == ["AAPL", "MSFT"]
+
+    @pytest.mark.asyncio
+    async def test_chat_answer_is_returned_and_saved(
+        self, async_test_client: AsyncClient, auth_headers, monkeypatch
+    ):
+        fake = _FakeLLM("You hold nothing yet.")
+        monkeypatch.setattr("portf_server.routers.llm.get_llm_client", lambda: fake)
+        monkeypatch.setattr("portf_server.routers.llm._enhanced_chat_engine", None)
+
+        response = await async_test_client.post(
+            "/api/v1/llm/chat", json={"message": "what do I own?"}, headers=auth_headers
+        )
+
         assert response.status_code == status.HTTP_200_OK
-        assert response.json() == {"transactions": [], "count": 0}
+        data = response.json()
+        assert data["answer"] == "You hold nothing yet."
+        history = await async_test_client.get(
+            f"/api/v1/llm/chat/sessions/{data['session_id']}/messages",
+            headers=auth_headers,
+        )
+        assert [(m["role"], m["content"]) for m in history.json()["messages"]] == [
+            ("user", "what do I own?"),
+            ("assistant", "You hold nothing yet."),
+        ]
+
+    @pytest.mark.asyncio
+    async def test_chat_tool_follow_up_failure_is_502_not_a_data_dump(
+        self, async_test_client: AsyncClient, auth_headers, monkeypatch
+    ):
+        from portf_manager.llm_client import (
+            LLMError,
+            ToolCallRequest,
+            ToolResponse,
+        )
+
+        class ToolLLM(_FakeLLM):
+            def generate_with_tools(self, messages, tools):
+                return ToolResponse(tool_call=ToolCallRequest("get_brokers", {}, "c1"))
+
+            def complete_with_tool_result(self, messages, call, result, tools=None):
+                raise LLMError("Test", "m", "complete_with_tool_result", 3, "503")
+
+        monkeypatch.setattr(
+            "portf_server.routers.llm.get_llm_client", lambda: ToolLLM("unused")
+        )
+        monkeypatch.setattr("portf_server.routers.llm._enhanced_chat_engine", None)
+
+        response = await async_test_client.post(
+            "/api/v1/llm/chat", json={"message": "brokers?"}, headers=auth_headers
+        )
+
+        assert response.status_code == status.HTTP_502_BAD_GATEWAY
+        assert (
+            "complete_with_tool_result failed after 3 attempts"
+            in response.json()["detail"]
+        )
 
     @pytest.mark.asyncio
     async def test_chat_without_provider_is_503(

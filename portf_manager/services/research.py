@@ -449,10 +449,12 @@ Be concise and data-driven. If this is a crypto, ETF, or P2P asset where DCF doe
         return report
     except Exception as e:
         logger.error(f"LLM valuation failed for {symbol}: {e}")
+        # No recommendation on failure: a placeholder "HOLD" read as advice
         return {
+            "error": str(e),
             "fair_value": None,
-            "recommendation": "HOLD",
-            "confidence": "low",
+            "recommendation": None,
+            "confidence": None,
             "summary": f"Could not generate automated analysis for {symbol}: {e}",
             "rationale": "",
             "risks": [],
