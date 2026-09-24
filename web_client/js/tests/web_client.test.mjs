@@ -946,3 +946,49 @@ test('budgetNetBreakdown: tolerates a missing payload', () => {
     assert.equal(budgetNetBreakdown(null).cashFlow, 0);
     assert.equal(budgetNetBreakdown({}).kept, 0);
 });
+
+test("errorDetailFromBody reads FastAPI detail, validation lists and plain text", () => {
+    const w = loadAppIntoContext();
+    const f = w.errorDetailFromBody;
+    assert.equal(
+        f('{"detail":"Gemini (m) generate failed after 3 attempts: timed out"}'),
+        "Gemini (m) generate failed after 3 attempts: timed out"
+    );
+    assert.equal(f('{"detail":[{"msg":"field required"},{"msg":"bad"}]}'), "field required; bad");
+    assert.equal(f("Bad Gateway"), "Bad Gateway");
+    assert.equal(f("", "Chat failed"), "Chat failed");
+    assert.equal(f(null, "x"), "x");
+    assert.ok(f("y".repeat(500)).endsWith("…"));
+});
+
+test("logEntrySummary describes LLM calls with attempts and errors", () => {
+    const w = loadAppIntoContext();
+    const s = w.logEntrySummary({
+        level: "WARNING",
+        event: "llm.call",
+        message: "raw",
+        details: {
+            provider: "Gemini", operation: "generate", model: "gemini-2.5-flash",
+            outcome: "succeeded after retry", attempts: 2, duration_ms: 812,
+            errors: ["Timeout: read timed out"],
+        },
+    });
+    assert.equal(s.badge, "bg-warning text-dark");
+    assert.equal(
+        s.text,
+        "Gemini generate (gemini-2.5-flash) — succeeded after retry, 2 attempts, 812 ms"
+    );
+    assert.deepEqual([...s.extra], ["Timeout: read timed out"]);
+});
+
+test("logEntrySummary falls back to the message and exception", () => {
+    const w = loadAppIntoContext();
+    const s = w.logEntrySummary({
+        level: "error", message: "price fetch failed", details: { exception: "ValueError('x')" },
+    });
+    assert.equal(s.level, "ERROR");
+    assert.equal(s.badge, "bg-danger");
+    assert.equal(s.text, "price fetch failed");
+    assert.deepEqual([...s.extra], ["ValueError('x')"]);
+    assert.equal(w.logEntrySummary({ level: "INFO", message: "m" }).badge, "bg-secondary");
+});

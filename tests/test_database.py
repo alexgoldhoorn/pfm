@@ -50,7 +50,7 @@ class TestDatabase:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             result = cursor.fetchone()
-            assert result[0] == 30  # Current schema version
+            assert result[0] == 31  # Current schema version
 
     def test_v18_assets_have_ticker_column(self):
         """v18 adds the nullable ticker alias column to assets."""
@@ -1048,7 +1048,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 30
+            assert version == 31
 
             # Assert columns exist
             for table in ["entities", "portfolios", "transactions"]:
@@ -1078,7 +1078,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 30
+            assert version == 31
 
             # Check all tables exist
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -1149,7 +1149,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 30
+            assert version == 31
 
             # Check new tables exist
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -1615,7 +1615,7 @@ class TestSpendingCategories:
                         "SELECT name FROM sqlite_master WHERE type = 'table'"
                     )
                 }
-            assert version == 30
+            assert version == 31
             assert {"budgets", "budget_lines"} <= tables
 
             # Pre-existing spending data is untouched by the upgrade.
@@ -1946,4 +1946,4 @@ class TestFundProfilesV30:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             ).fetchone()[0]
         assert row is not None
-        assert version == 30
+        assert version == 31

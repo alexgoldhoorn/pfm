@@ -19,6 +19,12 @@ Required API keys:
   OPENROUTER_API_KEY / PORTF_OPENROUTER_API_KEY           — for OpenRouter
   ANTHROPIC_API_KEY                                        — for Anthropic
 
+Reliability (every provider, however it was constructed):
+  PORTF_LLM_MAX_ATTEMPTS  — attempts per call for transient failures (default 3)
+  PORTF_LLM_RETRY_DELAY   — first backoff in seconds, doubling each retry (default 2)
+  A call that still fails raises LLMError naming provider, model, attempts and
+  cause. Each call is logged once as an "llm.call" event (see event_log.py).
+
 Default auto-detection order (provider=auto):
   1. Ollama on localhost:11434 — no API key needed
   2. Gemini   — if GEMINI_API_KEY is set
@@ -26,10 +32,14 @@ Default auto-detection order (provider=auto):
   4. Anthropic  — if ANTHROPIC_API_KEY is set
 """
 
+import functools
 import os
 import logging
+import re
+import threading
+import time
 from dataclasses import dataclass
-from typing import Optional, Protocol, runtime_checkable
+from typing import Callable, List, Optional, Protocol, runtime_checkable
 
 import requests
 
@@ -112,6 +122,212 @@ class ToolCapableLLMClient(LLMClient, Protocol):
     ) -> str:
         """Second pass: given tool result, return final answer string."""
         ...
+
+
+class LLMError(RuntimeError):
+    """An LLM call failed, after retries where the failure looked transient.
+
+    Attributes:
+        provider: Provider name, e.g. "Gemini".
+        model: Model name the client was configured with.
+        operation: Client method, e.g. "generate".
+        attempts: How many attempts were made.
+        cause: The last underlying exception.
+    """
+
+    def __init__(
+        self,
+        provider: str,
+        model: str,
+        operation: str,
+        attempts: int,
+        cause: Exception,
+    ):
+        self.provider = provider
+        self.model = model
+        self.operation = operation
+        self.attempts = attempts
+        self.cause = cause
+        plural = "s" if attempts != 1 else ""
+        super().__init__(
+            f"{provider} ({model}) {operation} failed after {attempts} "
+            f"attempt{plural}: {cause}"
+        )
+
+
+class LLMResponseError(RuntimeError):
+    """The LLM answered, but its reply couldn't be used (e.g. not valid JSON)."""
+
+
+_TRANSIENT_STATUS = {408, 425, 429, 500, 502, 503, 504, 529}
+_TRANSIENT_STATUS_RE = re.compile(
+    r"\b(" + "|".join(str(c) for c in sorted(_TRANSIENT_STATUS)) + r")\b"
+)
+_TRANSIENT_WORDS = (
+    "timed out",
+    "timeout",
+    "cannot connect",
+    "connection",
+    "temporarily",
+    "unavailable",
+    "overloaded",
+    "rate limit",
+    "resource_exhausted",
+    "empty response",
+)
+
+
+def _status_of(exc: Exception) -> Optional[int]:
+    """HTTP status carried by an SDK or requests exception, if any."""
+    for attr in ("status_code", "code", "status"):
+        value = getattr(exc, attr, None)
+        if isinstance(value, int):
+            return value
+    response = getattr(exc, "response", None)
+    value = getattr(response, "status_code", None)
+    return value if isinstance(value, int) else None
+
+
+def is_transient_llm_error(exc: Exception) -> bool:
+    """True when retrying could help: timeouts, connection errors, 429 and 5xx.
+
+    Configuration and request errors (a missing key, a 400/401/403) are not
+    retried; they fail the same way every time.
+    """
+    if isinstance(exc, (ValueError, ImportError, TypeError, KeyError)):
+        return False
+    status = _status_of(exc)
+    if status is not None:
+        return status in _TRANSIENT_STATUS
+    if isinstance(
+        exc,
+        (requests.ConnectionError, requests.Timeout, TimeoutError, ConnectionError),
+    ):
+        return True
+    msg = str(exc).lower()
+    return any(word in msg for word in _TRANSIENT_WORDS) or bool(
+        _TRANSIENT_STATUS_RE.search(msg)
+    )
+
+
+_INSTRUMENTED_METHODS = (
+    "generate",
+    "generate_with_search",
+    "generate_with_tools",
+    "complete_with_tool_result",
+)
+_call_depth = threading.local()
+
+
+def _provider_name(client: object) -> str:
+    return type(client).__name__.replace("LLMClient", "") or type(client).__name__
+
+
+def _call_with_retry(client: object, operation: str, fn: Callable, args, kwargs):
+    """Run one provider call with retries, logging a single llm.call event."""
+    max_attempts = max(1, int(os.getenv("PORTF_LLM_MAX_ATTEMPTS", "3")))
+    delay = float(os.getenv("PORTF_LLM_RETRY_DELAY", "2"))
+    provider = _provider_name(client)
+    model = getattr(client, "model_name", "?")
+    errors: List[str] = []
+    started = time.monotonic()
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            result = fn(client, *args, **kwargs)
+        except Exception as exc:
+            errors.append(f"{type(exc).__name__}: {exc}")
+            if attempt < max_attempts and is_transient_llm_error(exc):
+                logger.info(
+                    "%s %s attempt %d/%d failed, retrying in %.1fs: %s",
+                    provider,
+                    operation,
+                    attempt,
+                    max_attempts,
+                    delay,
+                    exc,
+                )
+                time.sleep(delay)
+                delay *= 2
+                continue
+            _log_llm_call(
+                logging.ERROR, provider, model, operation, attempt, started, errors
+            )
+            raise LLMError(provider, model, operation, attempt, exc) from exc
+        level = logging.WARNING if attempt > 1 else logging.INFO
+        _log_llm_call(level, provider, model, operation, attempt, started, errors)
+        return result
+
+
+def _log_llm_call(
+    level: int,
+    provider: str,
+    model: str,
+    operation: str,
+    attempts: int,
+    started: float,
+    errors: List[str],
+) -> None:
+    if level >= logging.ERROR:
+        outcome = "failed"
+    elif attempts > 1:
+        outcome = "succeeded after retry"
+    else:
+        outcome = "ok"
+    duration_ms = int((time.monotonic() - started) * 1000)
+    logger.log(
+        level,
+        "LLM %s %s %s (%d attempt%s, %d ms)",
+        provider,
+        operation,
+        outcome,
+        attempts,
+        "s" if attempts != 1 else "",
+        duration_ms,
+        extra={
+            "pfm_event": "llm.call",
+            "pfm_details": {
+                "provider": provider,
+                "model": model,
+                "operation": operation,
+                "outcome": outcome,
+                "attempts": attempts,
+                "duration_ms": duration_ms,
+                "errors": errors,
+            },
+        },
+    )
+
+
+def _instrument(cls: type) -> type:
+    """Wrap a provider's LLM methods with retry and llm.call logging.
+
+    Only methods the class defines are wrapped, so ``hasattr(client,
+    "generate_with_search")`` still tells providers apart. A call made from
+    inside another instrumented call (Gemini's search falling back to
+    ``generate``) runs unwrapped, so it isn't retried or logged twice.
+    """
+    for name in _INSTRUMENTED_METHODS:
+        original = cls.__dict__.get(name)
+        if original is None:
+            continue
+
+        def make(original: Callable, name: str) -> Callable:
+            @functools.wraps(original)
+            def wrapper(self, *args, **kwargs):
+                if getattr(_call_depth, "n", 0):
+                    return original(self, *args, **kwargs)
+                _call_depth.n = 1
+                try:
+                    return _call_with_retry(self, name, original, args, kwargs)
+                finally:
+                    _call_depth.n = 0
+
+            return wrapper
+
+        setattr(cls, name, make(original, name))
+    return cls
 
 
 class GeminiLLMClient:
@@ -937,6 +1153,15 @@ class AnthropicLLMClient:
             if getattr(block, "type", None) == "text":
                 text = block.text
         return text
+
+
+for _provider_cls in (
+    GeminiLLMClient,
+    OllamaLLMClient,
+    OpenRouterLLMClient,
+    AnthropicLLMClient,
+):
+    _instrument(_provider_cls)
 
 
 # Singleton cache

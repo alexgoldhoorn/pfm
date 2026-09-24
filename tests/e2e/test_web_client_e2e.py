@@ -145,6 +145,22 @@ def test_every_page_renders_without_errors(page, server_url):
         assert page.errors == [], f"on page '{name}'"
 
 
+def test_logs_tab_loads_from_the_real_api(page, server_url):
+    page.goto(f"{server_url}/index.html")
+    page.wait_for_load_state("networkidle")
+    page.locator(
+        "#appShell .sidebar-nav-link[data-page='diagnostics']"
+    ).first.dispatch_event("click")
+    # Tab switching is stubbed, so load the pane directly (same call the tab makes)
+    page.evaluate("loadLogsTab()")
+    page.wait_for_function(
+        "!document.getElementById('diagLogBody').textContent.includes('Loading')"
+    )
+    text = page.locator("#diagLogBody").inner_text()
+    assert "Could not load" not in text
+    assert page.errors == []
+
+
 def test_bad_api_key_keeps_app_hidden(browser, server_url):
     context = browser.new_context()
     context.add_init_script("localStorage.setItem('apiKey', 'wrong-key');")

@@ -1016,6 +1016,84 @@ window.downloadGenericTemplate = downloadGenericTemplate;
 // Diagnostics page: price-data freshness + the daily update-run history.
 // Surfaces *why* a price may be stale (no Yahoo data vs. just old) and what
 // the cron actually did, so it isn't lost to stdout.
+// Readable message from an error response body: FastAPI's {"detail": ...}
+// (a string, or a list of validation errors), else the raw text.
+function errorDetailFromBody(text, fallback = 'Request failed') {
+    const raw = String(text == null ? '' : text).trim();
+    if (!raw) return fallback;
+    try {
+        const body = JSON.parse(raw);
+        const detail = body && body.detail;
+        if (typeof detail === 'string' && detail) return detail;
+        if (Array.isArray(detail) && detail.length) {
+            return detail.map(d => (d && d.msg) || JSON.stringify(d)).join('; ');
+        }
+    } catch (e) {
+        // Not JSON: fall through to the raw text
+    }
+    return raw.length > 300 ? raw.slice(0, 300) + '…' : raw;
+}
+window.errorDetailFromBody = errorDetailFromBody;
+
+// One app_logs row → badge class, headline and extra lines for the Logs tab.
+// LLM calls read as "Gemini generate (model) — failed, 3 attempts, 5210 ms".
+function logEntrySummary(entry) {
+    const d = (entry && entry.details) || {};
+    const level = String((entry && entry.level) || 'INFO').toUpperCase();
+    const badge = (level === 'ERROR' || level === 'CRITICAL') ? 'bg-danger'
+        : level === 'WARNING' ? 'bg-warning text-dark' : 'bg-secondary';
+    let text = (entry && entry.message) || '';
+    if (entry && entry.event === 'llm.call') {
+        const attempts = d.attempts || 1;
+        text = `${d.provider || 'LLM'} ${d.operation || 'call'} (${d.model || '?'}) — `
+            + `${d.outcome || '?'}, ${attempts} attempt${attempts === 1 ? '' : 's'}`
+            + (d.duration_ms != null ? `, ${d.duration_ms} ms` : '');
+    }
+    let extra = Array.isArray(d.errors) ? d.errors.slice() : [];
+    if (!extra.length && d.exception) extra = [d.exception];
+    return { level, badge, text, extra };
+}
+window.logEntrySummary = logEntrySummary;
+
+async function loadLogsTab() {
+    const body = document.getElementById('diagLogBody');
+    const filter = document.getElementById('diagLogFilter');
+    if (!body) return;
+    if (filter && !filter._wired) {
+        filter._wired = true;
+        filter.addEventListener('change', () => loadLogsTab());
+    }
+    const mode = filter ? filter.value : 'problems';
+    const params = mode === 'llm' ? { event: 'llm.call' }
+        : mode === 'problems' ? { level: 'WARNING' } : {};
+    body.innerHTML = '<tr><td colspan="4" class="text-muted small p-3">Loading…</td></tr>';
+    let items;
+    try {
+        items = (await window.apiClient.getLogs(params)).items || [];
+    } catch (e) {
+        body.innerHTML = `<tr><td colspan="4" class="text-danger small p-3">Could not load the log: ${esc(e.message)}</td></tr>`;
+        return;
+    }
+    if (!items.length) {
+        body.innerHTML = '<tr><td colspan="4" class="text-muted small p-3">Nothing logged for this filter in the last 30 days.</td></tr>';
+        return;
+    }
+    body.innerHTML = items.map(entry => {
+        const s = logEntrySummary(entry);
+        const when = entry.created_at ? new Date(entry.created_at).toLocaleString() : '';
+        const source = String(entry.source || '').replace(/^portf_(manager|server)\./, '');
+        const extra = s.extra.length
+            ? `<details class="small text-muted mt-1"><summary>${s.extra.length} error${s.extra.length === 1 ? '' : 's'}</summary>`
+              + s.extra.map(x => `<div class="font-monospace text-break">${esc(x)}</div>`).join('') + '</details>'
+            : '';
+        return `<tr><td class="small text-nowrap">${esc(when)}</td>`
+            + `<td><span class="badge ${s.badge}">${esc(s.level)}</span></td>`
+            + `<td class="small text-muted">${esc(source)}</td>`
+            + `<td class="small">${esc(s.text)}${extra}</td></tr>`;
+    }).join('');
+}
+window.loadLogsTab = loadLogsTab;
+
 async function loadDiagnosticsPage() {
     const freshBox = document.getElementById('diagFreshness');
     const staleBody = document.getElementById('diagStaleBody');
@@ -1031,7 +1109,10 @@ async function loadDiagnosticsPage() {
         refreshBtn.addEventListener('click', () => {
             const dqPane = document.getElementById('diagDataQuality');
             const dqActive = dqPane && dqPane.classList.contains('active');
-            if (dqActive) {
+            const logPane = document.getElementById('diagLogs');
+            if (logPane && logPane.classList.contains('active')) {
+                loadLogsTab();
+            } else if (dqActive) {
                 _dqLoaded = false;
                 loadDataQualityTab();
             } else {
@@ -1050,13 +1131,23 @@ async function loadDiagnosticsPage() {
         dqTabBtn.addEventListener('shown.bs.tab', () => loadDataQualityTab());
     }
 
+    const logTabBtn = document.getElementById('diagTabLogs');
+    if (logTabBtn && !logTabBtn._logWired) {
+        logTabBtn._logWired = true;
+        logTabBtn.addEventListener('shown.bs.tab', () => loadLogsTab());
+    }
+
     // Restore last active tab, or ensure Price Health is active (nav clearing may have
     // stripped the active class from both tab buttons).
     const lastTab = localStorage.getItem('pfmDiagTab');
     const dqBtn2  = document.getElementById('diagTabDQ');
     const phBtn   = document.getElementById('diagTabPrice');
     const dqPane  = document.getElementById('diagDataQuality');
-    if (lastTab === 'dq' && dqBtn2 && window.bootstrap) {
+    const logPane = document.getElementById('diagLogs');
+    if (lastTab === 'logs' && logTabBtn && window.bootstrap) {
+        if (logPane && logPane.classList.contains('active')) loadLogsTab();
+        else new window.bootstrap.Tab(logTabBtn).show();
+    } else if (lastTab === 'dq' && dqBtn2 && window.bootstrap) {
         if (dqPane && dqPane.classList.contains('active')) {
             // Pane already visible; shown.bs.tab won't fire — load directly.
             loadDataQualityTab();
@@ -1071,7 +1162,8 @@ async function loadDiagnosticsPage() {
     // Persist active tab to localStorage on switch
     document.querySelectorAll('#diagTabs button[data-bs-toggle="tab"]').forEach(btn => {
         btn.addEventListener('shown.bs.tab', () => {
-            localStorage.setItem('pfmDiagTab', btn.id === 'diagTabDQ' ? 'dq' : 'price');
+            const tab = btn.id === 'diagTabDQ' ? 'dq' : btn.id === 'diagTabLogs' ? 'logs' : 'price';
+            localStorage.setItem('pfmDiagTab', tab);
         });
     });
 
@@ -1851,8 +1943,7 @@ function createAPIClient() {
                 body: JSON.stringify({ text })
             });
             if (!response.ok) {
-                const err = await response.text();
-                throw new Error(`Extraction failed: ${err}`);
+                throw new Error(errorDetailFromBody(await response.text(), 'Extraction failed'));
             }
             return response.json();
         },
@@ -2277,8 +2368,18 @@ function createAPIClient() {
                 body: JSON.stringify({ message, session_id: sessionId, live: false })
             });
             if (!response.ok) {
-                const err = await response.text();
-                throw new Error(`Chat failed: ${err}`);
+                throw new Error(errorDetailFromBody(await response.text(), 'Chat failed'));
+            }
+            return response.json();
+        },
+
+        async getLogs(params = {}) {
+            const qs = new URLSearchParams({ limit: '200', ...params }).toString();
+            const response = await fetch(this.baseURL + '/api/v1/system/logs?' + qs, {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) {
+                throw new Error(errorDetailFromBody(await response.text(), 'Failed to load logs'));
             }
             return response.json();
         },
@@ -2773,7 +2874,7 @@ function createAPIClient() {
                 method: 'POST',
                 headers: { 'X-API-Key': this.apiKey }
             });
-            if (!resp.ok) throw new Error(await resp.text());
+            if (!resp.ok) throw new Error(errorDetailFromBody(await resp.text(), 'Analysis failed'));
             return resp.json();
         },
 
