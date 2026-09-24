@@ -42,6 +42,25 @@ const Fmt = {
     },
     // Wrap money text so the privacy toggle can blur it (hover to reveal).
     amt(text) { return `<span class="pfm-amt">${text}</span>`; },
+    // The one money formatter: locale-aware symbol and placement ("€1.234,50"
+    // or "1.234,50 €" per the number-locale setting, "$12.00", "£3.10").
+    // Codes Intl doesn't know (crypto tickers, GBX) fall back to "12.00 XYZ".
+    // decimals: fixed digits (default 2). Returns plain text; wrap in
+    // Fmt.amt() for privacy blur, but never inside an HTML attribute.
+    money(v, currency, decimals) {
+        if (v === null || v === undefined || v === '' || isNaN(parseFloat(v))) return '—';
+        const n = parseFloat(v);
+        const d = decimals != null ? decimals : 2;
+        const cur = String(currency || 'EUR').toUpperCase();
+        if (/^[A-Z]{3}$/.test(cur) && cur !== 'GBX') {
+            try {
+                return n.toLocaleString(this.loc(), { style: 'currency', currency: cur, minimumFractionDigits: d, maximumFractionDigits: d });
+            } catch (e) { /* unknown code: fall through */ }
+        }
+        // Codes come from imported data: escape before they reach innerHTML.
+        const safe = cur.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        return `${this.num(n, d, d)} ${safe}`;
+    },
     date(s) {
         if (!s) return '';
         const str = String(s);
@@ -338,22 +357,8 @@ function vizTypeLabel(type) {
 
 // Whole-euro, locale-aware ("192.777 €" / "€192,777"). KPIs and legends
 // don't need cents; the exact figure goes in the title/tooltip.
-function fmtEurWhole(v) {
-    const n = parseFloat(v) || 0;
-    try {
-        return n.toLocaleString(Fmt.loc(), { style: 'currency', currency: 'EUR', maximumFractionDigits: 0, minimumFractionDigits: 0 });
-    } catch (e) {
-        return '€' + Math.round(n).toLocaleString();
-    }
-}
-function fmtEurCents(v) {
-    const n = parseFloat(v) || 0;
-    try {
-        return n.toLocaleString(Fmt.loc(), { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2 });
-    } catch (e) {
-        return '€' + n.toFixed(2);
-    }
-}
+function fmtEurWhole(v) { return Fmt.money(parseFloat(v) || 0, 'EUR', 0); }
+function fmtEurCents(v) { return Fmt.money(parseFloat(v) || 0, 'EUR', 2); }
 
 // Sort [key, value] entries descending and fold everything past maxSlices
 // into one "other" slice, so a donut never grows a 9th generated colour.
@@ -488,6 +493,38 @@ function attachLineHover(svg, opts) {
     };
     const leave = () => { g.setAttribute('display', 'none'); chartTip.hide(); };
     overlay.addEventListener('mousemove', e => move(e.clientX, e.clientY));
+    // Keyboard: the chart takes focus and ←/→ (Home/End) step through points.
+    let kbIdx = opts.xs.length - 1;
+    const showAt = (i) => {
+        kbIdx = Math.max(0, Math.min(opts.xs.length - 1, i));
+        const rect = svg.getBoundingClientRect();
+        const px = rect.left + opts.xs[kbIdx] * (rect.width / opts.W);
+        const y0 = (opts.series && opts.series[0]) ? opts.series[0].y(kbIdx) : opts.top;
+        const py = rect.top + (y0 != null && !isNaN(y0) ? y0 : opts.top) * (rect.height / (svg.viewBox.baseVal.height || rect.height));
+        move(px, py);
+    };
+    if (!svg.hasAttribute('tabindex')) svg.setAttribute('tabindex', '0');
+    if (!svg.getAttribute('aria-label')) svg.setAttribute('aria-label', 'Chart');
+    svg.setAttribute('aria-description', 'Use the left and right arrow keys to read values');
+    const onFocus = () => showAt(kbIdx);
+    const onKey = e => {
+        const step = { ArrowLeft: -1, ArrowRight: 1 }[e.key];
+        if (step) { e.preventDefault(); showAt(kbIdx + step); }
+        else if (e.key === 'Home') { e.preventDefault(); showAt(0); }
+        else if (e.key === 'End') { e.preventDefault(); showAt(opts.xs.length - 1); }
+        else if (e.key === 'Escape') { leave(); }
+    };
+    // Some charts re-render into the same <svg>: drop the previous render's
+    // keyboard listeners so they don't accumulate.
+    if (svg._pfmKbCleanup) svg._pfmKbCleanup();
+    svg.addEventListener('focus', onFocus);
+    svg.addEventListener('blur', leave);
+    svg.addEventListener('keydown', onKey);
+    svg._pfmKbCleanup = () => {
+        svg.removeEventListener('focus', onFocus);
+        svg.removeEventListener('blur', leave);
+        svg.removeEventListener('keydown', onKey);
+    };
     overlay.addEventListener('mouseleave', leave);
     overlay.addEventListener('touchstart', e => { const t = e.touches[0]; if (t) move(t.clientX, t.clientY); }, { passive: true });
     overlay.addEventListener('touchmove', e => { const t = e.touches[0]; if (t) move(t.clientX, t.clientY); }, { passive: true });
@@ -522,7 +559,8 @@ function renderDonut(container, items, opts) {
     }).join('');
     const legend = items.map((it, i) => {
         const pct = (it.value / total) * 100;
-        return `<div class="pfm-legend-row${o.onClick ? ' pfm-legend-clickable' : ''}" data-idx="${i}">
+        return `<div class="pfm-legend-row${o.onClick ? ' pfm-legend-clickable' : ''}" data-idx="${i}" tabindex="0"
+                    role="${o.onClick ? 'button' : 'listitem'}" aria-label="${esc(`${it.label}: ${fmtEurWhole(it.value)}, ${pct.toFixed(1)}%`)}">
                 <span class="pfm-swatch" style="background:${it.color}"></span>
                 <span class="pfm-legend-label text-truncate" title="${esc(it.label)}">${esc(it.label)}</span>
                 <span class="pfm-legend-value">${Fmt.amt(esc(fmtEurWhole(it.value)))}</span>
@@ -536,7 +574,7 @@ function renderDonut(container, items, opts) {
                 <text x="${CX}" y="${CY - 6}" text-anchor="middle" font-size="11" class="pfm-donut-center-label">${esc(o.centerLabel || 'Total')}</text>
                 <text x="${CX}" y="${CY + 14}" text-anchor="middle" font-size="17" font-weight="700" class="pfm-donut-center-value pfm-amt">${esc(o.centerValue || _fmtEurShort(total))}</text>
             </svg>
-            <div class="pfm-legend">${legend}${o.footerHtml || ''}</div>
+            <div class="pfm-legend" role="list">${legend}${o.footerHtml || ''}</div>
         </div>`;
 
     const svg = container.querySelector('svg');
@@ -562,6 +600,21 @@ function renderDonut(container, items, opts) {
         el.addEventListener('mousemove', e => chartTip.show(tipFor(idx), e.clientX, e.clientY));
         el.addEventListener('mouseleave', () => { highlight(null); chartTip.hide(); });
         if (o.onClick) el.addEventListener('click', () => o.onClick(items[idx].key));
+        // Keyboard: focusing a legend row does what hovering does, with the
+        // tooltip anchored to the row instead of the pointer.
+        if (el.classList.contains('pfm-legend-row')) {
+            el.addEventListener('focus', () => {
+                highlight(idx);
+                const r = el.getBoundingClientRect();
+                chartTip.show(tipFor(idx), r.right, r.top);
+            });
+            el.addEventListener('blur', () => { highlight(null); chartTip.hide(); });
+            if (o.onClick) {
+                el.addEventListener('keydown', e => {
+                    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); o.onClick(items[idx].key); }
+                });
+            }
+        }
     };
     arcEls.forEach(wire);
     rows.forEach(wire);
@@ -580,6 +633,25 @@ function _fmtEurShort(v) {
 // Chart.js defaults for every Chart.js chart in the app: tooltips show all
 // series at the hovered x instead of requiring a pixel-exact hit, and text
 // uses the app font. Pies/doughnuts keep per-slice hover.
+// Shared Chart.js tooltip for EUR series: "Spent: €1,234" in the same money
+// format as the rest of the app (callbacks.label receives a tooltip item).
+const chartEurTooltip = {
+    label(item) {
+        const name = item.dataset && item.dataset.label ? `${item.dataset.label}: ` : '';
+        return ` ${name}${Fmt.money(item.raw, 'EUR', 0)}`;
+    },
+};
+window.chartEurTooltip = chartEurTooltip;
+
+// "2026-05" → "May 26" for monthly chart axes.
+function monthKeyLabel(key) {
+    const m = /^(\d{4})-(\d{2})/.exec(String(key || ''));
+    if (!m) return String(key || '');
+    const dt = new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, 1);
+    return dt.toLocaleDateString(Fmt.loc(), { month: 'short', year: '2-digit' });
+}
+window.monthKeyLabel = monthKeyLabel;
+
 function applyChartJsDefaults() {
     if (typeof Chart === 'undefined' || !Chart.defaults) return;
     Chart.defaults.font.family = getComputedStyle(document.body).fontFamily || Chart.defaults.font.family;
@@ -728,9 +800,9 @@ async function loadDashboardAlerts() {
                 const pnl = a.unrealized_pnl || 0;
                 const pnlCls = pnl >= 0 ? 'text-success' : 'text-danger';
                 const pnlSign = pnl >= 0 ? '+' : '';
-                const avgCostTxt = a.avg_price ? ` vs avg cost ${Fmt.num(a.avg_price, 2, 2)} ${cur}` : '';
-                posInfo = ` <span class="text-muted">— ${Fmt.num(a.quantity, 0, 4)} sh · ${Fmt.num(a.value, 2, 2)} ${cur} `
-                    + `(<span class="${pnlCls}">${pnlSign}${Fmt.num(pnl, 2, 2)} ${cur}, ${pnlSign}${Fmt.num(a.unrealized_pnl_pct || 0, 2, 2)}%${avgCostTxt}</span>)</span>`;
+                const avgCostTxt = a.avg_price ? ` vs avg cost ${Fmt.money(a.avg_price, cur, 2)}` : '';
+                posInfo = ` <span class="text-muted">— ${Fmt.num(a.quantity, 0, 4)} sh · ${Fmt.money(a.value, cur, 2)} `
+                    + `(<span class="${pnlCls}">${pnlSign}${Fmt.money(pnl, cur, 2)}, ${pnlSign}${Fmt.num(a.unrealized_pnl_pct || 0, 2, 2)}%${avgCostTxt}</span>)</span>`;
             } else {
                 posInfo = ` <span class="text-muted">— not held</span>`;
             }
@@ -738,7 +810,7 @@ async function loadDashboardAlerts() {
             (a.triggers || []).forEach(t => {
                 const buy = t.type === 'BUY';
                 const nameTxt = a.name ? ` <span class="text-muted">· ${esc(a.name)}</span>` : '';
-                const li = `<li class="mb-1"><span class="badge bg-${buy ? 'success' : 'danger'} me-2">${t.type}</span><strong>${esc(a.symbol)}</strong>${nameTxt} at ${Fmt.num(t.price, 2, 2)} ${cur} ${buy ? '≤ buy-below' : '≥ sell-above'} ${Fmt.num(t.threshold, 2, 2)} ${cur}${posInfo}${priceDateTxt}${researchLink(a.symbol, a.name)}</li>`;
+                const li = `<li class="mb-1"><span class="badge bg-${buy ? 'success' : 'danger'} me-2">${t.type}</span><strong>${esc(a.symbol)}</strong>${nameTxt} at ${Fmt.money(t.price, cur, 2)} ${buy ? '≤ buy-below' : '≥ sell-above'} ${Fmt.money(t.threshold, cur, 2)}${posInfo}${priceDateTxt}${researchLink(a.symbol, a.name)}</li>`;
                 (buy ? buyItems : sellItems).push(li);
             });
         });
@@ -1549,8 +1621,7 @@ const AssetSearch = (() => {
 // ---------------------------------------------------------------------------
 
 function fmtPrice(amount, currency) {
-    const n = Fmt.num(amount, 2, 2);
-    return currency ? `${n} ${currency}` : n;
+    return currency ? Fmt.money(amount, currency, 2) : Fmt.num(amount, 2, 2);
 }
 
 // Build Yahoo Finance quote link + Simply Wall St lookup link for a symbol.
@@ -3753,7 +3824,7 @@ function _fmtMoneyMap(map) {
             try {
                 return Number(v).toLocaleString(Fmt.loc(), { style: 'currency', currency: ccy, maximumFractionDigits: 2 });
             } catch (e) {
-                return `${Fmt.num(v, 2, 2)} ${ccy}`;
+                return `${Fmt.money(v, ccy, 2)}`;
             }
         }).join(' + ');
 }
