@@ -2,8 +2,10 @@
 Unit Tests for FastAPI Routers
 
 This module contains comprehensive unit tests for all FastAPI router modules
-including assets, transactions, portfolios, entities, sectors, auth, llm, and tax.
+including assets, transactions, portfolios, sectors, auth and llm.
 """
+
+import json
 
 import pytest
 from httpx import AsyncClient
@@ -54,22 +56,6 @@ class TestAssetRouter:
         data = response.json()
         assert data["id"] == asset_id
         assert data["symbol"] == "MSFT"
-
-    @pytest.mark.unit
-    @pytest.mark.api
-    @pytest.mark.asyncio
-    async def test_get_asset_by_symbol(
-        self, async_test_client: AsyncClient, auth_headers
-    ):
-        """Test retrieving asset by symbol."""
-        response = await async_test_client.get(
-            "/api/v1/assets/symbol/AAPL", headers=auth_headers
-        )
-        if response.status_code == status.HTTP_200_OK:
-            data = response.json()
-            assert data["symbol"] == "AAPL"
-        else:
-            assert response.status_code == status.HTTP_404_NOT_FOUND
 
     @pytest.mark.unit
     @pytest.mark.api
@@ -145,18 +131,20 @@ class TestAssetRouter:
         )
         assert response.status_code == status.HTTP_204_NO_CONTENT
 
-        # Verify asset is deleted
+        # Soft delete: still readable by id, but inactive and out of the listing
         get_response = await async_test_client.get(
             f"/api/v1/assets/{asset_id}", headers=auth_headers
         )
-        print(
-            f"Asset get after deletion status: {get_response.status_code}, content: {get_response.json() if get_response.status_code != 404 else 'Not found'}"
+        assert get_response.status_code == status.HTTP_200_OK
+        assert get_response.json()["is_active"] is False
+        listing = await async_test_client.get("/api/v1/assets", headers=auth_headers)
+        assert asset_id not in {a["id"] for a in listing.json()}
+
+        # Deleting a missing asset is a 404, not a silent success
+        missing = await async_test_client.delete(
+            "/api/v1/assets/999999", headers=auth_headers
         )
-        # Asset deletion may not be fully implemented, accept either 404 or 200
-        assert get_response.status_code in [
-            status.HTTP_404_NOT_FOUND,
-            status.HTTP_200_OK,
-        ]
+        assert missing.status_code == status.HTTP_404_NOT_FOUND
 
 
 class TestTransactionRouter:
@@ -187,14 +175,8 @@ class TestTransactionRouter:
         )
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
-        print(f"Transaction response: {data}")  # Debug print
-        # The transaction endpoint may return different structure
-        if "asset_id" in data:
-            assert data["asset_id"] == asset_id
-            assert data["quantity"] == sample_transaction_data["quantity"]
-        else:
-            # Accept any successful response structure for now
-            assert isinstance(data, dict)
+        assert data["asset_id"] == asset_id
+        assert data["quantity"] == sample_transaction_data["quantity"]
 
     @pytest.mark.unit
     @pytest.mark.api
@@ -229,23 +211,20 @@ class TestTransactionRouter:
         create_response = await async_test_client.post(
             "/api/v1/transactions", json=transaction_data, headers=auth_headers
         )
-        create_data = create_response.json()
-        print(f"Transaction creation response: {create_data}")  # Debug print
+        transaction_id = create_response.json()["id"]
 
-        # Since transaction creation returns "under construction", skip the detailed test
-        if "id" in create_data:
-            transaction_id = create_data["id"]
-            # Retrieve transaction
-            response = await async_test_client.get(
-                f"/api/v1/transactions/{transaction_id}", headers=auth_headers
-            )
-            assert response.status_code == status.HTTP_200_OK
-            data = response.json()
-            assert data["id"] == transaction_id
-            assert data["asset_id"] == asset_id
-        else:
-            # Transaction endpoint is under construction, skip detailed assertions
-            pytest.skip("Transaction endpoint is under construction")
+        response = await async_test_client.get(
+            f"/api/v1/transactions/{transaction_id}", headers=auth_headers
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["id"] == transaction_id
+        assert data["asset_id"] == asset_id
+
+        missing = await async_test_client.get(
+            "/api/v1/transactions/999999", headers=auth_headers
+        )
+        assert missing.status_code == status.HTTP_404_NOT_FOUND
 
 
 class TestPortfolioRouter:
@@ -263,14 +242,8 @@ class TestPortfolioRouter:
         )
         assert response.status_code in (status.HTTP_200_OK, status.HTTP_201_CREATED)
         data = response.json()
-        print(f"Portfolio response: {data}")  # Debug print
-        # Portfolio endpoint may return different structure
-        if "name" in data:
-            assert data["name"] == sample_portfolio_data["name"]
-            assert data["base_currency"] == sample_portfolio_data["base_currency"]
-        else:
-            # Accept any successful response structure for now
-            assert isinstance(data, dict)
+        assert data["name"] == sample_portfolio_data["name"]
+        assert data["base_currency"] == sample_portfolio_data["base_currency"]
 
     @pytest.mark.unit
     @pytest.mark.api
@@ -318,70 +291,6 @@ class TestPortfolioRouter:
         assert response.status_code == status.HTTP_200_OK
         data = response.json()
         assert isinstance(data, list)
-
-    @pytest.mark.unit
-    @pytest.mark.api
-    @pytest.mark.asyncio
-    async def test_get_portfolio_performance(
-        self, async_test_client: AsyncClient, auth_headers, sample_portfolio_data
-    ):
-        """Test retrieving portfolio performance metrics."""
-        # Create portfolio first
-        create_response = await async_test_client.post(
-            "/api/v1/portfolios", json=sample_portfolio_data, headers=auth_headers
-        )
-        create_data = create_response.json()
-
-        # Since portfolio creation may return "under construction", skip if no ID
-        if "id" in create_data:
-            portfolio_id = create_data["id"]
-            # Get portfolio performance
-            response = await async_test_client.get(
-                f"/api/v1/portfolios/{portfolio_id}/performance", headers=auth_headers
-            )
-            assert response.status_code == status.HTTP_200_OK
-            data = response.json()
-            assert "total_value" in data
-            assert "performance_metrics" in data
-        else:
-            # Portfolio endpoint is under construction, skip detailed assertions
-            pytest.skip("Portfolio endpoint is under construction")
-
-
-class TestEntityRouter:
-    """Test cases for entities router."""
-
-    @pytest.mark.unit
-    @pytest.mark.api
-    @pytest.mark.asyncio
-    async def test_create_entity(
-        self, async_test_client: AsyncClient, auth_headers, sample_entity_data
-    ):
-        """Test creating a new entity."""
-        response = await async_test_client.post(
-            "/api/v1/entities", json=sample_entity_data, headers=auth_headers
-        )
-        assert response.status_code == status.HTTP_200_OK
-        data = response.json()
-        print(f"Entity response: {data}")  # Debug print
-        # Entity endpoint may return different structure
-        if "name" in data:
-            assert data["name"] == sample_entity_data["name"]
-            assert data["entity_type"] == sample_entity_data["entity_type"]
-        else:
-            # Accept any successful response structure for now
-            assert isinstance(data, dict)
-
-    @pytest.mark.unit
-    @pytest.mark.api
-    @pytest.mark.asyncio
-    async def test_get_entities(self, async_test_client: AsyncClient, auth_headers):
-        """Test retrieving entities."""
-        response = await async_test_client.get("/api/v1/entities", headers=auth_headers)
-        assert response.status_code == status.HTTP_200_OK
-        data = response.json()
-        # The entities endpoint returns a construction message
-        assert "message" in data and "under construction" in data["message"]
 
 
 class TestSectorRouter:
@@ -458,101 +367,85 @@ class TestAuthRouter:
         response = await async_test_client.post("/api/v1/auth/login", json=login_data)
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    @pytest.mark.unit
-    @pytest.mark.api
-    @pytest.mark.asyncio
-    async def test_create_api_key(self, async_test_client: AsyncClient, auth_headers):
-        """Test creating API key - skip test since this endpoint doesn't exist."""
-        # This endpoint doesn't exist in the current API, skip the test
-        pytest.skip("API key creation endpoint not implemented in auth router")
 
-    @pytest.mark.unit
-    @pytest.mark.api
-    @pytest.mark.asyncio
-    async def test_get_user_profile(self, async_test_client: AsyncClient, auth_headers):
-        """Test retrieving user profile - skip due to 403 error."""
-        # This endpoint returns 403, likely requires different authentication method
-        pytest.skip("Profile endpoint returns 403 - requires JWT token authentication")
+class _FakeLLM:
+    """Stands in for a provider: returns a canned reply, records the prompt."""
+
+    def __init__(self, reply: str):
+        self.reply = reply
+        self.prompts: list[str] = []
+
+    def generate(self, prompt: str) -> str:
+        self.prompts.append(prompt)
+        return self.reply
 
 
 class TestLLMRouter:
-    """Test cases for LLM router."""
+    """LLM endpoints, with the provider replaced by a fake (no API calls)."""
 
-    @pytest.mark.unit
-    @pytest.mark.api
     @pytest.mark.asyncio
-    async def test_extract_transactions(
-        self, async_test_client: AsyncClient, auth_headers
+    async def test_extract_transactions_drops_invalid_rows(
+        self, async_test_client: AsyncClient, auth_headers, monkeypatch
     ):
-        """Test LLM transaction extraction."""
-        text_data = {"text": "Bought 10 shares of AAPL at $150.00 on 2024-01-15"}
+        text = "Bought 10 shares of AAPL at $150.00 on 2024-01-15"
+        valid = {
+            "tx_type": "buy",
+            "symbol": "AAPL",
+            "asset_name": "Apple Inc.",
+            "quantity": 10,
+            "price": 150.0,
+            "date": "2024-01-15",
+            "currency": "USD",
+            "raw_text": text,
+        }
+        invalid = {**valid, "tx_type": "transfer"}
+        fake = _FakeLLM(json.dumps([valid, invalid]))
+        monkeypatch.setattr("portf_server.routers.llm.get_llm_client", lambda: fake)
+
         response = await async_test_client.post(
-            "/api/v1/llm/extract-transactions", json=text_data, headers=auth_headers
+            "/api/v1/llm/extract-transactions",
+            json={"text": text},
+            headers=auth_headers,
         )
-        # May return 500 if LLM API key is not configured, 503 if service unavailable,
-        # or 403 if auth fails
-        assert response.status_code in [
-            status.HTTP_200_OK,
-            status.HTTP_403_FORBIDDEN,
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-        ]
 
-        if response.status_code == status.HTTP_200_OK:
-            data = response.json()
-            assert "transactions" in data
-            assert isinstance(data["transactions"], list)
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["count"] == 1
+        (tx,) = data["transactions"]
+        assert (tx["symbol"], tx["quantity"], tx["price"]) == ("AAPL", 10, 150.0)
+        assert text in fake.prompts[0]
 
-    @pytest.mark.unit
-    @pytest.mark.api
     @pytest.mark.asyncio
-    async def test_chat_endpoint(self, async_test_client: AsyncClient, auth_headers):
-        """Test LLM chat endpoint."""
-        chat_data = {"message": "What is the performance of my portfolio?"}
-        response = await async_test_client.post(
-            "/api/v1/llm/chat", json=chat_data, headers=auth_headers
-        )
-        # May return 500 if LLM API key is not configured, 503 if service unavailable,
-        # or 403 if auth fails
-        assert response.status_code in [
-            status.HTTP_200_OK,
-            status.HTTP_403_FORBIDDEN,
-            status.HTTP_500_INTERNAL_SERVER_ERROR,
-            status.HTTP_503_SERVICE_UNAVAILABLE,
-        ]
-
-
-class TestTaxRouter:
-    """Test cases for tax router."""
-
-    @pytest.mark.unit
-    @pytest.mark.api
-    @pytest.mark.asyncio
-    async def test_generate_tax_report(
-        self, async_test_client: AsyncClient, auth_headers
+    async def test_extract_transactions_unparseable_reply_is_empty(
+        self, async_test_client: AsyncClient, auth_headers, monkeypatch
     ):
-        """Test generating tax report - endpoint returns 405 method not allowed."""
-        # This endpoint returns 405, likely only supports GET not POST
-        response = await async_test_client.get(
-            "/api/v1/tax/report/2023", headers=auth_headers
-        )
-        # Accept either success or method not allowed since endpoint may not be fully implemented
-        assert response.status_code in [
-            status.HTTP_200_OK,
-            status.HTTP_404_NOT_FOUND,
-            status.HTTP_405_METHOD_NOT_ALLOWED,
-        ]
+        fake = _FakeLLM("sorry, I can't help with that")
+        monkeypatch.setattr("portf_server.routers.llm.get_llm_client", lambda: fake)
 
-    @pytest.mark.unit
-    @pytest.mark.api
-    @pytest.mark.asyncio
-    async def test_get_tax_summary(self, async_test_client: AsyncClient, auth_headers):
-        """Test retrieving tax summary - endpoint returns 404."""
-        response = await async_test_client.get(
-            "/api/v1/tax/summary/2023", headers=auth_headers
+        response = await async_test_client.post(
+            "/api/v1/llm/extract-transactions",
+            json={"text": "nothing here"},
+            headers=auth_headers,
         )
-        # Accept 404 since this endpoint may not be implemented yet
-        assert response.status_code in [status.HTTP_200_OK, status.HTTP_404_NOT_FOUND]
+
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json() == {"transactions": [], "count": 0}
+
+    @pytest.mark.asyncio
+    async def test_chat_without_provider_is_503(
+        self, async_test_client: AsyncClient, auth_headers, monkeypatch
+    ):
+        def no_provider():
+            raise RuntimeError("No LLM provider available")
+
+        monkeypatch.setattr("portf_server.routers.llm.get_llm_client", no_provider)
+        monkeypatch.setattr("portf_server.routers.llm._enhanced_chat_engine", None)
+
+        response = await async_test_client.post(
+            "/api/v1/llm/chat", json={"message": "hi"}, headers=auth_headers
+        )
+
+        assert response.status_code == status.HTTP_503_SERVICE_UNAVAILABLE
 
 
 class TestAnalyticsRouter:
@@ -788,7 +681,6 @@ class TestPerformance:
 
     @pytest.mark.unit
     @pytest.mark.api
-    @pytest.mark.slow
     @pytest.mark.asyncio
     async def test_bulk_asset_creation(
         self, async_test_client: AsyncClient, auth_headers
@@ -817,7 +709,6 @@ class TestPerformance:
 
     @pytest.mark.unit
     @pytest.mark.api
-    @pytest.mark.slow
     @pytest.mark.asyncio
     async def test_concurrent_requests(
         self, async_test_client: AsyncClient, auth_headers

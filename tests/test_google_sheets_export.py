@@ -3,17 +3,15 @@ Tests for Google Sheets Export functionality
 """
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 import tempfile
 import os
-from datetime import datetime
 
 from portf_manager.google_sheets_export import (
     GoogleSheetsExporter,
     GoogleSheetsExportError,
     create_google_sheets_exporter,
 )
-from portf_manager.models import DatabaseAdapter
 from portf_manager.auth import AuthManager
 
 
@@ -181,41 +179,3 @@ class TestGoogleSheetsExporter:
                 assert update_call[1]["body"]["values"] == test_data
         finally:
             os.unlink(temp_file)
-
-
-class TestIntegration:
-    """Integration tests (require real Google credentials)."""
-
-    @pytest.mark.skipif(
-        not os.getenv("GOOGLE_SHEETS_INTEGRATION_TEST"),
-        reason="Set GOOGLE_SHEETS_INTEGRATION_TEST=1 to run integration tests",
-    )
-    def test_full_export_integration(self):
-        """
-        Full integration test with real Google Sheets API.
-
-        This test is skipped by default. To run it:
-        1. Set up a Google service account and download the JSON key
-        2. Set GOOGLE_SERVICE_ACCOUNT_FILE to the key file path
-        3. Set GOOGLE_SHEETS_INTEGRATION_TEST=1
-        4. Optionally set GOOGLE_SPREADSHEET_ID to a test spreadsheet
-        """
-        pytest.skip("Integration test - set GOOGLE_SHEETS_INTEGRATION_TEST=1 to enable")
-
-        # This would be the actual integration test code:
-        # from portf_manager.database import Database
-        # from portf_manager.auth import AuthManager
-        #
-        # db_manager = Database("test_portfolio.db")  # Use test DB
-        # auth_manager = AuthManager(db_manager)
-        #
-        # exporter = create_google_sheets_exporter(db_manager, auth_manager)
-        # result = exporter.export(create_new=True)
-        #
-        # assert result["success"]
-        # assert "spreadsheet_id" in result
-        # print(f"Test export created: {result['spreadsheet_url']}")
-
-
-if __name__ == "__main__":
-    pytest.main([__file__])
