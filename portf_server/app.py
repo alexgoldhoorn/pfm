@@ -52,6 +52,7 @@ from .routers import (
     deposits,
     notifications,
     fund_profiles,
+    reports,
 )
 from .dependencies import (
     get_database,
@@ -381,6 +382,13 @@ app.include_router(
     fund_profiles.router,
     prefix="/api/v1/fund-profiles",
     tags=["Fund Profiles"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    reports.router,
+    prefix="/api/v1/reports",
+    tags=["Reports"],
     dependencies=_PROTECTED,
 )
 

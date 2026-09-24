@@ -5,7 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-09-21
+Last updated: 2026-09-24
+
+**Recent (v2.5.69):** **PDF exports — filing-ready IRPF tax report + a selectable-section portfolio report.** Two new server-rendered PDFs (reportlab — already a dependency, no new system libraries). `GET /api/v1/analytics/tax-report/pdf?year=` renders the same data `GET /tax-report` returns (per-lot FIFO gains + dividend/interest withholding — `analytics.py`'s `_build_tax_report_data` is now shared by both so they can't drift) plus the IRPF savings-base estimated tax from `current_year_savings_components`/`irpf_savings_tax`; a "Download PDF" button sits next to the existing "Download CSV" on the Analytics page's Tax tab. New `GET /api/v1/reports/portfolio?sections=networth,performance,diversification,health` (new router `portf_server/routers/reports.py`, registered `/api/v1/reports`) builds a general portfolio-report PDF from a user-chosen subset of sections; it gathers data by calling `networth.get_networth`, `portfolios.get_holdings`, `analytics.get_performance`/`get_risk`/`get_diversification` directly in-process (the same `api_key_info={}` reuse pattern `action_items.py` uses) rather than re-deriving any of those figures, so the PDF can't disagree with the pages it summarises. The Portfolio Health section reads the cached `portf:advisor:all` entry from `kv_cache` only — it deliberately does **not** trigger a fresh LLM run (would risk the nginx `proxy_read_timeout`), and says so in the PDF when nothing is cached yet. Both PDF builders live in a new `portf_manager/services/pdf_reports.py`; new "Report PDF" button on the Analytics page header opens a section-checkbox modal (`#portfolioReportModal`). 8 new backend tests (`tests/unit/test_reports.py` + one in `test_analytics.py`); 1333 unit tests passing (was 1327).
 
 **Recent (v2.5.68):** **Tax-aware rebalance planner — Task 5 performance refactors + privacy-blur consistency.** Two pure backend refactors, both flagged and deferred across Tasks 3-4's reviews: `build_plan` no longer re-fetches transactions and rebuilds holdings a second time — `compute_before_state` now hands back the `holdings`/`transactions` it already computed internally (single-pass); and `build_sell_candidates` groups transactions by symbol once (O(N)) instead of handing `TaxCalculator.get_open_lots()` the full transaction list on every held symbol (was O(candidates × N)). Both verified behaviour-preserving against the full `test_rebalance_planner`/`test_rebalance_research`/`test_tax_calculator` suites (byte-identical trades/warnings/amounts before and after). User-visible: the Rebalancing card's euro figures now blur under privacy mode — both the pre-existing Analysis table and the Trade Plan section added in Task 4 had not yet caught up to the `Fmt.amt()`/`pfm-amt` convention used everywhere else on the page. Plan: `docs/superpowers/plans/2026-09-18-tax-aware-rebalance-planner.md`.
 
@@ -202,7 +204,7 @@ All are re-exported by the remote gateway (now 85 tools) and added to the financ
 - FastAPI REST API, 40+ endpoints across routers: auth, assets, transactions,
   portfolios, entities, sectors, llm, tax, analytics, research, rebalance,
   networth, deposits, spending, budgets, action_items, watchlist, goals,
-  sync, exports, imports, fund_profiles, market
+  sync, exports, imports, fund_profiles, market, reports
 - API key authentication
 - Docker support with docker-compose
 
@@ -232,9 +234,9 @@ All are re-exported by the remote gateway (now 85 tools) and added to the financ
 
 ## Test Status
 
-**1327 passed, 0 failed, 6 skipped** (unit tests, excluding integration/e2e); JS: **148 passed, 0 failed**
+**1333 passed, 0 failed, 6 skipped** (unit tests, excluding integration/e2e); JS: **148 passed, 0 failed**
 
-All tests passing as of 2026-09-21.
+All tests passing as of 2026-09-24.
 
 ## Recent Changes (main)
 

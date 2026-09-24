@@ -4931,6 +4931,51 @@ document.addEventListener('DOMContentLoaded', function() {
     if (anTaxReportCsvBtn) {
         anTaxReportCsvBtn.addEventListener('click', downloadTaxReportCsv);
     }
+    const anTaxReportPdfBtn = document.getElementById('anTaxReportPdfBtn');
+    if (anTaxReportPdfBtn) {
+        anTaxReportPdfBtn.addEventListener('click', async () => {
+            const year = (document.getElementById('anTaxYear') || {}).value || new Date().getFullYear();
+            anTaxReportPdfBtn.disabled = true;
+            try {
+                const url = window.apiClient.baseURL + `/api/v1/analytics/tax-report/pdf?year=${encodeURIComponent(year)}`;
+                await window.apiClient.downloadBlob(url, `irpf_tax_report_${year}.pdf`);
+            } catch (err) {
+                alert('Failed to download tax report PDF: ' + err.message);
+            } finally {
+                anTaxReportPdfBtn.disabled = false;
+            }
+        });
+    }
+    const openPortfolioReportModal = document.getElementById('openPortfolioReportModal');
+    if (openPortfolioReportModal) {
+        openPortfolioReportModal.addEventListener('click', () => {
+            const modalEl = document.getElementById('portfolioReportModal');
+            if (modalEl) new bootstrap.Modal(modalEl).show();
+        });
+    }
+    const prDownloadBtn = document.getElementById('prDownloadBtn');
+    if (prDownloadBtn) {
+        prDownloadBtn.addEventListener('click', async () => {
+            const sections = ['networth', 'performance', 'diversification', 'health']
+                .filter(s => (document.getElementById(`prSec${s.charAt(0).toUpperCase()}${s.slice(1)}`) || {}).checked);
+            if (!sections.length) { alert('Select at least one section.'); return; }
+            prDownloadBtn.disabled = true;
+            const origHtml = prDownloadBtn.innerHTML;
+            prDownloadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Generating…';
+            try {
+                const url = window.apiClient.baseURL + `/api/v1/reports/portfolio?sections=${encodeURIComponent(sections.join(','))}`;
+                await window.apiClient.downloadBlob(url, 'portfolio_report.pdf');
+                const modalEl = document.getElementById('portfolioReportModal');
+                const inst = modalEl && bootstrap.Modal.getInstance(modalEl);
+                if (inst) inst.hide();
+            } catch (err) {
+                alert('Failed to generate report: ' + err.message);
+            } finally {
+                prDownloadBtn.disabled = false;
+                prDownloadBtn.innerHTML = origHtml;
+            }
+        });
+    }
     // Re-render the net worth chart on resize when the analytics page is
     // visible — debounced so a drag-resize doesn't fire a burst of reloads.
     let _nwResizeTimer = null;
