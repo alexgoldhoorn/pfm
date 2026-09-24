@@ -26,9 +26,15 @@ function renderDashTopPositions() {
 
     const rows = topPositions(_dashTopHoldings, { n: cfg.n, type: cfg.type, sort: cfg.sort });
     if (rows.length === 0) {
-        body.innerHTML = '<tr><td colspan="4" class="text-center text-muted ps-3 py-3">No positions match this filter.</td></tr>';
+        body.innerHTML = '<tr><td colspan="5" class="text-center text-muted ps-3 py-3">No positions match this filter.</td></tr>';
         return;
     }
+    // Weight is against the whole invested portfolio (all brokers), so the
+    // number means the same thing whatever filter the table is showing.
+    const investedTotal = _dashHoldingsAll
+        .filter(h => parseFloat(h.quantity || 0) > 0)
+        .reduce((s, h) => s + parseFloat(h.total_value_eur || h.total_value || 0), 0);
+    const maxWeight = Math.max(...rows.map(h => parseFloat(h.total_value_eur || h.total_value || 0)), 1) / (investedTotal || 1);
     body.innerHTML = rows.map(h => {
         const valEur = parseFloat(h.total_value_eur || h.total_value || 0);
         const pnlPct = parseFloat(h.pnl_pct || 0);
@@ -45,8 +51,9 @@ function renderDashTopPositions() {
                 <div class="fw-semibold text-truncate" title="${esc(name)}">${esc(name)}</div>
                 <div class="small text-muted">${esc(h.symbol || '')} ${assetLinks(h.symbol)}</div>
             </td>
-            <td><span class="badge ${_dashTypeBadge(h.asset_type)}">${esc((h.asset_type || '').toUpperCase())}</span></td>
-            <td class="text-end">${valEur.toLocaleString(Fmt.loc(), { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+            <td><span class="d-inline-flex align-items-center gap-1 small"><span class="pfm-swatch" style="background:${vizTypeColor(h.asset_type)}"></span>${esc(vizTypeLabel(h.asset_type))}</span></td>
+            <td class="text-end" title="${esc(fmtEurCents(valEur))}">${Fmt.amt(esc(fmtEurWhole(valEur)))}</td>
+            <td class="text-end d-none d-sm-table-cell">${investedTotal > 0 ? `<span class="pfm-weight"><span class="small">${(valEur / investedTotal * 100).toFixed(1)}%</span><span class="pfm-weight-bar"><span style="width:${Math.min(100, (valEur / investedTotal) / maxWeight * 100).toFixed(0)}%"></span></span></span>` : '—'}</td>
             <td class="text-end pe-3 ${cls} fw-semibold">${txt}</td>
         </tr>`;
     }).join('');
@@ -379,9 +386,14 @@ function createPageManager() {
             loadDataFreshness();
             if (window.loadDashboardActionItems) window.loadDashboardActionItems();
 
-            const fmtEur = (val) => {
-                const n = parseFloat(val) || 0;
-                return n.toLocaleString(Fmt.loc(), { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' EUR';
+            // KPI tiles show whole euros (cents are noise at this scale and made
+            // the figure wrap); the exact amount is in each tile's title.
+            const fmtEur = (val) => fmtEurWhole(val);
+            const setKpi = (id, val) => {
+                const node = el(id);
+                if (!node) return;
+                node.textContent = fmtEurWhole(val);
+                node.title = fmtEurCents(val);
             };
 
             const fmtPct = (val) => {
@@ -437,23 +449,34 @@ function createPageManager() {
             if (window.loadDashboardNetworthHistory) window.loadDashboardNetworthHistory();
             if (window.loadDashboardBudget) window.loadDashboardBudget();
 
-            if (el('totalValue'))    el('totalValue').textContent    = fmtEur(totalValue);
-            if (el('dashTotalCost')) el('dashTotalCost').textContent = fmtEur(totalCost);
-            if (el('dashCash'))      el('dashCash').textContent      = haveCashData ? fmtEur(totalCashEur) : '—';
+            setKpi('totalValue', totalValue);
+            setKpi('dashTotalCost', totalCost);
+            if (haveCashData) setKpi('dashCash', totalCashEur);
+            else if (el('dashCash')) el('dashCash').textContent = '—';
+            if (el('dashValueSub')) {
+                el('dashValueSub').innerHTML = haveCashData
+                    ? `${Fmt.amt(esc(fmtEurWhole(totalValue + totalCashEur)))} incl. cash`
+                    : '';
+            }
             if (el('dashInvestedBrokers')) {
                 el('dashInvestedBrokers').textContent = portfolioValues && investedBrokerCount > 0
                     ? plural(investedBrokerCount, 'broker') : '';
             }
             if (el('dashCashAccounts')) {
+                const share = (totalValue + totalCashEur) > 0
+                    ? ` · ${(totalCashEur / (totalValue + totalCashEur) * 100).toFixed(0)}% of total` : '';
                 el('dashCashAccounts').textContent = haveCashData && cashAccountCount > 0
-                    ? plural(cashAccountCount, 'account') : '';
+                    ? plural(cashAccountCount, 'account') + share : '';
             }
 
+            // Unrealised P&L on open positions — labelled, since its % differs
+            // from the Return figure above (which includes realised gains).
             if (el('totalGainLoss')) {
-                el('totalGainLoss').textContent = (totalPnl >= 0 ? '+' : '') + fmtEur(totalPnl);
+                el('totalGainLoss').textContent = 'P&L ' + (totalPnl >= 0 ? '+' : '') + fmtEur(totalPnl);
+                el('totalGainLoss').title = 'Unrealised P&L on open positions: ' + fmtEurCents(totalPnl);
             }
             if (el('dashPnlPct')) {
-                el('dashPnlPct').textContent = fmtPct(totalPnlPct);
+                el('dashPnlPct').textContent = '(' + fmtPct(totalPnlPct) + ')';
             }
             const pnlCard = el('dashPnlCard');
             if (pnlCard) {
@@ -469,7 +492,7 @@ function createPageManager() {
                     byType[t] = (byType[t] || 0) + 1;
                 });
                 const parts = Object.entries(byType).sort((a, b) => b[1] - a[1])
-                    .map(([t, n]) => `${n} ${t}`);
+                    .map(([t, n]) => `${n} ${vizTypeLabel(t).toLowerCase()}`);
                 el('totalTransactions').textContent = parts.length ? parts.join(' · ')
                     : (openPositions === 1 ? '1 position' : openPositions + ' positions');
             }
@@ -491,59 +514,14 @@ function createPageManager() {
                 // a KPI — otherwise a cash-heavy portfolio looks 100% invested.
                 if (totalCashEur > 0) grouped['cash'] = totalCashEur;
 
-                const COLOURS = ['#2563eb', '#16a34a', '#f59e0b', '#dc2626', '#7c3aed', '#64748b'];
-                const entries = Object.entries(grouped).sort((a, b) => b[1] - a[1]);
-                const grandTotal = entries.reduce((s, e) => s + e[1], 0);
-
-                if (grandTotal <= 0 || entries.length === 0) {
-                    donutArea.innerHTML = '<p class="text-muted small mb-0">No holdings data yet.</p>';
-                } else {
-                    const MAX_SLICES = 5;
-                    let slices = entries.slice(0, MAX_SLICES);
-                    if (entries.length > MAX_SLICES) {
-                        const otherVal = entries.slice(MAX_SLICES).reduce((s, e) => s + e[1], 0);
-                        if (otherVal > 0) slices.push(['other', otherVal]);
-                    }
-
-                    const R = 64;
-                    const CX = 80;
-                    const CY = 80;
-                    const CIRC = 2 * Math.PI * R;
-
-                    let offset = 0;
-                    const svgSlices = slices.map(([ label, value ], i) => {
-                        const pct     = value / grandTotal;
-                        const dash    = pct * CIRC;
-                        const gap     = CIRC - dash;
-                        const dashStr = `${dash.toFixed(2)} ${gap.toFixed(2)}`;
-                        const offStr  = (-offset * CIRC).toFixed(2);
-                        offset += pct;
-                        const colour  = COLOURS[i % COLOURS.length];
-                        return `<circle cx="${CX}" cy="${CY}" r="${R}" fill="none"
-                                    stroke="${colour}" stroke-width="26"
-                                    stroke-dasharray="${dashStr}"
-                                    stroke-dashoffset="${offStr}"
-                                    transform="rotate(-90 ${CX} ${CY})"/>`;
-                    }).join('');
-
-                    const legendItems = slices.map(([ label, value ], i) => {
-                        const pct    = ((value / grandTotal) * 100).toFixed(1);
-                        const colour = COLOURS[i % COLOURS.length];
-                        return `<div class="d-flex align-items-center gap-2 mb-1">
-                                    <span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${colour};flex-shrink:0;"></span>
-                                    <span class="small">${label.toUpperCase()} <span class="text-muted">${pct}%</span></span>
-                                </div>`;
-                    }).join('');
-
-                    donutArea.innerHTML = `
-                        <svg viewBox="0 0 160 160" style="flex:0 0 auto;width:100%;max-width:200px;height:auto;">
-                            ${svgSlices}
-                            <text x="${CX}" y="${CY - 8}" text-anchor="middle" font-size="12" fill="#94a3b8">Total</text>
-                            <text x="${CX}" y="${CY + 12}" text-anchor="middle" font-size="16" font-weight="bold" class="donut-total">${(grandTotal / 1000).toFixed(1)}k</text>
-                        </svg>
-                        <div class="d-flex flex-column justify-content-center">${legendItems}</div>
-                    `;
-                }
+                const { slices } = donutSlices(Object.entries(grouped), 7);
+                const items = slices.map(([type, value, folded]) => type === '__other__'
+                    ? { key: 'other', label: 'Other', value, color: vizTypeColor('other'), detail: folded.map(vizTypeLabel).join(', ') }
+                    : { key: type, label: vizTypeLabel(type), value, color: vizTypeColor(type) });
+                renderDonut(donutArea, items, {
+                    centerLabel: 'Total',
+                    emptyHtml: '<p class="text-muted small mb-0">No holdings data yet.</p>',
+                });
             }
 
             // --- Recent transactions table ---

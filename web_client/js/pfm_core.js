@@ -308,26 +308,363 @@ function makeSortableTable(config) {
 }
 window.makeSortableTable = makeSortableTable;
 
-// Dashboard alerts banner: price targets crossed + watchlist buy zones.
-// Loaded async so it never blocks the dashboard (watchlist check hits live
-// prices). Hidden entirely when nothing is triggered. BUY/SELL/WATCH are
-// grouped into independently-collapsible sections (collapsed by default) so
-// the banner stays short once most holdings have targets set — a flat list
-// got unwieldy fast once the bulk research refresh populated ~45 targets.
-async function loadDashboardAlerts() {
-    const box = document.getElementById('dashAlerts');
-    if (!box) return;
-    // Research-icon click opens the same research modal used elsewhere —
-    // wired once via delegation since box.innerHTML is replaced on every load.
-    if (!box._wired) {
-        box._wired = true;
-        box.addEventListener('click', (e) => {
+// ---------------------------------------------------------------------------
+// Shared chart helpers (dashboard + analytics hand-rolled SVG charts)
+// ---------------------------------------------------------------------------
+// Series colours are CSS custom properties (--viz-1..8, --viz-neutral in
+// styles.css) so light/dark each get their own validated step. SVG
+// presentation attributes can't read var(), so marks set them via style=.
+const VIZ_SLOTS = 8;
+function vizColor(i) { return `var(--viz-${(i % VIZ_SLOTS) + 1})`; }
+
+// Asset types keep the same colour everywhere (colour follows the entity,
+// never its rank), so ETF is always blue whatever its share this month.
+const VIZ_TYPE_COLOR = {
+    etf: 'var(--viz-1)', stock: 'var(--viz-2)', mutual_fund: 'var(--viz-3)',
+    bond: 'var(--viz-4)', crypto: 'var(--viz-7)', index: 'var(--viz-6)',
+    commodity: 'var(--viz-5)', p2p: 'var(--viz-8)',
+    cash: 'var(--viz-neutral)', other: 'var(--viz-other)',
+};
+function vizTypeColor(type) { return VIZ_TYPE_COLOR[type] || 'var(--viz-other)'; }
+
+const VIZ_TYPE_LABEL = {
+    etf: 'ETF', stock: 'Stock', mutual_fund: 'Mutual fund', bond: 'Bond',
+    crypto: 'Crypto', index: 'Index fund', commodity: 'Commodity', p2p: 'P2P',
+    cash: 'Cash', other: 'Other',
+};
+function vizTypeLabel(type) {
+    return VIZ_TYPE_LABEL[type] || String(type || 'other').replace(/_/g, ' ');
+}
+
+// Whole-euro, locale-aware ("192.777 €" / "€192,777"). KPIs and legends
+// don't need cents; the exact figure goes in the title/tooltip.
+function fmtEurWhole(v) {
+    const n = parseFloat(v) || 0;
+    try {
+        return n.toLocaleString(Fmt.loc(), { style: 'currency', currency: 'EUR', maximumFractionDigits: 0, minimumFractionDigits: 0 });
+    } catch (e) {
+        return '€' + Math.round(n).toLocaleString();
+    }
+}
+function fmtEurCents(v) {
+    const n = parseFloat(v) || 0;
+    try {
+        return n.toLocaleString(Fmt.loc(), { style: 'currency', currency: 'EUR', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    } catch (e) {
+        return '€' + n.toFixed(2);
+    }
+}
+
+// Sort [key, value] entries descending and fold everything past maxSlices
+// into one "other" slice, so a donut never grows a 9th generated colour.
+// Non-positive values can't be drawn as an arc and are returned separately.
+function donutSlices(entries, maxSlices) {
+    const max = maxSlices || 6;
+    const pos = entries.filter(e => e[1] > 0).sort((a, b) => b[1] - a[1]);
+    const nonPositive = entries.filter(e => !(e[1] > 0));
+    if (pos.length <= max) return { slices: pos, nonPositive };
+    const head = pos.slice(0, max - 1);
+    const rest = pos.slice(max - 1);
+    const otherVal = rest.reduce((s, e) => s + e[1], 0);
+    return { slices: head.concat([['__other__', otherVal, rest.map(e => e[0])]]), nonPositive };
+}
+
+// Index of the value in the ascending array xs closest to x.
+function nearestIndex(xs, x) {
+    if (!xs.length) return -1;
+    let lo = 0, hi = xs.length - 1;
+    while (hi - lo > 1) {
+        const mid = (lo + hi) >> 1;
+        if (xs[mid] <= x) lo = mid; else hi = mid;
+    }
+    return Math.abs(xs[lo] - x) <= Math.abs(xs[hi] - x) ? lo : hi;
+}
+
+// One floating HTML tooltip shared by every chart (HTML rather than SVG
+// text so it can't be clipped by the chart box and wraps naturally).
+const chartTip = {
+    el: null,
+    ensure() {
+        if (this.el) return this.el;
+        this.el = document.createElement('div');
+        this.el.className = 'pfm-chart-tip';
+        this.el.setAttribute('role', 'tooltip');
+        document.body.appendChild(this.el);
+        return this.el;
+    },
+    show(html, clientX, clientY) {
+        const el = this.ensure();
+        el.innerHTML = html;
+        el.style.display = 'block';
+        const pad = 14;
+        const w = el.offsetWidth, h = el.offsetHeight;
+        let left = clientX + pad;
+        let top = clientY + pad;
+        if (left + w > window.innerWidth - 8) left = clientX - w - pad;
+        if (top + h > window.innerHeight - 8) top = clientY - h - pad;
+        el.style.left = Math.max(8, left) + 'px';
+        el.style.top = Math.max(8, top) + 'px';
+    },
+    hide() { if (this.el) this.el.style.display = 'none'; },
+};
+window.chartTip = chartTip;
+
+// Tooltip body: a title line plus [swatch] label ..... value rows.
+function chartTipHtml(title, rows) {
+    return `<div class="pfm-chart-tip-title">${esc(title)}</div>` + rows.map(r => `
+        <div class="pfm-chart-tip-row">
+            ${r.color ? `<span class="pfm-swatch" style="background:${r.color}${r.dashed ? ';height:2px;border-radius:0' : ''}"></span>` : '<span></span>'}
+            <span class="pfm-chart-tip-label">${esc(r.label)}</span>
+            <span class="pfm-chart-tip-value">${esc(r.value)}</span>
+        </div>`).join('');
+}
+
+// Crosshair + tooltip for an SVG line/area chart whose viewBox width is W
+// (rendered at width:100%). opts.xs: x position (viewBox units) of each
+// point, ascending; opts.series: [{ y: i => viewBox y, color }] for the
+// hover dots; opts.html(i): tooltip markup for point i.
+function attachLineHover(svg, opts) {
+    if (!svg || !opts.xs || !opts.xs.length) return;
+    const NS = 'http://www.w3.org/2000/svg';
+    const g = document.createElementNS(NS, 'g');
+    g.setAttribute('display', 'none');
+    g.setAttribute('pointer-events', 'none');
+    const line = document.createElementNS(NS, 'line');
+    line.setAttribute('y1', opts.top);
+    line.setAttribute('y2', opts.bottom);
+    line.setAttribute('stroke', 'currentColor');
+    line.setAttribute('stroke-opacity', '0.45');
+    line.setAttribute('stroke-dasharray', '3 3');
+    g.appendChild(line);
+    const dots = (opts.series || []).map(s => {
+        const c = document.createElementNS(NS, 'circle');
+        c.setAttribute('r', '4.5');
+        c.setAttribute('style', `fill:${s.color};stroke:var(--viz-surface);stroke-width:2`);
+        g.appendChild(c);
+        return c;
+    });
+    const overlay = document.createElementNS(NS, 'rect');
+    overlay.setAttribute('x', opts.left);
+    overlay.setAttribute('y', opts.top);
+    overlay.setAttribute('width', Math.max(0, opts.right - opts.left));
+    overlay.setAttribute('height', Math.max(0, opts.bottom - opts.top));
+    overlay.setAttribute('fill', 'transparent');
+    overlay.style.cursor = 'crosshair';
+    svg.appendChild(g);
+    svg.appendChild(overlay);
+
+    const move = (clientX, clientY) => {
+        const rect = svg.getBoundingClientRect();
+        if (!rect.width) return;
+        const vx = (clientX - rect.left) * (opts.W / rect.width);
+        const i = nearestIndex(opts.xs, vx);
+        if (i < 0) return;
+        const x = opts.xs[i];
+        line.setAttribute('x1', x);
+        line.setAttribute('x2', x);
+        (opts.series || []).forEach((s, k) => {
+            const y = s.y(i);
+            if (y == null || isNaN(y)) { dots[k].setAttribute('display', 'none'); return; }
+            dots[k].removeAttribute('display');
+            dots[k].setAttribute('cx', x);
+            dots[k].setAttribute('cy', y);
+        });
+        g.removeAttribute('display');
+        chartTip.show(opts.html(i), clientX, clientY);
+    };
+    const leave = () => { g.setAttribute('display', 'none'); chartTip.hide(); };
+    overlay.addEventListener('mousemove', e => move(e.clientX, e.clientY));
+    overlay.addEventListener('mouseleave', leave);
+    overlay.addEventListener('touchstart', e => { const t = e.touches[0]; if (t) move(t.clientX, t.clientY); }, { passive: true });
+    overlay.addEventListener('touchmove', e => { const t = e.touches[0]; if (t) move(t.clientX, t.clientY); }, { passive: true });
+    overlay.addEventListener('touchend', leave);
+}
+
+// Donut + value legend. items: [{ key, label, value, color, detail? }].
+// opts: { centerLabel, centerValue, emptyHtml, footerHtml, onClick(key) }.
+// Hovering a slice or its legend row highlights both and shows the exact
+// amount and share; the legend doubles as the table view (label, €, %).
+function renderDonut(container, items, opts) {
+    const o = opts || {};
+    const total = items.reduce((s, it) => s + it.value, 0);
+    if (!items.length || total <= 0) {
+        container.innerHTML = o.emptyHtml || '<p class="text-muted small mb-0">No data yet.</p>';
+        return;
+    }
+    const R = 62, CX = 80, CY = 80, SW = 22;
+    const CIRC = 2 * Math.PI * R;
+    // 2px surface gap between segments (skipped for a single full ring).
+    const GAP = items.length > 1 ? 2 : 0;
+    let acc = 0;
+    const arcs = items.map((it, i) => {
+        const frac = it.value / total;
+        const len = Math.max(0, frac * CIRC - GAP);
+        const off = -acc * CIRC;
+        acc += frac;
+        return `<circle class="pfm-donut-arc" data-idx="${i}" cx="${CX}" cy="${CY}" r="${R}" fill="none"
+                    style="stroke:${it.color};stroke-width:${SW}px"
+                    stroke-dasharray="${len.toFixed(2)} ${(CIRC - len).toFixed(2)}"
+                    stroke-dashoffset="${off.toFixed(2)}" transform="rotate(-90 ${CX} ${CY})"/>`;
+    }).join('');
+    const legend = items.map((it, i) => {
+        const pct = (it.value / total) * 100;
+        return `<div class="pfm-legend-row${o.onClick ? ' pfm-legend-clickable' : ''}" data-idx="${i}">
+                <span class="pfm-swatch" style="background:${it.color}"></span>
+                <span class="pfm-legend-label text-truncate" title="${esc(it.label)}">${esc(it.label)}</span>
+                <span class="pfm-legend-value">${Fmt.amt(esc(fmtEurWhole(it.value)))}</span>
+                <span class="pfm-legend-pct">${pct.toFixed(1)}%</span>
+            </div>`;
+    }).join('');
+    container.innerHTML = `
+        <div class="pfm-donut">
+            <svg viewBox="0 0 160 160" class="pfm-donut-svg" role="img" aria-label="${esc(o.centerLabel || 'Breakdown')}">
+                ${arcs}
+                <text x="${CX}" y="${CY - 6}" text-anchor="middle" font-size="11" class="pfm-donut-center-label">${esc(o.centerLabel || 'Total')}</text>
+                <text x="${CX}" y="${CY + 14}" text-anchor="middle" font-size="17" font-weight="700" class="pfm-donut-center-value pfm-amt">${esc(o.centerValue || _fmtEurShort(total))}</text>
+            </svg>
+            <div class="pfm-legend">${legend}${o.footerHtml || ''}</div>
+        </div>`;
+
+    const svg = container.querySelector('svg');
+    const rows = container.querySelectorAll('.pfm-legend-row');
+    const arcEls = container.querySelectorAll('.pfm-donut-arc');
+    const highlight = idx => {
+        arcEls.forEach(a => a.classList.toggle('pfm-dim', idx != null && a.dataset.idx !== String(idx)));
+        rows.forEach(r => r.classList.toggle('pfm-dim', idx != null && r.dataset.idx !== String(idx)));
+    };
+    const tipFor = idx => {
+        const it = items[idx];
+        const pct = (it.value / total) * 100;
+        const rowsHtml = [
+            { color: it.color, label: 'Amount', value: fmtEurCents(it.value) },
+            { label: 'Share', value: pct.toFixed(1) + '%' },
+        ];
+        if (it.detail) rowsHtml.push({ label: '', value: it.detail });
+        return chartTipHtml(it.label, rowsHtml);
+    };
+    const wire = (el) => {
+        const idx = parseInt(el.dataset.idx, 10);
+        el.addEventListener('mouseenter', () => highlight(idx));
+        el.addEventListener('mousemove', e => chartTip.show(tipFor(idx), e.clientX, e.clientY));
+        el.addEventListener('mouseleave', () => { highlight(null); chartTip.hide(); });
+        if (o.onClick) el.addEventListener('click', () => o.onClick(items[idx].key));
+    };
+    arcEls.forEach(wire);
+    rows.forEach(wire);
+    if (svg) svg.addEventListener('mouseleave', () => { highlight(null); chartTip.hide(); });
+}
+
+// €214k / €1.2M for a donut centre — fits the hole at any magnitude.
+function _fmtEurShort(v) {
+    const abs = Math.abs(v);
+    if (abs >= 1e6) return '€' + (v / 1e6).toFixed(2) + 'M';
+    if (abs >= 1e4) return '€' + (v / 1e3).toFixed(0) + 'k';
+    if (abs >= 1e3) return '€' + (v / 1e3).toFixed(1) + 'k';
+    return '€' + v.toFixed(0);
+}
+
+// Chart.js defaults for every Chart.js chart in the app: tooltips show all
+// series at the hovered x instead of requiring a pixel-exact hit, and text
+// uses the app font. Pies/doughnuts keep per-slice hover.
+function applyChartJsDefaults() {
+    if (typeof Chart === 'undefined' || !Chart.defaults) return;
+    Chart.defaults.font.family = getComputedStyle(document.body).fontFamily || Chart.defaults.font.family;
+    Chart.defaults.interaction.mode = 'index';
+    Chart.defaults.interaction.intersect = false;
+    ['pie', 'doughnut', 'polarArea'].forEach(t => {
+        if (Chart.overrides && Chart.overrides[t]) {
+            Chart.overrides[t].interaction = { mode: 'nearest', intersect: true };
+        }
+    });
+    Chart.defaults.plugins.tooltip.padding = 10;
+    Chart.defaults.plugins.tooltip.boxPadding = 4;
+    Chart.defaults.plugins.tooltip.usePointStyle = true;
+}
+
+Object.assign(window, {
+    vizColor, vizTypeColor, vizTypeLabel, fmtEurWhole, fmtEurCents, donutSlices,
+    nearestIndex, chartTipHtml, attachLineHover, renderDonut, applyChartJsDefaults,
+});
+
+// Dashboard "Needs attention" strip: one slim line that summarises price
+// alerts and action items as badges, instead of two full-width banners
+// above the KPIs. Clicking a group opens its detail list below the strip;
+// the × hides that group until its content changes (signature-keyed).
+// slotId: 'dashAlerts' | 'dashActionItems'. part = null hides the slot.
+const _dashAttn = { open: null, detail: {} };
+function dashAttentionSet(slotId, part) {
+    const slot = document.getElementById(slotId);
+    const wrap = document.getElementById('dashAttention');
+    const detail = document.getElementById('dashAttentionDetail');
+    if (!slot || !wrap || !detail) return;
+    if (!part) {
+        slot.style.display = 'none';
+        slot.innerHTML = '';
+        delete _dashAttn.detail[slotId];
+        if (_dashAttn.open === slotId) _dashAttn.open = null;
+    } else {
+        _dashAttn.detail[slotId] = part.detailHtml;
+        slot.style.display = '';
+        slot.innerHTML = `
+            <span class="pfm-attn-group">
+                <button type="button" class="pfm-attn-toggle" aria-expanded="${_dashAttn.open === slotId}" title="Show details">
+                    ${part.summaryHtml}
+                    <i class="bi bi-chevron-${_dashAttn.open === slotId ? 'up' : 'down'} small"></i>
+                </button>
+                <button type="button" class="btn-close" style="font-size:.55rem;" aria-label="Dismiss" title="Hide until something changes"></button>
+            </span>`;
+        slot.querySelector('.pfm-attn-toggle').addEventListener('click', () => {
+            _dashAttn.open = _dashAttn.open === slotId ? null : slotId;
+            _dashAttentionRender();
+        });
+        slot.querySelector('.btn-close').addEventListener('click', () => {
+            if (part.onDismiss) part.onDismiss();
+            dashAttentionSet(slotId, null);
+        });
+    }
+    _dashAttentionRender();
+}
+
+function _dashAttentionRender() {
+    const wrap = document.getElementById('dashAttention');
+    const bar = document.getElementById('dashAttentionBar');
+    const detail = document.getElementById('dashAttentionDetail');
+    if (!wrap || !detail) return;
+    const anyVisible = ['dashAlerts', 'dashActionItems'].some(id => {
+        const el = document.getElementById(id);
+        return el && el.style.display !== 'none' && el.innerHTML.trim();
+    });
+    wrap.style.display = anyVisible ? '' : 'none';
+    const open = _dashAttn.open && _dashAttn.detail[_dashAttn.open];
+    detail.style.display = open ? '' : 'none';
+    detail.innerHTML = open || '';
+    if (bar) bar.classList.toggle('has-open', !!open);
+    ['dashAlerts', 'dashActionItems'].forEach(id => {
+        const t = document.querySelector(`#${id} .pfm-attn-toggle`);
+        if (!t) return;
+        const isOpen = _dashAttn.open === id;
+        t.setAttribute('aria-expanded', String(isOpen));
+        const ic = t.querySelector('.bi-chevron-down, .bi-chevron-up');
+        if (ic) ic.className = `bi bi-chevron-${isOpen ? 'up' : 'down'} small`;
+    });
+    // Research-icon clicks inside the alert detail open the research modal.
+    if (!detail._wired) {
+        detail._wired = true;
+        detail.addEventListener('click', (e) => {
             const btn = e.target.closest('[data-research-symbol]');
             if (btn && window.openResearchModal) {
                 window.openResearchModal(btn.dataset.researchSymbol, btn.dataset.researchName || '');
             }
         });
     }
+}
+window.dashAttentionSet = dashAttentionSet;
+
+// Price alerts part of the strip: price targets crossed + watchlist buy
+// zones + stale price data. Loaded async so it never blocks the dashboard
+// (watchlist check hits live prices). BUY/SELL/WATCH stay grouped into
+// collapsible sections in the detail so ~45 targets don't make a wall.
+async function loadDashboardAlerts() {
     const researchLink = (symbol, name) =>
         `<button type="button" class="btn btn-link btn-sm p-0 ms-1 align-baseline" `
         + `data-research-symbol="${esc(symbol)}" data-research-name="${esc(name || '')}" `
@@ -341,8 +678,6 @@ async function loadDashboardAlerts() {
         let dataItem = '';
         // Stale price-data warning: prices feed value & gain/loss, so flag when
         // the last refresh is old or some holdings have gone stale/unpriced.
-        // Always a single aggregated line, so it stays outside the BUY/SELL/
-        // WATCH grouping below rather than being its own collapsible section.
         if (fresh) {
             const ageH = fresh.refresh_age_hours;
             const oldRefresh = (ageH == null) || (ageH > 30);
@@ -394,20 +729,18 @@ async function loadDashboardAlerts() {
             watchItems.push(`<li class="mb-1"><span class="badge bg-info text-dark me-2">WATCH</span><strong>${esc(a.symbol)}</strong> ${a.name ? '· ' + esc(a.name) : ''} at ${Fmt.num(a.price, 2, 2)} entered buy zone (≤ ${Fmt.num(a.buy_below, 2, 2)})${fetchedTxt}${researchLink(a.symbol, a.name)}</li>`);
         });
         const totalCount = (dataItem ? 1 : 0) + buyItems.length + sellItems.length + watchItems.length;
-        if (!totalCount) { box.style.display = 'none'; box.innerHTML = ''; return; }
+        if (!totalCount) { dashAttentionSet('dashAlerts', null); return; }
         // Dismissal is keyed by the alert content so a *new* alert reappears even
         // after the user closed the previous set; the same set stays hidden.
         const sig = hashStr(dataItem + buyItems.join('') + sellItems.join('') + watchItems.join(''));
         if (localStorage.getItem('pfmAlertsDismissed') === sig) {
-            box.style.display = 'none'; box.innerHTML = ''; return;
+            dashAttentionSet('dashAlerts', null); return;
         }
-        // Each type gets its own collapsed-by-default section (omitted entirely
-        // when empty) so the banner doesn't grow one line per triggered symbol.
         const section = (key, label, badgeCls, list) => {
             if (!list.length) return '';
             const bodyId = `dashAlerts${key}Body`;
             return `
-                <div class="mt-2">
+                <div class="mt-1">
                     <div class="d-flex align-items-center gap-2" role="button" data-bs-toggle="collapse" data-bs-target="#${bodyId}" aria-expanded="false">
                         <span class="badge ${badgeCls}">${label} (${list.length})</span>
                         <i class="bi bi-chevron-down small"></i>
@@ -417,23 +750,24 @@ async function loadDashboardAlerts() {
                     </div>
                 </div>`;
         };
-        box.style.display = '';
-        box.innerHTML = `
-            <div class="alert alert-warning alert-dismissible mb-0">
-                <button type="button" class="btn-close" id="dashAlertsClose" aria-label="Dismiss"></button>
-                <div class="fw-semibold mb-1"><i class="bi bi-bell-fill me-2"></i>${totalCount} alert${totalCount > 1 ? 's' : ''}</div>
-                ${dataItem ? `<ul class="list-unstyled mb-0 small">${dataItem}</ul>` : ''}
+        const chip = (n, label, cls) => n ? `<span class="badge ${cls}">${n} ${label}</span>` : '';
+        dashAttentionSet('dashAlerts', {
+            summaryHtml: `<span>Price signals</span>`
+                + chip(buyItems.length, 'buy', 'text-bg-success')
+                + chip(sellItems.length, 'sell', 'text-bg-danger')
+                + chip(watchItems.length, 'watch', 'text-bg-info')
+                + (dataItem ? '<span class="badge text-bg-warning">stale prices</span>' : ''),
+            detailHtml: `
+                <div class="fw-semibold mb-1">Price signals</div>
+                ${dataItem ? `<ul class="list-unstyled mb-1 small">${dataItem}</ul>` : ''}
                 ${section('Buy', 'BUY', 'bg-success', buyItems)}
                 ${section('Sell', 'SELL', 'bg-danger', sellItems)}
                 ${section('Watch', 'WATCH', 'bg-info text-dark', watchItems)}
-            </div>`;
-        const closeBtn = document.getElementById('dashAlertsClose');
-        if (closeBtn) closeBtn.addEventListener('click', () => {
-            localStorage.setItem('pfmAlertsDismissed', sig);
-            box.style.display = 'none'; box.innerHTML = '';
+                <div class="small text-muted mt-2">Targets come from your research notes — review them on the <a href="#" data-page="research">Research</a> page.</div>`,
+            onDismiss: () => localStorage.setItem('pfmAlertsDismissed', sig),
         });
     } catch (e) {
-        box.style.display = 'none';
+        dashAttentionSet('dashAlerts', null);
     }
 }
 
