@@ -1,146 +1,110 @@
-#!/usr/bin/env python3
-"""
-Test script for the user authentication system.
-"""
+"""Tests for AuthManager: registration, login, sessions and password changes."""
 
-import sys
-import os
-import pathlib
+import json
+from datetime import datetime, timedelta
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "portf_manager"))
+import pytest
 
-from portf_manager.database import Database  # noqa: E402
-from portf_manager.auth import AuthManager, AuthenticationError  # noqa: E402
-
-_TEST_DB = "test_auth.db"
+from portf_manager.auth import AuthenticationError, AuthManager, UserSession
+from portf_manager.database import Database
 
 
-def test_auth_system():
-    """Test the authentication system."""
-    # Clean up any leftover DB from a previous run
-    pathlib.Path(_TEST_DB).unlink(missing_ok=True)
-
-    print("🧪 Testing Portfolio Manager Authentication System")
-    print("=" * 60)
-
-    # Initialize database and auth manager
-    db = Database(_TEST_DB)
-    auth = AuthManager(db)
-
-    try:
-        # Test user registration
-        print("\n1. Testing User Registration")
-        print("-" * 30)
-
-        user_id = auth.register_user(
-            username="testuser",
-            email="test@example.com",
-            password="testpass123",
-            full_name="Test User",
-        )
-        print(f"✅ User registered successfully with ID: {user_id}")
-
-        # Test duplicate registration (should fail)
-        try:
-            auth.register_user(
-                username="testuser", email="test2@example.com", password="testpass123"
-            )
-            print("❌ Duplicate username should have failed!")
-        except AuthenticationError as e:
-            print(f"✅ Duplicate username properly rejected: {e}")
-
-        # Test login
-        print("\n2. Testing User Login")
-        print("-" * 30)
-
-        session = auth.login("testuser", "testpass123")
-        print(f"✅ Login successful! Session token: {session.session_token[:10]}...")
-
-        # Test current user
-        current_user = auth.get_current_user()
-        print(f"✅ Current user: {current_user['username']} ({current_user['email']})")
-
-        # Test wrong password
-        try:
-            auth.login("testuser", "wrongpass")
-            print("❌ Wrong password should have failed!")
-        except AuthenticationError as e:
-            print(f"✅ Wrong password properly rejected: {e}")
-
-        # Test logout
-        print("\n3. Testing User Logout")
-        print("-" * 30)
-
-        auth.logout()
-        current_user = auth.get_current_user()
-        if current_user is None:
-            print("✅ Logout successful - no current user")
-        else:
-            print("❌ Logout failed - user still logged in")
-
-        # Test session persistence
-        print("\n4. Testing Session Persistence")
-        print("-" * 30)
-
-        # Login again
-        session = auth.login("testuser", "testpass123")
-        print("✅ Logged in again")
-
-        # Create new auth manager (simulates app restart)
-        auth2 = AuthManager(db)
-        current_user = auth2.get_current_user()
-
-        if current_user and current_user["username"] == "testuser":
-            print("✅ Session persistence works!")
-        else:
-            print("❌ Session persistence failed")
-
-        # Test password change
-        print("\n5. Testing Password Change")
-        print("-" * 30)
-
-        auth2.change_password("testpass123", "newpass456")
-        print("✅ Password changed successfully")
-
-        # Test login with new password
-        auth2.logout()
-        session = auth2.login("testuser", "newpass456")
-        print("✅ Login with new password successful")
-
-        # Test login with old password (should fail)
-        auth2.logout()
-        try:
-            auth2.login("testuser", "testpass123")
-            print("❌ Old password should have failed!")
-        except AuthenticationError as e:
-            print(f"✅ Old password properly rejected: {e}")
-
-    except Exception as e:
-        print(f"❌ Test failed with error: {e}")
-        import traceback
-
-        traceback.print_exc()
-
-    finally:
-        # Cleanup
-        print("\n6. Cleanup")
-        print("-" * 30)
-        try:
-            os.remove("test_auth.db")
-            print("✅ Test database cleaned up")
-        except Exception:
-            pass
-
-        try:
-            session_file = pathlib.Path.home() / ".portf_session"
-            if session_file.exists():
-                session_file.unlink()
-                print("✅ Session file cleaned up")
-        except Exception:
-            pass
-
-    print("\n🎉 Authentication system test completed!")
+@pytest.fixture
+def db(tmp_path):
+    return Database(str(tmp_path / "auth.db"))
 
 
-if __name__ == "__main__":
-    test_auth_system()
+@pytest.fixture
+def auth(db):
+    manager = AuthManager(db)
+    manager.register_user("alice", "alice@example.com", "s3cret-pass", "Alice")
+    return manager
+
+
+def test_register_rejects_duplicate_username_and_email(auth):
+    with pytest.raises(AuthenticationError, match="Username"):
+        auth.register_user("alice", "other@example.com", "x")
+    with pytest.raises(AuthenticationError, match="Email"):
+        auth.register_user("bob", "alice@example.com", "x")
+
+
+def test_password_is_stored_hashed_and_salted(auth, db):
+    user = db.get_user_by_username("alice")
+    assert "s3cret-pass" not in (user["password_hash"], user["salt"])
+    auth.register_user("bob", "bob@example.com", "s3cret-pass")
+    assert db.get_user_by_username("bob")["password_hash"] != user["password_hash"]
+
+
+def test_login_by_username_or_email(auth):
+    assert auth.login("alice", "s3cret-pass").username == "alice"
+    assert auth.login("alice@example.com", "s3cret-pass").username == "alice"
+    assert auth.get_current_user()["email"] == "alice@example.com"
+
+
+@pytest.mark.parametrize("user,password", [("alice", "wrong"), ("nobody", "x")])
+def test_login_failures_share_one_message(auth, user, password):
+    # Same message for unknown user and bad password: no username probing
+    with pytest.raises(AuthenticationError, match="Invalid username or password"):
+        auth.login(user, password)
+    assert auth.get_current_user() is None
+
+
+def test_disabled_account_cannot_log_in(auth, db, monkeypatch):
+    user = db.get_user_by_username("alice")
+    monkeypatch.setattr(db, "get_user_by_username", lambda u: {**user, "is_active": 0})
+    with pytest.raises(AuthenticationError, match="disabled"):
+        auth.login("alice", "s3cret-pass")
+
+
+def test_session_survives_restart_and_logout_clears_it(auth, db, tmp_path):
+    auth.login("alice", "s3cret-pass")
+    assert (AuthManager(db).get_current_user() or {}).get("username") == "alice"
+
+    auth.logout()
+    assert not auth.session_file.exists()
+    assert AuthManager(db).get_current_user() is None
+
+
+def test_session_file_is_private(auth):
+    auth.login("alice", "s3cret-pass")
+    assert auth.session_file.stat().st_mode & 0o777 == 0o600
+
+
+def test_expired_session_is_discarded_on_load(auth, db):
+    auth.login("alice", "s3cret-pass")
+    data = json.loads(auth.session_file.read_text())
+    data["last_activity"] = (datetime.now() - timedelta(hours=25)).isoformat()
+    auth.session_file.write_text(json.dumps(data))
+
+    assert AuthManager(db).get_current_user() is None
+    assert not auth.session_file.exists()
+
+
+def test_corrupt_session_file_starts_logged_out(auth, db):
+    auth.session_file.write_text("{not json")
+    assert AuthManager(db).get_current_user() is None
+
+
+def test_session_expiry_boundary():
+    session = UserSession(1, "alice", "alice@example.com")
+    session.last_activity = datetime.now() - timedelta(hours=23, minutes=59)
+    assert not session.is_expired()
+    session.last_activity = datetime.now() - timedelta(hours=24, minutes=1)
+    assert session.is_expired()
+
+
+def test_change_password(auth):
+    auth.login("alice", "s3cret-pass")
+    with pytest.raises(AuthenticationError, match="incorrect"):
+        auth.change_password("wrong", "new-pass-456")
+
+    auth.change_password("s3cret-pass", "new-pass-456")
+    auth.logout()
+    assert auth.login("alice", "new-pass-456").username == "alice"
+    with pytest.raises(AuthenticationError):
+        auth.login("alice", "s3cret-pass")
+
+
+def test_change_password_requires_login(auth):
+    with pytest.raises(AuthenticationError, match="Not authenticated"):
+        auth.change_password("s3cret-pass", "x")

@@ -16,10 +16,13 @@ import pytest
 
 from portf_manager.api_client import APIClient, CacheStrategy
 
-pytestmark = pytest.mark.skipif(
-    not os.getenv("PFM_LIVE_NETWORK_TESTS"),
-    reason="live network test; set PFM_LIVE_NETWORK_TESTS=1 to run",
-)
+pytestmark = [
+    pytest.mark.network,
+    pytest.mark.skipif(
+        not os.getenv("PFM_LIVE_NETWORK_TESTS"),
+        reason="live network test; set PFM_LIVE_NETWORK_TESTS=1 to run",
+    ),
+]
 
 
 @pytest.fixture

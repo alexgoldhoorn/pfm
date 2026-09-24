@@ -8,6 +8,12 @@ from portf_manager.services.research import get_symbols_needing_refresh
 from portf_server.routers.research import _BULK_RESEARCH, _run_bulk_research_refresh
 
 
+@pytest.fixture(autouse=True)
+def _no_live_quotes(monkeypatch):
+    """The worker falls back to a live quote when no price is stored; stub it."""
+    monkeypatch.setattr("portf_manager.market._fetch_quote_live", lambda symbol: None)
+
+
 def _held_asset(db, symbol="AAPL", name="Apple Inc.", qty=10.0, asset_type="stock"):
     aid = db.create_asset(symbol, name, asset_type, currency="USD")
     pid = db.get_or_create_portfolio("TestBroker", base_currency="EUR")

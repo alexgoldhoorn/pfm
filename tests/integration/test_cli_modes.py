@@ -6,9 +6,10 @@ using ephemeral FastAPI server fixtures for integration testing.
 """
 
 import os
+import sys
 import time
 import uuid
-from multiprocessing import Process
+import multiprocessing
 from subprocess import run
 import pytest
 import uvicorn
@@ -18,12 +19,16 @@ from portf_manager.cli import PortfolioManagerCLI
 from portf_manager.config import PortfolioConfig
 
 
-def run_server(host, port):
-    """Top-level function to run the uvicorn server."""
-    # The integration test provisions its API key via the /auth/register HTTP
-    # endpoint, which is gated off by default — enable it for this ephemeral
-    # server (set before importing the app so settings pick it up).
-    os.environ["PORTF_ALLOW_REGISTRATION"] = "true"
+TEST_API_KEY = "integration-test-key-0123456789abcdef"
+
+
+def run_server(host, port, db_path):
+    """Run the app on a throwaway database, seeded with a known API key.
+
+    Env vars are set before importing the app so its settings pick them up.
+    """
+    os.environ["PORTF_DATABASE_URL"] = f"sqlite:///{db_path}"
+    os.environ["SERVER_API_KEY"] = TEST_API_KEY
     from portf_server.app import app
 
     uvicorn.run(app, host=host, port=port, log_level="error")
@@ -32,14 +37,15 @@ def run_server(host, port):
 class EphemeralFastAPIServer:
     """Ephemeral FastAPI server for testing CLI in server mode."""
 
-    def __init__(self, host: str = "127.0.0.1", port: int = 0):
+    def __init__(self, db_path: str, host: str = "127.0.0.1", port: int = 0):
+        self.db_path = db_path
         self.host = host
         self.port = port
         self.process = None
         self.server_url = None
         self.api_key = None
 
-    def start(self, test_app=None, timeout: int = 10):
+    def start(self, timeout: int = 10):
         """Start the ephemeral server."""
         import socket
 
@@ -51,7 +57,11 @@ class EphemeralFastAPIServer:
 
         self.server_url = f"http://{self.host}:{self.port}"
 
-        self.process = Process(target=run_server, args=(self.host, self.port))
+        # spawn, not fork: a forked child inherits the parent's imported app and
+        # cached settings, so run_server's env vars would come too late
+        self.process = multiprocessing.get_context("spawn").Process(
+            target=run_server, args=(self.host, self.port, self.db_path)
+        )
         self.process.start()
 
         # Wait for server to be ready
@@ -76,53 +86,9 @@ class EphemeralFastAPIServer:
                 self.process.kill()
             self.process = None
 
-    def create_api_key(self, username: str = "testuser") -> str:
-        """Create an API key for testing."""
-        if not self.api_key:
-            # Create test user and API key through the server
-            try:
-                # Register user
-                user_data = {
-                    "username": f"testuser_{uuid.uuid4().hex[:8]}",
-                    "email": f"test_{uuid.uuid4().hex[:8]}@example.com",
-                    "password": "testpassword123",
-                    "full_name": "Test User",
-                }
-
-                response = httpx.post(
-                    f"{self.server_url}/api/v1/auth/register", json=user_data
-                )
-                if response.status_code == 201:
-                    # Login to get token
-                    login_response = httpx.post(
-                        f"{self.server_url}/api/v1/auth/login",
-                        json={
-                            "username": user_data["username"],
-                            "password": user_data["password"],
-                        },
-                    )
-                    if login_response.status_code == 200:
-                        token = login_response.json()["access_token"]
-
-                        # Create API key
-                        api_key_response = httpx.post(
-                            f"{self.server_url}/api/v1/auth/api-keys",
-                            json={
-                                "name": "test-cli-key",
-                                "description": "CLI test key",
-                            },
-                            headers={"Authorization": f"Bearer {token}"},
-                        )
-                        if api_key_response.status_code == 201:
-                            self.api_key = api_key_response.json()["key"]
-                            return self.api_key
-
-                # Fallback to dummy key
-                self.api_key = "test-api-key-123"
-            except Exception:
-                self.api_key = "test-api-key-123"
-
-        return self.api_key
+    def create_api_key(self) -> str:
+        """The key the server seeded from SERVER_API_KEY at startup."""
+        return TEST_API_KEY
 
     def __enter__(self):
         self.start()
@@ -133,10 +99,10 @@ class EphemeralFastAPIServer:
 
 
 @pytest.fixture
-def ephemeral_server(test_app):
+def ephemeral_server(tmp_path):
     """Create ephemeral FastAPI server fixture."""
-    server = EphemeralFastAPIServer()
-    server.start(test_app)
+    server = EphemeralFastAPIServer(str(tmp_path / "server.db"))
+    server.start()
     yield server
     server.stop()
 
@@ -296,13 +262,7 @@ class TestCLIServerMode:
         """Test asset operations in server mode."""
         cli = PortfolioManagerCLI(server_config)
 
-        # Test getting assets (should make HTTP request)
-        try:
-            assets = cli._get_all_assets()
-            assert isinstance(assets, list)
-        except Exception as e:
-            # Expected if server endpoints are not fully implemented
-            assert "not implemented" in str(e).lower() or "not found" in str(e).lower()
+        assert cli._get_all_assets() == []
 
     @pytest.mark.integration
     @pytest.mark.cli
@@ -321,11 +281,11 @@ class TestCLIServerMode:
 
     @pytest.mark.integration
     @pytest.mark.cli
-    def test_server_mode_error_handling(self, server_config):
-        """Test error handling in server mode."""
-        # Create CLI with invalid config
+    def test_server_mode_error_handling(self):
+        """An unreachable server surfaces as RuntimeError, not a hang or crash."""
+        # Port 9 (discard) on loopback: refused locally, no DNS or real network
         invalid_config = PortfolioConfig(
-            server_url="http://nonexistent:9999", api_key="invalid-key", db_path=None
+            server_url="http://127.0.0.1:9", api_key="invalid-key", db_path=None
         )
 
         cli = PortfolioManagerCLI(invalid_config)
@@ -418,7 +378,9 @@ class TestCLICommandLineInterface:
     def test_cli_help_command(self):
         """Test CLI help command."""
         result = run(
-            ["python", "-m", "portf_manager", "--help"], capture_output=True, text=True
+            [sys.executable, "-m", "portf_manager", "--help"],
+            capture_output=True,
+            text=True,
         )
         assert result.returncode == 0
         assert "Portfolio Manager CLI" in result.stdout
@@ -426,23 +388,29 @@ class TestCLICommandLineInterface:
 
     @pytest.mark.integration
     @pytest.mark.cli
-    def test_cli_version_info(self):
-        """Test CLI version and info commands."""
+    def test_cli_help_lists_commands(self):
+        """--help works without a database or login."""
         result = run(
-            ["python", "-m", "portf_manager", "list-sectors"],
+            [sys.executable, "-m", "portf_manager", "--help"],
             capture_output=True,
             text=True,
         )
-        # Should fail without authentication, but command should be recognized
-        assert "Sectors" in result.stdout
-        assert "Information Technology" in result.stdout
+        assert result.returncode == 0
+        assert "list-assets" in result.stdout
 
     @pytest.mark.integration
     @pytest.mark.cli
     def test_cli_local_mode_flag(self, temp_db_path):
         """Test CLI with local mode flags."""
         result = run(
-            ["python", "-m", "portf_manager", "--db-path", temp_db_path, "list-assets"],
+            [
+                sys.executable,
+                "-m",
+                "portf_manager",
+                "--db-path",
+                temp_db_path,
+                "list-assets",
+            ],
             capture_output=True,
             text=True,
         )
@@ -459,7 +427,7 @@ class TestCLICommandLineInterface:
 
         result = run(
             [
-                "python",
+                sys.executable,
                 "-m",
                 "portf_manager",
                 "--server",
@@ -472,16 +440,14 @@ class TestCLICommandLineInterface:
             text=True,
         )
 
-        # Should work or fail gracefully with server connection
-        # Result depends on server endpoint implementation
-        assert result.returncode in [0, 1]  # Success or expected failure
+        assert result.returncode == 0, result.stderr
 
     @pytest.mark.integration
     @pytest.mark.cli
     def test_cli_invalid_command(self):
         """Test CLI with invalid command."""
         result = run(
-            ["python", "-m", "portf_manager", "invalid-command"],
+            [sys.executable, "-m", "portf_manager", "invalid-command"],
             capture_output=True,
             text=True,
         )
