@@ -75,3 +75,82 @@ test("vizTypeColor is stable per asset type", () => {
     assert.equal(win.vizTypeColor("something-new"), "var(--viz-other)");
     assert.equal(win.vizTypeLabel("mutual_fund"), "Mutual fund");
 });
+
+test("notifyLevel classifies messages", () => {
+    assert.equal(win.notifyLevel("Error saving: boom"), "danger");
+    assert.equal(win.notifyLevel("Backfill failed: timeout"), "danger");
+    assert.equal(win.notifyLevel("Goal not found"), "danger");
+    assert.equal(win.notifyLevel("Asset created successfully!"), "success");
+    assert.equal(win.notifyLevel("Please select a broker."), "warning");
+    assert.equal(win.notifyLevel("Pattern and category cannot be empty."), "warning");
+    assert.equal(win.notifyLevel("Asset, type, date and a positive quantity are required."), "warning");
+    assert.equal(win.notifyLevel("No data selected."), "warning");
+    assert.equal(win.notifyLevel("Open the Tax tab first."), "warning");
+    assert.equal(win.notifyLevel("Imported 12 rows"), "success");
+});
+
+test("fmtEurTick never prints two equal adjacent labels", () => {
+    assert.equal(win.fmtEurTick(152500, 2500), "€152.5k");
+    assert.equal(win.fmtEurTick(160000, 20000), "€160k");
+    assert.equal(win.fmtEurTick(1250000, 250000), "€1.25M");
+    assert.equal(win.fmtEurTick(2000000, 500000), "€2.0M");
+});
+
+test("importResultModel summarises a clean import", () => {
+    const m = win.importResultModel({
+        saved: 3, saved_bookings: 2, saved_deposits: 0, duplicates_skipped: 1, overwritten: 0,
+        errors: ["DUPLICATE: EX buy 1@10 on 2024-01-01 (existing id=4)"],
+        by_type: { buy: 2, dividend: 1 }, date_from: "2024-01-01", date_to: "2024-03-01",
+        new_assets: ["Example Corp (EX)"], portfolios: ["Example Broker"],
+        booking_totals: { Deposit: { EUR: 750 } },
+    });
+    assert.equal(m.title, "Import complete");
+    assert.equal(m.level, "success");
+    const chips = Object.fromEntries(m.chips.map((c) => [c.label, c.value]));
+    assert.equal(chips.transactions, 3);
+    assert.equal(chips["cash movements"], 2);
+    assert.equal(chips["duplicates skipped"], 1);
+    assert.equal(chips.errors, undefined);
+    const facts = Object.fromEntries(m.facts.map((f) => [f.label, f.value]));
+    assert.equal(facts.Breakdown, "2 buys · 1 dividend");
+    assert.equal(facts.Account, "Example Broker");
+    assert.ok(facts.Deposited.includes("750"));
+    const dup = m.lists.find((l) => l.title === "Skipped as duplicates");
+    assert.deepEqual([...dup.items], ["EX buy 1@10 on 2024-01-01 (existing id=4)"]);
+    assert.ok(m.note.includes("price refresh"));
+});
+
+test("importResultModel flags errors and all-duplicate imports", () => {
+    const bad = win.importResultModel({ saved: 0, errors: ["EX (2024-01-01): date is required"] });
+    assert.equal(bad.level, "danger");
+    assert.equal(bad.title, "Nothing imported");
+    const partial = win.importResultModel({ saved: 2, errors: ["boom"] });
+    assert.equal(partial.level, "warning");
+    const dupsOnly = win.importResultModel({ saved: 0, duplicates_skipped: 5, errors: [] });
+    assert.equal(dupsOnly.title, "Nothing new to import");
+    assert.ok(dupsOnly.note.includes("already imported"));
+});
+
+test("spendingImportResultModel reports balance and work left", () => {
+    const m = win.spendingImportResultModel({
+        saved: 40, duplicates_skipped: 2, overwritten: 0, transfers_linked: 3, errors: [],
+        account_name: "Example Bank", date_from: "2026-01-01", date_to: "2026-01-31",
+        money_in: { EUR: 2000 }, money_out: { EUR: 1500.5 }, uncategorized: 7,
+        latest_balance: 3200, latest_balance_currency: "EUR", latest_balance_date: "2026-01-31",
+    });
+    assert.equal(m.title, "Bank statement imported");
+    const chips = Object.fromEntries(m.chips.map((c) => [c.label, c.value]));
+    assert.equal(chips.rows, 40);
+    assert.equal(chips["to categorise"], 7);
+    assert.equal(chips["transfers linked"], 3);
+    const facts = Object.fromEntries(m.facts.map((f) => [f.label, f.value]));
+    assert.equal(facts.Account, "Example Bank");
+    assert.ok(facts.Balance.includes("3,200") || facts.Balance.includes("3.200"));
+    assert.ok(m.note.includes("7 row(s)"));
+});
+
+test("importResultText is readable in chat", () => {
+    const t = win.importResultText({ saved: 1, errors: [], by_type: { buy: 1 } });
+    assert.ok(t.startsWith("Import complete: 1 transaction."));
+    assert.ok(t.includes("Breakdown: 1 buy"));
+});
