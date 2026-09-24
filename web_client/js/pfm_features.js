@@ -188,14 +188,14 @@ window.deleteGoalRow = async function(id, name) {
         await window.apiClient.deleteGoal(id);
         loadGoals();
     } catch (err) {
-        alert('Error deleting goal: ' + err.message);
+        notify('Error deleting goal: ' + err.message);
     }
 };
 
 window.editGoalRow = async function(id) {
     const goals = await window.apiClient.getGoals().catch(() => []);
     const g = goals.find(x => x.id === id);
-    if (!g) { alert('Goal not found'); return; }
+    if (!g) { notify('Goal not found'); return; }
 
     document.getElementById('editGoalId').value = g.id;
     document.getElementById('editGoalName').value = g.name || '';
@@ -849,7 +849,7 @@ function setupChatPage() {
             const btn = e.currentTarget;
             const checkedIdxs = Array.from(card.querySelectorAll('.chat-tx-select:checked'))
                 .map(cb => parseInt(cb.dataset.idx));
-            if (checkedIdxs.length === 0) { alert('Nothing selected.'); return; }
+            if (checkedIdxs.length === 0) { notify('Nothing selected.'); return; }
             const f = (cls, i) => card.querySelector(`.${cls}[data-idx="${i}"]`);
             const normalized = checkedIdxs.map(i => ({
                 symbol: f('chat-tx-symbol', i).value,
@@ -865,7 +865,7 @@ function setupChatPage() {
             }));
             const missingDate = normalized.filter(t => !t.date || !t.date.trim());
             if (missingDate.length > 0) {
-                alert(`Please fill in a date for: ${missingDate.map(t => t.symbol || '(row)').join(', ')}`);
+                notify(`Please fill in a date for: ${missingDate.map(t => t.symbol || '(row)').join(', ')}`);
                 return;
             }
             btn.disabled = true;
@@ -1016,7 +1016,7 @@ function setupChatPage() {
 
     async function doExtract() {
         const text = inputEl.value.trim();
-        if (!text) { alert('Paste a broker statement first.'); return; }
+        if (!text) { notify('Paste a broker statement first.'); return; }
         inputEl.value = '';
         appendMessage('user', '[Broker statement — extracting transactions…]', new Date().toISOString());
         extractBtn.disabled = true;
@@ -1133,7 +1133,7 @@ function setupEditTransactionModal() {
             bootstrap.Modal.getInstance(document.getElementById('editTransactionModal')).hide();
             window.pageManager.loadTransactionsPage();
         } catch (err) {
-            alert('Error updating transaction: ' + err.message);
+            notify('Error updating transaction: ' + err.message);
         }
     });
 }
@@ -1172,7 +1172,7 @@ window.confirmDeleteTransaction = async function(id, symbol) {
         await window.apiClient.deleteTransaction(id);
         window.pageManager.loadTransactionsPage();
     } catch (err) {
-        alert('Error deleting transaction: ' + err.message);
+        notify('Error deleting transaction: ' + err.message);
     }
 };
 
@@ -1182,7 +1182,7 @@ window.confirmDeleteBooking = async function(id) {
         await window.apiClient.deleteBooking(id);
         window.pageManager.loadTransactionsPage();
     } catch (err) {
-        alert('Error deleting booking: ' + err.message);
+        notify('Error deleting booking: ' + err.message);
     }
 };
 
@@ -1300,7 +1300,7 @@ function setupPortfoliosPage() {
             const filter = document.getElementById('txPortfolioFilter');
             if (filter) { filter.innerHTML = '<option value="">All Portfolios</option>'; }
         } catch (err) {
-            alert('Error saving portfolio: ' + err.message);
+            notify('Error saving portfolio: ' + err.message);
         }
     });
 }
@@ -1309,12 +1309,12 @@ window.setAssetPrice = async function(id, symbol, currency) {
     const val = prompt(`Set a manual price for ${symbol}${currency ? ' (' + currency + ')' : ''}.\nThe daily price update will stop overwriting it.`);
     if (val === null) return;
     const price = parseFloat(val);
-    if (!(price > 0)) { alert('Please enter a positive number.'); return; }
+    if (!(price > 0)) { notify('Please enter a positive number.'); return; }
     try {
         await window.apiClient.setAssetPrice(id, price);
         window.pageManager.loadAssetsPage();
     } catch (e) {
-        alert('Error setting price: ' + e.message);
+        notify('Error setting price: ' + e.message);
     }
 };
 
@@ -1341,7 +1341,7 @@ window.deletePortfolio = async function(id, name) {
         const filter = document.getElementById('txPortfolioFilter');
         if (filter) { filter.innerHTML = '<option value="">All Portfolios</option>'; }
     } catch (err) {
-        alert('Error deleting portfolio: ' + err.message);
+        notify('Error deleting portfolio: ' + err.message);
     }
 };
 
@@ -1368,7 +1368,7 @@ window.clearPortfolioTransactions = async function(id, name) {
                 window.apiClient.baseURL + '/api/v1/export/backup',
                 'pfm-backup.db'
             );
-        } catch (err) { alert('Backup error: ' + err.message); }
+        } catch (err) { notify('Backup error: ' + err.message); }
     };
 
     confirmBtn.onclick = async () => {
@@ -1386,7 +1386,7 @@ window.clearPortfolioTransactions = async function(id, name) {
             window.showToast(`Deleted ${data.deleted} transaction${data.deleted !== 1 ? 's' : ''}${bkMsg} from ${name}.`, 'success');
             window.pageManager.loadPortfoliosPage();
         } catch (err) {
-            alert('Error clearing transactions: ' + err.message);
+            notify('Error clearing transactions: ' + err.message);
             confirmBtn.disabled = false;
         }
     };
@@ -1483,9 +1483,9 @@ function setupImportExportPage() {
         const isPaste  = broker === 'myinvestor_paste';
         const file     = isPaste ? null : fileInput.files[0];
         const pasteText = isPaste && filePasteArea ? filePasteArea.value.trim() : '';
-        if (!broker)              { alert('Please select a broker.'); return; }
-        if (!isPaste && !file)    { alert('Please select a file.'); return; }
-        if (isPaste && !pasteText){ alert('Please paste statement text first.'); return; }
+        if (!broker)              { notify('Please select a broker.'); return; }
+        if (!isPaste && !file)    { notify('Please select a file.'); return; }
+        if (isPaste && !pasteText){ notify('Please paste statement text first.'); return; }
         const uploadFile = isPaste
             ? new File([pasteText], 'myinvestor_paste.txt', { type: 'text/plain' })
             : file;
@@ -1504,7 +1504,7 @@ function setupImportExportPage() {
             filePreview.innerHTML = html;
             _wireImportSymbolSearch(filePreview);
         } catch (err) {
-            alert('Error parsing file: ' + err.message);
+            notify('Error parsing file: ' + err.message);
         } finally {
             fileParseBtn.disabled = false;
             fileParseBtn.innerHTML = '<i class="bi bi-search me-1"></i>Parse File';
@@ -1521,10 +1521,10 @@ function setupImportExportPage() {
             });
         const selectedDeps = Array.from(document.querySelectorAll('#ioFilePreview .file-dep-select:checked'))
             .map(cb => parsedFileDeposits[parseInt(cb.dataset.idx)]);
-        if (selected.length === 0 && parsedFileBookings.length === 0 && selectedDeps.length === 0) { alert('No data selected.'); return; }
+        if (selected.length === 0 && parsedFileBookings.length === 0 && selectedDeps.length === 0) { notify('No data selected.'); return; }
         const missingDate = selected.filter(t => !t.date || !String(t.date).trim());
         if (missingDate.length > 0) {
-            alert(`Please fill in a date for: ${missingDate.map(t => t.symbol || '(row)').join(', ')}`);
+            notify(`Please fill in a date for: ${missingDate.map(t => t.symbol || '(row)').join(', ')}`);
             return;
         }
         fileSaveBtn.disabled = true;
@@ -1537,12 +1537,12 @@ function setupImportExportPage() {
             const owMsg = result.overwritten > 0 ? `, ${result.overwritten} overwritten` : '';
             const dupMsg = result.duplicates_skipped > 0 ? `, ${result.duplicates_skipped} duplicate(s) skipped` : '';
             const realErrors = result.errors.filter(e => !e.startsWith('DUPLICATE'));
-            alert(realErrors.length > 0
+            notify(realErrors.length > 0
                 ? `Saved ${result.saved}${bkMsg}${depMsg}${owMsg}${dupMsg}. Errors:\n${realErrors.join('\n')}`
                 : `Successfully imported ${result.saved} transaction(s)${bkMsg}${depMsg}${owMsg}${dupMsg}.`);
             fileShowStep1();
         } catch (err) {
-            alert('Error saving: ' + err.message);
+            notify('Error saving: ' + err.message);
         } finally {
             fileSaveBtn.disabled = false;
             fileSaveBtn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Selected';
@@ -1590,7 +1590,7 @@ function setupImportExportPage() {
 
     extractBtn.addEventListener('click', async () => {
         const text = textarea.value.trim();
-        if (!text) { alert('Please paste some broker statement text first.'); return; }
+        if (!text) { notify('Please paste some broker statement text first.'); return; }
         extractBtn.disabled = true;
         extractBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Extracting…';
         try {
@@ -1669,7 +1669,7 @@ function setupImportExportPage() {
                    <thead><tr><th></th><th>Date</th><th>Asset</th><th>Type</th><th>Qty</th><th>Price / Cur</th><th>Fees</th></tr></thead>
                    <tbody>${rows}</tbody></table></div>`;
         } catch (err) {
-            alert('Error extracting: ' + err.message);
+            notify('Error extracting: ' + err.message);
         } finally {
             extractBtn.disabled = false;
             extractBtn.innerHTML = '<i class="bi bi-magic me-1"></i>Extract';
@@ -1680,7 +1680,7 @@ function setupImportExportPage() {
         const checkedIdxs = Array.from(document.querySelectorAll('#ioTextPreview .io-tx-select:checked'))
             .map(cb => parseInt(cb.dataset.idx));
         if (checkedIdxs.length === 0 && extractedTextBookings.length === 0) {
-            alert('Nothing selected to save.'); return;
+            notify('Nothing selected to save.'); return;
         }
         const normalized = checkedIdxs.map(i => ({
             symbol: document.getElementById(`iotx_symbol_${i}`).value,
@@ -1696,7 +1696,7 @@ function setupImportExportPage() {
         }));
         const missingDate = normalized.filter(t => !t.date || !t.date.trim());
         if (missingDate.length > 0) {
-            alert(`Please fill in a date for: ${missingDate.map(t => t.symbol || '(row)').join(', ')}`);
+            notify(`Please fill in a date for: ${missingDate.map(t => t.symbol || '(row)').join(', ')}`);
             return;
         }
         // Cash movements can arrive with no date (see extraction step) —
@@ -1707,7 +1707,7 @@ function setupImportExportPage() {
         }));
         const missingBookingDate = bookingsToSave.filter(b => !b.date);
         if (missingBookingDate.length > 0) {
-            alert(`Please fill in a date for cash movement(s): ${missingBookingDate.map(b => `${b.action} ${b.amount.toFixed(2)} ${b.currency}`).join(', ')}`);
+            notify(`Please fill in a date for cash movement(s): ${missingBookingDate.map(b => `${b.action} ${b.amount.toFixed(2)} ${b.currency}`).join(', ')}`);
             return;
         }
         textSaveBtn.disabled = true;
@@ -1719,14 +1719,14 @@ function setupImportExportPage() {
             const owMsg = result.overwritten > 0 ? `, ${result.overwritten} overwritten` : '';
             const bkMsg = result.saved_bookings > 0 ? ` + ${result.saved_bookings} cash movement(s)` : '';
             const realErrors = result.errors.filter(e => !e.startsWith('DUPLICATE'));
-            alert(realErrors.length > 0
+            notify(realErrors.length > 0
                 ? `Saved ${result.saved}${bkMsg}${owMsg}${dupNote}. Errors:\n${realErrors.join('\n')}`
                 : `Successfully imported ${result.saved} transaction(s)${bkMsg}${owMsg}${dupNote}.`);
             textShowStep1();
             textarea.value = '';
             if (_ioDataTabLoaded) loadBookings(); else _ioDataTabLoaded = false;
         } catch (err) {
-            alert('Error saving: ' + err.message);
+            notify('Error saving: ' + err.message);
         } finally {
             textSaveBtn.disabled = false;
             textSaveBtn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save Selected';
@@ -1781,18 +1781,18 @@ function setupImportExportPage() {
             const qs = selectedIds.map(id => `portfolio_id=${encodeURIComponent(id)}`).join('&');
             const url = window.apiClient.baseURL + '/api/v1/export/csv' + (qs ? '?' + qs : '');
             await window.apiClient.downloadBlob(url, 'transactions.csv');
-        } catch (err) { alert('Export error: ' + err.message); }
+        } catch (err) { notify('Export error: ' + err.message); }
     });
     if (ioPdtBtn) ioPdtBtn.addEventListener('click', async () => {
         try {
             await window.apiClient.downloadBlob(window.apiClient.baseURL + '/api/v1/export/pdt', 'portfolio_pdt.xlsx');
-        } catch (err) { alert('Export error: ' + err.message); }
+        } catch (err) { notify('Export error: ' + err.message); }
     });
     const ioBackupBtn = document.getElementById('ioExportBackupBtn');
     if (ioBackupBtn) ioBackupBtn.addEventListener('click', async () => {
         try {
             await window.apiClient.downloadBlob(window.apiClient.baseURL + '/api/v1/export/backup', 'pfm-backup.db');
-        } catch (err) { alert('Backup error: ' + err.message); }
+        } catch (err) { notify('Backup error: ' + err.message); }
     });
     const ioRestoreBtn = document.getElementById('ioRestoreBackupBtn');
     if (ioRestoreBtn) {
@@ -1832,7 +1832,7 @@ function setupImportExportPage() {
                 const backupNote = data.pre_restore_backup
                     ? ` Pre-restore snapshot saved to ${data.pre_restore_backup}.`
                     : '';
-                alert(`Database restored successfully.${backupNote}\n\nThe page will reload.`);
+                window.alert(`Database restored successfully.${backupNote}\n\nThe page will reload.`);
                 window.location.reload();
             } catch (err) {
                 restoreStatusMsg.textContent = 'Error: ' + err.message;
@@ -1896,7 +1896,7 @@ function setupImportExportPage() {
                     platformExportWarning.classList.remove('d-none');
                 }
             } catch (err) {
-                alert('Platform export error: ' + err.message);
+                notify('Platform export error: ' + err.message);
             } finally {
                 platformExportBtn.disabled = false;
             }
@@ -1970,7 +1970,7 @@ function setupImportExportPage() {
                     ? parseInt(addBookingPortfolio.value) : null,
             };
             if (!payload.date || !payload.amount || payload.amount <= 0) {
-                alert('Please enter a valid date and amount.'); return;
+                notify('Please enter a valid date and amount.'); return;
             }
             btn.disabled = true;
             const orig = btn.innerHTML;
@@ -1980,7 +1980,7 @@ function setupImportExportPage() {
                 document.getElementById('addBookingAmount').value = '';
                 if (_ioDataTabLoaded) loadBookings(); else _ioDataTabLoaded = false;
             } catch (err) {
-                alert('Error adding booking: ' + err.message);
+                notify('Error adding booking: ' + err.message);
             } finally {
                 btn.disabled = false;
                 btn.innerHTML = orig;
@@ -2586,8 +2586,13 @@ function setupForecastPage() {
                 </span>`).join('');
         }
 
-        const maxVal = Math.max(naturalMax, ...onChartOverlays.map(o => o.target));
-        const minVal = Math.min(naturalMin, ...onChartOverlays.map(o => o.target));
+        // Round the axis out to "nice" steps (€250k, €500k …) so gridlines
+        // land on readable values instead of arbitrary quarters of the range.
+        const nt = niceTicks(
+            Math.min(naturalMin, ...onChartOverlays.map(o => o.target)),
+            Math.max(naturalMax, ...onChartOverlays.map(o => o.target)), 5);
+        const maxVal = nt.hi;
+        const minVal = nt.lo;
         const range  = maxVal - minVal || 1;
 
         function xScale(t) {
@@ -2597,9 +2602,7 @@ function setupForecastPage() {
             return PAD.top + innerH - ((v - minVal) / range) * innerH;
         }
         function yTickFmt(v) {
-            if (Math.abs(v) >= 1000000) return '€' + (v / 1000000).toFixed(1) + 'M';
-            if (Math.abs(v) >= 1000)    return '€' + (v / 1000).toFixed(0) + 'k';
-            return '€' + v;
+            return fmtEurTick(v, nt.step);
         }
         function pathD(key) {
             return data.map((p, i) =>
@@ -2614,11 +2617,7 @@ function setupForecastPage() {
             ).join(' ') + ' Z';
 
         // Y-axis ticks
-        const yTicks = [];
-        for (let i = 0; i <= 4; i++) {
-            const v = minVal + range * (i / 4);
-            yTicks.push({ v, y: yScale(v) });
-        }
+        const yTicks = nt.ticks.map(v => ({ v, y: yScale(v) }));
 
         // X-axis ticks (every 5 years + final year if needed)
         const xTicks = [];
@@ -2633,35 +2632,35 @@ function setupForecastPage() {
             const px = xScale(mortgagePaidOffYear);
             payoffLine = `
                 <line x1="${px.toFixed(1)}" y1="${PAD.top}" x2="${px.toFixed(1)}" y2="${(PAD.top + innerH).toFixed(1)}"
-                      stroke="#22c55e" stroke-width="1.5" stroke-dasharray="6 4"/>
-                <text x="${(px + 4).toFixed(1)}" y="${(PAD.top + 14).toFixed(1)}" font-size="10" fill="#22c55e">Paid off Yr ${mortgagePaidOffYear}</text>
+                      style="stroke:var(--viz-good)" stroke-width="1.5" stroke-dasharray="6 4"/>
+                <text x="${(px + 4).toFixed(1)}" y="${(PAD.top + 14).toFixed(1)}" font-size="10" style="fill:var(--viz-good)">Paid off Yr ${mortgagePaidOffYear}</text>
             `;
         }
 
         const hasMortgage = data[0].mortgage > 0;
         const mortgageLine = hasMortgage
-            ? `<path d="${pathD('mortgage')}" fill="none" stroke="#f43f5e" stroke-width="2" stroke-dasharray="5 5"/>`
+            ? `<path d="${pathD('mortgage')}" fill="none" style="stroke:var(--viz-8)" stroke-width="2" stroke-dasharray="5 5"/>`
             : '';
 
         const zeroLine = minVal < 0
             ? `<line x1="${PAD.left}" y1="${yScale(0).toFixed(1)}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${yScale(0).toFixed(1)}"
-                     stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 3"/>`
+                     stroke="currentColor" stroke-opacity="0.45" stroke-width="1" stroke-dasharray="3 3"/>`
             : '';
 
-        const GOAL_COLORS = ['#a855f7', '#f59e0b', '#0891b2', '#db2777'];
+        const GOAL_COLORS = ['var(--viz-7)', 'var(--viz-4)', 'var(--viz-3)', 'var(--viz-5)'];
         const goalLines = onChartOverlays.map((o, i) => {
             const color = GOAL_COLORS[i % GOAL_COLORS.length];
             const gy = yScale(o.target);
             const label = `${esc(o.name || 'Goal')} — ${fmtEur(o.target)}`;
             let marker = `
                 <line x1="${PAD.left}" y1="${gy.toFixed(1)}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${gy.toFixed(1)}"
-                      stroke="${color}" stroke-width="1.5" stroke-dasharray="2 3"/>
-                <text x="${(PAD.left + innerW - 4).toFixed(1)}" y="${(gy - 4).toFixed(1)}" text-anchor="end" font-size="10" fill="${color}">${label}</text>`;
+                      style="stroke:${color}" stroke-width="1.5" stroke-dasharray="2 3"/>
+                <text x="${(PAD.left + innerW - 4).toFixed(1)}" y="${(gy - 4).toFixed(1)}" text-anchor="end" font-size="10" style="fill:${color}">${label}</text>`;
             if (o.onChartYear) {
                 const gx = xScale(o.targetYear);
                 marker += `
                 <line x1="${gx.toFixed(1)}" y1="${PAD.top}" x2="${gx.toFixed(1)}" y2="${(PAD.top + innerH).toFixed(1)}"
-                      stroke="${color}" stroke-width="1" stroke-dasharray="2 3" opacity="0.6"/>`;
+                      style="stroke:${color}" stroke-width="1" stroke-dasharray="2 3" opacity="0.6"/>`;
             }
             return marker;
         }).join('');
@@ -2672,38 +2671,28 @@ function setupForecastPage() {
         svg.style.display = 'block';
 
         svg.innerHTML = `
-            <defs>
-                <linearGradient id="fcBandGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stop-color="#93c5fd" stop-opacity="0.35"/>
-                    <stop offset="100%" stop-color="#93c5fd" stop-opacity="0.1"/>
-                </linearGradient>
-                <linearGradient id="fcLineGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stop-color="#2563eb" stop-opacity="0.15"/>
-                    <stop offset="100%" stop-color="#2563eb" stop-opacity="0.0"/>
-                </linearGradient>
-            </defs>
 
             <!-- Grid lines -->
             ${yTicks.map(t => `
                 <line x1="${PAD.left}" y1="${t.y.toFixed(1)}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${t.y.toFixed(1)}"
-                      stroke="#e2e8f0" stroke-width="1"/>
+                      stroke="currentColor" stroke-opacity="0.12" stroke-width="1"/>
             `).join('')}
 
             ${zeroLine}
 
             <!-- Confidence band -->
-            <path d="${bandPath}" fill="url(#fcBandGrad)" stroke="none"/>
+            <path d="${bandPath}" style="fill:var(--viz-1)" opacity="0.14" stroke="none"/>
 
             <!-- Under net-worth-line fill -->
             <path d="${pathD('netWorth')} L${xScale(years).toFixed(1)},${(PAD.top + innerH).toFixed(1)} L${xScale(0).toFixed(1)},${(PAD.top + innerH).toFixed(1)} Z"
-                  fill="url(#fcLineGrad)"/>
+                  style="fill:var(--viz-1)" opacity="0.06"/>
 
             <!-- Band edges (dashed) -->
-            <path d="${pathD('netWorthHigh')}" fill="none" stroke="#93c5fd" stroke-width="1.5" stroke-dasharray="4 3"/>
-            <path d="${pathD('netWorthLow')}"  fill="none" stroke="#93c5fd" stroke-width="1.5" stroke-dasharray="4 3"/>
+            <path d="${pathD('netWorthHigh')}" fill="none" style="stroke:var(--viz-1)" stroke-opacity="0.5" stroke-width="1" stroke-dasharray="4 3"/>
+            <path d="${pathD('netWorthLow')}"  fill="none" style="stroke:var(--viz-1)" stroke-opacity="0.5" stroke-width="1" stroke-dasharray="4 3"/>
 
             <!-- Net worth mean line -->
-            <path d="${pathD('netWorth')}" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="${pathD('netWorth')}" fill="none" style="stroke:var(--viz-1)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
 
             <!-- Mortgage balance line -->
             ${mortgageLine}
@@ -2716,29 +2705,52 @@ function setupForecastPage() {
 
             <!-- Starting net worth marker -->
             <line x1="${PAD.left}" y1="${startY.toFixed(1)}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${startY.toFixed(1)}"
-                  stroke="#64748b" stroke-width="1" stroke-dasharray="6 4"/>
-            <text x="${(PAD.left + 4).toFixed(1)}" y="${(startY - 4).toFixed(1)}" font-size="10" fill="#64748b">Current</text>
+                  stroke="currentColor" stroke-opacity="0.4" stroke-width="1" stroke-dasharray="6 4"/>
+            <text x="${(PAD.left + 4).toFixed(1)}" y="${(startY - 4).toFixed(1)}" font-size="10" fill="currentColor" fill-opacity="0.65">Current</text>
 
             <!-- Y-axis labels -->
             ${yTicks.map(t => `
-                <text x="${(PAD.left - 6).toFixed(1)}" y="${(t.y + 4).toFixed(1)}" text-anchor="end" font-size="11" fill="#64748b">${yTickFmt(t.v)}</text>
+                <text x="${(PAD.left - 6).toFixed(1)}" y="${(t.y + 4).toFixed(1)}" text-anchor="end" font-size="11" fill="currentColor" fill-opacity="0.65">${yTickFmt(t.v)}</text>
             `).join('')}
 
             <!-- X-axis labels -->
             ${xTicks.map(t => `
-                <text x="${t.x.toFixed(1)}" y="${(PAD.top + innerH + 16).toFixed(1)}" text-anchor="middle" font-size="11" fill="#64748b">Yr ${t.t}</text>
+                <text x="${t.x.toFixed(1)}" y="${(PAD.top + innerH + 16).toFixed(1)}" text-anchor="middle" font-size="11" fill="currentColor" fill-opacity="0.65">Yr ${t.t}</text>
             `).join('')}
 
             <!-- Axis lines -->
-            <line x1="${PAD.left}" y1="${PAD.top}" x2="${PAD.left}" y2="${(PAD.top + innerH).toFixed(1)}" stroke="#cbd5e1" stroke-width="1"/>
-            <line x1="${PAD.left}" y1="${(PAD.top + innerH).toFixed(1)}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${(PAD.top + innerH).toFixed(1)}" stroke="#cbd5e1" stroke-width="1"/>
+            <line x1="${PAD.left}" y1="${(PAD.top + innerH).toFixed(1)}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${(PAD.top + innerH).toFixed(1)}" stroke="currentColor" stroke-opacity="0.3" stroke-width="1"/>
 
             <!-- Endpoint dot on mean net worth -->
             <circle cx="${xScale(years).toFixed(1)}" cy="${yScale(data[years].netWorth).toFixed(1)}" r="5"
-                    fill="#2563eb" stroke="white" stroke-width="2"/>
+                    style="fill:var(--viz-1);stroke:var(--viz-surface);stroke-width:2"/>
         `;
 
-        chartPlaceholder.style.display = 'none';
+        // Hover: one tooltip per projected year with the expected path, the
+        // confidence range, and the mortgage balance when there is one.
+        const thisYear = new Date().getFullYear();
+        const hoverSeries = [{ y: i => yScale(data[i].netWorth), color: 'var(--viz-1)' }];
+        if (hasMortgage) hoverSeries.push({ y: i => yScale(data[i].mortgage), color: 'var(--viz-8)' });
+        attachLineHover(svg, {
+            W, top: PAD.top, bottom: PAD.top + innerH, left: PAD.left, right: PAD.left + innerW,
+            xs: data.map(p => xScale(p.year)),
+            series: hoverSeries,
+            html: i => {
+                const p = data[i];
+                const rows = [
+                    { label: 'Expected', value: fmtEurWhole(p.netWorth), color: 'var(--viz-1)' },
+                    { label: 'Range', value: `${fmtEurWhole(p.netWorthLow)} – ${fmtEurWhole(p.netWorthHigh)}` },
+                ];
+                if (hasMortgage) rows.push({ label: 'Mortgage left', value: fmtEurWhole(p.mortgage), color: 'var(--viz-8)', dashed: true });
+                if (i > 0) rows.push({ label: 'vs today', value: (p.netWorth - data[0].netWorth >= 0 ? '+' : '−') + fmtEurWhole(Math.abs(p.netWorth - data[0].netWorth)) });
+                return chartTipHtml(p.year === 0 ? 'Today' : `Year ${p.year} (${thisYear + p.year})`, rows);
+            },
+        });
+
+        // The placeholder carries Bootstrap's d-flex (display:flex !important),
+        // so an inline display:none never hid it; swap the class instead.
+        chartPlaceholder.classList.remove('d-flex');
+        chartPlaceholder.classList.add('d-none');
     }
 
     // Run forecast
@@ -3222,7 +3234,7 @@ function setupRebalanceForm() {
             await window.apiClient.setRebalanceTargets(targets);
             await loadRebalanceAnalysis();
         } catch (err) {
-            alert('Error saving targets: ' + err.message);
+            notify('Error saving targets: ' + err.message);
         } finally {
             if (btn) { btn.disabled = false; btn.innerHTML = orig; }
         }
@@ -3732,12 +3744,12 @@ function setupExportButtons() {
     if (csvBtn) csvBtn.addEventListener('click', async () => {
         try {
             await window.apiClient.downloadBlob(window.apiClient.baseURL + '/api/v1/export/csv', 'transactions.csv');
-        } catch (err) { alert('Export error: ' + err.message); }
+        } catch (err) { notify('Export error: ' + err.message); }
     });
     if (pdtBtn) pdtBtn.addEventListener('click', async () => {
         try {
             await window.apiClient.downloadBlob(window.apiClient.baseURL + '/api/v1/export/pdt', 'portfolio_pdt.xlsx');
-        } catch (err) { alert('Export error: ' + err.message); }
+        } catch (err) { notify('Export error: ' + err.message); }
     });
 }
 
@@ -3815,7 +3827,7 @@ function setupAddTransaction() {
             description: $('transactionNotes').value || null,
         };
         if (!payload.asset_id || !type || !payload.transaction_date || qty <= 0) {
-            alert('Asset, type, date and a positive quantity are required.'); return;
+            notify('Asset, type, date and a positive quantity are required.'); return;
         }
         try {
             await window.apiClient.createTransaction(payload);
@@ -3823,7 +3835,7 @@ function setupAddTransaction() {
             form.reset(); hint.style.display = 'none'; priceInput.required = true;
             if (window.pageManager) window.pageManager.loadTransactionsPage();
         } catch (err) {
-            alert('Error adding transaction: ' + err.message);
+            notify('Error adding transaction: ' + err.message);
         }
     });
 }
@@ -3863,7 +3875,7 @@ function setupAddCash() {
             portfolio_id: portfolioSel.value ? parseInt(portfolioSel.value) : null,
         };
         if (!payload.date || !payload.amount || payload.amount <= 0) {
-            alert('Please enter a valid date and amount.'); return;
+            notify('Please enter a valid date and amount.'); return;
         }
         try {
             await window.apiClient.createBooking(payload);
@@ -3871,7 +3883,7 @@ function setupAddCash() {
             form.reset();
             if (window.pageManager) window.pageManager.loadTransactionsPage();
         } catch (err) {
-            alert('Error adding cash movement: ' + err.message);
+            notify('Error adding cash movement: ' + err.message);
         }
     });
 }
@@ -4261,7 +4273,7 @@ function setupResearchPage() {
     function renderCostChart(evolution, price, cur) {
         const svg = $('rsCostChart');
         const pts = (evolution || []).filter(p => p.avg_cost > 0);
-        if (pts.length < 1) { svg.innerHTML = '<text x="8" y="20" font-size="12" fill="#94a3b8">No cost history.</text>'; return; }
+        if (pts.length < 1) { svg.innerHTML = '<text x="8" y="20" font-size="12" fill="currentColor" fill-opacity="0.6">No cost history.</text>'; return; }
         const W = svg.clientWidth || 460, H = 180, PAD = { t: 14, r: 14, b: 38, l: 60 };
         const iW = W - PAD.l - PAD.r, iH = H - PAD.t - PAD.b;
         // Scale across avg cost, the live price, AND every transaction price so
@@ -4282,15 +4294,18 @@ function setupResearchPage() {
         // Transaction markers (buys green, sells red) at their actual price
         const markers = pts.map((p, i) => {
             if (!p.tx_price) return '';
-            const col = p.tx_type === 'sell' ? '#dc2626' : p.tx_type === 'buy' ? '#16a34a' : '#94a3b8';
-            return `<circle cx="${x(i).toFixed(1)}" cy="${cy(p.tx_price).toFixed(1)}" r="2.8" fill="${col}" opacity="0.8"><title>${p.tx_type} @ ${fmtY(p.tx_price)} (${p.date})</title></circle>`;
+            const col = p.tx_type === 'sell' ? 'var(--viz-bad)' : p.tx_type === 'buy' ? 'var(--viz-good)' : 'var(--viz-neutral)';
+            // Sells are squares so buy/sell doesn't rely on red vs green alone.
+            return p.tx_type === 'sell'
+                ? `<rect x="${(x(i) - 3).toFixed(1)}" y="${(cy(p.tx_price) - 3).toFixed(1)}" width="6" height="6" style="fill:${col}" opacity="0.9" pointer-events="none"/>`
+                : `<circle cx="${x(i).toFixed(1)}" cy="${cy(p.tx_price).toFixed(1)}" r="3.2" style="fill:${col}" opacity="0.9" pointer-events="none"/>`;
         }).join('');
-        const priceLine = price ? `<line x1="${PAD.l}" y1="${y(price).toFixed(1)}" x2="${(PAD.l + iW).toFixed(1)}" y2="${y(price).toFixed(1)}" stroke="#16a34a" stroke-width="1.5" stroke-dasharray="4 3"/><text x="${(PAD.l + iW).toFixed(1)}" y="${(y(price) - 4).toFixed(1)}" text-anchor="end" font-size="10" fill="#16a34a">price ${fmtY(price)}</text>` : '';
+        const priceLine = price ? `<line x1="${PAD.l}" y1="${y(price).toFixed(1)}" x2="${(PAD.l + iW).toFixed(1)}" y2="${y(price).toFixed(1)}" stroke="currentColor" stroke-opacity="0.6" stroke-width="1.5" stroke-dasharray="4 3"/><text x="${(PAD.l + iW).toFixed(1)}" y="${(y(price) - 4).toFixed(1)}" text-anchor="end" font-size="10" fill="currentColor" fill-opacity="0.8">price ${fmtY(price)}</text>` : '';
         // Y-axis ticks (currency) + gridlines
         const yt = [lo + rng * 0.1, lo + rng * 0.5, hi - rng * 0.1];
         const yTicks = yt.map(v => `
-            <line x1="${PAD.l}" y1="${y(v).toFixed(1)}" x2="${PAD.l + iW}" y2="${y(v).toFixed(1)}" stroke="#eef2f6"/>
-            <text x="${PAD.l - 6}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="#64748b">${fmtY(v)}</text>`).join('');
+            <line x1="${PAD.l}" y1="${y(v).toFixed(1)}" x2="${PAD.l + iW}" y2="${y(v).toFixed(1)}" stroke="currentColor" stroke-opacity="0.12"/>
+            <text x="${PAD.l - 6}" y="${(y(v) + 3).toFixed(1)}" text-anchor="end" font-size="10" fill="currentColor" fill-opacity="0.65">${fmtY(v)}</text>`).join('');
         // X-axis date ticks (~4)
         const step = Math.max(1, Math.floor((n - 1) / 3));
         const xTicks = [];
@@ -4299,18 +4314,39 @@ function setupResearchPage() {
         const xLabels = xTicks.map(i => {
             const d = new Date(pts[i].date);
             const lbl = isNaN(d) ? pts[i].date : d.toLocaleDateString(Fmt.loc(), { month: 'short', year: '2-digit' });
-            return `<text x="${x(i).toFixed(1)}" y="${(PAD.t + iH + 14).toFixed(1)}" text-anchor="middle" font-size="10" fill="#64748b">${lbl}</text>`;
+            return `<text x="${x(i).toFixed(1)}" y="${(PAD.t + iH + 14).toFixed(1)}" text-anchor="middle" font-size="10" fill="currentColor" fill-opacity="0.65">${esc(lbl)}</text>`;
         }).join('');
         svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
         svg.innerHTML = `${yTicks}
-            <line x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${PAD.t + iH}" stroke="#cbd5e1"/>
-            <line x1="${PAD.l}" y1="${PAD.t + iH}" x2="${PAD.l + iW}" y2="${PAD.t + iH}" stroke="#cbd5e1"/>
+            <line x1="${PAD.l}" y1="${PAD.t + iH}" x2="${PAD.l + iW}" y2="${PAD.t + iH}" stroke="currentColor" stroke-opacity="0.3"/>
             ${xLabels}
             ${priceLine}
-            <path d="${path}" fill="none" stroke="#2563eb" stroke-width="2"/>
+            <path d="${path}" fill="none" style="stroke:var(--viz-1)" stroke-width="2"/>
             ${markers}
-            <circle cx="${x(n - 1).toFixed(1)}" cy="${y(pts[n - 1].avg_cost).toFixed(1)}" r="3.5" fill="#2563eb"/>
-            <text x="${PAD.l}" y="${H - 4}" font-size="10" fill="#64748b">avg cost (blue line) · buys (green) / sells (red) · current price (green dash)</text>`;
+            <circle cx="${x(n - 1).toFixed(1)}" cy="${y(pts[n - 1].avg_cost).toFixed(1)}" r="3.5" style="fill:var(--viz-1)"/>
+            <text x="${PAD.l}" y="${H - 4}" font-size="10" fill="currentColor" fill-opacity="0.65">avg cost (line) · ● buy · ■ sell · dashed = current price · hover for details</text>`;
+        const money2 = v => sym ? sym + Fmt.num(v, 2, 2) : Fmt.num(v, 2, 2) + ' ' + (cur || '');
+        attachLineHover(svg, {
+            W, top: PAD.t, bottom: PAD.t + iH, left: PAD.l, right: PAD.l + iW,
+            xs: pts.map((_, i) => x(i)),
+            series: [{ y: i => y(pts[i].avg_cost), color: 'var(--viz-1)' }],
+            html: i => {
+                const p = pts[i];
+                const rows = [{ label: 'Avg cost', value: money2(p.avg_cost), color: 'var(--viz-1)' }];
+                if (p.tx_price) {
+                    rows.push({
+                        label: p.tx_type ? p.tx_type.charAt(0).toUpperCase() + p.tx_type.slice(1) : 'Trade',
+                        value: money2(p.tx_price),
+                        color: p.tx_type === 'sell' ? 'var(--viz-bad)' : p.tx_type === 'buy' ? 'var(--viz-good)' : 'var(--viz-neutral)',
+                    });
+                }
+                if (price) {
+                    const d = (price - p.avg_cost) / p.avg_cost * 100;
+                    rows.push({ label: 'Today vs this cost', value: (d >= 0 ? '+' : '−') + Math.abs(d).toFixed(1) + '%' });
+                }
+                return chartTipHtml(Fmt.date(p.date), rows);
+            },
+        });
     }
 
     function renderTransactions(txns, cur) {
@@ -4515,7 +4551,7 @@ function setupResearchPage() {
             const url = window.apiClient.baseURL + `/api/v1/research/${encodeURIComponent(R.symbol)}/report?format=md&download=true`;
             await window.apiClient.downloadBlob(url, `research_${esc(R.symbol)}_${new Date().toISOString().slice(0, 10)}.md`);
         } catch (e) {
-            alert('Could not generate report: ' + (e.message || e));
+            notify('Could not generate report: ' + (e.message || e));
         } finally { btn.disabled = false; btn.innerHTML = orig; }
     });
 
@@ -4555,7 +4591,7 @@ function setupResearchPage() {
     });
 
     $('rvSaveBtn').addEventListener('click', async () => {
-        if (!R.symbol) { alert('Load a ticker first.'); return; }
+        if (!R.symbol) { notify('Load a ticker first.'); return; }
         const c = recompute();
         const assumptions = {
             eps: parseFloat($('rvEps').value) || null,
@@ -4945,7 +4981,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 const url = window.apiClient.baseURL + `/api/v1/analytics/tax-report/pdf?year=${encodeURIComponent(year)}`;
                 await window.apiClient.downloadBlob(url, `irpf_tax_report_${year}.pdf`);
             } catch (err) {
-                alert('Failed to download tax report PDF: ' + err.message);
+                notify('Failed to download tax report PDF: ' + err.message);
             } finally {
                 anTaxReportPdfBtn.disabled = false;
             }
@@ -4963,7 +4999,7 @@ document.addEventListener('DOMContentLoaded', function() {
         prDownloadBtn.addEventListener('click', async () => {
             const sections = ['networth', 'performance', 'diversification', 'health']
                 .filter(s => (document.getElementById(`prSec${s.charAt(0).toUpperCase()}${s.slice(1)}`) || {}).checked);
-            if (!sections.length) { alert('Select at least one section.'); return; }
+            if (!sections.length) { notify('Select at least one section.'); return; }
             prDownloadBtn.disabled = true;
             const origHtml = prDownloadBtn.innerHTML;
             prDownloadBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Generating…';
@@ -4974,7 +5010,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 const inst = modalEl && bootstrap.Modal.getInstance(modalEl);
                 if (inst) inst.hide();
             } catch (err) {
-                alert('Failed to generate report: ' + err.message);
+                notify('Failed to generate report: ' + err.message);
             } finally {
                 prDownloadBtn.disabled = false;
                 prDownloadBtn.innerHTML = origHtml;
@@ -5143,7 +5179,7 @@ async function loadSpendingPage() {
                 }
             } catch (err) {
                 if (status) { status.className = 'small text-danger mb-2'; status.textContent = 'Error: ' + err.message; }
-                else alert('Error: ' + err.message);
+                else notify('Error: ' + err.message);
             }
             rescanBtn.disabled = false;
         });
@@ -5167,7 +5203,7 @@ async function loadSpendingPage() {
                 }
             } catch (err) {
                 if (status) { status.className = 'small text-danger mb-2'; status.textContent = 'Error: ' + err.message; }
-                else alert('Error: ' + err.message);
+                else notify('Error: ' + err.message);
             }
             rescanCatBtn.disabled = false;
         });
@@ -6023,7 +6059,7 @@ function _wireSpBulkActions() {
                 }
             } catch (err) {
                 if (status) { status.className = 'small text-danger px-3 pt-2'; status.textContent = 'Error: ' + err.message; }
-                else alert('Error: ' + err.message);
+                else notify('Error: ' + err.message);
             }
             applyRulesBtn.disabled = false;
         });
@@ -6359,7 +6395,7 @@ window.mergeSpendingCategories = async function (pairIndex, keepIdx) {
     try {
         await window.apiClient.renameSpendingCategory(loser, winner);
     } catch (err) {
-        alert('Error: ' + err.message);
+        notify('Error: ' + err.message);
     }
     await _refreshSpendingData();
 };
@@ -6419,7 +6455,7 @@ window.editSpendingCategory = function (id) {
                 await window.apiClient.reparentSpendingCategory(newName || originalName, newParent);
             }
         } catch (err) {
-            alert('Error: ' + err.message);
+            notify('Error: ' + err.message);
         }
         await _refreshSpendingData();
     };
@@ -6440,7 +6476,7 @@ window.deleteSpendingRule = async function (id) {
     try {
         await window.apiClient.deleteSpendingRule(id);
         await _refreshSpendingData();
-    } catch (err) { alert('Error: ' + err.message); }
+    } catch (err) { notify('Error: ' + err.message); }
 };
 
 window.editSpendingRule = function (id) {
@@ -6465,7 +6501,7 @@ window.editSpendingRule = function (id) {
         const newCategory = categoryInput.value.trim();
         if (!commit) { await _refreshSpendingData(); return; }
         if (!newPattern || !newCategory) {
-            alert('Pattern and category cannot be empty.');
+            notify('Pattern and category cannot be empty.');
             await _refreshSpendingData();
             return;
         }
@@ -6476,7 +6512,7 @@ window.editSpendingRule = function (id) {
         try {
             await window.apiClient.updateSpendingRule(id, { pattern: newPattern, category: newCategory });
         } catch (err) {
-            alert('Error: ' + err.message);
+            notify('Error: ' + err.message);
         }
         await _refreshSpendingData();
     };
@@ -6517,7 +6553,7 @@ function _wireSpendingRuleForm() {
                 }
             } catch (err) {
                 if (status) { status.className = 'small text-danger mt-2'; status.textContent = 'Error: ' + err.message; }
-                else alert('Error: ' + err.message);
+                else notify('Error: ' + err.message);
             }
         });
     }
@@ -6541,7 +6577,7 @@ function _wireSpCategoryAddForm() {
                 if (status) { status.className = 'small text-success mt-2'; status.textContent = 'Category added.'; }
             } catch (err) {
                 if (status) { status.className = 'small text-danger mt-2'; status.textContent = 'Error: ' + err.message; }
-                else alert('Error: ' + err.message);
+                else notify('Error: ' + err.message);
             }
         });
     }

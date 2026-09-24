@@ -415,13 +415,7 @@ function renderDashboardNetworthSparkline(area, snaps) {
     const yGridLines = nt.ticks.map(v =>
         `<line x1="${PAD.left}" y1="${yScale(v).toFixed(1)}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${yScale(v).toFixed(1)}" stroke="currentColor" stroke-opacity="0.12"/>`
     ).join('');
-    // Enough decimals that adjacent ticks never print the same label.
-    const fmtTick = v => {
-        const abs = Math.abs(v);
-        if (abs >= 1e6) return '€' + (v / 1e6).toFixed(nt.step % 1e5 ? 2 : 1) + 'M';
-        if (abs >= 1e3) return '€' + (v / 1e3).toFixed(nt.step % 1e3 ? 1 : 0) + 'k';
-        return '€' + v.toFixed(0);
-    };
+    const fmtTick = v => fmtEurTick(v, nt.step);
     const yLabels = nt.ticks.map(v =>
         `<text x="${(PAD.left - 8).toFixed(1)}" y="${(yScale(v) + 3.5).toFixed(1)}" font-size="11" text-anchor="end" fill="currentColor" fill-opacity="0.65">${esc(fmtTick(v))}</text>`
     ).join('');
@@ -542,7 +536,7 @@ function _wireNetworthForm() {
 window.confirmDeleteManualAsset = async function (id) {
     if (!confirm('Delete this item?')) return;
     try { await window.apiClient.deleteManualAsset(id); loadNetworthPage(); }
-    catch (err) { alert('Error: ' + err.message); }
+    catch (err) { notify('Error: ' + err.message); }
 };
 
 // Click-to-edit the amount on a manual asset row (e.g. a bank balance you
@@ -572,7 +566,7 @@ window.editManualAssetAmount = function (id) {
             await window.apiClient.updateManualAsset(id, { amount: newAmount });
             if (window.showToast) window.showToast('Balance updated.', 'success');
         } catch (err) {
-            alert('Error: ' + err.message);
+            notify('Error: ' + err.message);
         }
         loadNetworthPage();
     };
@@ -797,13 +791,13 @@ function _wireCashflowForm() {
 window.confirmDeleteCashflow = async function (id) {
     if (!confirm('Delete this entry?')) return;
     try { await window.apiClient.deleteCashflowEntry(id); loadNetworthPage(); }
-    catch (err) { alert('Error: ' + err.message); }
+    catch (err) { notify('Error: ' + err.message); }
 };
 
 window.confirmDeleteDeposit = async function (id) {
     if (!confirm('Delete this deposit?')) return;
     try { await window.apiClient.deleteDeposit(id); loadNetworthPage(); }
-    catch (err) { alert('Error: ' + err.message); }
+    catch (err) { notify('Error: ' + err.message); }
 };
 
 window.openMatureDepositModal = function (id, projectedInterest, maturityDate) {
@@ -1180,13 +1174,13 @@ function _wireBackfillButton() {
                 const s = await window.apiClient.getBackfillStatus();
                 btn.innerHTML = `<span class="spinner-border spinner-border-sm me-1"></span>${s.running ? (s.total ? `prices ${s.done}/${s.total}` : '…') + (s.added ? ` · ${s.added} days` : '') : 'finishing'}`;
                 if (!s.running) {
-                    if (s.error) alert('Backfill error: ' + s.error);
+                    if (s.error) notify('Backfill error: ' + s.error);
                     break;
                 }
             }
             loadAnalyticsNetworth();
         } catch (e) {
-            alert('Backfill failed: ' + e.message);
+            notify('Backfill failed: ' + e.message);
         } finally {
             btn.disabled = false;
             btn.innerHTML = orig;
@@ -1231,182 +1225,96 @@ async function loadAnalyticsNetworth() {
     }
 }
 
+// Axis text/gridline colours come from currentColor so every hand-drawn
+// chart follows the light/dark theme without its own CSS rule.
+const SVG_GRID = 'stroke="currentColor" stroke-opacity="0.12"';
+const SVG_AXIS = 'stroke="currentColor" stroke-opacity="0.3"';
+const SVG_LABEL = 'fill="currentColor" fill-opacity="0.65"';
+
+// Compact € tick label with just enough decimals for the tick step, so
+// adjacent ticks never print the same text (€152.5k vs €153k).
+function fmtEurTick(v, step) {
+    const abs = Math.abs(v);
+    if (abs >= 1e6) return '€' + (v / 1e6).toFixed(step % 1e5 ? 2 : 1) + 'M';
+    if (abs >= 1e3) return '€' + (v / 1e3).toFixed(step % 1e3 ? 1 : 0) + 'k';
+    return '€' + v.toFixed(0);
+}
+window.fmtEurTick = fmtEurTick;
+
 function renderNetworthChart(snaps) {
     const container = document.getElementById('anNetworthContainer');
     const placeholder = document.getElementById('anNetworthPlaceholder');
     const svg = document.getElementById('anNetworthSvg');
     const W = container.clientWidth || 600;
     const H = 300;
-    const PAD = { top: 20, right: 20, bottom: 40, left: 72 };
+    const PAD = { top: 16, right: 20, bottom: 36, left: 64 };
     const innerW = W - PAD.left - PAD.right;
     const innerH = H - PAD.top - PAD.bottom;
 
     const n = snaps.length;
-    const vals = snaps.flatMap(s => [
-        parseFloat(s.total_value_eur || 0),
-        parseFloat(s.total_cost_eur || 0)
-    ]);
-    const maxVal = Math.max(...vals, 0);
-    const minVal = Math.min(...vals, 0);
-    const range = maxVal - minVal || 1;
+    const values = snaps.map(s => parseFloat(s.total_value_eur || 0));
+    const costs = snaps.map(s => parseFloat(s.total_cost_eur || 0));
+    // Anchored at zero (unlike the dashboard's tight view) so the size of the
+    // gain between the two lines reads in proportion to the whole portfolio.
+    const nt = niceTicks(Math.min(0, ...values, ...costs), Math.max(...values, ...costs), 5);
+    const range = (nt.hi - nt.lo) || 1;
 
-    function xScale(i) {
-        return PAD.left + (n === 1 ? 0 : (i / (n - 1)) * innerW);
-    }
-    function yScale(v) {
-        return PAD.top + innerH - ((v - minVal) / range) * innerH;
-    }
-    function yTickFmt(v) {
-        if (Math.abs(v) >= 1000000) return '€' + (v / 1000000).toFixed(1) + 'M';
-        if (Math.abs(v) >= 1000)    return '€' + (v / 1000).toFixed(0) + 'k';
-        return '€' + v.toFixed(0);
-    }
-    function pathD(key) {
-        return snaps.map((s, i) =>
-            (i === 0 ? 'M' : 'L') + xScale(i).toFixed(1) + ',' + yScale(parseFloat(s[key] || 0)).toFixed(1)
-        ).join(' ');
-    }
+    const xScale = i => PAD.left + (n === 1 ? 0 : (i / (n - 1)) * innerW);
+    const yScale = v => PAD.top + innerH - ((v - nt.lo) / range) * innerH;
+    const pathOf = arr => arr.map((v, i) =>
+        (i === 0 ? 'M' : 'L') + xScale(i).toFixed(1) + ',' + yScale(v).toFixed(1)).join(' ');
+    const baseline = (PAD.top + innerH).toFixed(1);
 
-    // Y-axis ticks
-    const yTicks = [];
-    for (let i = 0; i <= 4; i++) {
-        const v = minVal + range * (i / 4);
-        yTicks.push({ v, y: yScale(v) });
-    }
-
-    // X-axis ticks: ~5 evenly spaced date labels
-    const xTicks = [];
-    const step = Math.max(1, Math.floor((n - 1) / 4));
-    for (let i = 0; i < n; i += step) {
-        xTicks.push({ i, x: xScale(i), label: shortDate(snaps[i].snapshot_date) });
-    }
-    if (xTicks[xTicks.length - 1].i !== n - 1) {
-        xTicks.push({ i: n - 1, x: xScale(n - 1), label: shortDate(snaps[n - 1].snapshot_date) });
-    }
-
-    function shortDate(dStr) {
+    const shortDate = dStr => {
         const dt = new Date(dStr);
-        if (isNaN(dt)) return String(dStr);
-        // Include the year (history can span multiple years) e.g. "Jun '25".
-        return dt.toLocaleDateString(Fmt.loc(), { month: 'short', year: '2-digit' });
-    }
+        return isNaN(dt) ? String(dStr) : dt.toLocaleDateString(Fmt.loc(), { month: 'short', year: '2-digit' });
+    };
+    const longDate = dStr => {
+        const dt = new Date(dStr);
+        return isNaN(dt) ? String(dStr) : dt.toLocaleDateString(Fmt.loc(), { day: 'numeric', month: 'short', year: 'numeric' });
+    };
+
+    // X-axis: ~5 date labels, always including the last point, without a
+    // near-duplicate label crammed next to it.
+    const step = Math.max(1, Math.floor((n - 1) / 5));
+    const xIdx = [];
+    for (let i = 0; i < n; i += step) xIdx.push(i);
+    if (xIdx.length > 1 && n - 1 - xIdx[xIdx.length - 1] < step / 2) xIdx.pop();
+    if (xIdx[xIdx.length - 1] !== n - 1) xIdx.push(n - 1);
 
     svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
     svg.setAttribute('height', H);
     svg.style.display = 'block';
-
+    svg.style.overflow = 'visible';
     svg.innerHTML = `
-        <defs>
-            <linearGradient id="anValGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#2563eb" stop-opacity="0.15"/>
-                <stop offset="100%" stop-color="#2563eb" stop-opacity="0.0"/>
-            </linearGradient>
-        </defs>
-
-        <!-- Grid lines -->
-        ${yTicks.map(t => `
-            <line x1="${PAD.left}" y1="${t.y.toFixed(1)}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${t.y.toFixed(1)}"
-                  stroke="#e2e8f0" stroke-width="1"/>
-        `).join('')}
-
-        <!-- Under value-line fill -->
-        <path d="${pathD('total_value_eur')} L${xScale(n - 1).toFixed(1)},${(PAD.top + innerH).toFixed(1)} L${xScale(0).toFixed(1)},${(PAD.top + innerH).toFixed(1)} Z"
-              fill="url(#anValGrad)"/>
-
-        <!-- Invested (cost) dashed grey line -->
-        <path d="${pathD('total_cost_eur')}" fill="none" stroke="#94a3b8" stroke-width="2" stroke-dasharray="4 3"/>
-
-        <!-- Total value solid blue line -->
-        <path d="${pathD('total_value_eur')}" fill="none" stroke="#2563eb" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
-
-        <!-- Y-axis labels -->
-        ${yTicks.map(t => `
-            <text x="${(PAD.left - 6).toFixed(1)}" y="${(t.y + 4).toFixed(1)}" text-anchor="end" font-size="11" fill="#64748b">${yTickFmt(t.v)}</text>
-        `).join('')}
-
-        <!-- X-axis labels -->
-        ${xTicks.map(t => `
-            <text x="${t.x.toFixed(1)}" y="${(PAD.top + innerH + 16).toFixed(1)}" text-anchor="middle" font-size="11" fill="#64748b">${t.label}</text>
-        `).join('')}
-
-        <!-- Axis lines -->
-        <line x1="${PAD.left}" y1="${PAD.top}" x2="${PAD.left}" y2="${(PAD.top + innerH).toFixed(1)}" stroke="#cbd5e1" stroke-width="1"/>
-        <line x1="${PAD.left}" y1="${(PAD.top + innerH).toFixed(1)}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${(PAD.top + innerH).toFixed(1)}" stroke="#cbd5e1" stroke-width="1"/>
-
-        <!-- Endpoint dot on value line -->
-        <circle cx="${xScale(n - 1).toFixed(1)}" cy="${yScale(parseFloat(snaps[n - 1].total_value_eur || 0)).toFixed(1)}" r="5"
-                fill="#2563eb" stroke="white" stroke-width="2"/>
-
-        <!-- Hover crosshair (hidden by default) -->
-        <g id="anNetworthCrosshair" display="none">
-            <line id="anCrosshairLine" x1="0" y1="${PAD.top}" x2="0" y2="${(PAD.top + innerH).toFixed(1)}"
-                  stroke="#94a3b8" stroke-width="1" stroke-dasharray="3 2"/>
-            <circle id="anCrosshairDotV" r="4" fill="#2563eb" stroke="white" stroke-width="2"/>
-            <circle id="anCrosshairDotC" r="4" fill="#94a3b8" stroke="white" stroke-width="2"/>
-            <rect id="anTooltipBg" rx="4" ry="4" fill="#1e293b" fill-opacity="0.88"/>
-            <text id="anTooltipDate"  font-size="11" fill="#94a3b8"/>
-            <text id="anTooltipVal"   font-size="12" fill="#93c5fd" font-weight="bold"/>
-            <text id="anTooltipCost"  font-size="11" fill="#94a3b8"/>
-        </g>
-
-        <!-- Invisible mouse-capture overlay -->
-        <rect id="anNetworthOverlay"
-              x="${PAD.left}" y="${PAD.top}"
-              width="${innerW}" height="${innerH}"
-              fill="transparent" style="cursor:crosshair"/>
+        ${nt.ticks.map(v => `<line x1="${PAD.left}" y1="${yScale(v).toFixed(1)}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${yScale(v).toFixed(1)}" ${SVG_GRID}/>`).join('')}
+        <path d="${pathOf(values)} L${xScale(n - 1).toFixed(1)},${baseline} L${xScale(0).toFixed(1)},${baseline} Z" style="fill:var(--viz-1)" opacity="0.10"/>
+        <path d="${pathOf(costs)}" fill="none" style="stroke:var(--viz-cost)" stroke-width="1.5" stroke-dasharray="5 4"/>
+        <path d="${pathOf(values)}" fill="none" style="stroke:var(--viz-1)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="${xScale(n - 1).toFixed(1)}" cy="${yScale(values[n - 1]).toFixed(1)}" r="4" style="fill:var(--viz-1)"/>
+        ${nt.ticks.map(v => `<text x="${(PAD.left - 8).toFixed(1)}" y="${(yScale(v) + 4).toFixed(1)}" text-anchor="end" font-size="11" ${SVG_LABEL}>${fmtEurTick(v, nt.step)}</text>`).join('')}
+        ${xIdx.map((i, k) => `<text x="${xScale(i).toFixed(1)}" y="${(PAD.top + innerH + 18).toFixed(1)}" text-anchor="${k === 0 ? 'start' : i === n - 1 ? 'end' : 'middle'}" font-size="11" ${SVG_LABEL}>${esc(shortDate(snaps[i].snapshot_date))}</text>`).join('')}
+        <line x1="${PAD.left}" y1="${baseline}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${baseline}" ${SVG_AXIS}/>
     `;
 
-    // Wire hover behaviour
-    const overlay  = svg.getElementById('anNetworthOverlay');
-    const crosshair = svg.getElementById('anNetworthCrosshair');
-    const chLine   = svg.getElementById('anCrosshairLine');
-    const dotV     = svg.getElementById('anCrosshairDotV');
-    const dotC     = svg.getElementById('anCrosshairDotC');
-    const ttBg     = svg.getElementById('anTooltipBg');
-    const ttDate   = svg.getElementById('anTooltipDate');
-    const ttVal    = svg.getElementById('anTooltipVal');
-    const ttCost   = svg.getElementById('anTooltipCost');
-
-    overlay.addEventListener('mousemove', (e) => {
-        const rect = svg.getBoundingClientRect();
-        const svgX = (e.clientX - rect.left) * (W / rect.width);
-        // Nearest snap index
-        const frac = Math.max(0, Math.min(1, (svgX - PAD.left) / innerW));
-        const idx  = Math.round(frac * (n - 1));
-        const snap = snaps[idx];
-        const val  = parseFloat(snap.total_value_eur || 0);
-        const cost = parseFloat(snap.total_cost_eur  || 0);
-        const cx   = xScale(idx);
-        const cyV  = yScale(val);
-        const cyC  = yScale(cost);
-
-        chLine.setAttribute('x1', cx.toFixed(1));
-        chLine.setAttribute('x2', cx.toFixed(1));
-        dotV.setAttribute('cx', cx.toFixed(1));
-        dotV.setAttribute('cy', cyV.toFixed(1));
-        dotC.setAttribute('cx', cx.toFixed(1));
-        dotC.setAttribute('cy', cyC.toFixed(1));
-
-        const dateStr = new Date(snap.snapshot_date).toLocaleDateString(Fmt.loc(), { day: 'numeric', month: 'short', year: 'numeric' });
-        ttDate.textContent = dateStr;
-        ttVal.textContent  = '● ' + yTickFmt(val);
-        ttCost.textContent = '● ' + yTickFmt(cost) + ' invested';
-
-        // Position tooltip: prefer right of cursor, flip left near edge
-        const TT_W = 148, TT_H = 52, TT_PAD = 8;
-        let ttX = cx + 8;
-        let ttY = PAD.top + 8;
-        if (ttX + TT_W > W - PAD.right) ttX = cx - TT_W - 8;
-        ttBg.setAttribute('x', ttX);  ttBg.setAttribute('y', ttY);
-        ttBg.setAttribute('width', TT_W); ttBg.setAttribute('height', TT_H);
-        ttDate.setAttribute('x', ttX + TT_PAD); ttDate.setAttribute('y', ttY + 14);
-        ttVal.setAttribute('x',  ttX + TT_PAD); ttVal.setAttribute('y',  ttY + 29);
-        ttCost.setAttribute('x', ttX + TT_PAD); ttCost.setAttribute('y', ttY + 44);
-
-        crosshair.setAttribute('display', '');
+    attachLineHover(svg, {
+        W, top: PAD.top, bottom: PAD.top + innerH, left: PAD.left, right: PAD.left + innerW,
+        xs: snaps.map((_, i) => xScale(i)),
+        series: [
+            { y: i => yScale(values[i]), color: 'var(--viz-1)' },
+            { y: i => yScale(costs[i]), color: 'var(--viz-cost)' },
+        ],
+        html: i => {
+            const gain = values[i] - costs[i];
+            const pct = costs[i] ? (gain / costs[i]) * 100 : 0;
+            const sgn = gain >= 0 ? '+' : '−';
+            return chartTipHtml(longDate(snaps[i].snapshot_date), [
+                { label: 'Value', value: fmtEurWhole(values[i]), color: 'var(--viz-1)' },
+                { label: 'Invested', value: fmtEurWhole(costs[i]), color: 'var(--viz-cost)', dashed: true },
+                { label: 'Unrealised', value: `${sgn}${fmtEurWhole(Math.abs(gain))} (${sgn}${Math.abs(pct).toFixed(1)}%)` },
+            ]);
+        },
     });
-
-    overlay.addEventListener('mouseleave', () => crosshair.setAttribute('display', 'none'));
 
     placeholder.style.display = 'none';
 }
@@ -1467,7 +1375,7 @@ async function loadAnalyticsDividends() {
         const calBars = MONTHS.map((m, i) => `
             <div class="text-center" style="flex:1 1 0;">
                 <div class="d-flex align-items-end justify-content-center" style="height:60px;">
-                    <div title="${m}: ${anFmtEur2(moy[i])} received historically" style="width:60%;background:#16a34a;border-radius:3px 3px 0 0;height:${(moy[i] / moyMax * 100).toFixed(0)}%;min-height:2px;"></div>
+                    <div data-chart-tip="${esc(chartTipHtml(m, [{ label: 'Received (all years)', value: fmtEurCents(moy[i]), color: 'var(--viz-3)' }, { label: 'Share of total', value: (moy.reduce((a, b) => a + b, 0) ? (moy[i] / moy.reduce((a, b) => a + b, 0) * 100).toFixed(1) : '0.0') + '%' }]))}" style="width:60%;background:var(--viz-3);border-radius:3px 3px 0 0;height:${(moy[i] / moyMax * 100).toFixed(0)}%;min-height:2px;"></div>
                 </div>
                 <div class="small text-muted">${m}</div>
             </div>`).join('');
@@ -1475,7 +1383,7 @@ async function loadAnalyticsDividends() {
             <hr class="my-3">
             <div class="row g-4">
                 <div class="col-12 col-lg-6">
-                    <h6 class="fw-semibold small text-muted text-uppercase mb-2">Projected forward annual income <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="Each holding's trailing-12-month dividends, used as a forward estimate. Total ≈ ${anFmtEur2(fwdTotal)}/yr."></i></h6>
+                    <h6 class="fw-semibold small text-muted text-uppercase mb-2">Projected forward annual income <i class="bi bi-info-circle text-muted" style="cursor:help;" data-bs-toggle="tooltip" title="Each holding's trailing-12-month dividends, used as a forward estimate. Total ≈ ${esc(fmtEurCents(fwdTotal))}/yr."></i></h6>
                     <div class="table-responsive" style="max-height:300px;overflow:auto;">
                         <table class="table table-sm table-hover mb-0">
                             <thead><tr><th>Symbol</th><th>Name</th><th class="text-end">€/yr</th><th class="text-end">Share</th></tr></thead>
@@ -1545,58 +1453,60 @@ function renderDividendBars(months, byMonth) {
     }
     const W = 480;
     const H = 220;
-    const PAD = { top: 16, right: 12, bottom: 36, left: 56 };
+    const PAD = { top: 16, right: 8, bottom: 30, left: 50 };
     const innerW = W - PAD.left - PAD.right;
     const innerH = H - PAD.top - PAD.bottom;
     const vals = months.map(m => parseFloat(byMonth[m] || 0));
-    const maxVal = Math.max(...vals, 1);
-    const gap = 6;
-    const barW = (innerW / months.length) - gap;
-
-    function yScale(v) {
-        return PAD.top + innerH - (v / maxVal) * innerH;
-    }
-    function yTickFmt(v) {
-        if (Math.abs(v) >= 1000) return '€' + (v / 1000).toFixed(1) + 'k';
-        return '€' + v.toFixed(0);
-    }
-
-    const yTicks = [];
-    for (let i = 0; i <= 4; i++) {
-        const v = maxVal * (i / 4);
-        yTicks.push({ v, y: yScale(v) });
-    }
+    const nt = niceTicks(0, Math.max(...vals, 1), 4);
+    const slot = innerW / months.length;
+    // 2px surface gap between bars, never thinner than 4px.
+    const barW = Math.max(4, slot - 2);
+    const yScale = v => PAD.top + innerH - (v / (nt.hi || 1)) * innerH;
+    const avg = vals.reduce((s, v) => s + v, 0) / vals.length;
 
     function shortMonth(mKey) {
         // mKey like "2026-05"
         const parts = String(mKey).split('-');
         const dt = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, 1);
         if (isNaN(dt)) return mKey;
-        return dt.toLocaleDateString(undefined, { month: 'short' }) + (parts[1] === '01' ? " '" + parts[0].slice(2) : '');
+        return dt.toLocaleDateString(Fmt.loc(), { month: 'short' }) + (parts[1] === '01' ? " '" + parts[0].slice(2) : '');
+    }
+    function longMonth(mKey) {
+        const parts = String(mKey).split('-');
+        const dt = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, 1);
+        return isNaN(dt) ? mKey : dt.toLocaleDateString(Fmt.loc(), { month: 'long', year: 'numeric' });
     }
 
+    const baseline = PAD.top + innerH;
     const bars = months.map((m, i) => {
-        const v = parseFloat(byMonth[m] || 0);
-        const x = PAD.left + i * (barW + gap) + gap / 2;
+        const v = vals[i];
+        const x = PAD.left + i * slot + (slot - barW) / 2;
         const y = yScale(v);
-        const h = (PAD.top + innerH) - y;
+        const h = Math.max(0, baseline - y);
+        const tip = chartTipHtml(longMonth(m), [
+            { label: 'Received', value: fmtEurCents(v), color: 'var(--viz-3)' },
+            { label: 'vs 12-mo avg', value: (v - avg >= 0 ? '+' : '−') + fmtEurWhole(Math.abs(v - avg)) },
+        ]);
+        // Full-height transparent hit area so a €0 month is still hoverable.
         return `
-            <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(0, h).toFixed(1)}"
-                  fill="#22c55e" rx="2">
-                <title>${m}: ${anFmtEur2(v)}</title>
-            </rect>
-            <text x="${(x + barW / 2).toFixed(1)}" y="${(PAD.top + innerH + 14).toFixed(1)}" text-anchor="middle" font-size="9" fill="#64748b">${shortMonth(m)}</text>
-        `;
+            <g data-chart-tip="${esc(tip)}" style="cursor:default">
+                <rect x="${(PAD.left + i * slot).toFixed(1)}" y="${PAD.top}" width="${slot.toFixed(1)}" height="${innerH}" fill="transparent"/>
+                <rect x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barW.toFixed(1)}" height="${h.toFixed(1)}" style="fill:var(--viz-3)" rx="2"/>
+            </g>
+            <text x="${(x + barW / 2).toFixed(1)}" y="${(baseline + 14).toFixed(1)}" text-anchor="middle" font-size="9" ${SVG_LABEL}>${esc(shortMonth(m))}</text>`;
     }).join('');
+    const avgY = yScale(avg);
 
     return `
-        <svg viewBox="0 0 ${W} ${H}" width="100%" style="overflow:visible;">
-            ${yTicks.map(t => `
-                <line x1="${PAD.left}" y1="${t.y.toFixed(1)}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${t.y.toFixed(1)}" stroke="#e2e8f0" stroke-width="1"/>
-                <text x="${(PAD.left - 6).toFixed(1)}" y="${(t.y + 4).toFixed(1)}" text-anchor="end" font-size="10" fill="#64748b">${yTickFmt(t.v)}</text>
+        <svg viewBox="0 0 ${W} ${H}" width="100%" style="overflow:visible;" role="img" aria-label="Monthly dividend income">
+            ${nt.ticks.map(v => `
+                <line x1="${PAD.left}" y1="${yScale(v).toFixed(1)}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${yScale(v).toFixed(1)}" ${SVG_GRID}/>
+                <text x="${(PAD.left - 6).toFixed(1)}" y="${(yScale(v) + 4).toFixed(1)}" text-anchor="end" font-size="10" ${SVG_LABEL}>${fmtEurTick(v, nt.step)}</text>
             `).join('')}
             ${bars}
-            <line x1="${PAD.left}" y1="${(PAD.top + innerH).toFixed(1)}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${(PAD.top + innerH).toFixed(1)}" stroke="#cbd5e1" stroke-width="1"/>
+            <line x1="${PAD.left}" y1="${avgY.toFixed(1)}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${avgY.toFixed(1)}" stroke="currentColor" stroke-opacity="0.5" stroke-dasharray="4 3" pointer-events="none"/>
+            <text x="${(PAD.left + innerW).toFixed(1)}" y="${(avgY - 4).toFixed(1)}" text-anchor="end" font-size="10" ${SVG_LABEL} pointer-events="none">avg ${fmtEurWhole(avg)}/mo</text>
+            <line x1="${PAD.left}" y1="${baseline.toFixed(1)}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${baseline.toFixed(1)}" ${SVG_AXIS}/>
         </svg>`;
 }
 
@@ -1900,7 +1810,7 @@ async function loadAnalyticsTaxReport() {
 // Download the current tax report as CSV (built client-side from the JSON).
 function downloadTaxReportCsv() {
     const d = _lastTaxReport;
-    if (!d) { alert('Open the Tax tab first.'); return; }
+    if (!d) { notify('Open the Tax tab first.'); return; }
     const rows = [['symbol', 'sell_date', 'quantity', 'currency', 'proceeds', 'proceeds_eur', 'cost_basis', 'cost_basis_eur', 'gain_loss', 'gain_loss_eur', 'holding_days']];
     (d.realised_lots || []).forEach(l => rows.push([
         l.symbol, l.sell_date, l.quantity, l.currency || 'EUR',
@@ -2189,6 +2099,9 @@ async function loadAnalyticsDiversification() {
 }
 
 // Render a labelled list of horizontal progress bars from a {label: pct} map
+// Share bars: every bar is the same quantity (share of portfolio), so one
+// hue encodes it — the old per-rank rainbow implied categories meant
+// something across blocks when they didn't.
 function renderDiversificationBars(map, upper) {
     const entries = Object.entries(map || {})
         .map(([k, v]) => [k, parseFloat(v || 0)])
@@ -2196,18 +2109,17 @@ function renderDiversificationBars(map, upper) {
     if (!entries.length) {
         return '<p class="text-muted small mb-0">No data.</p>';
     }
-    const COLOURS = ['#2563eb', '#16a34a', '#f59e0b', '#dc2626', '#7c3aed', '#64748b', '#0891b2', '#db2777'];
-    return entries.map(([label, pct], i) => {
-        const colour = COLOURS[i % COLOURS.length];
-        const shown = upper ? String(label).toUpperCase() : label;
+    return entries.map(([label, pct]) => {
+        const shown = upper ? String(label).toUpperCase() : String(label);
+        const tip = chartTipHtml(shown, [{ label: 'Share', value: pct.toFixed(2) + '%', color: 'var(--viz-1)' }]);
         return `
-            <div class="mb-2">
+            <div class="mb-2" data-chart-tip="${esc(tip)}">
                 <div class="d-flex justify-content-between small mb-1">
-                    <span class="text-truncate" style="max-width:70%;" title="${label}">${shown}</span>
-                    <span class="text-muted">${pct.toFixed(1)}%</span>
+                    <span class="text-truncate" style="max-width:70%;">${esc(shown)}</span>
+                    <span class="text-muted font-tabular">${pct.toFixed(1)}%</span>
                 </div>
-                <div class="progress" style="height:8px;">
-                    <div class="progress-bar" role="progressbar" style="width:${Math.min(100, pct).toFixed(1)}%;background:${colour};"></div>
+                <div class="progress" style="height:6px;">
+                    <div class="progress-bar" role="progressbar" style="width:${Math.min(100, pct).toFixed(1)}%;background:var(--viz-1);"></div>
                 </div>
             </div>`;
     }).join('');
@@ -2965,6 +2877,6 @@ window.deleteWatchlistRow = async function(symbol) {
         await window.apiClient.deleteWatchlist(symbol);
         loadWatchlist();
     } catch (err) {
-        alert('Error removing from watchlist: ' + err.message);
+        notify('Error removing from watchlist: ' + err.message);
     }
 };
