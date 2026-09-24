@@ -15,6 +15,9 @@
     <!-- Bootstrap 5 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 
+    <!-- Inter (variable) — numeric-friendly UI font; falls back to system-ui -->
+    <link href="https://cdn.jsdelivr.net/npm/@fontsource-variable/inter@5/index.css" rel="stylesheet">
+
     <!-- Bootstrap Icons -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" rel="stylesheet">
 
@@ -24,7 +27,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-matrix@2.0.1/dist/chartjs-chart-matrix.min.js"></script>
 
     <!-- Custom CSS -->
-    <link href="css/styles.css?v=1780000013" rel="stylesheet">
+    <link href="css/styles.css?v=1790330000" rel="stylesheet">
     <style>
         /* Privacy mode: blur monetary amounts until hovered */
         body.pfm-privacy .pfm-amt { filter: blur(0.45em); transition: filter .12s ease; user-select: none; }
@@ -300,24 +303,17 @@
                         </div>
                     </div>
 
-                    <!-- Alerts banner (price targets crossed + watchlist buy zones); hidden when none -->
-                    <div id="dashAlerts" class="mb-3" style="display:none;"></div>
-
-                    <!-- Action Items summary (stale imports, data quality, price-update errors, stale research, off-track goals, net worth checklist); hidden when none -->
-                    <div id="dashActionItems" class="mb-3" style="display:none;"></div>
-
-                    <!-- Row 1: KPI Cards -->
-                    <div class="row g-3 mb-4 row-cols-2 row-cols-md-5">
+                    <!-- Row 1: KPI tiles -->
+                    <div class="row g-3 mb-3 row-cols-2 row-cols-md-3 row-cols-xl-5">
                         <div class="col">
                             <div class="card bg-primary text-white h-100">
                                 <div class="card-body py-3">
                                     <div class="d-flex justify-content-between align-items-start">
-                                        <div>
-                                            <div class="small opacity-75 mb-1" data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="Portfolio Value: current value of your invested positions in EUR (all currencies converted at live FX rates). Uninvested cash is shown separately in the Cash card.">Portfolio Value</div>
-                                            <div class="fs-4 fw-bold" id="totalValue">—</div>
-                                        </div>
-                                        <i class="bi bi-cash-stack fs-2 opacity-40"></i>
+                                        <div class="kpi-label mb-1" data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="Portfolio Value: current value of your invested positions in EUR (all currencies converted at live FX rates). Uninvested cash is shown separately in the Cash card.">Portfolio value</div>
+                                        <i class="bi bi-graph-up fs-5 opacity-50"></i>
                                     </div>
+                                    <div class="kpi-value pfm-amt" id="totalValue">—</div>
+                                    <div class="kpi-sub" id="dashValueSub"></div>
                                 </div>
                             </div>
                         </div>
@@ -325,13 +321,11 @@
                             <div class="card bg-secondary text-white h-100">
                                 <div class="card-body py-3">
                                     <div class="d-flex justify-content-between align-items-start">
-                                        <div>
-                                            <div class="small opacity-75 mb-1" data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="Invested: cost basis of your currently-held positions (what you paid, in EUR).">Total Invested</div>
-                                            <div class="fs-4 fw-bold" id="dashTotalCost">—</div>
-                                            <div class="small opacity-75" id="dashInvestedBrokers"></div>
-                                        </div>
-                                        <i class="bi bi-wallet2 fs-2 opacity-40"></i>
+                                        <div class="kpi-label mb-1" data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="Invested: cost basis of your currently-held positions (what you paid, in EUR).">Invested</div>
+                                        <i class="bi bi-wallet2 fs-5 opacity-50"></i>
                                     </div>
+                                    <div class="kpi-value pfm-amt" id="dashTotalCost">—</div>
+                                    <div class="kpi-sub" id="dashInvestedBrokers"></div>
                                 </div>
                             </div>
                         </div>
@@ -339,13 +333,11 @@
                             <div class="card text-white h-100" style="background:#6f42c1;">
                                 <div class="card-body py-3">
                                     <div class="d-flex justify-content-between align-items-start">
-                                        <div>
-                                            <div class="small opacity-75 mb-1" data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="Cash: idle cash across everything — uninvested cash in your brokerage/investment accounts (deposits, withdrawals, sells, dividends, interest not yet reinvested) plus your bank account balances (see the Bank Accounts card below for the per-account breakdown).">Cash</div>
-                                            <div class="fs-4 fw-bold" id="dashCash">—</div>
-                                            <div class="small opacity-75" id="dashCashAccounts"></div>
-                                        </div>
-                                        <i class="bi bi-piggy-bank fs-2 opacity-40"></i>
+                                        <div class="kpi-label mb-1" data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="Cash: idle cash across everything — uninvested cash in your brokerage/investment accounts (deposits, withdrawals, sells, dividends, interest not yet reinvested) plus your bank account balances (see the Bank Accounts card below for the per-account breakdown).">Cash</div>
+                                        <i class="bi bi-piggy-bank fs-5 opacity-50"></i>
                                     </div>
+                                    <div class="kpi-value pfm-amt" id="dashCash">—</div>
+                                    <div class="kpi-sub" id="dashCashAccounts"></div>
                                 </div>
                             </div>
                         </div>
@@ -353,22 +345,19 @@
                             <div class="card text-white h-100" id="dashPnlCard" style="background:#6c757d;">
                                 <div class="card-body py-3">
                                     <div class="d-flex justify-content-between align-items-start">
-                                        <div>
-                                            <div class="d-flex align-items-center gap-2 mb-1">
-                                                <div class="small opacity-75" data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="Return: lifetime return vs cost basis for 'All'; YTD/1Y use daily snapshots.">Return</div>
-                                                <select class="form-select form-select-sm py-0 border-0 bg-transparent text-white" id="dashReturnPeriod" style="width:auto;font-size:.7rem;" title="Return timeframe">
-                                                    <option value="all">All</option>
-                                                    <option value="ytd">YTD</option>
-                                                    <option value="1y">1Y</option>
-                                                </select>
-                                            </div>
-                                            <div class="fs-4 fw-bold" id="dashReturnPct">—</div>
-                                            <div class="small opacity-75 mt-1" id="dashCagrLine"></div>
-                                            <div class="small opacity-75" id="totalGainLoss"></div>
-                                            <div class="small opacity-75" id="dashPnlPct"></div>
+                                        <div class="d-flex align-items-center gap-1 mb-1">
+                                            <div class="kpi-label" data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="Return: lifetime return vs cost basis for 'All'; YTD/1Y use daily snapshots. The P&L line below is unrealised gain on positions you still hold.">Return</div>
+                                            <select class="form-select form-select-sm py-0 ps-1 border-0 bg-transparent text-white" id="dashReturnPeriod" style="width:auto;font-size:.72rem;" title="Return timeframe">
+                                                <option value="all">All</option>
+                                                <option value="ytd">YTD</option>
+                                                <option value="1y">1Y</option>
+                                            </select>
                                         </div>
-                                        <i class="bi bi-graph-up-arrow fs-2 opacity-40"></i>
+                                        <i class="bi bi-percent fs-5 opacity-50"></i>
                                     </div>
+                                    <div class="kpi-value" id="dashReturnPct">—</div>
+                                    <div class="kpi-sub" id="dashCagrLine"></div>
+                                    <div class="kpi-sub"><span class="pfm-amt" id="totalGainLoss"></span> <span id="dashPnlPct"></span></div>
                                 </div>
                             </div>
                         </div>
@@ -376,26 +365,81 @@
                             <div class="card bg-info text-white h-100">
                                 <div class="card-body py-3">
                                     <div class="d-flex justify-content-between align-items-start">
-                                        <div>
-                                            <div class="small opacity-75 mb-1">Open Positions</div>
-                                            <div class="fs-4 fw-bold" id="totalAssets">—</div>
-                                            <div class="small opacity-75" id="totalTransactions"></div>
+                                        <div class="kpi-label mb-1">Open positions</div>
+                                        <i class="bi bi-collection fs-5 opacity-50"></i>
+                                    </div>
+                                    <div class="kpi-value" id="totalAssets">—</div>
+                                    <div class="kpi-sub" id="totalTransactions"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Needs-attention strip: one slim line combining price alerts
+                         (BUY/SELL/WATCH/DATA) and action items. Each part expands
+                         in place; hidden entirely when both are empty. -->
+                    <div id="dashAttention" class="mb-4" style="display:none;">
+                        <div class="pfm-attn" id="dashAttentionBar">
+                            <span class="text-muted small fw-semibold text-uppercase" style="letter-spacing:.06em;"><i class="bi bi-bell me-1"></i>Needs attention</span>
+                            <div id="dashAlerts" style="display:none;"></div>
+                            <div id="dashActionItems" style="display:none;"></div>
+                        </div>
+                        <div id="dashAttentionDetail" class="pfm-attn-detail" style="display:none;"></div>
+                    </div>
+
+                    <!-- Investments -->
+                    <div class="dash-section-label">Investments</div>
+                    <div class="row g-3 mb-3">
+                        <!-- Portfolio Value History (actual, from daily snapshots) -->
+                        <div class="col-12 col-xl-8">
+                            <div class="card h-100">
+                                <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                                    <span data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="Value and cost basis of your invested positions over time, from daily snapshots — cash isn't tracked historically. Hover the chart for exact values on any day."><i class="bi bi-graph-up me-2"></i>Portfolio value history</span>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <div class="btn-group btn-group-sm dash-range" role="group" id="dashHistoryRange" aria-label="History range">
+                                            <button type="button" class="btn btn-outline-secondary" data-range="3m">3M</button>
+                                            <button type="button" class="btn btn-outline-secondary" data-range="6m">6M</button>
+                                            <button type="button" class="btn btn-outline-secondary" data-range="ytd">YTD</button>
+                                            <button type="button" class="btn btn-outline-secondary" data-range="1y">1Y</button>
+                                            <button type="button" class="btn btn-outline-secondary" data-range="all">All</button>
                                         </div>
-                                        <i class="bi bi-pie-chart fs-2 opacity-40"></i>
+                                        <a href="#" class="small text-nowrap" onclick="window.navigationManager.showPage('analytics'); return false;">Details <i class="bi bi-arrow-right"></i></a>
+                                    </div>
+                                </div>
+                                <div class="card-body">
+                                    <div id="dashNetworthArea" style="min-height:230px;">
+                                        <div class="text-muted small text-center py-4">
+                                            <div class="spinner-border spinner-border-sm mb-1" role="status"></div><br>Loading…
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Allocation Donut -->
+                        <div class="col-12 col-xl-4">
+                            <div class="card h-100">
+                                <div class="card-header">
+                                    <i class="bi bi-pie-chart-fill me-2"></i>Allocation by type
+                                </div>
+                                <div class="card-body d-flex align-items-center justify-content-center">
+                                    <div id="dashDonutArea" class="w-100">
+                                        <div class="text-muted small text-center">
+                                            <div class="spinner-border spinner-border-sm mb-1" role="status"></div><br>Loading…
+                                        </div>
                                     </div>
                                 </div>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Row 2: Top Positions + Allocation Donut -->
                     <div class="row g-3 mb-4">
-                        <!-- Top 5 Positions -->
-                        <div class="col-12 col-lg-7">
+                        <!-- Top Positions -->
+                        <div class="col-12 col-xl-8">
                             <div class="card h-100">
                                 <div class="card-header">
                                     <div class="d-flex justify-content-between align-items-center">
-                                        <span><i class="bi bi-bar-chart-steps me-2"></i>Top Positions</span>
+                                        <span><i class="bi bi-bar-chart-steps me-2"></i>Top positions</span>
                                         <div class="btn-group btn-group-sm">
                                             <button class="btn btn-outline-secondary" id="dashTopConfigBtn" title="Configure">
                                                 <i class="bi bi-sliders"></i>
@@ -442,18 +486,19 @@
                                 </div>
                                 <div class="card-body p-0">
                                     <div class="table-responsive">
-                                        <table class="table table-hover mb-0" id="dashTopPositionsTable">
+                                        <table class="table table-hover mb-0 align-middle" id="dashTopPositionsTable">
                                             <thead>
                                                 <tr>
                                                     <th class="ps-3">Name</th>
                                                     <th>Type</th>
-                                                    <th class="text-end">Value (EUR)</th>
+                                                    <th class="text-end">Value</th>
+                                                    <th class="text-end d-none d-sm-table-cell" data-bs-toggle="tooltip" title="Share of your invested portfolio value (excluding cash).">Weight</th>
                                                     <th class="text-end pe-3" id="dashTopPnlHeader" data-bs-toggle="tooltip" title="P/L (Profit &amp; Loss): current value minus cost basis.">P&amp;L %</th>
                                                 </tr>
                                             </thead>
                                             <tbody>
                                                 <tr>
-                                                    <td colspan="4" class="text-center py-3">
+                                                    <td colspan="5" class="text-center py-3">
                                                         <div class="spinner-border spinner-border-sm me-2" role="status"></div>
                                                         Loading…
                                                     </td>
@@ -465,68 +510,101 @@
                             </div>
                         </div>
 
-                        <!-- Allocation Donut -->
-                        <div class="col-12 col-lg-5">
-                            <div class="card h-100">
-                                <div class="card-header">
-                                    <i class="bi bi-pie-chart-fill me-2"></i>Allocation by Type
-                                </div>
-                                <div class="card-body d-flex align-items-center justify-content-center">
-                                    <div id="dashDonutArea" class="d-flex align-items-center gap-4 flex-wrap justify-content-center w-100">
-                                        <div class="text-muted small text-center">
-                                            <div class="spinner-border spinner-border-sm mb-1" role="status"></div><br>Loading…
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Row 2b: Portfolio Value History (actual, from daily snapshots) -->
-                    <div class="row g-3 mb-4">
-                        <div class="col-12">
-                            <div class="card">
-                                <div class="card-header d-flex justify-content-between align-items-center">
-                                    <span data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="Value and cost basis of your invested positions over time, from daily snapshots — cash isn't tracked historically. This is the past; the Wealth Simulator card below projects the future."><i class="bi bi-graph-up me-2"></i>Portfolio Value History</span>
-                                    <a href="#" class="small" onclick="window.navigationManager.showPage('analytics'); return false;">Full history <i class="bi bi-arrow-right"></i></a>
-                                </div>
-                                <div class="card-body">
-                                    <div id="dashNetworthArea" style="min-height:150px;">
-                                        <div class="text-muted small text-center py-4">
-                                            <div class="spinner-border spinner-border-sm mb-1" role="status"></div><br>Loading…
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Row 3: Wealth Simulator preview + Recent Transactions -->
-                    <div class="row g-3 mb-4">
                         <!-- Wealth Simulator live preview -->
-                        <div class="col-12 col-md-4">
-                            <div class="card border-primary h-100">
+                        <div class="col-12 col-xl-4">
+                            <div class="card h-100">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <span data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="Projection of your net worth using your saved Wealth Simulator assumptions. Solid line = expected path; shaded band = confidence range. Hover for values per year."><i class="bi bi-graph-up-arrow me-2"></i>Wealth projection</span>
+                                    <a href="#" class="small" onclick="window.navigationManager.showPage('forecast'); return false;">Customize <i class="bi bi-arrow-right"></i></a>
+                                </div>
                                 <div class="card-body d-flex flex-column">
-                                    <h5 class="card-title text-primary mb-2">
-                                        <i class="bi bi-graph-up-arrow me-2"></i>Wealth Simulator
-                                    </h5>
                                     <div id="dashForecastArea" class="flex-grow-1 d-flex flex-column justify-content-center">
                                         <div class="text-muted small text-center">
                                             <div class="spinner-border spinner-border-sm mb-1" role="status"></div><br>Loading…
                                         </div>
                                     </div>
-                                    <button class="btn btn-outline-primary btn-sm mt-2" onclick="window.navigationManager.showPage('forecast')">
-                                        Customize <i class="bi bi-arrow-right ms-1"></i>
-                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Cash & spending -->
+                    <div class="dash-section-label">Cash &amp; spending</div>
+                    <div class="row g-3 mb-4">
+                        <!-- Bank Accounts -->
+                        <div class="col-12 col-lg-6">
+                            <div class="card h-100">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <span><i class="bi bi-bank me-2"></i>Bank accounts</span>
+                                    <a href="#" class="small" onclick="window.navigationManager.showPage('networth'); return false;">Net worth <i class="bi bi-arrow-right"></i></a>
+                                </div>
+                                <div class="card-body d-flex align-items-center">
+                                    <div id="dashBankArea" class="w-100">
+                                        <div class="text-muted small text-center py-3">
+                                            <div class="spinner-border spinner-border-sm mb-1" role="status"></div><br>Loading…
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
 
-                        <!-- Recent Transactions -->
-                        <div class="col-12 col-md-8">
+                        <!-- Spending: Spent/Income/Transferred summary + category donut -->
+                        <div class="col-12 col-lg-6">
                             <div class="card h-100">
-                                <div class="card-header">
-                                    <i class="bi bi-clock-history me-2"></i>Recent Transactions
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <span><i class="bi bi-cart3 me-2"></i>Spending</span>
+                                    <div class="d-flex align-items-center gap-2">
+                                        <select class="form-select form-select-sm" id="dashSpendingPeriod" style="width:auto;" title="Time frame">
+                                            <option value="7">Last 7 days</option>
+                                            <option value="30" selected>Last 30 days</option>
+                                            <option value="90">Last 90 days</option>
+                                            <option value="365">Last 365 days</option>
+                                        </select>
+                                        <a href="#" class="small text-nowrap" onclick="window.navigationManager.showPage('spending'); const t = document.getElementById('spTabBtnAnalytics'); if (t) t.click(); return false;">Details <i class="bi bi-arrow-right"></i></a>
+                                    </div>
+                                </div>
+                                <div class="card-body">
+                                    <div class="d-flex justify-content-around text-center mb-3 pb-2 border-bottom font-tabular" id="dashSpendingStatsArea">
+                                        <div class="text-muted small">Loading…</div>
+                                    </div>
+                                    <div id="dashTopCategoriesArea">
+                                        <div class="text-muted small text-center py-3">
+                                            <div class="spinner-border spinner-border-sm mb-1" role="status"></div><br>Loading…
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Budget (hidden until an active budget exists) -->
+                    <div class="row g-3 mb-4" id="dashBudgetCard" style="display:none;">
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <span><i class="bi bi-clipboard-data me-2"></i>Budget this month</span>
+                                    <span class="d-flex align-items-center gap-3">
+                                        <span class="text-muted small" id="dashBudgetName"></span>
+                                        <a href="#" class="small" data-page="budget">Open budget <i class="bi bi-arrow-right"></i></a>
+                                    </span>
+                                </div>
+                                <div class="card-body">
+                                    <div id="dashBudgetArea">
+                                        <div class="text-muted small">Loading…</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Activity -->
+                    <div class="dash-section-label">Recent activity</div>
+                    <div class="row g-3">
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <span><i class="bi bi-clock-history me-2"></i>Recent transactions</span>
+                                    <a href="#" class="small" data-page="transactions">All transactions <i class="bi bi-arrow-right"></i></a>
                                 </div>
                                 <div class="card-body p-0">
                                     <div class="table-responsive">
@@ -551,86 +629,6 @@
                                             </tbody>
                                         </table>
                                     </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Row 4: Bank Accounts + Top Spending Categories -->
-                    <div class="row g-3">
-                        <!-- Bank Accounts -->
-                        <div class="col-12 col-md-6">
-                            <div class="card h-100">
-                                <div class="card-header">
-                                    <i class="bi bi-bank me-2"></i>Bank Accounts
-                                </div>
-                                <div class="card-body p-0">
-                                    <div class="table-responsive">
-                                        <table class="table table-hover table-sm mb-0" id="dashBankAccountsTable">
-                                            <thead>
-                                                <tr>
-                                                    <th class="ps-3">Account</th>
-                                                    <th class="text-end pe-3">Balance</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                <tr>
-                                                    <td colspan="2" class="text-center py-3">
-                                                        <div class="spinner-border spinner-border-sm me-2" role="status"></div>
-                                                        Loading…
-                                                    </td>
-                                                </tr>
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Spending: Spent/Income/Transferred summary + top categories -->
-                        <div class="col-12 col-md-6">
-                            <div class="card h-100">
-                                <div class="card-header d-flex justify-content-between align-items-center">
-                                    <span><i class="bi bi-wallet2 me-2"></i>Spending</span>
-                                    <select class="form-select form-select-sm" id="dashSpendingPeriod" style="width:auto;" title="Time frame">
-                                        <option value="7">Last 7 days</option>
-                                        <option value="30" selected>Last 30 days</option>
-                                        <option value="90">Last 90 days</option>
-                                        <option value="365">Last 365 days</option>
-                                    </select>
-                                </div>
-                                <div class="card-body">
-                                    <div class="d-flex justify-content-around text-center mb-3 pb-2 border-bottom" id="dashSpendingStatsArea">
-                                        <div class="text-muted small">Loading…</div>
-                                    </div>
-                                    <div id="dashTopCategoriesArea">
-                                        <div class="text-muted small text-center py-3">
-                                            <div class="spinner-border spinner-border-sm mb-1" role="status"></div><br>Loading…
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="card-footer bg-transparent text-end">
-                                    <a href="#" class="small" onclick="window.navigationManager.showPage('spending'); const t = document.getElementById('spTabBtnCategories'); if (t) t.click(); return false;">View all <i class="bi bi-arrow-right"></i></a>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Row 5: Budget (hidden until an active budget exists) -->
-                    <div class="row g-3 mt-0" id="dashBudgetCard" style="display:none;">
-                        <div class="col-12">
-                            <div class="card">
-                                <div class="card-header d-flex justify-content-between align-items-center">
-                                    <span><i class="bi bi-clipboard-data me-2"></i>Budget this month</span>
-                                    <span class="text-muted small" id="dashBudgetName"></span>
-                                </div>
-                                <div class="card-body">
-                                    <div id="dashBudgetArea">
-                                        <div class="text-muted small">Loading…</div>
-                                    </div>
-                                </div>
-                                <div class="card-footer bg-transparent text-end">
-                                    <a href="#" class="small" data-page="budget">Open budget <i class="bi bi-arrow-right"></i></a>
                                 </div>
                             </div>
                         </div>
@@ -4493,7 +4491,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
 
     <!-- Centralized help text (must load before the app scripts) -->
-    <script src="js/help_text.js?v=1788428227"></script>
+    <script src="js/help_text.js?v=1790330000"></script>
 
     <!-- App scripts: portfolio_debug.js was split into these four classic
          scripts. They share one global scope and MUST load in this order:
@@ -4636,10 +4634,10 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
       </div>
     </div>
 
-    <script src="js/pfm_core.js?v=1788463269"></script>
-    <script src="js/pfm_pages.js?v=1788428227"></script>
-    <script src="js/pfm_analytics.js?v=1780000055"></script>
-    <script src="js/pfm_features.js?v=1790245583"></script>
+    <script src="js/pfm_core.js?v=1790330000"></script>
+    <script src="js/pfm_pages.js?v=1790330000"></script>
+    <script src="js/pfm_analytics.js?v=1790330000"></script>
+    <script src="js/pfm_features.js?v=1790330000"></script>
     <script>
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('/sw.js');
