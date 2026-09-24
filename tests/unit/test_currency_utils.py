@@ -46,3 +46,37 @@ def test_lookup_failure_is_safe():
             None,
             "EUR",
         )
+
+
+def test_lookup_failure_is_not_cached():
+    """A transient failure must not pin a GBX symbol as non-GBX for good."""
+    currency_utils._GBX_CACHE.clear()
+    with patch("yfinance.Ticker", side_effect=Exception("network")):
+        assert is_gbx("GB0000000002") is False
+    with patch("yfinance.Ticker", return_value=_mock_ticker("GBp")):
+        assert is_gbx("GB0000000002") is True
+
+
+def test_success_is_cached_case_insensitively():
+    currency_utils._GBX_CACHE.clear()
+    with patch("yfinance.Ticker", return_value=_mock_ticker("GBp")) as ticker:
+        assert is_gbx("gb0000000003") is True
+        assert is_gbx("GB0000000003") is True
+    assert ticker.call_count == 1
+
+
+def test_blank_symbol_skips_lookup():
+    with patch("yfinance.Ticker") as ticker:
+        assert is_gbx("") is False
+    ticker.assert_not_called()
+
+
+def test_optional_amounts_stay_none_for_gbx():
+    currency_utils._GBX_CACHE.clear()
+    with patch("yfinance.Ticker", return_value=_mock_ticker("GBp")):
+        assert normalize_gbx_amounts("GB0000000004", 250.0) == (
+            2.5,
+            None,
+            None,
+            "GBP",
+        )

@@ -21,20 +21,21 @@ _GBX_CACHE: dict[str, bool] = {}
 def is_gbx(symbol: str) -> bool:
     """Return True if *symbol* is quoted in GBX (pence) on Yahoo Finance.
 
-    Cached per symbol. Network/lookup failures default to False (no change).
+    Cached per symbol. A lookup failure returns False (no change) but is not
+    cached, so a transient Yahoo outage can't pin a GBX symbol as non-GBX for
+    the rest of the process.
     """
     if not symbol:
         return False
     key = symbol.upper()
     if key in _GBX_CACHE:
         return _GBX_CACHE[key]
-    result = False
     try:
         import yfinance as yf
 
         result = yf.Ticker(key).fast_info.currency == "GBp"
     except Exception:
-        result = False
+        return False
     _GBX_CACHE[key] = result
     return result
 

@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional, Tuple
 
+from portf_manager.parsers.utils import parse_unsigned_amount as _parse_amount
+
 _HEADER_SYNONYMS = {
     "name": {
         "name",
@@ -122,26 +124,6 @@ def _map_columns(fieldnames: List[str]) -> dict:
             if norm in syns and canonical not in mapping:
                 mapping[canonical] = actual
     return mapping
-
-
-def _parse_amount(raw: str) -> Optional[float]:
-    s = (raw or "").strip()
-    for sym in ("€", "$", "£", "USD", "EUR", "GBP"):
-        s = s.replace(sym, "")
-    s = re.sub(r"[^0-9,.\-]", "", s.strip())
-    if not s:
-        return None
-    if "," in s and "." in s:
-        if s.rfind(",") > s.rfind("."):
-            s = s.replace(".", "").replace(",", ".")
-        else:
-            s = s.replace(",", "")
-    elif "," in s:
-        s = s.replace(",", ".")
-    try:
-        return abs(float(s))
-    except ValueError:
-        return None
 
 
 def _parse_rate(raw: str) -> Optional[float]:
