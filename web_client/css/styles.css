@@ -650,3 +650,21 @@ body {
 .pfm-result-list { max-height: 220px; overflow: auto; }
 .pfm-chev { transition: transform .15s ease; }
 [aria-expanded="true"] > .pfm-chev { transform: rotate(90deg); }
+
+/* Keyboard focus on charts and legend rows (see attachLineHover / renderDonut) */
+.pfm-legend-row:focus-visible { outline: 2px solid var(--viz-1); outline-offset: 1px; }
+svg[tabindex]:focus { outline: none; }
+svg[tabindex]:focus-visible { outline: 2px solid var(--viz-1); outline-offset: 4px; border-radius: 4px; }
+
+/* Page headers (title + actions) wrap on phones instead of pushing the page
+   wider than the screen; the title block takes its own row. */
+.page-content > .d-flex.justify-content-between:first-child { flex-wrap: wrap; row-gap: .5rem; column-gap: .75rem; }
+@media (max-width: 575.98px) {
+    .page-content > .d-flex.justify-content-between:first-child > div:first-child { flex: 1 1 100%; }
+    .kpi-value { font-size: 1.3rem; }
+    .pfm-donut-svg { width: 150px; }
+    .pfm-legend { min-width: 0; flex-basis: 100%; }
+    .pfm-stat { flex-basis: calc(50% - .25rem); }
+}
+.dash-pos-name { max-width: 220px; }
+@media (max-width: 575.98px) { .dash-pos-name { max-width: 42vw; } }

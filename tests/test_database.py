@@ -144,9 +144,18 @@ class TestDatabase:
 
     def test_connection_error_handling(self):
         """Test database connection error handling."""
-        # Test with invalid path
-        with pytest.raises((DatabaseError, OSError)):
-            Database("/invalid/path/test.db")
+        # A path *under a regular file* can't be created by anyone, root
+        # included (a missing directory like /invalid/path can be, so that
+        # version of this test failed whenever the suite ran as root).
+        not_a_dir = os.path.join(self.temp_dir, "plain_file")
+        with open(not_a_dir, "w") as fh:
+            fh.write("x")
+        try:
+            with pytest.raises((DatabaseError, OSError)):
+                Database(os.path.join(not_a_dir, "test.db"))
+        finally:
+            # teardown_method uses os.rmdir, which needs an empty directory.
+            os.remove(not_a_dir)
 
     def test_backup_database(self):
         """Test database backup functionality."""
