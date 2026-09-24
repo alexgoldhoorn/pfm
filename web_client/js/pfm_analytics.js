@@ -534,7 +534,7 @@ function _wireNetworthForm() {
 }
 
 window.confirmDeleteManualAsset = async function (id) {
-    if (!confirm('Delete this item?')) return;
+    if (!(await confirmDialog({ title: 'Delete item', message: 'Remove this item from your net worth? This cannot be undone.', danger: true }))) return;
     try { await window.apiClient.deleteManualAsset(id); loadNetworthPage(); }
     catch (err) { notify('Error: ' + err.message); }
 };
@@ -789,13 +789,13 @@ function _wireCashflowForm() {
 }
 
 window.confirmDeleteCashflow = async function (id) {
-    if (!confirm('Delete this entry?')) return;
+    if (!(await confirmDialog({ title: 'Delete cash-flow entry', message: 'Remove this monthly cash-flow entry? Goals and the Wealth Simulator stop using it for suggestions.', danger: true }))) return;
     try { await window.apiClient.deleteCashflowEntry(id); loadNetworthPage(); }
     catch (err) { notify('Error: ' + err.message); }
 };
 
 window.confirmDeleteDeposit = async function (id) {
-    if (!confirm('Delete this deposit?')) return;
+    if (!(await confirmDialog({ title: 'Delete fixed deposit', message: 'Delete this deposit? It stops counting toward your net worth. This cannot be undone.', danger: true }))) return;
     try { await window.apiClient.deleteDeposit(id); loadNetworthPage(); }
     catch (err) { notify('Error: ' + err.message); }
 };
@@ -1164,7 +1164,7 @@ function _wireBackfillButton() {
     if (!btn || btn.dataset.wired) return;
     btn.dataset.wired = '1';
     btn.addEventListener('click', async () => {
-        if (!confirm('Reconstruct daily net-worth history from your transactions and historical prices? This can take a minute and fills dates that are missing.')) return;
+        if (!(await confirmDialog({ title: 'Rebuild net-worth history', message: 'Reconstruct daily net-worth history from your transactions and historical prices?\n\nThis can take a minute. Only missing dates are filled; existing snapshots are kept.', confirmLabel: 'Rebuild history' }))) return;
         const orig = btn.innerHTML;
         btn.disabled = true;
         try {
@@ -2186,10 +2186,12 @@ window.openFundProfileModal = async function (assetId, symbol, name) {
                 filled = await window.apiClient.refreshFundProfile(assetId, key, false);
             } catch (err) {
                 if (err.status !== 409) throw err;
-                const proceed = window.confirm(
-                    'This fund has a hand-edited profile. Replacing it with benchmark ' +
-                    'data will overwrite your edits, including resetting any currency-hedged flag. Continue?'
-                );
+                const proceed = await confirmDialog({
+                    title: 'Overwrite hand-edited profile?',
+                    message: 'This fund has a hand-edited profile. Replacing it with benchmark data overwrites your edits, including any currency-hedged flag.',
+                    confirmLabel: 'Overwrite with benchmark',
+                    danger: true,
+                });
                 if (!proceed) { document.getElementById('fpProblems').textContent = ''; return; }
                 filled = await window.apiClient.refreshFundProfile(assetId, key, true);
             }
@@ -2872,7 +2874,7 @@ async function loadWatchlist() {
 }
 
 window.deleteWatchlistRow = async function(symbol) {
-    if (!confirm(`Remove ${symbol} from your watchlist?`)) return;
+    if (!(await confirmDialog({ title: 'Remove from watchlist', message: `Remove ${symbol} from your watchlist? Its buy-zone alert stops too.`, confirmLabel: 'Remove', danger: true }))) return;
     try {
         await window.apiClient.deleteWatchlist(symbol);
         loadWatchlist();

@@ -1192,7 +1192,7 @@ async function loadDataQualityTab(force = false) {
                     btn.addEventListener('click', async () => {
                         const id  = parseInt(btn.dataset.id);
                         const key = btn.dataset.key;
-                        if (!confirm(`Delete transaction #${id}?`)) return;
+                        if (!(await confirmDialog({ title: 'Delete transaction', message: `Delete transaction #${id}? Holdings, cost basis and tax figures are recalculated without it. This cannot be undone.`, danger: true }))) return;
                         try {
                             await window.apiClient.deleteTransaction(id);
                             _dqDismiss('dup', key);
@@ -1286,7 +1286,7 @@ async function loadDataQualityTab(force = false) {
                 body.querySelectorAll('.dq-del-susp').forEach(btn => {
                     btn.addEventListener('click', async () => {
                         const id = parseInt(btn.dataset.id);
-                        if (!confirm(`Delete transaction #${id}?`)) return;
+                        if (!(await confirmDialog({ title: 'Delete transaction', message: `Delete transaction #${id}? Holdings, cost basis and tax figures are recalculated without it. This cannot be undone.`, danger: true }))) return;
                         try {
                             await window.apiClient.deleteTransaction(id);
                             await _loadSuspCard();
@@ -3386,13 +3386,8 @@ function setupFileImportModal() {
             const result = await window.apiClient.saveImportedTransactions(selected, parsedBookings, null, _dupAction(), selectedDeps);
             saveBtn.disabled = false;
             saveBtn.innerHTML = '<i class="bi bi-check-lg me-2"></i>Save Selected';
+            showImportResult(result, { afterModal: modal, actions: [_VIEW_TX_ACTION] });
             bootstrap.Modal.getInstance(modal).hide();
-            const bkMsg = result.saved_bookings > 0 ? ` + ${result.saved_bookings} booking(s)` : '';
-            const depMsg = result.saved_deposits > 0 ? ` + ${result.saved_deposits} deposit(s)` : '';
-            const msg = result.errors.length > 0
-                ? `Saved ${result.saved}${bkMsg}${depMsg}. Errors:\n${result.errors.join('\n')}`
-                : `Successfully imported ${result.saved} transaction(s)${bkMsg}${depMsg}.`;
-            notify(msg);
             window.pageManager.loadTransactionsPage();
         } catch (err) {
             saveBtn.disabled = false;
@@ -3535,11 +3530,8 @@ function setupLlmImportModal() {
             const result = await window.apiClient.saveImportedTransactions(normalized, [], portfolioId);
             saveBtn.disabled = false;
             saveBtn.innerHTML = '<i class="bi bi-check-lg me-2"></i>Save All';
+            showImportResult(result, { afterModal: modal, actions: [_VIEW_TX_ACTION] });
             bootstrap.Modal.getInstance(modal).hide();
-            const msg = result.errors.length > 0
-                ? `Saved ${result.saved}${result.duplicates_skipped ? `, ${result.duplicates_skipped} duplicate(s) skipped` : ''}. Errors:\n${result.errors.filter(e => !e.startsWith('DUPLICATE')).join('\n')}`
-                : `Successfully imported ${result.saved} transaction(s)${result.duplicates_skipped ? `, ${result.duplicates_skipped} duplicate(s) skipped` : ''}.`;
-            notify(msg);
             window.pageManager.loadTransactionsPage();
         } catch (err) {
             saveBtn.disabled = false;
@@ -3605,6 +3597,292 @@ function notify(msg, level) {
     }
 }
 window.notify = notify;
+
+// ---------------------------------------------------------------------------
+// Dialogs: one styled confirm and one result box, used everywhere instead of
+// native confirm()/alert() so every question and outcome looks the same.
+// ---------------------------------------------------------------------------
+function _pfmDialogEl() {
+    let el = document.getElementById('pfmDialog');
+    if (el) return el;
+    el = document.createElement('div');
+    el.id = 'pfmDialog';
+    el.className = 'modal fade';
+    el.tabIndex = -1;
+    el.setAttribute('aria-hidden', 'true');
+    el.innerHTML = `
+        <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header py-2">
+                    <h6 class="modal-title d-flex align-items-center gap-2 mb-0" id="pfmDialogTitle"></h6>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="pfmDialogBody"></div>
+                <div class="modal-footer py-2" id="pfmDialogFooter"></div>
+            </div>
+        </div>`;
+    document.body.appendChild(el);
+    // May open on top of another modal (fund profile, research): lift it and
+    // its own backdrop above the one underneath.
+    el.style.zIndex = '1065';
+    el.addEventListener('shown.bs.modal', () => {
+        const drops = document.querySelectorAll('.modal-backdrop');
+        if (drops.length > 1) drops[drops.length - 1].style.zIndex = '1062';
+    });
+    el.addEventListener('hidden.bs.modal', () => {
+        // Bootstrap removes body.modal-open when any modal closes; restore it
+        // if another modal is still open underneath so it keeps scrolling.
+        if (document.querySelector('.modal.show')) document.body.classList.add('modal-open');
+    });
+    return el;
+}
+
+const _DIALOG_ICON = {
+    danger: 'bi-exclamation-octagon-fill text-danger',
+    warning: 'bi-exclamation-triangle-fill text-warning',
+    success: 'bi-check-circle-fill text-success',
+    info: 'bi-info-circle-fill text-info',
+    question: 'bi-question-circle-fill text-primary',
+};
+
+// Styled replacement for window.confirm(). Resolves true on confirm, false on
+// cancel / close / Esc. opts: string, or { title, message (plain text, keeps
+// line breaks), detailHtml (trusted markup), confirmLabel, cancelLabel, danger }.
+function confirmDialog(opts) {
+    const o = typeof opts === 'string' ? { message: opts } : (opts || {});
+    if (typeof bootstrap === 'undefined' || !bootstrap.Modal) {
+        return Promise.resolve(window.confirm(o.message || o.title || 'Are you sure?'));
+    }
+    const el = _pfmDialogEl();
+    const danger = !!o.danger;
+    el.querySelector('#pfmDialogTitle').innerHTML =
+        `<i class="bi ${_DIALOG_ICON[danger ? 'danger' : 'question']}"></i><span></span>`;
+    el.querySelector('#pfmDialogTitle span').textContent = o.title || (danger ? 'Are you sure?' : 'Please confirm');
+    const body = el.querySelector('#pfmDialogBody');
+    body.innerHTML = '<p class="mb-0" style="white-space:pre-line;"></p>' + (o.detailHtml || '');
+    body.querySelector('p').textContent = o.message || '';
+    const footer = el.querySelector('#pfmDialogFooter');
+    footer.innerHTML = `
+        <button type="button" class="btn btn-sm btn-outline-secondary" data-act="cancel"></button>
+        <button type="button" class="btn btn-sm ${danger ? 'btn-danger' : 'btn-primary'}" data-act="ok"></button>`;
+    footer.querySelector('[data-act="cancel"]').textContent = o.cancelLabel || 'Cancel';
+    footer.querySelector('[data-act="ok"]').textContent = o.confirmLabel || (danger ? 'Delete' : 'OK');
+    return new Promise(resolve => {
+        let result = false;
+        const modal = bootstrap.Modal.getOrCreateInstance(el);
+        footer.querySelector('[data-act="ok"]').onclick = () => { result = true; modal.hide(); };
+        footer.querySelector('[data-act="cancel"]').onclick = () => { result = false; modal.hide(); };
+        el.addEventListener('hidden.bs.modal', () => resolve(result), { once: true });
+        el.addEventListener('shown.bs.modal', () => {
+            // Focus the safe choice for destructive actions, the action otherwise.
+            const f = footer.querySelector(danger ? '[data-act="cancel"]' : '[data-act="ok"]');
+            if (f) f.focus();
+        }, { once: true });
+        modal.show();
+    });
+}
+window.confirmDialog = confirmDialog;
+
+// Result box: headline + stat chips + key facts + collapsible lists.
+// model: { title, level, chips: [{label, value, cls}], facts: [{label, value}],
+//          lists: [{title, items: [string], level, open}], note, actions: [{label, onClick}] }
+function showResultDialog(model) {
+    const m = model || {};
+    if (typeof bootstrap === 'undefined' || !bootstrap.Modal) { notify(m.title || 'Done', m.level); return; }
+    const el = _pfmDialogEl();
+    el.querySelector('#pfmDialogTitle').innerHTML =
+        `<i class="bi ${_DIALOG_ICON[m.level] || _DIALOG_ICON.info}"></i><span></span>`;
+    el.querySelector('#pfmDialogTitle span').textContent = m.title || 'Done';
+    const chips = (m.chips || []).map(c => `
+        <div class="pfm-stat ${c.cls || ''}">
+            <div class="pfm-stat-value">${esc(String(c.value))}</div>
+            <div class="pfm-stat-label">${esc(c.label)}</div>
+        </div>`).join('');
+    const facts = (m.facts || []).map(f => `
+        <div class="pfm-fact"><span class="text-muted">${esc(f.label)}</span><span class="text-end">${esc(String(f.value))}</span></div>`).join('');
+    const lists = (m.lists || []).filter(l => l.items && l.items.length).map((l, i) => {
+        const id = `pfmDialogList${i}`;
+        const MAX = 50;
+        const shown = l.items.slice(0, MAX).map(t => `<li>${esc(t)}</li>`).join('');
+        const more = l.items.length > MAX ? `<li class="text-muted">… and ${l.items.length - MAX} more</li>` : '';
+        const badge = l.level === 'danger' ? 'text-bg-danger' : l.level === 'warning' ? 'text-bg-warning' : 'text-bg-secondary';
+        return `
+            <div class="mt-2">
+                <button class="btn btn-link btn-sm p-0 text-decoration-none d-flex align-items-center gap-2" type="button"
+                        data-bs-toggle="collapse" data-bs-target="#${id}" aria-expanded="${l.open ? 'true' : 'false'}">
+                    <i class="bi bi-chevron-right pfm-chev"></i><span>${esc(l.title)}</span>
+                    <span class="badge ${badge}">${l.items.length}</span>
+                </button>
+                <div id="${id}" class="collapse${l.open ? ' show' : ''}">
+                    <ul class="small mb-0 mt-1 ps-4 pfm-result-list">${shown}${more}</ul>
+                </div>
+            </div>`;
+    }).join('');
+    const body = el.querySelector('#pfmDialogBody');
+    body.innerHTML = `
+        ${chips ? `<div class="pfm-stats mb-3">${chips}</div>` : ''}
+        ${facts ? `<div class="pfm-facts">${facts}</div>` : ''}
+        ${lists}
+        ${m.note ? `<div class="small text-muted mt-3"></div>` : ''}`;
+    if (m.note) body.lastElementChild.textContent = m.note;
+    const footer = el.querySelector('#pfmDialogFooter');
+    footer.innerHTML = '';
+    const modal = bootstrap.Modal.getOrCreateInstance(el);
+    (m.actions || []).forEach(a => {
+        const b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'btn btn-sm btn-outline-primary';
+        b.textContent = a.label;
+        b.onclick = () => { modal.hide(); if (a.onClick) a.onClick(); };
+        footer.appendChild(b);
+    });
+    const ok = document.createElement('button');
+    ok.type = 'button';
+    ok.className = 'btn btn-sm btn-primary';
+    ok.textContent = 'Close';
+    ok.onclick = () => modal.hide();
+    footer.appendChild(ok);
+    modal.show();
+}
+window.showResultDialog = showResultDialog;
+
+function _fmtMoneyMap(map) {
+    return Object.entries(map || {})
+        .filter(([, v]) => v)
+        .map(([ccy, v]) => {
+            try {
+                return Number(v).toLocaleString(Fmt.loc(), { style: 'currency', currency: ccy, maximumFractionDigits: 2 });
+            } catch (e) {
+                return `${Fmt.num(v, 2, 2)} ${ccy}`;
+            }
+        }).join(' + ');
+}
+
+function _dateSpan(from, to) {
+    if (!from) return null;
+    return from === to ? Fmt.date(from) : `${Fmt.date(from)} → ${Fmt.date(to)}`;
+}
+
+const _TX_TYPE_LABEL = {
+    buy: ['buy', 'buys'], sell: ['sell', 'sells'], dividend: ['dividend', 'dividends'],
+    interest: ['interest payment', 'interest payments'], split: ['split', 'splits'],
+};
+
+// Pure: turn an /import/save response into the result-box model, so the five
+// import flows (file, text/LLM, legacy modal x2, chat) all say the same thing.
+function importResultModel(r) {
+    const res = r || {};
+    const errors = (res.errors || []).filter(e => !String(e).startsWith('DUPLICATE'));
+    const dups = (res.errors || []).filter(e => String(e).startsWith('DUPLICATE'))
+        .map(e => String(e).replace(/^DUPLICATE:\s*/, ''));
+    const saved = res.saved || 0;
+    const bookings = res.saved_bookings || 0;
+    const deposits = res.saved_deposits || 0;
+    const written = saved + bookings + deposits + (res.overwritten || 0);
+    const level = errors.length ? (written ? 'warning' : 'danger') : (written ? 'success' : 'info');
+    const title = errors.length
+        ? (written ? 'Import finished with problems' : 'Nothing imported')
+        : (written ? 'Import complete' : 'Nothing new to import');
+
+    const chips = [{ label: saved === 1 ? 'transaction' : 'transactions', value: saved, cls: saved ? 'pfm-stat-good' : '' }];
+    if (bookings) chips.push({ label: bookings === 1 ? 'cash movement' : 'cash movements', value: bookings, cls: 'pfm-stat-good' });
+    if (deposits) chips.push({ label: deposits === 1 ? 'fixed deposit' : 'fixed deposits', value: deposits, cls: 'pfm-stat-good' });
+    if (res.overwritten) chips.push({ label: 'overwritten', value: res.overwritten, cls: 'pfm-stat-info' });
+    if (res.duplicates_skipped) chips.push({ label: 'duplicates skipped', value: res.duplicates_skipped, cls: 'pfm-stat-muted' });
+    if (errors.length) chips.push({ label: errors.length === 1 ? 'error' : 'errors', value: errors.length, cls: 'pfm-stat-bad' });
+
+    const facts = [];
+    const types = Object.entries(res.by_type || {}).filter(([, n]) => n)
+        .map(([t, n]) => `${n} ${(_TX_TYPE_LABEL[t] || [t, t])[n === 1 ? 0 : 1]}`);
+    if (types.length) facts.push({ label: 'Breakdown', value: types.join(' · ') });
+    const span = _dateSpan(res.date_from, res.date_to);
+    if (span) facts.push({ label: 'Dates', value: span });
+    if ((res.portfolios || []).length) facts.push({ label: res.portfolios.length === 1 ? 'Account' : 'Accounts', value: res.portfolios.join(', ') });
+    const bt = res.booking_totals || {};
+    if (bt.Deposit) facts.push({ label: 'Deposited', value: _fmtMoneyMap(bt.Deposit) });
+    if (bt.Withdrawal) facts.push({ label: 'Withdrawn', value: _fmtMoneyMap(bt.Withdrawal) });
+
+    const lists = [
+        { title: 'Errors', items: errors, level: 'danger', open: true },
+        { title: 'New assets created', items: res.new_assets || [], level: 'info', open: (res.new_assets || []).length <= 5 },
+        { title: 'Asset types corrected', items: res.asset_types_corrected || [], level: 'info' },
+        { title: 'Skipped as duplicates', items: dups, level: 'secondary' },
+    ];
+    let note = null;
+    if ((res.new_assets || []).length) note = 'New assets get prices on the next price refresh. Check their type and ticker on the Assets page.';
+    else if (!written && res.duplicates_skipped) note = 'Everything in this file was already imported.';
+    return { title, level, chips, facts, lists, note };
+}
+window.importResultModel = importResultModel;
+
+// Pure: same for a bank-statement (/spending/save) response.
+function spendingImportResultModel(r) {
+    const res = r || {};
+    const errors = res.errors || [];
+    const written = (res.saved || 0) + (res.overwritten || 0);
+    const level = errors.length ? (written ? 'warning' : 'danger') : (written ? 'success' : 'info');
+    const title = errors.length
+        ? (written ? 'Import finished with problems' : 'Nothing imported')
+        : (written ? 'Bank statement imported' : 'Nothing new to import');
+    const chips = [{ label: res.saved === 1 ? 'row' : 'rows', value: res.saved || 0, cls: res.saved ? 'pfm-stat-good' : '' }];
+    if (res.overwritten) chips.push({ label: 'overwritten', value: res.overwritten, cls: 'pfm-stat-info' });
+    if (res.duplicates_skipped) chips.push({ label: 'duplicates skipped', value: res.duplicates_skipped, cls: 'pfm-stat-muted' });
+    if (res.transfers_linked) chips.push({ label: 'transfers linked', value: res.transfers_linked, cls: 'pfm-stat-info' });
+    if (res.uncategorized) chips.push({ label: 'to categorise', value: res.uncategorized, cls: 'pfm-stat-warn' });
+    if (errors.length) chips.push({ label: errors.length === 1 ? 'error' : 'errors', value: errors.length, cls: 'pfm-stat-bad' });
+    const facts = [];
+    if (res.account_name) facts.push({ label: 'Account', value: res.account_name });
+    const span = _dateSpan(res.date_from, res.date_to);
+    if (span) facts.push({ label: 'Dates', value: span });
+    const inTxt = _fmtMoneyMap(res.money_in), outTxt = _fmtMoneyMap(res.money_out);
+    if (inTxt) facts.push({ label: 'Money in', value: inTxt });
+    if (outTxt) facts.push({ label: 'Money out', value: outTxt });
+    if (res.latest_balance != null) {
+        facts.push({
+            label: 'Balance',
+            value: _fmtMoneyMap({ [res.latest_balance_currency || 'EUR']: res.latest_balance })
+                + (res.latest_balance_date ? ` on ${Fmt.date(res.latest_balance_date)}` : ''),
+        });
+    }
+    let note = null;
+    if (res.uncategorized) note = `${res.uncategorized} row(s) matched no rule. Use "Select all uncategorized" → "Suggest categories (AI)" on the Spending page to file them.`;
+    else if (!written && res.duplicates_skipped) note = 'Everything in this statement was already imported.';
+    return { title, level, chips, facts, lists: [{ title: 'Errors', items: errors, level: 'danger', open: true }], note };
+}
+window.spendingImportResultModel = spendingImportResultModel;
+
+// Show the import result once `modalEl` (the import modal being closed) has
+// finished hiding — opening a second modal mid-animation leaves a stray backdrop.
+function showImportResult(result, opts) {
+    const o = opts || {};
+    const model = (o.kind === 'spending' ? spendingImportResultModel : importResultModel)(result);
+    if (o.actions) model.actions = o.actions;
+    const open = () => showResultDialog(model);
+    if (o.afterModal && o.afterModal.classList.contains('show')) {
+        o.afterModal.addEventListener('hidden.bs.modal', open, { once: true });
+    } else {
+        open();
+    }
+}
+window.showImportResult = showImportResult;
+
+// Plain-text form of the same summary, for the chat thread (which reports an
+// import inside the conversation instead of opening a dialog).
+function importResultText(result) {
+    const m = importResultModel(result);
+    const lines = [`${m.title}: ` + m.chips.map(c => `${c.value} ${c.label}`).join(', ') + '.'];
+    m.facts.forEach(f => lines.push(`${f.label}: ${f.value}`));
+    m.lists.filter(l => l.items.length).forEach(l => {
+        lines.push(`${l.title} (${l.items.length}):`);
+        l.items.slice(0, 10).forEach(i => lines.push(`- ${i}`));
+        if (l.items.length > 10) lines.push(`- … and ${l.items.length - 10} more`);
+    });
+    if (m.note) lines.push(m.note);
+    return lines.join('\n');
+}
+window.importResultText = importResultText;
+
+const _VIEW_TX_ACTION = { label: 'View transactions', onClick: () => window.navigationManager && window.navigationManager.showPage('transactions') };
 // Kept for existing callers; type now actually selects the style.
 window.showToast = function(msg, type) { notify(msg, type === 'error' ? 'danger' : type); };
 

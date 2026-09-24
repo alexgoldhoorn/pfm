@@ -9,7 +9,7 @@ different dedup + transfer semantics.
 
 import json
 import logging
-from typing import List, Literal, Optional
+from typing import Dict, List, Literal, Optional
 
 from fastapi import (
     APIRouter,
@@ -85,6 +85,16 @@ class SpendingSaveResponse(BaseModel):
     overwritten: int
     transfers_linked: int
     errors: List[str]
+    # Detail for the "Import complete" summary (additive, optional).
+    account_name: Optional[str] = None
+    date_from: Optional[str] = None
+    date_to: Optional[str] = None
+    money_in: Dict[str, float] = {}
+    money_out: Dict[str, float] = {}
+    uncategorized: int = 0
+    latest_balance: Optional[float] = None
+    latest_balance_currency: Optional[str] = None
+    latest_balance_date: Optional[str] = None
 
 
 class SpendingTransactionResponse(BaseModel):
@@ -324,6 +334,10 @@ async def save_spending_transactions(
     overwritten = 0
     errors: List[str] = []
     saved_ids: List[int] = []
+    saved_dates: List[str] = []
+    money_in: Dict[str, float] = {}
+    money_out: Dict[str, float] = {}
+    uncategorized_ids: List[int] = []
 
     for row in body.rows:
         try:
@@ -346,23 +360,47 @@ async def save_spending_transactions(
                     continue
                 # "add": fall through and insert a second copy
 
+            category = _resolve_row_category(row)
             new_id = db.create_spending_transaction(
                 portfolio_id=body.account_portfolio_id,
                 date=row.date,
                 description=row.description,
                 amount=row.amount,
                 currency=row.currency,
-                category=_resolve_row_category(row),
+                category=category,
                 source="generic",
                 balance=row.balance,
             )
             saved += 1
             saved_ids.append(new_id)
+            saved_dates.append(str(row.date)[:10])
+            ccy = (row.currency or "EUR").upper()
+            bucket = money_in if row.amount > 0 else money_out
+            bucket[ccy] = round(bucket.get(ccy, 0.0) + abs(float(row.amount)), 2)
+            if category == "uncategorized":
+                uncategorized_ids.append(new_id)
         except Exception as e:
             errors.append(f"{row.date} {row.description}: {str(e)}")
             logger.warning(f"Failed to save spending row: {e}")
 
     transfers_linked = _run_transfer_matching(db, saved_ids)
+
+    # Summary-only lookups: never fail a save because of them.
+    account_name = None
+    latest = None
+    uncategorized = 0
+    try:
+        # Recount after transfer matching, which re-files matched rows as
+        # "Transfer" — the pre-match count would overstate the work left.
+        for sid in uncategorized_ids:
+            r = db.get_spending_transaction(sid)
+            if r and r.get("category") == "uncategorized":
+                uncategorized += 1
+        p = db.get_portfolio(body.account_portfolio_id)
+        account_name = p.get("name") if p else None
+        latest = db.get_latest_bank_balance(body.account_portfolio_id)
+    except Exception as e:
+        logger.debug(f"Spending save summary lookup failed: {e}")
 
     return SpendingSaveResponse(
         saved=saved,
@@ -370,6 +408,15 @@ async def save_spending_transactions(
         overwritten=overwritten,
         transfers_linked=transfers_linked,
         errors=errors,
+        account_name=account_name,
+        date_from=min(saved_dates) if saved_dates else None,
+        date_to=max(saved_dates) if saved_dates else None,
+        money_in=money_in,
+        money_out=money_out,
+        uncategorized=uncategorized,
+        latest_balance=(latest or {}).get("balance"),
+        latest_balance_currency=(latest or {}).get("currency"),
+        latest_balance_date=(latest or {}).get("date"),
     )
 
 

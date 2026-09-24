@@ -578,6 +578,66 @@ class TestImportSave:
         assert data["errors"] == []
 
     @pytest.mark.asyncio
+    async def test_save_returns_import_summary(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        """The response carries enough detail for a real "Import complete"
+        summary: types, date span, new assets, accounts and cash totals."""
+        payload = {
+            "transactions": [
+                {
+                    "symbol": "SUMMARYA",
+                    "name": "Example Corp",
+                    "asset_type": "stock",
+                    "tx_type": "buy",
+                    "date": "2024-03-01",
+                    "quantity": 2.0,
+                    "price": 50.0,
+                    "currency": "EUR",
+                    "broker": "Example Broker",
+                },
+                {
+                    "symbol": "SUMMARYA",
+                    "name": "Example Corp",
+                    "asset_type": "stock",
+                    "tx_type": "dividend",
+                    "date": "2024-05-10T09:30:00",
+                    "quantity": 1.0,
+                    "price": 3.0,
+                    "currency": "EUR",
+                    "broker": "Example Broker",
+                },
+            ],
+            "bookings": [
+                {
+                    "broker": "Example Broker",
+                    "date": "2024-02-15",
+                    "action": "Deposit",
+                    "amount": 500.0,
+                    "currency": "EUR",
+                },
+                {
+                    "broker": "Example Broker",
+                    "date": "2024-02-20",
+                    "action": "Deposit",
+                    "amount": 250.0,
+                    "currency": "EUR",
+                },
+            ],
+        }
+        response = await async_test_client.post(
+            "/api/v1/import/save", json=payload, headers=auth_headers
+        )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["by_type"] == {"buy": 1, "dividend": 1}
+        assert data["date_from"] == "2024-02-15"
+        assert data["date_to"] == "2024-05-10"
+        assert data["new_assets"] == ["Example Corp (SUMMARYA)"]
+        assert data["portfolios"] == ["Example Broker"]
+        assert data["booking_totals"] == {"Deposit": {"EUR": 750.0}}
+
+    @pytest.mark.asyncio
     async def test_explicit_portfolio_id_not_overridden_by_llm_broker_name(
         self, async_test_client: AsyncClient, auth_headers
     ):

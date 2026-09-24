@@ -183,7 +183,7 @@ async function _autofillGoalMonthlyFromCashflow() {
 }
 
 window.deleteGoalRow = async function(id, name) {
-    if (!confirm(`Delete goal "${name}"?`)) return;
+    if (!(await confirmDialog({ title: 'Delete goal', message: `Delete goal "${name}"? This cannot be undone.`, danger: true }))) return;
     try {
         await window.apiClient.deleteGoal(id);
         loadGoals();
@@ -873,7 +873,7 @@ function setupChatPage() {
             try {
                 const result = await window.apiClient.saveImportedTransactions(normalized);
                 btn.remove();
-                appendMessage('assistant', `Imported ${result.saved} transaction(s).${result.errors.length ? '\n' + result.errors.join('\n') : ''}`);
+                appendMessage('assistant', importResultText(result));
             } catch (err) {
                 btn.disabled = false;
                 btn.innerHTML = '<i class="bi bi-check-lg me-1"></i>Import selected';
@@ -949,7 +949,7 @@ function setupChatPage() {
                 if (e.target.classList.contains('chat-delete-session')) {
                     e.stopPropagation();
                     const id = btn.dataset.sessionId;
-                    if (!confirm('Delete this thread?')) return;
+                    if (!(await confirmDialog({ title: 'Delete chat thread', message: 'Delete this thread and all its messages? This cannot be undone.', danger: true }))) return;
                     await window.apiClient.deleteChatSession(id);
                     sessions = sessions.filter(s => s.id !== id);
                     if (id === sessionId) {
@@ -1167,7 +1167,7 @@ window.openEditTransaction = async function(id) {
 };
 
 window.confirmDeleteTransaction = async function(id, symbol) {
-    if (!confirm(`Delete this ${symbol} transaction? This cannot be undone.`)) return;
+    if (!(await confirmDialog({ title: 'Delete transaction', message: `Delete this ${symbol} transaction? Holdings, cost basis and tax figures are recalculated without it. This cannot be undone.`, danger: true }))) return;
     try {
         await window.apiClient.deleteTransaction(id);
         window.pageManager.loadTransactionsPage();
@@ -1177,7 +1177,7 @@ window.confirmDeleteTransaction = async function(id, symbol) {
 };
 
 window.confirmDeleteBooking = async function(id) {
-    if (!confirm('Delete this cash booking? This cannot be undone.')) return;
+    if (!(await confirmDialog({ title: 'Delete cash booking', message: 'Delete this deposit/withdrawal? The broker\'s cash balance is recalculated without it. This cannot be undone.', danger: true }))) return;
     try {
         await window.apiClient.deleteBooking(id);
         window.pageManager.loadTransactionsPage();
@@ -1334,7 +1334,7 @@ window.editPortfolio = function(id, name, currency, description, website, accoun
 };
 
 window.deletePortfolio = async function(id, name) {
-    if (!confirm(`Delete portfolio "${name}"?\n\nTransactions will be kept but unlinked from this portfolio.`)) return;
+    if (!(await confirmDialog({ title: 'Delete portfolio', message: `Delete portfolio "${name}"?\n\nIts transactions are kept but no longer linked to any portfolio.`, danger: true }))) return;
     try {
         await window.apiClient.deletePortfolio(id);
         window.pageManager.loadPortfoliosPage();
@@ -1532,14 +1532,7 @@ function setupImportExportPage() {
         try {
             const filePortfolioId = ioFilePortfolio && ioFilePortfolio.value ? parseInt(ioFilePortfolio.value) : null;
             const result = await window.apiClient.saveImportedTransactions(selected, parsedFileBookings, filePortfolioId, _dupAction(), selectedDeps);
-            const bkMsg = result.saved_bookings > 0 ? ` + ${result.saved_bookings} booking(s)` : '';
-            const depMsg = result.saved_deposits > 0 ? ` + ${result.saved_deposits} deposit(s)` : '';
-            const owMsg = result.overwritten > 0 ? `, ${result.overwritten} overwritten` : '';
-            const dupMsg = result.duplicates_skipped > 0 ? `, ${result.duplicates_skipped} duplicate(s) skipped` : '';
-            const realErrors = result.errors.filter(e => !e.startsWith('DUPLICATE'));
-            notify(realErrors.length > 0
-                ? `Saved ${result.saved}${bkMsg}${depMsg}${owMsg}${dupMsg}. Errors:\n${realErrors.join('\n')}`
-                : `Successfully imported ${result.saved} transaction(s)${bkMsg}${depMsg}${owMsg}${dupMsg}.`);
+            showImportResult(result, { actions: [_VIEW_TX_ACTION] });
             fileShowStep1();
         } catch (err) {
             notify('Error saving: ' + err.message);
@@ -1715,13 +1708,7 @@ function setupImportExportPage() {
         try {
             const ioPortfolioId = ioTextPortfolio && ioTextPortfolio.value ? parseInt(ioTextPortfolio.value) : null;
             const result = await window.apiClient.saveImportedTransactions(normalized, bookingsToSave, ioPortfolioId, _dupAction());
-            const dupNote = result.duplicates_skipped ? `, ${result.duplicates_skipped} duplicate(s) skipped` : '';
-            const owMsg = result.overwritten > 0 ? `, ${result.overwritten} overwritten` : '';
-            const bkMsg = result.saved_bookings > 0 ? ` + ${result.saved_bookings} cash movement(s)` : '';
-            const realErrors = result.errors.filter(e => !e.startsWith('DUPLICATE'));
-            notify(realErrors.length > 0
-                ? `Saved ${result.saved}${bkMsg}${owMsg}${dupNote}. Errors:\n${realErrors.join('\n')}`
-                : `Successfully imported ${result.saved} transaction(s)${bkMsg}${owMsg}${dupNote}.`);
+            showImportResult(result, { actions: [_VIEW_TX_ACTION] });
             textShowStep1();
             textarea.value = '';
             if (_ioDataTabLoaded) loadBookings(); else _ioDataTabLoaded = false;
@@ -4618,13 +4605,16 @@ function setupResearchPage() {
             if (hasExisting && differs) {
                 const cur = R.currency || '';
                 const fmt = v => v == null ? '—' : Fmt.num(v, 2, 2) + (cur ? ' ' + cur : '');
-                updateTargets = confirm(
-                    `${esc(R.symbol)} already has an alert target:\n` +
-                    `  buy ${fmt(existingBuy)} · sell ${fmt(existingSell)}\n\n` +
-                    `Overwrite with your researched values?\n` +
-                    `  buy ${fmt(c.buy)} · sell ${fmt(c.sell)}\n\n` +
-                    `OK = overwrite (alerts use new values)\n` +
-                    `Cancel = keep existing target, save research note only`);
+                // Closing the dialog keeps the existing target (the research
+                // note is saved either way), same as the old Cancel.
+                updateTargets = await confirmDialog({
+                    title: `Replace ${R.symbol}'s alert target?`,
+                    message: `Current target:  buy ${fmt(existingBuy)} · sell ${fmt(existingSell)}\n` +
+                             `Your research:   buy ${fmt(c.buy)} · sell ${fmt(c.sell)}\n\n` +
+                             `The research note is saved either way; this only decides which values the price alerts use.`,
+                    confirmLabel: 'Use new values',
+                    cancelLabel: 'Keep existing',
+                });
             }
         }
         try {
@@ -5968,11 +5958,18 @@ window._findSimilarCategories = _findSimilarCategories;
 window._findDuplicatePairs = _findDuplicatePairs;
 window.SP_CATEGORY_SIMILARITY_THRESHOLD = SP_CATEGORY_SIMILARITY_THRESHOLD;
 
-function _warnIfSimilarCategory(candidate, excludeName) {
+// Async: resolves true when there's no similar category or the user
+// confirms creating a separate one anyway.
+async function _warnIfSimilarCategory(candidate, excludeName) {
     const existing = (window._spendingAllCategories || []).filter(c => c !== excludeName);
     const matches = _findSimilarCategories(candidate, existing);
     if (!matches.length) return true;
-    return confirm(`"${candidate}" is similar to existing categor${matches.length > 1 ? 'ies' : 'y'} ${matches.map(m => `"${m}"`).join(', ')}. Create it as a new, separate category anyway?`);
+    return confirmDialog({
+        title: 'Similar category exists',
+        message: `"${candidate}" looks like existing categor${matches.length > 1 ? 'ies' : 'y'} ${matches.map(m => `"${m}"`).join(', ')}.\n\nCreate it as a new, separate category anyway? Near-duplicates split your spending totals.`,
+        confirmLabel: 'Create anyway',
+        cancelLabel: 'Go back',
+    });
 }
 window._warnIfSimilarCategory = _warnIfSimilarCategory;
 
@@ -6018,7 +6015,7 @@ function _wireSpBulkActions() {
             const ids = _selectedSpendingIds();
             const category = _resolveCategoryInput(document.getElementById('spBulkCategorySelect')?.value || '');
             if (!ids.length || !category) return;
-            if (!_warnIfSimilarCategory(category)) return;
+            if (!(await _warnIfSimilarCategory(category))) return;
             recatBtn.disabled = true;
             let succeeded = 0, failed = 0;
             for (const id of ids) {
@@ -6101,7 +6098,7 @@ function _wireSpBulkActions() {
         delBtn.addEventListener('click', async () => {
             const ids = _selectedSpendingIds();
             if (!ids.length) return;
-            if (!confirm(`Delete ${ids.length} transaction(s)? This cannot be undone.`)) return;
+            if (!(await confirmDialog({ title: `Delete ${ids.length} transaction${ids.length === 1 ? '' : 's'}`, message: `Delete the ${ids.length} selected bank transaction${ids.length === 1 ? '' : 's'}? Spending totals and budgets are recalculated without them. This cannot be undone.`, danger: true }))) return;
             delBtn.disabled = true;
             let succeeded = 0, failed = 0;
             for (const id of ids) {
@@ -6231,11 +6228,14 @@ async function _applySpSuggestions() {
     const flagged = accepted
         .map(g => ({ typed: g.suggestedCategory, matches: _findSimilarCategories(g.suggestedCategory, window._spendingAllCategories || []) }))
         .filter(f => f.matches.length);
-    if (flagged.length && !confirm(
-        `${flagged.length} suggested categor${flagged.length > 1 ? 'ies are' : 'y is'} similar to an existing one:\n` +
-        flagged.map(f => `"${f.typed}" ↔ "${f.matches[0]}"`).join('\n') +
-        '\n\nApply anyway?'
-    )) return;
+    if (flagged.length && !(await confirmDialog({
+        title: 'Similar categories',
+        message: `${flagged.length} suggested categor${flagged.length > 1 ? 'ies look' : 'y looks'} like an existing one:\n` +
+            flagged.map(f => `"${f.typed}" ↔ "${f.matches[0]}"`).join('\n') +
+            '\n\nApply anyway? Near-duplicates split your spending totals.',
+        confirmLabel: 'Apply anyway',
+        cancelLabel: 'Go back',
+    }))) return;
     if (status) { status.className = 'small text-muted px-3 pt-2'; status.textContent = 'Applying…'; }
     let succeeded = 0, failed = 0;
     const createdRuleKeys = new Set();
@@ -6391,7 +6391,7 @@ window.mergeSpendingCategories = async function (pairIndex, keepIdx) {
     if (!pair) return;
     const winner = pair[keepIdx];
     const loser = pair[1 - keepIdx];
-    if (!confirm(`Merge "${loser}" into "${winner}"? This moves every transaction and rule using "${loser}" to "${winner}".`)) return;
+    if (!(await confirmDialog({ title: 'Merge categories', message: `Merge "${loser}" into "${winner}"?\n\nEvery transaction and rule using "${loser}" moves to "${winner}".`, confirmLabel: 'Merge', danger: true }))) return;
     try {
         await window.apiClient.renameSpendingCategory(loser, winner);
     } catch (err) {
@@ -6448,7 +6448,7 @@ window.editSpendingCategory = function (id) {
         }
         try {
             if (newName && newName !== originalName) {
-                if (!_warnIfSimilarCategory(newName, originalName)) { await _refreshSpendingData(); return; }
+                if (!(await _warnIfSimilarCategory(newName, originalName))) { await _refreshSpendingData(); return; }
                 await window.apiClient.renameSpendingCategory(originalName, newName);
             }
             if (newParent && newParent !== originalParent) {
@@ -6472,7 +6472,7 @@ window.editSpendingCategory = function (id) {
 };
 
 window.deleteSpendingRule = async function (id) {
-    if (!confirm('Delete this rule?')) return;
+    if (!(await confirmDialog({ title: 'Delete rule', message: 'Delete this categorisation rule? Rows it already categorised keep their category; future imports won\'t match it.', danger: true }))) return;
     try {
         await window.apiClient.deleteSpendingRule(id);
         await _refreshSpendingData();
@@ -6534,7 +6534,7 @@ function _wireSpendingRuleForm() {
             const pattern = document.getElementById('spRulePattern').value.trim();
             const category = _resolveCategoryInput(document.getElementById('spRuleCategory').value);
             if (!pattern || !category) return;
-            if (!_warnIfSimilarCategory(category)) return;
+            if (!(await _warnIfSimilarCategory(category))) return;
             const status = document.getElementById('spRuleStatus');
             try {
                 await window.apiClient.createSpendingRule(pattern, category);
@@ -6568,7 +6568,7 @@ function _wireSpCategoryAddForm() {
             const name = document.getElementById('spCategoryNameInput').value.trim();
             const parentName = document.getElementById('spCategoryParentInput').value;
             if (!name) return;
-            if (!_warnIfSimilarCategory(name)) return;
+            if (!(await _warnIfSimilarCategory(name))) return;
             const status = document.getElementById('spCategoryAddStatus');
             try {
                 await window.apiClient.createSpendingCategory(name, parentName);
@@ -6661,7 +6661,8 @@ function _wireSpendingImportModal(ids) {
                 const result = await window.apiClient.saveSpendingTransactions(
                     preview_.account_portfolio_id, preview_.rows, _spDupAction(ids.dupSelectId)
                 );
-                status.textContent = `Saved ${result.saved}, ${result.duplicates_skipped} duplicate(s) skipped, ${result.transfers_linked} transfer(s) linked.`;
+                status.textContent = `Saved ${result.saved} row(s).`;
+                showImportResult(result, { kind: 'spending' });
                 preview.innerHTML = '';
                 saveBtn.style.display = 'none';
                 suggestBtn.style.display = 'none';
@@ -7438,7 +7439,7 @@ window.activateBudget = activateBudget;
 
 async function deleteBudget(id) {
     const budget = window._bgBudgets.find(b => b.id === id);
-    if (!confirm(`Delete budget "${budget ? budget.name : id}" and all of its lines?`)) return;
+    if (!(await confirmDialog({ title: 'Delete budget', message: `Delete budget "${budget ? budget.name : id}" and all of its lines? This cannot be undone.`, danger: true }))) return;
     try {
         await window.apiClient.deleteBudget(id);
         if (window._bgSelectedId === id) window._bgSelectedId = null;
@@ -7452,7 +7453,7 @@ window.deleteBudget = deleteBudget;
 
 async function deleteBudgetLine(lineId) {
     const line = window._bgLines.find(l => l.id === lineId);
-    if (!confirm(`Remove the budget line for "${line ? line.label : lineId}"?`)) return;
+    if (!(await confirmDialog({ title: 'Remove budget line', message: `Remove the budget line for "${line ? line.label : lineId}"? Its spending then shows as unbudgeted.`, confirmLabel: 'Remove', danger: true }))) return;
     try {
         await window.apiClient.deleteBudgetLine(window._bgSelectedId, lineId);
         await _refreshBudgetData();
