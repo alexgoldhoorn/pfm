@@ -240,7 +240,12 @@ def _parse_indexacapital(
         PreviewTransaction(
             symbol=tx.symbol,
             name=tx.asset_name,
-            asset_type="etf",
+            # Indexa holds index mutual funds (Vanguard/iShares/Amundi
+            # institutional classes), never ETFs. The type matters: fund
+            # overlaps are only "transferable" (tax-free traspaso) between
+            # mutual funds, and this value overwrites the stored type on
+            # every re-import.
+            asset_type="mutual_fund",
             tx_type=tx.tx_type,
             date=tx.date,
             quantity=tx.quantity,
@@ -788,7 +793,8 @@ async def save_imported_transactions(
                 # A broker parser can carry a more accurate asset_type than the
                 # one the asset was first created with (e.g. an ISHARES fund
                 # misclassified as "stock" by an earlier heuristic-based import,
-                # later re-imported from IndexaCapital which tags it "etf").
+                # later re-imported from IndexaCapital which tags it
+                # "mutual_fund").
                 # Correct it so filtering by type stays accurate.
                 if (
                     tx.asset_type
