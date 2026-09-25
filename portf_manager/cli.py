@@ -18,6 +18,7 @@ from dotenv import load_dotenv
 from .readline_support import setup_readline, enhanced_input, print_readline_help
 from .models import AssetType, TransactionType
 from .database import Database
+from .import_dedup import TransactionDeduplicator
 from .sectors import resolve_sector, list_all_sectors, GICS_SECTOR_MAP
 from .gemini_client import GeminiClient
 from .parsers.coinbase_csv_parser import parse_coinbase_csv
@@ -2036,6 +2037,7 @@ class PortfolioManagerCLI:
         self, transactions: list, portfolio_id: Optional[int], user_id: Optional[int]
     ) -> int:
         imported = 0
+        dedup = TransactionDeduplicator(self.db_manager)
         for tx in transactions:
             tx_type = _pdt_action_to_tx_type(tx.action)
             if tx_type is None:
@@ -2052,7 +2054,16 @@ class PortfolioManagerCLI:
                 fees = tx.costs or 0.0
                 tax = tx.tax or 0.0
                 total = tx.amount * tx.price + fees
-                self.db_manager.create_transaction(
+                if dedup.find(
+                    asset_id=asset_id,
+                    transaction_type=tx_type,
+                    quantity=tx.amount,
+                    price=tx.price,
+                    transaction_date=tx.date.isoformat(),
+                    portfolio_id=portfolio_id,
+                ):
+                    continue
+                new_id = self.db_manager.create_transaction(
                     asset_id=asset_id,
                     transaction_type=tx_type,
                     quantity=tx.amount,
@@ -2066,16 +2077,20 @@ class PortfolioManagerCLI:
                     user_id=user_id,
                     description="Imported from PDT XLSX",
                 )
+                dedup.inserted(new_id)
                 imported += 1
             except Exception as e:
                 print(f"❌ Failed to import {tx.action} {symbol} on {tx.date}: {e}")
 
+        if dedup.skipped:
+            print(f"ℹ️  Skipped {dedup.skipped} transaction(s) already in the DB.")
         return imported
 
     def _import_pdt_dividends(
         self, dividends: list, portfolio_id: Optional[int], user_id: Optional[int]
     ) -> int:
         imported = 0
+        dedup = TransactionDeduplicator(self.db_manager)
         for div in dividends:
             symbol = div.search if div.search else div.name[:20]
             asset_type = _detect_asset_type(div.name, div.pdt_type)
@@ -2084,7 +2099,16 @@ class PortfolioManagerCLI:
                 asset_id = self._get_or_create_asset_by_symbol(
                     symbol, div.name, asset_type, div.exchange, div.amount_currency
                 )
-                self.db_manager.create_transaction(
+                if dedup.find(
+                    asset_id=asset_id,
+                    transaction_type="dividend",
+                    quantity=1.0,
+                    price=div.amount,
+                    transaction_date=div.date.isoformat(),
+                    portfolio_id=portfolio_id,
+                ):
+                    continue
+                new_id = self.db_manager.create_transaction(
                     asset_id=asset_id,
                     transaction_type="dividend",
                     quantity=1.0,
@@ -2098,14 +2122,20 @@ class PortfolioManagerCLI:
                     user_id=user_id,
                     description="Dividend imported from PDT XLSX",
                 )
+                dedup.inserted(new_id)
                 imported += 1
             except Exception as e:
                 print(f"❌ Failed to import dividend {symbol} on {div.date}: {e}")
 
+        if dedup.skipped:
+            print(f"ℹ️  Skipped {dedup.skipped} dividend(s) already in the DB.")
         return imported
 
     def _import_pdt_bookings(self, bookings: list, portfolio_id: Optional[int]) -> int:
-        imported = 0
+        # Resolve every booking's portfolio, then match them all against what
+        # is already stored before inserting, so rows of this file are never
+        # compared with each other.
+        rows = []
         for bk in bookings:
             try:
                 # Use per-booking broker to resolve portfolio if present
@@ -2120,16 +2150,38 @@ class PortfolioManagerCLI:
                             base_currency=bk.currency or "EUR",
                             description="Auto-created from PDT XLSX import",
                         )
-                self.db_manager.create_booking(
-                    date=bk.date.isoformat(),
-                    action=bk.action,
-                    amount=bk.amount,
-                    currency=bk.currency,
-                    portfolio_id=bk_portfolio_id,
+                rows.append(
+                    {
+                        "date": bk.date.isoformat(),
+                        "action": bk.action,
+                        "amount": bk.amount,
+                        "currency": bk.currency,
+                        "portfolio_id": bk_portfolio_id,
+                    }
                 )
-                imported += 1
             except Exception as e:
                 print(f"❌ Failed to import booking {bk.action} on {bk.date}: {e}")
+
+        imported = skipped = 0
+        # Server mode's HTTP client can't match; it imports without the check.
+        matches = (
+            self.db_manager.match_existing_bookings(rows)
+            if hasattr(self.db_manager, "match_existing_bookings")
+            else [None] * len(rows)
+        )
+        for row, match in zip(rows, matches):
+            if match:
+                skipped += 1
+                continue
+            try:
+                self.db_manager.create_booking(**row)
+                imported += 1
+            except Exception as e:
+                print(
+                    f"❌ Failed to import booking {row['action']} on {row['date']}: {e}"
+                )
+        if skipped:
+            print(f"ℹ️  Skipped {skipped} booking(s) already in the DB.")
         return imported
 
     def list_bookings(self, portfolio_name: Optional[str] = None) -> None:

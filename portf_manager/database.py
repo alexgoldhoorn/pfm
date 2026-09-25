@@ -2797,6 +2797,7 @@ class Database:
         price: float,
         transaction_date: str,
         portfolio_id: int = None,
+        exclude_ids: Optional[Set[int]] = None,
     ) -> Optional[Dict]:
         """Return an existing transaction that matches on all key fields, or None.
 
@@ -2808,33 +2809,52 @@ class Database:
         row and the existing one carry a time component. That way two genuinely
         distinct same-day trades (different times) aren't treated as duplicates,
         while date-only data keeps matching on the date alone.
+
+        Dividends and interest match on their cash amount (quantity x price)
+        rather than on quantity and price separately.
+
+        ``exclude_ids`` skips those rows: an import passes the ids it has
+        already matched or inserted, so each stored row matches at most one
+        incoming row and rows of one import are never compared with each other.
         """
         inc = str(transaction_date or "").replace("T", " ")
         inc_date = inc[:10]
         inc_time = inc[11:].strip()
+        # A dividend or interest payment is one cash amount, which parsers
+        # store either as 1 x amount or as shares x per-share amount. Compare
+        # the cash (quantity x price) so both forms match each other.
+        if str(transaction_type).lower() in ("dividend", "interest"):
+            amount_clause = "ABS(quantity * price - ?) < 0.005"
+            amount_params: tuple = (quantity * price,)
+        else:
+            amount_clause = (
+                "ABS(quantity - ?) < 0.0001"
+                " AND ABS((price - ?) / NULLIF(price, 0)) < 0.00001"
+            )
+            amount_params = (quantity, price)
         with self.get_connection() as conn:
             cursor = conn.execute(
-                """
+                f"""
                 SELECT id, transaction_date, transaction_type, quantity, price, portfolio_id
                 FROM transactions
                 WHERE asset_id = ?
                   AND transaction_type = ?
                   AND substr(transaction_date, 1, 10) = ?
-                  AND ABS(quantity - ?) < 0.0001
-                  AND ABS((price - ?) / NULLIF(price, 0)) < 0.00001
+                  AND {amount_clause}
                   AND (portfolio_id IS ? OR portfolio_id = ?)
                 """,
                 (
                     asset_id,
                     transaction_type,
                     inc_date,
-                    quantity,
-                    price,
+                    *amount_params,
                     portfolio_id,
                     portfolio_id,
                 ),
             )
             for row in cursor.fetchall():
+                if exclude_ids and row["id"] in exclude_ids:
+                    continue
                 cand = str(row["transaction_date"] or "").replace("T", " ")
                 cand_time = cand[11:].strip()
                 # Only the date matched so far; if both sides have a time, it
@@ -3072,6 +3092,102 @@ class Database:
             )
             row = cursor.fetchone()
             return dict(row) if row else None
+
+    def match_existing_bookings(
+        self, rows: List[Dict], window_days: int = 3
+    ) -> List[Optional[Dict]]:
+        """Match incoming bookings to ones already stored, one to one.
+
+        Each row is a dict with ``date``, ``action``, ``amount``, ``currency``
+        and ``portfolio_id``. Returns a list aligned with ``rows``: the matched
+        existing booking (with ``match`` set to ``"exact"`` or ``"near"``) or
+        None.
+
+        A same-date booking with the same action, amount, currency and
+        portfolio is an exact match. Failing that, one up to ``window_days``
+        away is a near match, but only when its date lies inside the span of
+        dates this import covers for that portfolio. Two sources can date the
+        same transfer a day apart (operation vs value date); an import that
+        covers the stored booking's date and has no row on that date is
+        describing it under another date. A stored booking outside the span
+        belongs to a period this import doesn't describe, so a same-amount row
+        near it is a new deposit (e.g. a regular transfer every few days).
+
+        Each stored booking matches at most one row, so two genuine identical
+        deposits on one day are only treated as duplicates if both are stored.
+        Rows are only compared with stored bookings, never with each other.
+
+        Args:
+            rows: Incoming bookings.
+            window_days: Largest date gap for a near match.
+
+        Returns:
+            One matched booking dict or None per row.
+        """
+        spans: Dict[Any, List[str]] = {}
+        for r in rows:
+            d = str(r.get("date") or "")[:10]
+            if not d:
+                continue
+            span = spans.setdefault(r.get("portfolio_id"), [d, d])
+            span[0] = min(span[0], d)
+            span[1] = max(span[1], d)
+
+        candidates: List[List[Dict]] = []
+        with self.get_connection() as conn:
+            for r in rows:
+                d = str(r.get("date") or "")[:10]
+                if not d:
+                    candidates.append([])
+                    continue
+                pid = r.get("portfolio_id")
+                cursor = conn.execute(
+                    """
+                    SELECT id, date, action, amount, currency, portfolio_id,
+                           ABS(julianday(date) - julianday(?)) AS gap
+                    FROM bookings
+                    WHERE action = ?
+                      AND ABS(amount - ?) < 0.005
+                      AND currency = ?
+                      AND (portfolio_id IS ? OR portfolio_id = ?)
+                      AND ABS(julianday(date) - julianday(?)) <= ?
+                    ORDER BY gap, id
+                    """,
+                    (
+                        d,
+                        r.get("action"),
+                        float(r.get("amount") or 0),
+                        r.get("currency"),
+                        pid,
+                        pid,
+                        d,
+                        window_days,
+                    ),
+                )
+                candidates.append([dict(c) for c in cursor.fetchall()])
+
+        result: List[Optional[Dict]] = [None] * len(rows)
+        used: Set[int] = set()
+        # Exact dates first, so a near match can't take a booking that another
+        # row matches exactly.
+        for i, cands in enumerate(candidates):
+            for c in cands:
+                if c["gap"] == 0 and c["id"] not in used:
+                    used.add(c["id"])
+                    result[i] = {**c, "match": "exact"}
+                    break
+        for i, cands in enumerate(candidates):
+            if result[i] is not None:
+                continue
+            span = spans.get(rows[i].get("portfolio_id"))
+            for c in cands:
+                if c["id"] in used or not span:
+                    continue
+                if span[0] <= str(c["date"])[:10] <= span[1]:
+                    used.add(c["id"])
+                    result[i] = {**c, "match": "near"}
+                    break
+        return result
 
     def get_booking(self, booking_id: int) -> Optional[Dict]:
         """Get a booking by ID."""

@@ -992,3 +992,38 @@ test("logEntrySummary falls back to the message and exception", () => {
     assert.deepEqual([...s.extra], ["ValueError('x')"]);
     assert.equal(w.logEntrySummary({ level: "INFO", message: "m" }).badge, "bg-secondary");
 });
+
+test("_selectedBookings: only ticked rows, ticked duplicates forced", () => {
+    const ctx = loadAppIntoContext();
+    const bookings = [
+        { date: "2026-07-20", amount: 1500, is_duplicate: true },
+        { date: "2026-07-28", amount: 2000, is_duplicate: false },
+        { date: "2026-07-29", amount: 50, is_duplicate: false },
+    ];
+    // Row 0 (a duplicate) ticked by hand, row 1 ticked, row 2 unticked.
+    const root = {
+        querySelectorAll: (sel) => {
+            assert.equal(sel, ".file-bk-select:checked");
+            return [{ dataset: { idx: "0" } }, { dataset: { idx: "1" } }];
+        },
+    };
+    const out = ctx._selectedBookings(root, ".file-bk-select", bookings);
+    // JSON round-trip: the arrays come from the sandbox's realm.
+    assert.equal(
+        JSON.stringify(out.map((b) => [b.amount, b.force])),
+        JSON.stringify([[1500, true], [2000, false]]),
+    );
+    // The preview rows themselves are not mutated.
+    assert.equal(bookings[0].force, undefined);
+});
+
+test("_bookingDupBadge: tooltip carries the escaped reason", () => {
+    const ctx = loadAppIntoContext();
+    assert.equal(ctx._bookingDupBadge({ is_duplicate: false }), "");
+    const badge = ctx._bookingDupBadge({
+        is_duplicate: true,
+        duplicate_reason: 'same amount on 2026-07-21 (#337) <b>"x"</b>',
+    });
+    assert.match(badge, /title="Matches same amount on 2026-07-21 \(#337\)/);
+    assert.ok(!badge.includes("<b>"));
+});

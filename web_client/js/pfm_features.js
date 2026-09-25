@@ -1521,7 +1521,8 @@ function setupImportExportPage() {
             });
         const selectedDeps = Array.from(document.querySelectorAll('#ioFilePreview .file-dep-select:checked'))
             .map(cb => parsedFileDeposits[parseInt(cb.dataset.idx)]);
-        if (selected.length === 0 && parsedFileBookings.length === 0 && selectedDeps.length === 0) { notify('No data selected.'); return; }
+        const selectedBookings = _selectedBookings(document, '#ioFilePreview .file-bk-select', parsedFileBookings);
+        if (selected.length === 0 && selectedBookings.length === 0 && selectedDeps.length === 0) { notify('No data selected.'); return; }
         const missingDate = selected.filter(t => !t.date || !String(t.date).trim());
         if (missingDate.length > 0) {
             notify(`Please fill in a date for: ${missingDate.map(t => t.symbol || '(row)').join(', ')}`);
@@ -1531,7 +1532,7 @@ function setupImportExportPage() {
         fileSaveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving…';
         try {
             const filePortfolioId = ioFilePortfolio && ioFilePortfolio.value ? parseInt(ioFilePortfolio.value) : null;
-            const result = await window.apiClient.saveImportedTransactions(selected, parsedFileBookings, filePortfolioId, _dupAction(), selectedDeps);
+            const result = await window.apiClient.saveImportedTransactions(selected, selectedBookings, filePortfolioId, _dupAction(), selectedDeps);
             showImportResult(result, { actions: [_VIEW_TX_ACTION] });
             fileShowStep1();
         } catch (err) {
@@ -1606,7 +1607,7 @@ function setupImportExportPage() {
                 }));
                 const chk = await window.apiClient.checkDuplicates(previewTx, extractedTextBookings, ioPid);
                 (chk.transactions || []).forEach((t, i) => { if (extractedText[i]) extractedText[i].is_duplicate = t.is_duplicate; });
-                (chk.bookings || []).forEach((b, i) => { if (extractedTextBookings[i]) extractedTextBookings[i].is_duplicate = b.is_duplicate; });
+                (chk.bookings || []).forEach((b, i) => { if (extractedTextBookings[i]) Object.assign(extractedTextBookings[i], { is_duplicate: b.is_duplicate, duplicate_reason: b.duplicate_reason }); });
             } catch (e) { /* flagging is optional */ }
 
             textStep1.style.display = 'none'; textStep2.style.display = '';
@@ -1621,16 +1622,17 @@ function setupImportExportPage() {
             // filled in manually, same as the transactions table below.
             const bookingRows = extractedTextBookings.map((b, i) => `
                 <tr class="${b.is_duplicate ? 'table-warning' : ''}">
+                    <td><input class="form-check-input io-bk-select" type="checkbox" ${b.is_duplicate ? '' : 'checked'} data-idx="${i}"></td>
                     <td>${escapeForAttr(b.action)}</td>
                     <td><input type="date" class="form-control form-control-sm" id="iobk_date_${i}" value="${escapeForAttr(b.date || '')}">
-                        ${b.is_duplicate ? dupBadge : ''}</td>
+                        ${_bookingDupBadge(b)}</td>
                     <td>${b.amount.toFixed(2)} ${escapeForAttr(b.currency)}</td>
                     <td>${escapeForAttr(b.broker || '')}</td>
                 </tr>`).join('');
             const bookingsSummary = extractedTextBookings.length > 0
                 ? `<div class="alert alert-info py-1 mb-2 small"><i class="bi bi-bank me-1"></i><strong>${extractedTextBookings.length} cash movement(s)</strong> detected — saved with the transactions.</div>
                    <div class="table-responsive mb-2"><table class="table table-sm table-hover">
-                   <thead><tr><th>Type</th><th>Date</th><th>Amount</th><th>Broker</th></tr></thead>
+                   <thead><tr><th></th><th>Type</th><th>Date</th><th>Amount</th><th>Broker</th></tr></thead>
                    <tbody>${bookingRows}</tbody></table></div>`
                 : '';
             const rows = extractedText.map((tx, i) => `
@@ -1672,7 +1674,9 @@ function setupImportExportPage() {
     textSaveBtn.addEventListener('click', async () => {
         const checkedIdxs = Array.from(document.querySelectorAll('#ioTextPreview .io-tx-select:checked'))
             .map(cb => parseInt(cb.dataset.idx));
-        if (checkedIdxs.length === 0 && extractedTextBookings.length === 0) {
+        const checkedBookingIdxs = new Set(Array.from(document.querySelectorAll('#ioTextPreview .io-bk-select:checked'))
+            .map(cb => parseInt(cb.dataset.idx)));
+        if (checkedIdxs.length === 0 && checkedBookingIdxs.size === 0) {
             notify('Nothing selected to save.'); return;
         }
         const normalized = checkedIdxs.map(i => ({
@@ -1695,9 +1699,13 @@ function setupImportExportPage() {
         // Cash movements can arrive with no date (see extraction step) —
         // pull back whatever the user filled in and refuse to save any that
         // are still blank, same guard as the transactions above.
-        const bookingsToSave = extractedTextBookings.map((b, i) => Object.assign({}, b, {
-            date: (document.getElementById(`iobk_date_${i}`)?.value || '').trim()
-        }));
+        // A ticked duplicate is sent with force (see _selectedBookings).
+        const bookingsToSave = extractedTextBookings
+            .map((b, i) => Object.assign({}, b, {
+                date: (document.getElementById(`iobk_date_${i}`)?.value || '').trim(),
+                force: !!b.is_duplicate
+            }))
+            .filter((b, i) => checkedBookingIdxs.has(i));
         const missingBookingDate = bookingsToSave.filter(b => !b.date);
         if (missingBookingDate.length > 0) {
             notify(`Please fill in a date for cash movement(s): ${missingBookingDate.map(b => `${b.action} ${b.amount.toFixed(2)} ${b.currency}`).join(', ')}`);

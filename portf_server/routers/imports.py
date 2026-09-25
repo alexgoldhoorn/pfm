@@ -30,6 +30,7 @@ from fastapi import (
 )
 from pydantic import BaseModel
 
+from portf_manager.import_dedup import TransactionDeduplicator
 from portf_manager.currency_utils import normalize_gbx_amounts
 from portf_manager.models import AssetType
 from portf_manager.parsers.indexacapital_csv_parser import parse_indexacapital_csv
@@ -104,6 +105,12 @@ class PreviewBooking(BaseModel):
     amount: float
     currency: str
     is_duplicate: bool = False
+    # Why it was flagged, e.g. "same amount on 2026-07-21 (#337)".
+    duplicate_reason: Optional[str] = None
+    # Save even if it matches a stored booking. The request-wide
+    # duplicate_action does not apply to bookings: "Import anyway" chosen for
+    # a transaction must not copy every duplicate cash movement too.
+    force: bool = False
 
 
 class PreviewDeposit(BaseModel):
@@ -560,6 +567,26 @@ def _parse_generic(
 # ---------------------------------------------------------------------------
 
 
+def _booking_row(bk: PreviewBooking, portfolio_id: Optional[int]) -> Dict:
+    """The fields ``Database.match_existing_bookings`` compares."""
+    return {
+        "date": bk.date,
+        "action": bk.action,
+        "amount": bk.amount,
+        "currency": bk.currency,
+        "portfolio_id": portfolio_id,
+    }
+
+
+def _booking_dup_reason(match: Optional[Dict]) -> Optional[str]:
+    """Human-readable reason a booking was flagged, or None."""
+    if not match:
+        return None
+    if match["match"] == "exact":
+        return f"already stored (#{match['id']})"
+    return f"same amount on {str(match['date'])[:10]} (#{match['id']})"
+
+
 def _flag_duplicates(
     db,
     previews: List[PreviewTransaction],
@@ -596,23 +623,21 @@ def _flag_duplicates(
                 n += 1
         except Exception:
             continue
-    for bk in bookings:
-        try:
+    try:
+        rows = []
+        for bk in bookings:
             pid = portfolio_id
             if bk.broker:
                 existing_pf = db.get_portfolio_by_name(bk.broker)
                 pid = existing_pf["id"] if existing_pf else None
-            if db.find_duplicate_booking(
-                date=bk.date,
-                action=bk.action,
-                amount=bk.amount,
-                currency=bk.currency,
-                portfolio_id=pid,
-            ):
-                bk.is_duplicate = True
+            rows.append(_booking_row(bk, pid))
+        for bk, match in zip(bookings, db.match_existing_bookings(rows)):
+            bk.is_duplicate = match is not None
+            bk.duplicate_reason = _booking_dup_reason(match)
+            if match:
                 n += 1
-        except Exception:
-            continue
+    except Exception:
+        logger.exception("Booking duplicate check failed")
     if deposits:
         existing_deps = db.get_fixed_deposits()
         for dep in deposits:
@@ -737,6 +762,8 @@ async def save_imported_transactions(
 
     # force=True is the legacy way to say "import duplicates anyway".
     action = "add" if body.force else body.duplicate_action
+    # Compares each row only with transactions stored before this save.
+    tx_dedup = TransactionDeduplicator(db)
 
     for tx in body.transactions:
         try:
@@ -801,7 +828,7 @@ async def save_imported_transactions(
                 total_amount += fees
 
             # Duplicate handling: skip (default) / add anyway / overwrite.
-            existing = db.find_duplicate_transaction(
+            existing = tx_dedup.find(
                 asset_id=asset_id,
                 transaction_type=tx.tx_type,
                 quantity=tx.quantity,
@@ -832,7 +859,7 @@ async def save_imported_transactions(
                     continue
                 # action == "add": fall through and insert a second copy
 
-            db.create_transaction(
+            new_id = db.create_transaction(
                 asset_id=asset_id,
                 transaction_type=tx.tx_type,
                 quantity=tx.quantity,
@@ -845,6 +872,7 @@ async def save_imported_transactions(
                 portfolio_id=tx_portfolio_id,
                 description=tx.notes or None,
             )
+            tx_dedup.inserted(new_id)
             saved += 1
             by_type[tx.tx_type] = by_type.get(tx.tx_type, 0) + 1
             saved_dates.append(tx.date[:10])
@@ -855,26 +883,35 @@ async def save_imported_transactions(
             errors.append(f"{tx.symbol} ({tx.date}): {str(e)}")
             logger.warning(f"Failed to save transaction {tx.symbol}: {e}")
 
+    # Resolve portfolios and match every booking against what is stored
+    # BEFORE inserting any, so rows of this import are never compared with
+    # each other (two regular deposits a day apart are both kept).
+    bk_portfolio_ids: List[Optional[int]] = []
     for bk in body.bookings:
-        try:
-            bk_portfolio_id = body.portfolio_id
-            if bk.broker and not body.portfolio_id:
+        bk_portfolio_id = body.portfolio_id
+        if bk.broker and not body.portfolio_id:
+            try:
                 bk_portfolio_id = db.get_or_create_portfolio(
                     bk.broker, base_currency=bk.currency or "EUR"
                 )
+            except Exception as e:
+                errors.append(f"Booking {bk.action} {bk.date}: {str(e)}")
+                bk_portfolio_id = None
+        bk_portfolio_ids.append(bk_portfolio_id)
+    bk_matches = db.match_existing_bookings(
+        [_booking_row(bk, pid) for bk, pid in zip(body.bookings, bk_portfolio_ids)]
+    )
 
-            # Bookings dedup: skip exact matches unless importing anyway.
-            # (Overwrite is a no-op for a booking — the match is already exact.)
-            if action != "add" and db.find_duplicate_booking(
-                date=bk.date,
-                action=bk.action,
-                amount=bk.amount,
-                currency=bk.currency,
-                portfolio_id=bk_portfolio_id,
-            ):
+    for bk, bk_portfolio_id, match in zip(body.bookings, bk_portfolio_ids, bk_matches):
+        try:
+            # Duplicates are skipped unless this row is forced (or the legacy
+            # request-wide `force`). Overwrite has nothing to update on a
+            # booking, so it skips too.
+            if match and not (bk.force or body.force):
                 duplicates_skipped += 1
                 errors.append(
-                    f"DUPLICATE: {bk.action} {bk.amount} {bk.currency} on {bk.date}"
+                    f"DUPLICATE: {bk.action} {bk.amount} {bk.currency} on "
+                    f"{bk.date} ({_booking_dup_reason(match)})"
                 )
                 continue
 

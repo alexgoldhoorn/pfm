@@ -3309,6 +3309,27 @@ function _dupControl(transactions, bookings, deposits) {
         </div>`;
 }
 
+// Badge for a booking flagged as already stored, with the reason (e.g. the
+// same amount one day apart) as its tooltip.
+function _bookingDupBadge(bk) {
+    if (!bk.is_duplicate) return '';
+    const title = bk.duplicate_reason ? ` title="${esc('Matches ' + bk.duplicate_reason)}"` : '';
+    return `<span class="badge bg-warning text-dark ms-1"${title}>dup</span>`;
+}
+
+// Bookings whose checkbox (selector) is ticked, in preview order. A ticked
+// duplicate is sent with force=true: the "On duplicates" choice applies to
+// transactions only, so a booking is re-added only when ticked by hand.
+function _selectedBookings(root, selector, bookings) {
+    return Array.from(root.querySelectorAll(selector + ':checked'))
+        .map(cb => {
+            const bk = bookings[parseInt(cb.dataset.idx)];
+            return bk ? Object.assign({}, bk, { force: !!bk.is_duplicate }) : null;
+        })
+        .filter(Boolean);
+}
+window._selectedBookings = _selectedBookings;
+
 function _dupAction() {
     const el = document.getElementById('ioDupAction');
     return el ? el.value : 'skip';
@@ -3362,9 +3383,9 @@ function _buildPreviewTable(transactions, bookings, deposits) {
             const bk = d;
             return `
         <tr class="table-info${bk.is_duplicate ? ' table-warning' : ''}" data-txtype="deposit">
-            <td><i class="bi bi-bank text-muted" title="Cash booking — saved automatically"></i></td>
+            <td><input class="form-check-input file-bk-select" type="checkbox" ${bk.is_duplicate ? '' : 'checked'} data-idx="${i}" title="Cash booking"></td>
             ${hasBroker ? `<td><small>${esc(bk.broker || '')}</small></td>` : ''}
-            <td>${Fmt.date(bk.date)}${bk.is_duplicate ? dupBadge : ''}</td>
+            <td>${Fmt.date(bk.date)}${_bookingDupBadge(bk)}</td>
             <td><em class="text-muted">${esc(bk.action || '')} ${esc(bk.currency || '')}</em></td>
             <td><span class="badge bg-info">${esc(bk.action || '').toUpperCase()}</span></td>
             <td class="text-end">${parseFloat(bk.amount || 0).toFixed(2)}</td>
@@ -3550,12 +3571,13 @@ function setupFileImportModal() {
             });
         const selectedDeps = Array.from(document.querySelectorAll('.file-dep-select:checked'))
             .map(cb => parsedDeposits[parseInt(cb.dataset.idx)]);
-        if (selected.length === 0 && parsedBookings.length === 0 && selectedDeps.length === 0) { notify('No data selected.'); return; }
+        const selectedBookings = _selectedBookings(document, '.file-bk-select', parsedBookings);
+        if (selected.length === 0 && selectedBookings.length === 0 && selectedDeps.length === 0) { notify('No data selected.'); return; }
 
         saveBtn.disabled = true;
         saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Saving...';
         try {
-            const result = await window.apiClient.saveImportedTransactions(selected, parsedBookings, null, _dupAction(), selectedDeps);
+            const result = await window.apiClient.saveImportedTransactions(selected, selectedBookings, null, _dupAction(), selectedDeps);
             saveBtn.disabled = false;
             saveBtn.innerHTML = '<i class="bi bi-check-lg me-2"></i>Save Selected';
             showImportResult(result, { afterModal: modal, actions: [_VIEW_TX_ACTION] });

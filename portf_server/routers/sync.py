@@ -17,6 +17,7 @@ from pydantic import BaseModel
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
+from portf_manager.import_dedup import TransactionDeduplicator
 from portf_manager.parsers.pdt_xlsx_parser import (
     _detect_asset_type,
     _pdt_action_to_tx_type,
@@ -98,6 +99,8 @@ class PullResponse(BaseModel):
     imported_dividends: int
     imported_bookings: int
     skipped: int
+    # Rows already in the DB (a re-run of the same pull adds nothing).
+    duplicates_skipped: int = 0
     errors: list[str] = []
 
 
@@ -213,6 +216,8 @@ async def pull_from_sheets(
 
     saved_tx = saved_div = saved_bk = 0
     errors: list[str] = []
+    dedup = TransactionDeduplicator(db)
+    bookings_skipped = 0
 
     asset_cache: dict = {}
 
@@ -262,7 +267,16 @@ async def pull_from_sheets(
             total_amount = (
                 base_amount - fees if tx_type == "sell" else base_amount + fees
             )
-            db.create_transaction(
+            if dedup.find(
+                asset_id=asset_id,
+                transaction_type=tx_type,
+                quantity=tx.amount,
+                price=price,
+                transaction_date=tx.date.isoformat(),
+                portfolio_id=pid,
+            ):
+                continue
+            new_id = db.create_transaction(
                 asset_id=asset_id,
                 transaction_type=tx_type,
                 quantity=tx.amount,
@@ -275,6 +289,7 @@ async def pull_from_sheets(
                 portfolio_id=pid,
                 description="Imported from PDT Sheets sync",
             )
+            dedup.inserted(new_id)
             saved_tx += 1
         except Exception as e:
             errors.append(f"TX {tx.search} {tx.date}: {e}")
@@ -294,7 +309,16 @@ async def pull_from_sheets(
                 if div.broker
                 else portfolio_id
             )
-            db.create_transaction(
+            if dedup.find(
+                asset_id=asset_id,
+                transaction_type="dividend",
+                quantity=1.0,
+                price=div.amount,
+                transaction_date=div.date.isoformat(),
+                portfolio_id=pid,
+            ):
+                continue
+            new_id = db.create_transaction(
                 asset_id=asset_id,
                 transaction_type="dividend",
                 quantity=1.0,
@@ -307,10 +331,14 @@ async def pull_from_sheets(
                 portfolio_id=pid,
                 description="Dividend from PDT Sheets sync",
             )
+            dedup.inserted(new_id)
             saved_div += 1
         except Exception as e:
             errors.append(f"DIV {div.search} {div.date}: {e}")
 
+    # Match all bookings against what was stored before this pull, then insert
+    # the new ones, so rows of this pull are never compared with each other.
+    bk_rows = []
     for bk in result.bookings:
         try:
             pid = (
@@ -318,16 +346,27 @@ async def pull_from_sheets(
                 if bk.broker
                 else portfolio_id
             )
-            db.create_booking(
-                date=bk.date.isoformat(),
-                action=bk.action,
-                amount=bk.amount,
-                currency=bk.currency,
-                portfolio_id=pid,
-            )
-            saved_bk += 1
         except Exception as e:
             errors.append(f"Booking {bk.date}: {e}")
+            continue
+        bk_rows.append(
+            {
+                "date": bk.date.isoformat(),
+                "action": bk.action,
+                "amount": bk.amount,
+                "currency": bk.currency,
+                "portfolio_id": pid,
+            }
+        )
+    for row, match in zip(bk_rows, db.match_existing_bookings(bk_rows)):
+        if match:
+            bookings_skipped += 1
+            continue
+        try:
+            db.create_booking(**row)
+            saved_bk += 1
+        except Exception as e:
+            errors.append(f"Booking {row['date']}: {e}")
 
     return PullResponse(
         spreadsheet_id=sheet_id,
@@ -335,6 +374,7 @@ async def pull_from_sheets(
         imported_dividends=saved_div,
         imported_bookings=saved_bk,
         skipped=len(result.skipped),
+        duplicates_skipped=dedup.skipped + bookings_skipped,
         errors=errors,
     )
 
