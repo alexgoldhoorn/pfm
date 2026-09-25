@@ -449,21 +449,21 @@ function createPageManager() {
             if (window.loadDashboardNetworthHistory) window.loadDashboardNetworthHistory();
             if (window.loadDashboardBudget) window.loadDashboardBudget();
 
-            // Headline is positions + all idle cash; the subtitle keeps the
-            // positions-only figure, which Invested and Return compare against.
+            // Headline is positions + all idle cash. The positions' current
+            // value sits under Invested, next to the cost it compares with.
             // Without cash data the headline falls back to positions only.
             setKpi('totalValue', haveCashData ? totalValue + totalCashEur : totalValue);
             setKpi('dashTotalCost', totalCost);
             if (haveCashData) setKpi('dashCash', totalCashEur);
             else if (el('dashCash')) el('dashCash').textContent = '—';
             if (el('dashValueSub')) {
-                el('dashValueSub').innerHTML = haveCashData
-                    ? `${Fmt.amt(esc(fmtEurWhole(totalValue)))} in positions`
-                    : 'positions only (cash unavailable)';
+                el('dashValueSub').textContent = haveCashData ? '' : 'positions only (cash unavailable)';
             }
             if (el('dashInvestedBrokers')) {
-                el('dashInvestedBrokers').textContent = portfolioValues && investedBrokerCount > 0
-                    ? plural(investedBrokerCount, 'broker') : '';
+                const parts = [];
+                if (holdings.length) parts.push(`Now ${Fmt.amt(esc(fmtEurWhole(totalValue)))}`);
+                if (portfolioValues && investedBrokerCount > 0) parts.push(esc(plural(investedBrokerCount, 'broker')));
+                el('dashInvestedBrokers').innerHTML = parts.join(' · ');
             }
             if (el('dashCashAccounts')) {
                 const share = (totalValue + totalCashEur) > 0
