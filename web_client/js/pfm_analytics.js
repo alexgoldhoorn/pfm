@@ -2247,91 +2247,134 @@ window.openFundProfileModal = async function (assetId, symbol, name) {
     modal.show();
 };
 
+// Signed percentage for risk tiles ("+1.2%", "−3.4%").
+function fmtSignedPct(v, digits = 2, suffix = '%') {
+    if (v == null) return '—';
+    const n = Number(v);
+    return (n > 0 ? '+' : '') + n.toFixed(digits) + suffix;
+}
+window.fmtSignedPct = fmtSignedPct;
+
+// Months of history behind a risk payload, for the low-confidence label.
+function riskHistoryMonths(d) {
+    return d && d.history_days ? Math.max(1, Math.round(d.history_days / 30.4)) : null;
+}
+window.riskHistoryMonths = riskHistoryMonths;
+
+// Dashboard: the four risk tiles that matter day to day, over the trailing
+// year. The rest (Sortino, Calmar, beta, alpha, max drawdown) stays on
+// Analytics → Risk, where they're read side by side.
+async function loadDashboardRisk() {
+    const wrap = document.getElementById('dashRisk');
+    const tilesEl = document.getElementById('dashRiskTiles');
+    const noteEl = document.getElementById('dashRiskNote');
+    if (!wrap || !tilesEl) return;
+    try {
+        const d = await window.apiClient.getRisk('^GSPC', '1y');
+        if (d.sharpe_ratio == null && d.note) {
+            wrap.style.display = 'none';
+            return;
+        }
+        const lowConfidence = !!d.low_confidence;
+        const months = riskHistoryMonths(d);
+        const vsBench = d.period_return_pct != null && d.benchmark_return_pct != null
+            ? d.period_return_pct - d.benchmark_return_pct : null;
+        const tiles = [
+            { key: 'vsBenchmark', label: 'vs S&P 500', value: vsBench,
+              text: fmtSignedPct(vsBench, 1, ' pts'), help: METRIC_HELP.vsBenchmark,
+              sub: `You ${fmtSignedPct(d.period_return_pct, 1)} · index ${fmtSignedPct(d.benchmark_return_pct, 1)}` },
+            { key: 'currentDrawdown', label: 'Below 12-mo high', value: d.current_drawdown_pct,
+              text: fmtSignedPct(d.current_drawdown_pct, 1), help: METRIC_HELP.currentDrawdown,
+              sub: d.max_drawdown_pct != null ? `Worst: ${fmtSignedPct(d.max_drawdown_pct, 1)}` : '' },
+            { key: 'volatility', label: 'Volatility', value: d.volatility_pct,
+              text: d.volatility_pct == null ? '—' : Number(d.volatility_pct).toFixed(1) + '%', help: METRIC_HELP.volatility },
+            { key: 'sharpe', label: 'Sharpe', value: d.sharpe_ratio,
+              text: d.sharpe_ratio == null ? '—' : Number(d.sharpe_ratio).toFixed(2), help: METRIC_HELP.sharpe,
+              sub: d.sortino_ratio != null ? `Sortino ${Number(d.sortino_ratio).toFixed(2)}` : '' },
+        ];
+        tilesEl.innerHTML = tiles
+            .map(t => `<div class="col">${metricTile({ ...t, lowConfidence, months })}</div>`)
+            .join('');
+        if (noteEl) {
+            noteEl.textContent = lowConfidence
+                ? `Only ${months} months of history — ratings are greyed out until there's about a year.`
+                : '';
+        }
+        wrap.style.display = '';
+        initTooltips();
+    } catch (err) {
+        // A missing risk row must not look like "no risk": say it failed.
+        tilesEl.innerHTML = '';
+        if (noteEl) noteEl.textContent = 'Could not load risk metrics: ' + err.message;
+        wrap.style.display = '';
+    }
+}
+window.loadDashboardRisk = loadDashboardRisk;
+
+// Jump from the dashboard to Analytics → Risk & Diversification.
+function openAnalyticsRisk() {
+    _analyticsActiveTab = 'risk';
+    if (window.navigationManager) window.navigationManager.showPage('analytics');
+}
+window.openAnalyticsRisk = openAnalyticsRisk;
+
 // f) Risk section
 async function loadAnalyticsRisk() {
     const body = document.getElementById('anRiskBody');
     if (!body) return;
+    const windowSel = document.getElementById('anRiskWindow');
+    if (windowSel && !windowSel._bound) {
+        windowSel._bound = true;
+        windowSel.addEventListener('change', loadAnalyticsRisk);
+    }
+    const win = windowSel ? windowSel.value : '1y';
     body.innerHTML = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading…</div>';
     try {
-        const benchmark = document.getElementById('anBenchmark')?.value || '^GSPC';
-        const d = await window.apiClient.getRisk(benchmark);
+        const benchmarkSel = document.getElementById('anBenchmark');
+        const benchmark = benchmarkSel?.value || '^GSPC';
+        const benchName = benchmarkSel?.selectedOptions?.[0]?.textContent || benchmark;
+        const d = await window.apiClient.getRisk(benchmark, win);
         // Insufficient history: API returns null metrics plus a note
-        if (d.max_drawdown_pct == null) {
-            body.innerHTML = `<p class="text-muted small mb-0"><em>${d.note || 'Not enough snapshot history yet to compute risk metrics.'}</em></p>`;
+        if (d.sharpe_ratio == null && d.note) {
+            body.innerHTML = `<p class="text-muted small mb-0"><em>${esc(d.note)}</em></p>`;
             return;
         }
-        const dd = parseFloat(d.max_drawdown_pct || 0);
-        const vol = parseFloat(d.volatility_pct || 0);
-        const sharpe = parseFloat(d.sharpe_ratio || 0);
-        const sharpeCls = sharpe >= 1 ? 'text-success' : (sharpe >= 0 ? 'text-warning' : 'text-danger');
+        const lowConfidence = !!d.low_confidence;
+        const months = riskHistoryMonths(d);
+        const vsBench = d.period_return_pct != null && d.benchmark_return_pct != null
+            ? d.period_return_pct - d.benchmark_return_pct : null;
+        const tiles = [
+            { key: 'vsBenchmark', label: 'Return vs benchmark', value: vsBench,
+              text: fmtSignedPct(vsBench, 1, ' pts'), help: METRIC_HELP.vsBenchmark,
+              sub: `You ${fmtSignedPct(d.period_return_pct, 1)} · ${benchName} ${fmtSignedPct(d.benchmark_return_pct, 1)}` },
+            { key: 'currentDrawdown', label: 'Current drawdown', value: d.current_drawdown_pct,
+              text: fmtSignedPct(d.current_drawdown_pct, 1), help: METRIC_HELP.currentDrawdown },
+            { key: 'maxDrawdown', label: 'Max drawdown', value: d.max_drawdown_pct,
+              text: fmtSignedPct(d.max_drawdown_pct, 1), help: METRIC_HELP.maxDrawdown },
+            { key: 'volatility', label: 'Volatility (ann.)', value: d.volatility_pct,
+              text: d.volatility_pct == null ? '—' : Number(d.volatility_pct).toFixed(1) + '%', help: METRIC_HELP.volatility },
+            { key: 'sharpe', label: 'Sharpe ratio', value: d.sharpe_ratio,
+              text: d.sharpe_ratio == null ? '—' : Number(d.sharpe_ratio).toFixed(2), help: METRIC_HELP.sharpe },
+            { key: 'sortino', label: 'Sortino ratio', value: d.sortino_ratio,
+              text: d.sortino_ratio == null ? '—' : Number(d.sortino_ratio).toFixed(2), help: METRIC_HELP.sortino },
+            { key: 'calmar', label: 'Calmar ratio', value: d.calmar_ratio,
+              text: d.calmar_ratio == null ? '—' : Number(d.calmar_ratio).toFixed(2), help: METRIC_HELP.calmar },
+            { key: 'beta', label: 'Beta', value: d.beta,
+              text: d.beta == null ? '—' : Number(d.beta).toFixed(2), help: METRIC_HELP.beta },
+            { key: 'alpha', label: 'Alpha', value: d.alpha_pct,
+              text: fmtSignedPct(d.alpha_pct, 1, '%/yr'), help: METRIC_HELP.alpha },
+        ];
+        const range = d.start_date && d.end_date
+            ? `${Fmt.date(d.start_date)} – ${Fmt.date(d.end_date)}` : '';
+        const confNote = lowConfidence
+            ? ` · <span class="text-warning-emphasis">only ${months} months of history — ratings greyed out until there's about a year</span>`
+            : '';
         body.innerHTML = `
-            <div class="row g-3">
-                <div class="col-6 col-md-3">
-                    <div class="border rounded p-3 h-100">
-                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.maxDrawdown}">Max Drawdown</div>
-                        <div class="fs-5 fw-bold text-danger">${dd.toFixed(2)}%</div>
-                    </div>
-                </div>
-                <div class="col-6 col-md-3">
-                    <div class="border rounded p-3 h-100">
-                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.volatility}">Volatility (ann.)</div>
-                        <div class="fs-5 fw-bold">${vol.toFixed(2)}%</div>
-                    </div>
-                </div>
-                <div class="col-6 col-md-3">
-                    <div class="border rounded p-3 h-100">
-                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.sharpe}">Sharpe Ratio</div>
-                        <div class="fs-5 fw-bold ${sharpeCls}">${sharpe.toFixed(2)}</div>
-                    </div>
-                </div>
-                <div class="col-6 col-md-3">
-                    <div class="border rounded p-3 h-100">
-                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.snapshots}">Snapshots Used</div>
-                        <div class="fs-5 fw-bold">${d.snapshots_used != null ? d.snapshots_used : '—'}</div>
-                    </div>
-                </div>
-                <div class="col-6 col-md-3">
-                    <div class="border rounded p-3 h-100">
-                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.sortino}">Sortino Ratio</div>
-                        ${(() => {
-                            const v = d.sortino_ratio;
-                            if (v == null) return '<div class="fs-5 fw-bold text-muted">—</div>';
-                            const n = parseFloat(v);
-                            const cls = n >= 1 ? 'text-success' : (n >= 0 ? 'text-warning' : 'text-danger');
-                            return '<div class="fs-5 fw-bold ' + cls + '">' + n.toFixed(2) + '</div>';
-                        })()}
-                    </div>
-                </div>
-                <div class="col-6 col-md-3">
-                    <div class="border rounded p-3 h-100">
-                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.calmar}">Calmar Ratio</div>
-                        ${(() => {
-                            const v = d.calmar_ratio;
-                            if (v == null) return '<div class="fs-5 fw-bold text-muted">—</div>';
-                            const n = parseFloat(v);
-                            const cls = n >= 1 ? 'text-success' : (n >= 0.5 ? 'text-warning' : 'text-danger');
-                            return '<div class="fs-5 fw-bold ' + cls + '">' + n.toFixed(2) + '</div>';
-                        })()}
-                    </div>
-                </div>
-                <div class="col-6 col-md-3">
-                    <div class="border rounded p-3 h-100">
-                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.beta}">Beta</div>
-                        <div class="fs-5 fw-bold">${d.beta != null ? parseFloat(d.beta).toFixed(2) : '—'}</div>
-                    </div>
-                </div>
-                <div class="col-6 col-md-3">
-                    <div class="border rounded p-3 h-100">
-                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.alpha}">Alpha</div>
-                        ${(() => {
-                            const v = d.alpha_pct;
-                            if (v == null) return '<div class="fs-5 fw-bold text-muted">—</div>';
-                            const n = parseFloat(v);
-                            const cls = n >= 0 ? 'text-success' : 'text-danger';
-                            return '<div class="fs-5 fw-bold ' + cls + '">' + (n >= 0 ? '+' : '') + n.toFixed(2) + '%/yr</div>';
-                        })()}
-                    </div>
-                </div>
+            <div class="row g-3 row-cols-2 row-cols-md-3 row-cols-xl-5">
+                ${tiles.map(t => `<div class="col">${metricTile({ ...t, lowConfidence, months })}</div>`).join('')}
+            </div>
+            <div class="small text-muted mt-3" data-bs-toggle="tooltip" title="${esc(METRIC_HELP.riskReturns)}">
+                <i class="bi bi-info-circle me-1"></i>${esc(range)} · ${d.snapshots_used ?? '—'} daily snapshots · flow-adjusted returns, risk-free rate 0${confNote}
             </div>`;
     } catch (err) {
         body.innerHTML = `<div class="text-danger small">Error loading risk metrics: ${esc(err.message)}</div>`;

@@ -631,35 +631,51 @@ def diversification() -> str:
 @mcp.tool()
 def risk() -> str:
     """
-    Portfolio risk metrics derived from daily snapshot history: max drawdown,
-    annualised volatility, and Sharpe ratio.
+    Portfolio risk metrics from daily snapshot history, for the trailing year
+    and for all history: annualised return vs the S&P 500, current and max
+    drawdown, annualised volatility, Sharpe, Sortino, Calmar, beta and alpha.
+    Returns are flow-adjusted (buys, sells and imports are not gains/losses).
+    Under ~a year of history a window is flagged low-confidence.
     """
-    try:
-        data = _get("/api/v1/analytics/risk")
-    except Exception as e:
-        return f"Error fetching risk metrics: {e}"
 
-    if data.get("note"):
-        return f"RISK:\n  {data['note']}"
+    def _fmt(v, spec: str = ".2f", suffix: str = "") -> str:
+        return "n/a" if v is None else f"{v:{spec}}{suffix}"
 
-    lines = ["RISK METRICS:"]
-    dd = data.get("max_drawdown_pct")
-    vol = data.get("volatility_pct")
-    sr = data.get("sharpe_ratio")
-    lines.append(
-        f"  Max drawdown:     {dd:.2f}%"
-        if dd is not None
-        else "  Max drawdown:     n/a"
-    )
-    lines.append(
-        f"  Volatility (ann): {vol:.2f}%"
-        if vol is not None
-        else "  Volatility:       n/a"
-    )
-    lines.append(
-        f"  Sharpe ratio:     {sr:.2f}" if sr is not None else "  Sharpe ratio:     n/a"
-    )
-    lines.append(f"  Snapshots used:   {data.get('snapshots_used', '?')}")
+    lines = ["RISK METRICS (flow-adjusted, rf=0):"]
+    for window, label in (("1y", "Last 12 months"), ("all", "All history")):
+        try:
+            d = _get(f"/api/v1/analytics/risk?window={window}")
+        except Exception as e:
+            return f"Error fetching risk metrics: {e}"
+        if d.get("note"):
+            lines.append(f"  {label}: {d['note']}")
+            continue
+        flag = "  ⚠ low confidence (<1y)" if d.get("low_confidence") else ""
+        lines.append(f"  {label} ({d.get('start_date')} → {d.get('end_date')}){flag}")
+        lines.append(
+            f"    Return:           {_fmt(d.get('period_return_pct'), '+.2f', '%')}"
+            f" (benchmark {_fmt(d.get('benchmark_return_pct'), '+.2f', '%')})"
+        )
+        lines.append(
+            f"    Annualised:       {_fmt(d.get('annualised_return_pct'), '+.2f', '%')}"
+        )
+        lines.append(
+            f"    Current drawdown: {_fmt(d.get('current_drawdown_pct'), '.2f', '%')}"
+        )
+        lines.append(
+            f"    Max drawdown:     {_fmt(d.get('max_drawdown_pct'), '.2f', '%')}"
+        )
+        lines.append(
+            f"    Volatility (ann): {_fmt(d.get('volatility_pct'), '.2f', '%')}"
+        )
+        lines.append(
+            f"    Sharpe / Sortino / Calmar: {_fmt(d.get('sharpe_ratio'))} / "
+            f"{_fmt(d.get('sortino_ratio'))} / {_fmt(d.get('calmar_ratio'))}"
+        )
+        lines.append(
+            f"    Beta / Alpha:     {_fmt(d.get('beta'))} / "
+            f"{_fmt(d.get('alpha_pct'), '+.2f', '%/yr')}"
+        )
     return "\n".join(lines)
 
 

@@ -554,14 +554,14 @@ body {
     --viz-neutral: #8a94a3; --viz-other: #b8bec7;
     --viz-cost: #8a94a3;
     --viz-surface: var(--bs-body-bg, #fff);
-    --viz-good: #16a34a; --viz-bad: #dc2626;
+    --viz-good: #16a34a; --viz-bad: #dc2626; --viz-ok: #b45309;
 }
 [data-bs-theme="dark"] {
     --viz-1: #3987e5; --viz-2: #d95926; --viz-3: #199e70; --viz-4: #c98500;
     --viz-5: #d55181; --viz-6: #008300; --viz-7: #9085e9; --viz-8: #e66767;
     --viz-neutral: #7d8793; --viz-other: #5b636e;
     --viz-cost: #9aa4b1;
-    --viz-good: #22c55e; --viz-bad: #f87171;
+    --viz-good: #22c55e; --viz-bad: #f87171; --viz-ok: #fbbf24;
 }
 
 /* Floating chart tooltip (one shared element, see chartTip in pfm_core.js) */
@@ -629,6 +629,28 @@ body {
 .pfm-weight-bar { width: 48px; height: 5px; border-radius: 3px; background: var(--bs-tertiary-bg); overflow: hidden; }
 .pfm-weight-bar > span { display: block; height: 100%; background: var(--viz-1); border-radius: 3px; }
 .pfm-attn .badge { font-size: .72rem; font-weight: 600; padding: .3em .5em; }
+
+/* Rated metric tiles (see rateMetric / metricTile in pfm_core.js). The colour
+   is always paired with a word, never the only carrier of the verdict. */
+.pfm-metric {
+    height: 100%; padding: .65rem .8rem; border-radius: .5rem;
+    border: 1px solid var(--bs-border-color); border-left: 4px solid var(--viz-neutral);
+    font-variant-numeric: tabular-nums;
+}
+.pfm-metric-label { font-size: .75rem; color: var(--bs-secondary-color); text-transform: uppercase; letter-spacing: .04em; }
+.pfm-metric-value { font-size: 1.3rem; font-weight: 700; line-height: 1.2; white-space: nowrap; }
+.pfm-metric-rating { font-size: .75rem; font-weight: 600; }
+.pfm-metric-rating::before { content: "\25CF"; margin-right: .3em; }
+.pfm-metric-sub { font-size: .75rem; color: var(--bs-secondary-color); }
+.pfm-metric-good { border-left-color: var(--viz-good); }
+.pfm-metric-good .pfm-metric-rating { color: var(--viz-good); }
+.pfm-metric-ok { border-left-color: var(--viz-ok); }
+.pfm-metric-ok .pfm-metric-rating { color: var(--viz-ok); }
+.pfm-metric-bad { border-left-color: var(--viz-bad); }
+.pfm-metric-bad .pfm-metric-rating { color: var(--viz-bad); }
+.pfm-metric-neutral .pfm-metric-rating,
+.pfm-metric-low .pfm-metric-rating { color: var(--bs-secondary-color); }
+.pfm-metric-low { border-left-style: dashed; }
 
 /* Dialogs: result box (see showResultDialog in pfm_core.js) */
 .pfm-stats { display: flex; flex-wrap: wrap; gap: .5rem; }

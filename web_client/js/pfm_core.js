@@ -142,6 +142,91 @@ function esc(s) {
 }
 window.esc = esc;
 
+// Good/OK/bad bands for the metrics that can honestly be called good or bad.
+// Bands are checked top-down; the first `value >= min` wins. `neutral` metrics
+// (volatility, beta, max drawdown) depend on risk appetite, so they get a
+// descriptive word and no red/green. One table so the dashboard and the
+// Analytics page can't disagree.
+const METRIC_RATINGS = {
+    sharpe: {
+        bands: [[1, 'good', 'Good'], [0.5, 'ok', 'OK'], [0, 'bad', 'Weak'], [-Infinity, 'bad', 'Negative']],
+        range: 'Good ≥ 1 · OK 0.5–1 · Weak < 0.5',
+    },
+    sortino: {
+        bands: [[1.5, 'good', 'Good'], [0.75, 'ok', 'OK'], [-Infinity, 'bad', 'Weak']],
+        range: 'Good ≥ 1.5 · OK 0.75–1.5 · Weak < 0.75',
+    },
+    calmar: {
+        bands: [[1, 'good', 'Good'], [0.5, 'ok', 'OK'], [-Infinity, 'bad', 'Weak']],
+        range: 'Good ≥ 1 · OK 0.5–1 · Weak < 0.5',
+    },
+    currentDrawdown: {
+        bands: [[-5, 'good', 'Near high'], [-15, 'ok', 'Pullback'], [-25, 'bad', 'Deep'], [-Infinity, 'bad', 'Severe']],
+        range: 'Near high > −5% · Pullback −5 to −15% · Deep −15 to −25% · Severe < −25%',
+    },
+    vsBenchmark: {
+        bands: [[1, 'good', 'Ahead'], [-1, 'ok', 'In line'], [-Infinity, 'bad', 'Behind']],
+        range: 'Ahead ≥ +1 pt · In line within ±1 pt · Behind < −1 pt',
+    },
+    alpha: {
+        bands: [[1, 'good', 'Good'], [-1, 'ok', 'Neutral'], [-Infinity, 'bad', 'Negative']],
+        range: 'Good ≥ +1%/yr · Neutral within ±1%/yr · Negative < −1%/yr',
+    },
+    volatility: {
+        neutral: true,
+        bands: [[20, 'High'], [10, 'Equity-like'], [-Infinity, 'Low']],
+        range: 'Low < 10% · Equity-like 10–20% · High ≥ 20% — neither good nor bad, it depends on your risk appetite',
+    },
+    beta: {
+        neutral: true,
+        bands: [[1.2, 'Swings more than market'], [0.8, 'Moves with market'], [-Infinity, 'Swings less than market']],
+        range: '< 0.8 swings less than the benchmark · 0.8–1.2 moves with it · > 1.2 swings more',
+    },
+    maxDrawdown: {
+        neutral: true,
+        bands: [[-10, 'Mild'], [-25, 'Typical for equities'], [-Infinity, 'Severe']],
+        range: 'Mild > −10% · Typical for equities −10 to −25% · Severe < −25%',
+    },
+};
+window.METRIC_RATINGS = METRIC_RATINGS;
+
+// Rate one metric → { level, label, range }. level is good|ok|bad for rated
+// metrics, neutral for descriptive ones, and low when history is too short to
+// trust (a green earned on a few months of data is mostly noise).
+function rateMetric(key, value, opts = {}) {
+    const cfg = METRIC_RATINGS[key];
+    const range = cfg ? cfg.range : '';
+    const n = value == null ? NaN : Number(value);
+    if (!cfg || Number.isNaN(n)) return { level: 'neutral', label: '', range };
+    if (cfg.neutral) {
+        const band = cfg.bands.find(b => n >= b[0]);
+        return { level: 'neutral', label: band[1], range };
+    }
+    if (opts.lowConfidence) {
+        const span = opts.months != null ? ` (${opts.months} mo)` : '';
+        return { level: 'low', label: 'Low confidence' + span, range };
+    }
+    const band = cfg.bands.find(b => n >= b[0]);
+    return { level: band[1], label: band[2], range };
+}
+window.rateMetric = rateMetric;
+
+// One rated metric tile. `text` is the formatted value (caller formats), `help`
+// the METRIC_HELP sentence; the band ranges are appended to the tooltip.
+function metricTile({ key, label, value, text, help = '', sub = '', lowConfidence = false, months = null }) {
+    const r = rateMetric(key, value, { lowConfidence, months });
+    const shown = value == null || Number.isNaN(Number(value)) ? '—' : text;
+    const tip = [help, r.range].filter(Boolean).join(' — ');
+    return `
+        <div class="pfm-metric pfm-metric-${r.level}">
+            <div class="pfm-metric-label" data-bs-toggle="tooltip" data-bs-trigger="hover focus click" title="${esc(tip)}">${esc(label)}</div>
+            <div class="pfm-metric-value">${esc(shown)}</div>
+            ${r.label ? `<div class="pfm-metric-rating">${esc(r.label)}</div>` : ''}
+            ${sub ? `<div class="pfm-metric-sub">${esc(sub)}</div>` : ''}
+        </div>`;
+}
+window.metricTile = metricTile;
+
 // LLM extraction returns "YYYY-MM-DDTHH:MM:SS" when a statement shows an
 // execution time, but <input type="date"> silently renders any value that
 // isn't a bare "YYYY-MM-DD" as blank — so the preview looked like the date was
@@ -3085,9 +3170,10 @@ function createAPIClient() {
             return resp.json();
         },
 
-        async getRisk(benchmark) {
-            const params = benchmark ? `?benchmark=${encodeURIComponent(benchmark)}` : '';
-            const resp = await fetch(this.baseURL + '/api/v1/analytics/risk' + params, {
+        async getRisk(benchmark, window = 'all') {
+            const qs = new URLSearchParams({ window });
+            if (benchmark) qs.set('benchmark', benchmark);
+            const resp = await fetch(this.baseURL + '/api/v1/analytics/risk?' + qs, {
                 headers: { 'X-API-Key': this.apiKey }
             });
             if (!resp.ok) throw new Error(await resp.text());

@@ -16,7 +16,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 
 from portf_manager.services.analytics_service import (
-    calmar_ratio,
     compute_beta_alpha,
     compute_cagr,
     current_year_savings_components,
@@ -27,7 +26,10 @@ from portf_manager.services.analytics_service import (
     period_return,
     period_start_date,
     simple_return,
-    sortino_ratio,
+)
+from portf_manager.services.risk_metrics import (
+    compute_portfolio_risk,
+    daily_realised_gains,
 )
 from portf_manager.tax_calculator import TaxCalculator
 from portf_manager.positions import compute_positions
@@ -371,7 +373,11 @@ def get_performance(
         period_ret = total_ret
     else:
         period_ret = period_return(
-            db.get_snapshots(), current_value, period, current_cost=invested
+            db.get_snapshots(),
+            current_value,
+            period,
+            current_cost=invested,
+            realised=daily_realised_gains(db.get_all_transactions(), _fx),
         )
     bench_start = period_start_date(period)
 
@@ -811,72 +817,33 @@ def get_fund_overlap(db=Depends(get_database), api_key_info: dict = Depends(_aut
 @router.get("/risk")
 def get_risk(
     benchmark: str = Query("^GSPC", description="Benchmark ticker for beta/alpha"),
+    window: str = Query(
+        "all", pattern="^(all|1y)$", description="all history, or trailing 1y"
+    ),
     db=Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
-    """Max drawdown, volatility, Sharpe, Sortino, Calmar, Beta, Alpha from snapshots."""
-    snapshots = db.get_snapshots()
-    if len(snapshots) < 3:
-        return {
-            "max_drawdown_pct": None,
-            "volatility_pct": None,
-            "sharpe_ratio": None,
-            "sortino_ratio": None,
-            "calmar_ratio": None,
-            "beta": None,
-            "alpha_pct": None,
-            "note": "Need at least 3 daily snapshots — collected automatically each day.",
-        }
+    """Drawdowns, volatility, Sharpe, Sortino, Calmar, Beta, Alpha from snapshots.
 
-    values = [s["total_value_eur"] for s in snapshots]
+    Computed from flow-adjusted (time-weighted) daily returns, so buys, sells and
+    late imports don't count as gains or losses. See
+    ``portf_manager/services/risk_metrics.py``.
+    """
+    metrics = compute_portfolio_risk(db, _fx, window=window)
+    returns = metrics.pop("returns")
+    metrics.update(beta=None, alpha_pct=None, benchmark=benchmark)
+    metrics["benchmark_return_pct"] = None
+    metrics["benchmark_annualised_return_pct"] = None
+    metrics["snapshots_used"] = len(returns) + 1 if returns else 0
+    if not returns:
+        return metrics
 
-    # Max drawdown
-    peak = values[0]
-    max_dd = 0.0
-    for v in values:
-        peak = max(peak, v)
-        if peak > 0:
-            dd = (v - peak) / peak
-            max_dd = min(max_dd, dd)
-
-    # Daily returns
-    returns = [
-        (values[i] - values[i - 1]) / values[i - 1]
-        for i in range(1, len(values))
-        if values[i - 1] > 0
-    ]
-    vol = statistics.stdev(returns) * math.sqrt(252) if len(returns) > 1 else None
-    mean_daily = statistics.mean(returns) if returns else 0
-    sharpe = None
-    if vol and vol > 0:
-        sharpe = round((mean_daily * 252) / vol, 2)
-
-    # Sortino
-    sortino = sortino_ratio(returns)
-
-    # Snapshot-based CAGR (for Calmar)
-    snap_dates = [s["snapshot_date"][:10] for s in snapshots]
-    snap_days = (
-        date.fromisoformat(snap_dates[-1]) - date.fromisoformat(snap_dates[0])
-    ).days
-    snap_cagr_pct = None
-    if snap_days >= 365 and values[0] > 0 and values[-1] > 0:
-        snap_cagr_pct = round(
-            ((values[-1] / values[0]) ** (365.25 / snap_days) - 1) * 100, 2
-        )
-
-    max_dd_pct = round(max_dd * 100, 2)
-    calmar = calmar_ratio(snap_cagr_pct, max_dd_pct)
-
-    # Beta / Alpha — fetches benchmark daily closes (cached 12h)
-    beta_val: Optional[float] = None
-    alpha_val: Optional[float] = None
+    # Beta / Alpha / benchmark return — benchmark daily closes (cached 12h)
     try:
-        cache_key = (
-            f"yf:bench-daily:{benchmark}:{snap_dates[0]}:{date.today().isoformat()}"
-        )
+        start_d = metrics["start_date"]
+        cache_key = f"yf:bench-daily:{benchmark}:{start_d}:{date.today().isoformat()}"
 
-        def _fetch_bench(b=benchmark, s=snap_dates[0]):
+        def _fetch_bench(b=benchmark, s=start_d):
             hist = yf.download(b, start=s, progress=False, auto_adjust=True)
             if hist.empty:
                 return []
@@ -892,49 +859,35 @@ def get_risk(
         bench_data: list[tuple[str, float]] = cached(
             db, cache_key, 12 * 3600, _fetch_bench
         )
+        bench_data = [(d, p) for d, p in bench_data if d <= metrics["end_date"]]
 
         if bench_data and len(bench_data) >= 2:
             bench_by_date: dict[str, float] = {}
-            for i in range(1, len(bench_data)):
-                d_str, prev_p, curr_p = (
-                    bench_data[i][0],
-                    bench_data[i - 1][1],
-                    bench_data[i][1],
-                )
+            for (_, prev_p), (d_str, curr_p) in zip(bench_data, bench_data[1:]):
                 if prev_p > 0:
                     bench_by_date[d_str] = (curr_p - prev_p) / prev_p
+            aligned_p = [r for d, r in returns if d in bench_by_date]
+            aligned_b = [bench_by_date[d] for d, _ in returns if d in bench_by_date]
 
-            return_dates = snap_dates[1:]
-            aligned_p: list[float] = []
-            aligned_b: list[float] = []
-            for i, d_str in enumerate(return_dates):
-                if d_str in bench_by_date and i < len(returns):
-                    aligned_p.append(returns[i])
-                    aligned_b.append(bench_by_date[d_str])
-
+            first_p, last_p = bench_data[0][1], bench_data[-1][1]
             bench_cagr = None
-            if snap_days >= 365 and bench_data[0][1] > 0 and bench_data[-1][1] > 0:
-                bench_cagr = (
-                    (bench_data[-1][1] / bench_data[0][1]) ** (365.25 / snap_days)
-                ) - 1
+            if first_p > 0:
+                growth = last_p / first_p
+                metrics["benchmark_return_pct"] = round((growth - 1) * 100, 2)
+                if metrics["annualised_return_pct"] is not None:
+                    bench_cagr = growth ** (365.25 / metrics["history_days"]) - 1
+                    metrics["benchmark_annualised_return_pct"] = round(
+                        bench_cagr * 100, 2
+                    )
 
-            snap_cagr_frac = snap_cagr_pct / 100 if snap_cagr_pct is not None else None
-            beta_val, alpha_val = compute_beta_alpha(
-                aligned_p, aligned_b, snap_cagr_frac, bench_cagr
+            ann = metrics["annualised_return_pct"]
+            metrics["beta"], metrics["alpha_pct"] = compute_beta_alpha(
+                aligned_p, aligned_b, ann / 100 if ann is not None else None, bench_cagr
             )
     except Exception as e:
         logger.warning(f"Beta/alpha computation failed: {e}")
 
-    return {
-        "max_drawdown_pct": max_dd_pct,
-        "volatility_pct": round(vol * 100, 2) if vol else None,
-        "sharpe_ratio": sharpe,
-        "sortino_ratio": sortino,
-        "calmar_ratio": calmar,
-        "beta": beta_val,
-        "alpha_pct": alpha_val,
-        "snapshots_used": len(snapshots),
-    }
+    return metrics
 
 
 # ── Fees & Costs ───────────────────────────────────────────────────────────────

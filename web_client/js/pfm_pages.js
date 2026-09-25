@@ -567,6 +567,7 @@ function createPageManager() {
                 periodSel.addEventListener('change', () => loadDashboardReturn(periodSel.value));
             }
             loadDashboardReturn(periodSel ? periodSel.value : 'all');
+            loadDashboardRisk();
 
             initTooltips();
             this.hideLoadingSpinners();

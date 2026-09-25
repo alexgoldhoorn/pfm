@@ -9,7 +9,7 @@ at that date, leaving total cost unchanged (so average cost per share scales).
 ``dividend`` and unknown types don't affect positions.
 """
 
-from typing import Callable, Dict, Hashable, List, Tuple
+from typing import Callable, Dict, Hashable, List, Optional, Tuple
 
 
 def _sort_key(tx: dict):
@@ -20,6 +20,7 @@ def _sort_key(tx: dict):
 def compute_positions(
     transactions: List[dict],
     key: Callable[[dict], Hashable] = lambda tx: tx["asset_id"],
+    on_sell: Optional[Callable[[dict, float], None]] = None,
 ) -> Tuple[Dict[Hashable, dict], float]:
     """Return ``(positions, realised)``.
 
@@ -32,6 +33,8 @@ def compute_positions(
         transactions: rows with transaction_type, quantity, total_amount, date.
         key: how to group (default per asset; pass a (portfolio_id, asset_id)
              lambda for per-broker positions).
+        on_sell: optional callback, called with each sell and the realised
+            gain it booked (in the transaction's own currency).
     """
     positions: Dict[Hashable, dict] = {}
     realised = 0.0
@@ -47,7 +50,10 @@ def compute_positions(
         elif t == "sell":
             if pos["quantity"] > 0:
                 avg = pos["cost"] / pos["quantity"]
-                realised += total - avg * qty
+                gain = total - avg * qty
+                realised += gain
+                if on_sell is not None:
+                    on_sell(tx, gain)
                 pos["cost"] *= max(pos["quantity"] - qty, 0.0) / pos["quantity"]
             pos["quantity"] -= qty
         elif t == "split" and qty > 0:

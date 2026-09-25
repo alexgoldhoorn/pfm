@@ -213,7 +213,11 @@ def _get_risk(db: Database, portfolio_id: Optional[str] = None) -> str:
     from portf_server.routers.analytics import get_risk as _risk_fn
 
     try:
-        result = _risk_fn(db=db, api_key_info={})
+        # Called directly, so every Query-defaulted parameter must be passed.
+        result = {
+            w: _risk_fn(benchmark="^GSPC", window=w, db=db, api_key_info={})
+            for w in ("1y", "all")
+        }
         return _j(result)
     except Exception as e:
         return _j({"error": str(e)})
