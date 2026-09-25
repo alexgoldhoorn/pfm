@@ -205,7 +205,8 @@ class TestImportUpload:
         assert data["broker"] == "indexacapital"
         assert len(data["transactions"]) == 1
         assert data["transactions"][0]["symbol"] == "US0378331005"
-        assert data["transactions"][0]["asset_type"] == "etf"
+        # Indexa only holds index mutual funds, never ETFs.
+        assert data["transactions"][0]["asset_type"] == "mutual_fund"
         assert data["skipped_count"] == 0
 
     @pytest.mark.asyncio
