@@ -1,0 +1,28 @@
+# Price updates and market data
+
+> Moved out of `CLAUDE.md` on 2026-09-25 so it isn't loaded into every session. CLAUDE.md keeps the must-know gotchas and links here; this file is the full reference. "See the X section" means the matching file in `docs/features/`, or CLAUDE.md.
+
+### Price Updates
+Daily cron at **20:00 UTC** via `~/scripts/portf-update-prices.sh`. Manual CLI: `docker exec -e PORTF_API_KEY=... portf_backend_dev python3 -m portf_manager.cli update-prices`
+
+On-demand via API (powers the dashboard "Refresh prices" button):
+- `POST /api/v1/analytics/trigger-price-update` — starts a background thread; returns `{"status":"started"}` or 409 if already running
+- `GET /api/v1/analytics/price-update-status` — returns `{"running": bool, "started_at": "..."}`
+- Core logic in `portf_manager/services/price_updater.py::run_price_update(db, symbols=None, source="api")` — shared by CLI and API. Records each run in `price_update_runs`. CLI passes `source="manual"` (specific symbols) or `source="cron"` (all assets). **`_CRYPTO_YF_OVERRIDES` lives here** (single source of truth); analytics.py imports it from here — do not define a local copy.
+
+- **GBX**: yfinance returns UK stocks in GBX (pence). `fetch_latest_prices` auto-converts when `fast_info.currency == "GBp"` (÷100). Never store raw yfinance prices for UK ISINs without this check.
+- **Crypto**: `{SYM}-EUR` format. Some tokens need `_CRYPTO_YF_OVERRIDES` (e.g. `SUI → ("SUI20947-USD", "USD")`); USD results converted to EUR before storing.
+- Holdings EUR conversion via `XYZEUR=X` FX tickers.
+- **Currency self-healing**: for every non-crypto asset priced this run, `run_price_update` also calls `APIClient.get_quote_currency(ticker)` (normalizes GBX `"GBp"` → `"GBP"` the same way `fetch_latest_prices` does) and compares it to the asset's stored `currency`. A mismatch — e.g. an asset auto-created as `EUR` by a heuristic import that's actually priced in USD or GBP by yfinance — self-corrects `assets.currency` via `db.update_asset()` and logs a warning (`Currency corrected for {symbol}: {old} -> {new}`); it does not touch already-stored `prices` rows or existing `transactions.currency` (a one-off historical mismatch there needs a manual fix, same as the IJPA.L/XDWS.L/CTEC.AS/MXFP.L MyInvestor holdings corrected 2026-08-18). Crypto is excluded — its `_CRYPTO_YF_OVERRIDES` currency is intentionally the post-conversion EUR label, not yfinance's raw quote currency, so the check would misfire there.
+
+### Market Data API (`portf_server/routers/market.py` + `portf_manager/market.py`)
+Single market-data source for web, MCP, cron:
+- `GET /api/v1/market/quotes?symbols=A,B,C&max_age=` (batch, ≤50), `/market/quote/{symbol}`, `/market/fx?currencies=`, `/market/fundamentals/{symbol}`
+- kv_cache keys: `mkt:quote:*`, `mkt:fx:*`, `mkt:fund:*`. Stale-on-failure: last value with `stale: true`.
+- **Read `previous_close` via subscript, never `fast_info.get()` with snake_case — it silently returns None.**
+- `portf_manager.market.get_fx_eur_on(db, currency, on_date)` — historical FX at a date (nearest prior trading day), one yfinance call per currency-year, kv_cache key `mkt:fxhist:{CUR}:{year}`. Returns `(rate, stale)`; stale=True means current-rate fallback.
+- All routers delegate to `portf_manager.market`; external scripts call the HTTP API.
+
+### GBX and ISIN→ticker resolution (full notes)
+- **GBX normalization**: `portf_manager/currency_utils.normalize_gbx_amounts()` ÷100 on import (`imports.py` save + `sync.py` pull). Live price fetch normalizes separately in `api_client.py`, gated on `fast_info.currency == "GBp"` — a live yfinance call, so a single price-update run can (rarely) get an unexpected/missing `currency` value from Yahoo and silently skip the ÷100, storing every held GBP asset ~100x too high for just that one run (confirmed real incident: 2026-08-12, self-corrected the next run, isolated — see PROJECT_STATUS v2.5.50). Nothing currently guards against this automatically (no day-over-day sanity check on stored prices/snapshots) — if a net-worth chart ever shows an implausible one-day spike-and-revert, check `prices` for that date across GBP-currency assets first. Missing the ÷100 entirely (e.g. on import) → cost basis 100× too high. `currency_utils.is_gbx` caches successful lookups only — a failed Yahoo lookup returns False but isn't cached, so one outage can't pin a UK symbol as non-GBX for the life of the process.
+- **ISIN→ticker resolution currency guard** (`portf_manager/ticker_resolver.py`): OpenFIGI's mapping response has **no currency field**, so `_pick_best_ticker` infers a venue's currency from its exchange code (`_CURRENCY_BY_EXCHANGE`) and discards any candidate on a wrong-currency venue — a EUR ETF and an unrelated US stock routinely share a bare ticker string ("PRAB"), and a suffix-less Yahoo symbol resolves to the US one. `_verify_yf(sym, expected_currency)` is the second half: the quote's own `fast_info.currency` must match (GBX≈GBP; a missing currency field is *not* rejected). Net effect: the resolver returns **`None` rather than a wrong-currency ticker** when it can't find a verifiable same-currency listing — those assets need a manual `ticker` (via `PUT /api/v1/assets/{id}`). `_yf_ticker_for_exchange`'s `_SUFFIX` map now carries the real OpenFIGI Bloomberg codes (`GR`→`.DE`, `FP`→`.PA`, `NA`→`.AS`, …), not just the pretty aliases. Known gap: `_pick_best_ticker` returns a bare ticker string and the caller re-derives the exchange by first-match, so when the same ISIN lists on several right-currency venues the *first* one wins even if another has the better Yahoo listing.
