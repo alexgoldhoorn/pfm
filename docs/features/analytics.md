@@ -9,7 +9,7 @@
 - `GET /api/v1/analytics/tax-estimate?year=` — IRPF savings base (realised gains + dividends + interest); `irpf_savings_tax()` progressive brackets (19/21/23/27/28%)
 - `GET /api/v1/analytics/diversification` — sector/country/currency/type + Herfindahl HHI (slow, fetches yfinance), plus fund look-through: `by_region_equity`, `by_currency_exposure`, and a `coverage` block (`classified_pct`, `sector_classified_pct`, `unprofiled`, `stale_profiles`). See "Fund look-through" section below.
 - `GET /api/v1/analytics/fund-overlap` — held funds grouped by one of three `kind`s (`portf_manager/services/exposure.py::find_fund_overlaps`, evaluated and reported in this order): shared index family (`"consolidation_candidate"` — two-plus held funds on the same `benchmark_key` family, worth merging), nesting (`"informational"` — a narrower fund's index sits inside a broader held fund's, e.g. a China Tech fund inside a World fund; a deliberate tilt, not a problem), and, only for the subset of held funds with **no** `benchmark_key` on either side, cosine similarity of their region+sector weight maps above `SIMILARITY_THRESHOLD` (`"similar"`) — the fallback for funds a benchmark can't identify. Each group carries `members`, `combined_pct`/`combined_value_eur`, `reason`, and `transferable` (both funds, so a Spanish `traspaso` avoids realising a gain). Plain `def`, same `compute_exposure()` call as `/diversification`.
-- `GET /api/v1/analytics/risk?benchmark=^GSPC` — max drawdown, volatility, Sharpe, `sortino_ratio`, `calmar_ratio`, `beta`, `alpha_pct`. Plain `def` (threadpool).
+- `GET /api/v1/analytics/risk?benchmark=^GSPC&window=all|1y` — `max_drawdown_pct`, `current_drawdown_pct`, `volatility_pct`, `sharpe_ratio`, `sortino_ratio`, `calmar_ratio`, `annualised_return_pct`, `period_return_pct`, `benchmark_return_pct`/`benchmark_annualised_return_pct` (same days), `beta`, `alpha_pct`, `start_date`/`end_date`, `history_days`, `periods_per_year`, `low_confidence`, `snapshots_used`. Plain `def` (threadpool). See "Risk metrics" below.
 - `GET /api/v1/analytics/fees` — plain `def` (blocking `_fx()` calls); amounts converted to EUR at **current** FX via `_fx()`
 - `GET /api/v1/analytics/tax-report?year=` — plain `def`; per-lot FIFO (full-history: prior-year sells consume lots, fees in amounts — see Spanish tax gotcha) + withholding; all amounts converted to EUR at **transaction-date FX** via `_fx_on()` (proceeds at sell-date, cost basis at purchase-date; dividends/withholding at dividend date); withholding counts the `tax` field on **both dividend and interest** rows (`dividend_withholding_eur` + `interest_withholding_eur`); response lot keys: `symbol`, `quantity`, `proceeds`, `cost_basis`, `gain_loss`, `proceeds_eur`, `cost_basis_eur`, `gain_loss_eur`, `purchase_date`; **`TaxTransaction` internal fields use `sell_quantity`/`sell_amount`/`purchase_amount` — different from response keys**. Its body is `_build_tax_report_data(db, yr)`, a plain function shared with the PDF export below so the two can't disagree.
 - `GET /api/v1/analytics/tax-report/pdf?year=` — filing-ready Spanish IRPF PDF built with reportlab (`portf_manager/services/pdf_reports.py::build_tax_report_pdf`): the same per-lot FIFO table as `/tax-report` (no long/short-term split — Spain taxes all capital gains together in the base del ahorro, unlike the US) plus dividend/interest withholding and, when `current_year_savings_components`/`irpf_savings_tax` succeed, an estimated-tax line. Not tax advice. Web: "Download PDF" button next to the existing CSV download on the Analytics page's Tax tab.
@@ -18,6 +18,42 @@
 - `services/tax_rates.py` — IRPF brackets; `GET /api/v1/public/summary` off unless `PORTF_PUBLIC_VIEW=true`
 - Auth: `POST /api/v1/auth/login-key`
 - Cron: `portf-price-alerts.sh` (20:05), `portf-monthly-report.sh` (1st of month 09:00)
+
+### Risk metrics (`portf_manager/services/risk_metrics.py`)
+
+One implementation, used by `/analytics/risk`, the Portfolio Health advisor
+(`gather_risk`), the chat `get_risk` tool, the PDF report and the MCP `risk` tool.
+
+- **Flow-adjusted daily returns.** Snapshots hold the value and cost of open
+  positions only, so a raw day-over-day change counts every buy as a gain and
+  every sell as a loss. Each day's return is
+  `(V_t − V_{t−1} − F) / (V_{t−1} + max(F, 0))`, with `F = ΔCost − realised gain`
+  booked by sells since the previous snapshot. Realised gain comes from
+  `compute_positions(..., on_sell=...)`, so position math stays in one place.
+- **Why cost basis and not transaction dates:** trades imported after a snapshot
+  was recorded, with earlier dates, are missing from that snapshot. The first
+  snapshot that includes them jumps in value *and* cost together. A transaction-
+  dated flow sits on the wrong day and turns the import into a spike (this is
+  what made the old figures read vol 47%, Sharpe 2.5, alpha +368%). Known limit:
+  the *unrealised* gain late-imported lots built up before the import still lands
+  on the import day. Re-running the backfill with `force=true` rebuilds history
+  from current transactions, but also overwrites the cron's own snapshots.
+- **Annualisation uses observed frequency.** Snapshots are calendar-daily
+  (weekends included), so `periods_per_year = returns / years spanned` (~365),
+  not 252.
+- **Windows:** `all` (every snapshot) or `1y` (returns dated after today − 365).
+  Drawdowns are measured within the window, so `current_drawdown_pct` is the
+  distance below the window's high. `annualised_return_pct` and Calmar need
+  ≥ 350 days; `low_confidence` is true below that.
+- rf = 0. Beta/alpha align flow-adjusted returns with benchmark daily closes over
+  the same window; alpha is `annualised − beta × benchmark annualised`.
+
+**Ratings (web).** `METRIC_RATINGS` + `rateMetric(key, value, {lowConfidence})`
+in `pfm_core.js` hold the only good/OK/bad bands (Sharpe, Sortino, Calmar, current
+drawdown, return vs benchmark, alpha). Volatility, beta and max drawdown are
+`neutral`: descriptive words, no red/green, because they depend on risk appetite.
+`metricTile({...})` renders one tile with the word beside the colour and the
+bands in the tooltip. Low-confidence history greys rated tiles out.
 
 ### Fund look-through (`portf_manager/services/exposure.py` + `services/fund_profiles.py` + `services/benchmarks.py`, db v30)
 

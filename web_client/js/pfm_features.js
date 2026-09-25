@@ -2900,14 +2900,16 @@ function setupForecastPage() {
             try {
                 const [perf, risk] = await Promise.all([
                     window.apiClient.getPerformance(null, 'all'),
-                    window.apiClient.getRisk(),
+                    // Trailing year: the simulator projects today's mix, not
+                    // whatever the portfolio held in its first months.
+                    window.apiClient.getRisk(null, '1y'),
                 ]);
                 const h = historyToForecast(perf, risk);
                 if (!h.ok) { if (histNote) histNote.textContent = h.reason; return; }
                 stocksRateInput.value = h.rate.toFixed(1);
                 if (stocksVolInput) stocksVolInput.value = Math.round(h.vol);
                 if (histNote) {
-                    histNote.textContent = `Set from your history: return ${h.rate.toFixed(1)}%/yr (money-weighted IRR), volatility ${Math.round(h.vol)}% — based on ${h.snapshots} daily snapshots. This is your whole-portfolio figure (incl. crypto), a proxy for the stocks bucket.`;
+                    histNote.textContent = `Set from your history: return ${h.rate.toFixed(1)}%/yr (money-weighted IRR), volatility ${Math.round(h.vol)}% over the last 12 months (${h.snapshots} daily snapshots). This is your whole-portfolio figure (incl. crypto), a proxy for the stocks bucket.`;
                 }
             } catch (e) {
                 if (histNote) histNote.textContent = 'Could not load history: ' + e.message;

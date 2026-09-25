@@ -297,22 +297,24 @@ def period_return(
     current_value: float,
     period: str,
     current_cost: Optional[float] = None,
+    realised: Optional[dict[str, float]] = None,
 ) -> Optional[float]:
     """Time-weighted return (TWR) over a period from daily snapshots.
 
-    Chains each step's market return while removing the day's net contribution
-    (≈ change in cost basis), so deposits/withdrawals don't inflate the figure —
-    the correct way to measure return when money is being added (a naive
-    (end−start)/start can read absurdly high, e.g. when the starting balance was
-    tiny and most growth came from contributions). Falls back to a chained value
-    return if snapshots carry no cost basis. Returns None if history is too short
-    or doesn't cover the period start.
+    Chains the same flow-adjusted daily returns the risk metrics use
+    (``risk_metrics.flow_adjusted_returns``), so buys, sells and late imports
+    don't count as gains or losses and the dashboard's Return card agrees with
+    its risk row. Snapshots without a cost basis are treated as having no flows.
+    Returns None if history is too short or doesn't cover the period start.
 
     Args:
         snapshots: [{snapshot_date, total_value_eur, total_cost_eur}].
         current_value: latest value (kept for signature compatibility).
         period: 'ytd' | '1m' | '1y' | 'all'.
         current_cost: latest cost basis (kept for signature compatibility).
+        realised: realised EUR gain per day from sells
+            (``risk_metrics.daily_realised_gains``). Without it a sell's
+            realised gain reads as a loss on the day of the sale.
     """
     if not snapshots:
         return None
@@ -338,19 +340,12 @@ def period_return(
     if len(window) < 2:
         return None
 
-    # Time-weighted return: chain each step's market return, removing the day's
-    # net contribution (≈ change in cost basis) so deposits/withdrawals don't
-    # inflate the figure. This is the correct way to measure return over a
-    # period when money is being added — unlike a naive (end-start)/start.
+    # Imported here: risk_metrics imports this module.
+    from portf_manager.services.risk_metrics import flow_adjusted_returns
+
     factor = 1.0
-    has_cost = all(s.get("total_cost_eur") is not None for s in window)
-    for prev, cur in zip(window, window[1:]):
-        v0 = prev.get("total_value_eur") or 0
-        v1 = cur.get("total_value_eur") or 0
-        if v0 <= 0:
-            continue
-        flow = (cur["total_cost_eur"] - prev["total_cost_eur"]) if has_cost else 0.0
-        factor *= 1 + (v1 - v0 - flow) / v0
+    for _, r in flow_adjusted_returns(window, realised or {}):
+        factor *= 1 + r
     return round((factor - 1) * 100, 2)
 
 
@@ -388,21 +383,27 @@ def compute_cagr(
     return round((ratio ** (1.0 / years) - 1) * 100, 2)
 
 
-def sortino_ratio(returns: list[float]) -> Optional[float]:
-    """Annualised Sortino ratio (rf=0) from a list of raw daily returns.
+def sortino_ratio(
+    returns: list[float], periods_per_year: float = 252
+) -> Optional[float]:
+    """Annualised Sortino ratio (rf=0) from a list of raw periodic returns.
 
-    Penalises only downside volatility (negative-return days).
+    Penalises only downside volatility (negative-return periods).
     Returns None when fewer than 2 downside observations are available.
+
+    Args:
+        returns: raw (not %) returns, one per period.
+        periods_per_year: observations per year used to annualise.
     """
     if not returns:
         return None
     downside = [r for r in returns if r < 0]
     if len(downside) < 2:
         return None
-    downside_std = _stats.stdev(downside) * math.sqrt(252)
+    downside_std = _stats.stdev(downside) * math.sqrt(periods_per_year)
     if downside_std == 0:
         return None
-    return round((_stats.mean(returns) * 252) / downside_std, 2)
+    return round((_stats.mean(returns) * periods_per_year) / downside_std, 2)
 
 
 def calmar_ratio(

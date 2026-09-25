@@ -7,16 +7,19 @@ window.METRIC_HELP = {
   totalReturn: "Total Return: current value + realised gains − amount invested, divided by amount invested. Lifetime, not annualised.",
   periodReturn: "Period Return: change in portfolio value over the selected window, measured from daily snapshots.",
   hhi: "Herfindahl Index (HHI): concentration score 0–10000. Above 2500 = concentrated, below 1500 = well diversified.",
-  sharpe: "Sharpe Ratio: return per unit of risk (volatility). Higher is better; >1 is good.",
+  sharpe: "Sharpe Ratio: annualised return per unit of volatility (risk-free rate taken as 0). Higher is better; >1 is good.",
   cagr:          "CAGR: Compound Annual Growth Rate — average annual growth since inception assuming constant compounding. Formula: (end/start)^(1/years) − 1. Unlike IRR it ignores contribution timing.",
   annualizedGain:"Annualized Gain: average annual profit in euros — CAGR × invested capital. A rough sense of how much the portfolio earns per year.",
   inception:     "Inception Date: date of your first transaction — the start point for CAGR.",
   sortino:       "Sortino Ratio: like Sharpe but only penalises downside volatility (negative-return days). Ignores upside swings that inflate Sharpe's denominator. >1 is good.",
-  calmar:        "Calmar Ratio: annualised return ÷ max drawdown. >1 means your annual gain exceeds your worst peak-to-trough drop.",
-  beta:          "Beta: sensitivity to the benchmark. 1.0 = moves with the market; >1 amplifies swings; <1 is more stable. Computed from daily snapshot returns.",
+  calmar:        "Calmar Ratio: annualised return ÷ max drawdown. >1 means your annual gain exceeds your worst peak-to-trough drop. Needs about a year of history.",
+  beta:          "Beta: sensitivity to the benchmark. 1.0 = moves with the market; >1 amplifies swings; <1 is more stable. Computed from flow-adjusted daily returns.",
   alpha:         "Alpha: annualised excess return above what Beta predicts (CAPM, rf=0). Positive = outperformance beyond market exposure.",
   volatility: "Volatility: annualised standard deviation of daily returns — how much the portfolio value swings.",
-  maxDrawdown: "Max Drawdown: largest peak-to-trough drop in portfolio value over the recorded history.",
+  maxDrawdown: "Max Drawdown: largest peak-to-trough drop over the window, measured on returns (buys and sells don't count as rises or drops).",
+  currentDrawdown: "Current Drawdown: how far the portfolio sits below its highest point in the window, measured on returns (buys and sells don't count).",
+  vsBenchmark: "Return vs benchmark: your time-weighted return over the window minus the benchmark's return over the same days, in percentage points.",
+  riskReturns: "All risk metrics use flow-adjusted (time-weighted) daily returns: money you put in or take out, and trades imported later, are not counted as gains or losses.",
   fairValue: "Fair Value: an estimate of intrinsic worth from fundamentals + an LLM analyst. Compare to current price.",
   yieldOnCost: "Yield on Cost: trailing-12-month dividends from a position divided by what you paid for it.",
   feeDrag: "Fee Drag: total fees paid as a percentage of the amount invested — how much costs eat your capital.",
@@ -50,6 +53,7 @@ window.PAGE_HELP = {
         <li><strong>Total value</strong> is your positions plus all idle cash. <strong>Invested</strong> is what you paid for the positions you hold, with what they're worth now on the line below. Both are in EUR. Foreign-currency holdings are converted at live FX rates.</li>
         <li><strong>Cash</strong> combines uninvested cash in your brokerage accounts (deposits/withdrawals/sells/dividends/interest not yet reinvested) with your bank account balances into one figure — included in Total value. See the Bank Accounts card for the per-account breakdown.</li>
         <li><strong>Return</strong> defaults to lifetime (cost-basis) return. Switching to YTD / 1Y uses daily snapshots, so it only covers the period since snapshots began.</li>
+        <li>The <strong>Risk, last 12 months</strong> row shows your return against the benchmark, how far you are below the 12-month high, volatility and Sharpe. Green / amber / red come with a word (Good, Pullback, Behind…); hover a label for the ranges. Volatility is described, not coloured — how much swing is acceptable depends on you. The same numbers, plus more, are on Analytics → Risk.</li>
         <li><strong>Top Positions</strong> and the <strong>allocation donut</strong> reflect current open positions by EUR value, plus a Cash slice.</li>
         <li>The <strong>Needs attention</strong> strip below the KPI tiles combines two groups: <em>price signals</em> (price targets crossed, watchlist buy zones, stale price data) and <em>to-dos</em> from the Action Items page (stale imports, data-quality issues, price-update errors, stale research, off-track goals, Net Worth setup). Click a group to expand it; the × hides it until something changes.</li>
         <li>Hover any chart for exact values — the history chart shows value, cost basis and unrealised gain for each day; donuts show the amount and share of each slice.</li>
@@ -66,7 +70,7 @@ window.PAGE_HELP = {
         <li><strong>Dividends</strong>: monthly bar chart of dividend income, trailing-12-month total, projected annual income, yield on cost per position, and an upcoming dividend calendar.</li>
         <li><strong>Gain / Loss</strong>: unrealised winners and losers leaderboard for your open positions, plus a year-by-year realised gains summary with a tax-report CSV export.</li>
         <li><strong>Tax</strong>: Spanish IRPF savings-base estimate — FIFO realised gains + dividends + interest taxed on the progressive 19/21/23/27/28% brackets. Also shows tax-loss harvesting candidates (open losses, with 2-month wash-sale flag). An estimate, not tax advice.</li>
-        <li><strong>Risk</strong>: maximum drawdown, annualised volatility, and Sharpe ratio — computed from daily snapshots (needs at least 3).</li>
+        <li><strong>Risk</strong>: current and maximum drawdown, volatility, Sharpe, Sortino, Calmar, beta and alpha over the last 12 months or all history — computed from flow-adjusted daily snapshot returns (needs at least 3 snapshots). Each rated metric shows a Good / OK / Weak label; hover it for the ranges. Under a year of history the ratings are greyed out as low confidence.</li>
         <li><strong>Fees</strong>: total fees and withholding tax paid per broker, plus fee drag % of amount invested.</li>
         <li><strong>Diversification</strong>: sector, country, currency and asset-type breakdown with Herfindahl concentration index (HHI). Fetches fundamentals from Yahoo Finance — can be slow.</li>
       </ul>
@@ -86,7 +90,7 @@ window.PAGE_HELP = {
         <li><strong>Volatility</strong> — annualised std dev of daily returns. Higher = bumpier ride.</li>
         <li><strong>Sharpe</strong> — return per unit of total volatility. Penalises all swings equally.</li>
         <li><strong>Sortino</strong> — like Sharpe but only penalises losses. Better for portfolios with positive skew.</li>
-        <li><strong>Max Drawdown</strong> — worst peak-to-trough drop in portfolio history.</li>
+        <li><strong>Max Drawdown</strong> — worst peak-to-trough drop in the window. <strong>Current Drawdown</strong> — how far below the window's high you are now.</li>
         <li><strong>Calmar</strong> — CAGR ÷ drawdown. Combines return and worst-case loss in one number.</li>
         <li><strong>Beta</strong> — market sensitivity. Not good or bad by itself; depends on your goals.</li>
       </ul>`
@@ -122,7 +126,7 @@ window.PAGE_HELP = {
       <ul class="small mb-2">
         <li><strong>Stocks / ETFs</strong> value is auto-populated from your live holdings when the page loads. Hit the refresh icon <i class="bi bi-arrow-clockwise"></i> to reload it.</li>
         <li><strong>Load from Net Worth</strong> pre-fills Cash, Bonds and Mortgage amounts from your Net Worth page, plus <strong>Monthly contribution</strong> and the mortgage <strong>Monthly Payment</strong> from your Monthly Cash Flow entries (all still manually editable afterwards).</li>
-        <li><strong>Use my history</strong> sets the Stocks annual return and volatility from your own portfolio's recorded snapshot history, replacing the defaults.</li>
+        <li><strong>Use my history</strong> sets the Stocks annual return (money-weighted IRR since inception) and volatility (last 12 months) from your own portfolio's recorded snapshot history, replacing the defaults.</li>
         <li><strong>Annual return %</strong> per asset class is your assumed long-run real return, e.g. 8% for stocks, 4% for bonds, 1.5% for cash.</li>
         <li><strong>Volatility %</strong> (stocks only) controls how wide the confidence band is. Default 16%; your historical figure may differ.</li>
         <li><strong>Monthly contribution</strong> (under Stocks / ETFs) is added to the stocks bucket each month before compounding — it does not apply to cash or bonds.</li>

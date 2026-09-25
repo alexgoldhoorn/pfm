@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
-import statistics
 from datetime import date, datetime
 from typing import Any, Optional
 
@@ -13,14 +11,13 @@ from portf_manager.cache import cached
 from portf_manager.market import get_fundamentals
 from portf_manager.positions import compute_positions
 from portf_manager.services.analytics_service import (
-    calmar_ratio,
     compute_cagr,
     dividend_income,
     irpf_savings_tax,
     money_weighted_irr,
     simple_return,
-    sortino_ratio,
 )
+from portf_manager.services.risk_metrics import compute_portfolio_risk
 from portf_manager.tax_calculator import TaxCalculator
 
 logger = logging.getLogger(__name__)
@@ -88,54 +85,10 @@ def gather_performance(db, portfolio_id: Optional[int] = None) -> dict[str, Any]
 
 
 def gather_risk(db) -> dict[str, Any]:
-    """Risk metrics from daily snapshots (portfolio-wide, no portfolio_id filter)."""
-    snapshots = db.get_snapshots()
-    base: dict[str, Any] = {
-        "max_drawdown_pct": None,
-        "volatility_pct": None,
-        "sharpe_ratio": None,
-        "sortino_ratio": None,
-        "calmar_ratio": None,
-    }
-    if len(snapshots) < 3:
-        base["note"] = "Need at least 3 daily snapshots."
-        return base
-
-    values = [s["total_value_eur"] for s in snapshots]
-    peak = values[0]
-    max_dd = 0.0
-    for v in values:
-        peak = max(peak, v)
-        if peak > 0:
-            max_dd = min(max_dd, (v - peak) / peak)
-
-    returns = [
-        (values[i] - values[i - 1]) / values[i - 1]
-        for i in range(1, len(values))
-        if values[i - 1] > 0
-    ]
-    vol = statistics.stdev(returns) * math.sqrt(252) if len(returns) > 1 else None
-    mean_daily = statistics.mean(returns) if returns else 0
-    sharpe = round((mean_daily * 252) / vol, 2) if vol and vol > 0 else None
-
-    snap_dates = [s["snapshot_date"][:10] for s in snapshots]
-    snap_days = (
-        date.fromisoformat(snap_dates[-1]) - date.fromisoformat(snap_dates[0])
-    ).days
-    snap_cagr_pct = None
-    if snap_days >= 365 and values[0] > 0 and values[-1] > 0:
-        snap_cagr_pct = round(
-            ((values[-1] / values[0]) ** (365.25 / snap_days) - 1) * 100, 2
-        )
-
-    max_dd_pct = round(max_dd * 100, 2)
-    return {
-        "max_drawdown_pct": max_dd_pct,
-        "volatility_pct": round(vol * 100, 2) if vol else None,
-        "sharpe_ratio": sharpe,
-        "sortino_ratio": sortino_ratio(returns),
-        "calmar_ratio": calmar_ratio(snap_cagr_pct, max_dd_pct),
-    }
+    """Flow-adjusted risk metrics from daily snapshots (portfolio-wide)."""
+    metrics = compute_portfolio_risk(db, _fx)
+    metrics.pop("returns", None)
+    return metrics
 
 
 _CRYPTO_SECTOR = "Cryptocurrency"

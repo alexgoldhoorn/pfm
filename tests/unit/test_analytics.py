@@ -178,6 +178,32 @@ class TestPeriodReturn:
         # No snapshot inside a 1-day window far in the future → None
         assert period_return([], 130000, "ytd") is None
 
+    def test_period_return_sell_is_not_a_loss(self):
+        from portf_manager.services.analytics_service import period_return
+
+        # Half sold at market on day 2 (basis 400, proceeds 500), rest +10%.
+        snaps = [
+            {
+                "snapshot_date": "2026-01-01",
+                "total_value_eur": 1000,
+                "total_cost_eur": 800,
+            },
+            {
+                "snapshot_date": "2026-01-02",
+                "total_value_eur": 500,
+                "total_cost_eur": 400,
+            },
+            {
+                "snapshot_date": "2026-01-03",
+                "total_value_eur": 550,
+                "total_cost_eur": 400,
+            },
+        ]
+        realised = {"2026-01-02": 100.0}
+        assert period_return(snaps, 550, "all", realised=realised) == 10.0
+        # Without the realised gain the sale's profit reads as a loss.
+        assert period_return(snaps, 550, "all") < 0
+
 
 class TestPublicView:
     @pytest.mark.asyncio
