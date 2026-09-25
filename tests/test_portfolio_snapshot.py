@@ -6,14 +6,12 @@ import pytest
 import tempfile
 import os
 from decimal import Decimal
-from datetime import datetime, timedelta
-from unittest.mock import Mock, patch
+from datetime import datetime
 
 from portf_manager.database import Database
 from portf_manager.models import AssetType, TransactionType
 from portf_manager.portfolio_snapshot import (
     PortfolioSnapshot,
-    PositionSummary,
     PortfolioSummary,
     create_snapshot_from_db_path,
     get_portfolio_context_for_chat,

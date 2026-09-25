@@ -153,7 +153,7 @@ def test_search_prompt_omits_prefetched_headlines(mocker):
 
 
 def test_generate_valuation_returns_error_dict_on_llm_failure(mocker):
-    """LLM exception returns a safe error dict instead of raising."""
+    """LLM exception returns an error dict (no advice) instead of raising."""
     from portf_manager.services.research import generate_valuation_report
 
     mock_llm = MagicMock(spec=["generate"])
@@ -172,6 +172,9 @@ def test_generate_valuation_returns_error_dict_on_llm_failure(mocker):
         fundamentals=_MOCK_FUND,
     )
 
-    assert result["recommendation"] == "HOLD"
-    assert result["confidence"] == "low"
+    # A failed analysis must not read as a HOLD recommendation
+    assert result["error"] == "API down"
+    assert result["recommendation"] is None
+    assert result["confidence"] is None
+    assert result["fair_value"] is None
     assert "API down" in result["summary"]

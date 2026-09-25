@@ -65,8 +65,8 @@ def parse_myinvestor_paste(text: str) -> MyInvestorParseResult:
     while i < len(all_lines):
         line = all_lines[i]
 
-        # Date section header: DD/MM/YYYY or "Hoy" (today in Spanish)
-        if line.lower() in ("hoy", "ayer", "today"):
+        # Date section header: DD/MM/YYYY, or a relative day (Spanish/English)
+        if line.lower() in ("hoy", "ayer", "today", "yesterday"):
             offset = 1 if line.lower() in ("ayer", "yesterday") else 0
             from datetime import timedelta
 

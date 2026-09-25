@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional, Tuple
 
+from portf_manager.parsers.utils import parse_unsigned_amount as _parse_amount
+
 _DEPOSIT_WORDS = {
     "deposit",
     "deposito",
@@ -67,26 +69,6 @@ def _map_columns(fieldnames: List[str]) -> dict:
             if norm in syns and canonical not in mapping:
                 mapping[canonical] = actual
     return mapping
-
-
-def _parse_amount(raw: str) -> Optional[float]:
-    s = (raw or "").strip().replace("€", "").replace("$", "").replace("£", "")
-    s = re.sub(r"[^0-9,.\-]", "", s)
-    if not s:
-        return None
-    # Decide decimal separator: if both present, the last one is the decimal.
-    if "," in s and "." in s:
-        if s.rfind(",") > s.rfind("."):
-            s = s.replace(".", "").replace(",", ".")
-        else:
-            s = s.replace(",", "")
-    elif "," in s:
-        # Comma as decimal (European) when it looks like a decimal separator.
-        s = s.replace(",", ".")
-    try:
-        return abs(float(s))
-    except ValueError:
-        return None
 
 
 def _parse_date(raw: str) -> Optional[str]:

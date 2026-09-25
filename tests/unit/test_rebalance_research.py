@@ -428,3 +428,30 @@ class TestUpsertPriceTargetClearSemantics:
         aid = self._asset(test_database)
         with pytest.raises(ValueError):
             test_database.upsert_price_target(asset_id=aid, clear={"bogus_field"})
+
+
+@pytest.mark.asyncio
+async def test_generate_failure_is_502_and_nothing_is_cached(
+    async_test_client, auth_headers, test_database, monkeypatch
+):
+    """A failed LLM analysis must not be stored as a HOLD research report."""
+    aid = test_database.create_asset("EXA", "Example Corp", "stock", currency="EUR")
+    monkeypatch.setattr(
+        "portf_manager.services.research.fetch_fundamentals", lambda *a, **k: {}
+    )
+    monkeypatch.setattr(
+        "portf_manager.services.research.fetch_recent_news", lambda *a, **k: []
+    )
+    monkeypatch.setattr(
+        "portf_manager.services.research.generate_valuation_report",
+        lambda **kwargs: {"error": "Gemini (m) generate failed after 3 attempts: 503"},
+    )
+    monkeypatch.setattr("portf_manager.market._fetch_quote_live", lambda s: None)
+
+    resp = await async_test_client.post(
+        "/api/v1/research/EXA/generate", headers=auth_headers
+    )
+
+    assert resp.status_code == 502
+    assert "after 3 attempts" in resp.json()["detail"]
+    assert test_database.get_research_report(aid) is None

@@ -5,18 +5,13 @@ Tests for the CLI module.
 import pytest
 import tempfile
 import os
-import sys
 from unittest.mock import patch, MagicMock
 from io import StringIO
 
 from portf_manager.cli import (
     PortfolioManagerCLI,
-    execute_command,
     AuthenticationRequiredError,
 )
-from portf_manager.database import Database
-from portf_manager.models import AssetType, TransactionType
-from portf_manager.auth import AuthManager
 
 
 from portf_manager.config import PortfolioConfig

@@ -16,6 +16,15 @@ from portf_manager.parsers.utils import parse_european_number
         ("1.200.000,50", 1200000.50),
         ("", 0.0),
         ("  ", 0.0),
+        # Thousands with no decimal part: a lone dot in groups of three
+        ("10.000", 10000.0),
+        ("-2.500", -2500.0),
+        ("1.000.000", 1000000.0),
+        ("10.000 €", 10000.0),
+        # A dot that isn't in thousands groups is left as a decimal point
+        ("2.5", 2.5),
+        ("-", 0.0),
+        ("abc", 0.0),
     ],
 )
 def test_parse_european_number(raw, expected):

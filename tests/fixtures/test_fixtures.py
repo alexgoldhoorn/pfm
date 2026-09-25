@@ -1,22 +1,17 @@
 """
 Test fixtures and utilities for the portfolio management system.
 
-This module provides reusable fixtures for testing FastAPI endpoints,
-CLI operations, database interactions, and web client functionality.
+Reusable fixtures: a temp database, an app wired to it, an authenticated
+async client, and sample payloads.
 """
 
-import asyncio
 import os
 import tempfile
 import uuid
-from datetime import date, timedelta
-from typing import Dict, Any
-from unittest.mock import Mock
 
 import pytest
 import pytest_asyncio
 import httpx
-from fastapi.testclient import TestClient
 
 from portf_server.app import app
 from portf_server.dependencies import (
@@ -28,14 +23,6 @@ from portf_manager.database import Database
 from portf_manager.auth import AuthManager
 from portf_server.auth_middleware import APIKeyManager
 from portf_manager.models import AssetType, TransactionType
-
-
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create event loop for async tests."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
 
 
 @pytest.fixture
@@ -124,13 +111,6 @@ def test_app(test_database, test_auth_manager, test_api_key_manager):
     app.dependency_overrides.clear()
 
 
-@pytest.fixture
-def test_client(test_app):
-    """Create test client for FastAPI app."""
-    with TestClient(test_app) as client:
-        yield client
-
-
 @pytest_asyncio.fixture
 async def async_test_client(test_app):
     """Create async test client for FastAPI app."""
@@ -188,54 +168,6 @@ def sample_portfolio_data():
 
 
 @pytest.fixture
-def sample_entity_data():
-    """Sample entity data for testing."""
-    return {
-        "name": "Test Broker",
-        "entity_type": "broker",
-        "website": "https://testbroker.com",
-        "description": "Test broker entity",
-    }
-
-
-@pytest.fixture
-def mock_yfinance():
-    """Mock yfinance responses."""
-    mock = Mock()
-    mock.history.return_value = {
-        "Close": [150.0, 151.0, 152.0],
-        "Volume": [1000000, 1100000, 1200000],
-    }
-    mock.info = {
-        "longName": "Apple Inc.",
-        "sector": "Technology",
-        "exchange": "NMS",
-        "currency": "USD",
-        "marketCap": 3000000000000,
-    }
-    return mock
-
-
-@pytest.fixture
-def mock_gemini_client():
-    """Mock Gemini client for LLM testing."""
-    mock = Mock()
-    mock.extract_transactions.return_value = [
-        Mock(
-            symbol="AAPL",
-            asset_name="Apple Inc.",
-            tx_type="buy",
-            quantity=10,
-            price=150.0,
-            currency="USD",
-            date="2024-01-15",
-            raw_text="Bought 10 shares of AAPL at $150",
-        )
-    ]
-    return mock
-
-
-@pytest.fixture
 def test_csv_data():
     """Sample CSV data for import testing."""
     return [
@@ -258,172 +190,3 @@ def test_csv_file(test_csv_data, temp_db_path):
         os.unlink(csv_path)
     except OSError:
         pass
-
-
-class MockServerFixture:
-    """Mock server fixture for testing server mode CLI operations."""
-
-    def __init__(self, base_url: str = "http://localhost:8000"):
-        self.base_url = base_url
-        self.responses = {}
-        self.called_endpoints = []
-
-    def set_response(self, endpoint: str, method: str, response: Dict[str, Any]):
-        """Set mock response for endpoint."""
-        key = f"{method.upper()}:{endpoint}"
-        self.responses[key] = response
-
-    def get_called_endpoints(self):
-        """Get list of called endpoints."""
-        return self.called_endpoints
-
-    async def request(self, method: str, url: str, **kwargs):
-        """Mock request method."""
-        endpoint = url.replace(self.base_url, "")
-        key = f"{method.upper()}:{endpoint}"
-        self.called_endpoints.append(key)
-
-        if key in self.responses:
-            response_data = self.responses[key]
-            mock_response = Mock()
-            mock_response.status_code = response_data.get("status_code", 200)
-            mock_response.json.return_value = response_data.get("json", {})
-            mock_response.raise_for_status.return_value = None
-            return mock_response
-        else:
-            # Default response
-            mock_response = Mock()
-            mock_response.status_code = 404
-            mock_response.json.return_value = {"error": "Not found"}
-            return mock_response
-
-
-@pytest.fixture
-def mock_server():
-    """Create mock server fixture."""
-    return MockServerFixture()
-
-
-@pytest.fixture(scope="session")
-def test_server_port():
-    """Get available port for test server."""
-    import socket
-
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("", 0))
-        return s.getsockname()[1]
-
-
-@pytest.fixture
-async def test_server(test_app, test_server_port):
-    """Start test server for integration tests."""
-    import uvicorn
-    from multiprocessing import Process
-    import time
-
-    def run_server():
-        uvicorn.run(
-            test_app, host="127.0.0.1", port=test_server_port, log_level="error"
-        )
-
-    server_process = Process(target=run_server)
-    server_process.start()
-
-    # Wait for server to start
-    time.sleep(2)
-
-    yield f"http://127.0.0.1:{test_server_port}"
-
-    server_process.terminate()
-    server_process.join()
-
-
-@pytest.fixture
-def cli_runner():
-    """Create CLI runner for testing CLI commands."""
-    from click.testing import CliRunner
-
-    return CliRunner()
-
-
-@pytest.fixture
-def mock_config():
-    """Mock configuration for testing."""
-    from portf_manager.config import PortfolioConfig
-
-    config = Mock(spec=PortfolioConfig)
-    config.is_local_mode = True
-    config.is_server_mode = False
-    config.db_path = "test.db"
-    config.server_url = None
-    config.api_key = None
-    config.debug = True
-
-    return config
-
-
-@pytest.fixture
-def mock_env_vars(monkeypatch):
-    """Set up mock environment variables for testing."""
-    test_env = {
-        "PORTF_DATABASE_URL": "sqlite:///test.db",
-        "PORTF_SECRET_KEY": "test-secret-key",
-        "PORTF_ENVIRONMENT": "testing",
-        "PORTF_LOG_LEVEL": "DEBUG",
-        "GEMINI_API_KEY": "test-gemini-key",
-    }
-
-    for key, value in test_env.items():
-        monkeypatch.setenv(key, value)
-
-    return test_env
-
-
-# Performance and load testing fixtures
-@pytest.fixture
-def performance_data():
-    """Generate performance test data."""
-    return {
-        "assets": [
-            {
-                "symbol": f"TEST{i:03d}",
-                "name": f"Test Company {i}",
-                "asset_type": "stock",
-                "currency": "USD",
-            }
-            for i in range(100)
-        ],
-        "transactions": [
-            {
-                "asset_id": i % 100 + 1,
-                "transaction_type": "buy" if i % 2 == 0 else "sell",
-                "quantity": float(i * 10 + 1),
-                "price": float(100 + i * 0.5),
-                "transaction_date": (date.today() - timedelta(days=i)).isoformat(),
-            }
-            for i in range(1000)
-        ],
-    }
-
-
-# Async context managers for testing
-class AsyncContextManager:
-    """Helper for testing async context managers."""
-
-    def __init__(self, return_value=None):
-        self.return_value = return_value
-        self.entered = False
-        self.exited = False
-
-    async def __aenter__(self):
-        self.entered = True
-        return self.return_value
-
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        self.exited = True
-
-
-@pytest.fixture
-def async_context_manager():
-    """Create async context manager for testing."""
-    return AsyncContextManager

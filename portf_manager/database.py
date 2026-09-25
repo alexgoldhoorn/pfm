@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Any, Set
 from pathlib import Path
 
 # Database version for migration tracking
-DATABASE_VERSION = 30
+DATABASE_VERSION = 31
 
 
 # black
@@ -720,6 +720,25 @@ class Database:
             """
         )
 
+        # Persistent application log: warnings/errors from pfm code and every
+        # LLM call. See _migrate_to_v31 and portf_manager/event_log.py.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_logs (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at  TEXT NOT NULL,
+                level       TEXT NOT NULL,
+                source      TEXT NOT NULL,
+                event       TEXT,
+                message     TEXT NOT NULL,
+                details     TEXT
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_app_logs_created ON app_logs(created_at)"
+        )
+
         # Create triggers for updated_at timestamps
         for table in [
             "entities",
@@ -800,6 +819,8 @@ class Database:
             self._migrate_to_v29(conn)
         if current_version < 30:
             self._migrate_to_v30(conn)
+        if current_version < 31:
+            self._migrate_to_v31(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -1737,6 +1758,121 @@ class Database:
             """
         )
         conn.commit()
+
+    def _migrate_to_v31(self, conn: sqlite3.Connection) -> None:
+        """Migrate from v30 to v31 — persistent application log (app_logs).
+
+        Written by event_log.DatabaseLogHandler: warnings/errors from pfm code
+        and every LLM call (attempts, duration, outcome). Pruned by age.
+        """
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS app_logs (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at  TEXT NOT NULL,
+                level       TEXT NOT NULL,
+                source      TEXT NOT NULL,
+                event       TEXT,
+                message     TEXT NOT NULL,
+                details     TEXT
+            )
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_app_logs_created ON app_logs(created_at)"
+        )
+        conn.commit()
+
+    # ── Application log ──────────────────────────────────────────────────────
+
+    def log_event(
+        self,
+        level: str,
+        source: str,
+        message: str,
+        event: Optional[str] = None,
+        details: Optional[Dict] = None,
+    ) -> int:
+        """Append one entry to app_logs. ``details`` is stored as JSON."""
+        import json
+        from datetime import datetime, timezone
+
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                "INSERT INTO app_logs (created_at, level, source, event, message, "
+                "details) VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    level,
+                    source,
+                    event,
+                    message,
+                    json.dumps(details, default=str) if details else None,
+                ),
+            )
+            conn.commit()
+            return cur.lastrowid
+
+    def list_logs(
+        self,
+        limit: int = 200,
+        min_level: Optional[str] = None,
+        event: Optional[str] = None,
+        source: Optional[str] = None,
+    ) -> List[Dict]:
+        """Newest-first log entries, with ``details`` decoded.
+
+        Args:
+            limit: Maximum rows returned.
+            min_level: Lowest level to include (``"WARNING"`` → warnings and up).
+            event: Exact event name, or a prefix ending in ``*`` (``"llm.*"``).
+            source: Logger-name prefix, e.g. ``"portf_manager.llm_client"``.
+        """
+        import json
+
+        levels = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+        where, params = [], []
+        if min_level and min_level.upper() in levels:
+            allowed = levels[levels.index(min_level.upper()) :]
+            where.append(f"level IN ({','.join('?' * len(allowed))})")
+            params.extend(allowed)
+        if event:
+            if event.endswith("*"):
+                where.append("event LIKE ?")
+                params.append(event[:-1] + "%")
+            else:
+                where.append("event = ?")
+                params.append(event)
+        if source:
+            where.append("source LIKE ?")
+            params.append(source + "%")
+        sql = "SELECT * FROM app_logs"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY id DESC LIMIT ?"
+        params.append(limit)
+        with self.get_connection() as conn:
+            out = []
+            for row in conn.execute(sql, params).fetchall():
+                d = dict(row)
+                try:
+                    d["details"] = json.loads(d["details"]) if d["details"] else None
+                except (ValueError, TypeError):
+                    pass
+                out.append(d)
+            return out
+
+    def prune_logs(self, older_than_days: int) -> int:
+        """Delete log entries older than N days. Returns rows deleted."""
+        from datetime import datetime, timedelta, timezone
+
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=older_than_days)
+        ).isoformat(timespec="seconds")
+        with self.get_connection() as conn:
+            cur = conn.execute("DELETE FROM app_logs WHERE created_at < ?", (cutoff,))
+            conn.commit()
+            return cur.rowcount
 
     # ── Fund look-through profiles ──────────────────────────────────────────
 

@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, status, Depends, Request
 from pydantic import BaseModel, Field
 
 from portf_manager.gemini_client import GeminiClient
-from portf_manager.llm_client import get_llm_client
+from portf_manager.llm_client import LLMError, LLMResponseError, get_llm_client
 from portf_manager.services.market_data import get_market_data_service
 from portf_manager.services.analytics.screener import (
     get_stock_screener,
@@ -39,6 +39,18 @@ from portf_server.chat_tools import TOOLS, execute_tool
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+def _llm_http_exception(exc: Exception, what: str) -> HTTPException:
+    """502 with the provider's reason for an LLM failure; 500 for anything else."""
+    if isinstance(exc, (LLMError, LLMResponseError)):
+        return HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=f"{what} failed: {exc}"
+        )
+    return HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=f"{what} failed: {exc}",
+    )
 
 
 # Chat session history is stored in the DB chat_sessions table (not kv_cache),
@@ -246,17 +258,31 @@ class EnhancedChatEngine:
                 warnings=context.get("warnings", []),
             )
 
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error processing enhanced chat request: {e}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to process chat request: {str(e)}",
-            )
+            raise _llm_http_exception(e, "Chat")
 
     def _extract_symbols(self, message: str) -> List[str]:
         """Extract stock symbols from message."""
         symbols = re.findall(r"\b[A-Z]{1,5}\b", message)
+        # All-caps words that aren't tickers: each would cost a live quote
+        # lookup ("what do I own?" used to fetch a price for "I").
         common_words = {
+            "I",
+            "A",
+            "AI",
+            "OK",
+            "ETF",
+            "ETFS",
+            "EUR",
+            "USD",
+            "GBP",
+            "IRPF",
+            "FIFO",
+            "PDT",
+            "LLM",
             "AND",
             "OR",
             "THE",
@@ -602,13 +628,11 @@ class EnhancedChatEngine:
             messages.append({"role": msg["role"], "content": msg["content"]})
         messages.append({"role": "user", "content": message})
 
-        try:
-            response = await asyncio.to_thread(
-                self.llm.generate_with_tools, messages, TOOLS
-            )
-        except Exception as e:
-            logger.error("generate_with_tools failed: %s", e)
-            return "I'm having trouble accessing the AI service right now. Please try again."
+        # A failure raises LLMError (after retries): the chat endpoint turns it
+        # into a 502 naming the cause, and nothing is written to the history.
+        response = await asyncio.to_thread(
+            self.llm.generate_with_tools, messages, TOOLS
+        )
 
         if response.text:
             return response.text
@@ -617,18 +641,13 @@ class EnhancedChatEngine:
             tool_result = await asyncio.to_thread(
                 execute_tool, response.tool_call.name, response.tool_call.arguments, db
             )
-            try:
-                final = await asyncio.to_thread(
-                    self.llm.complete_with_tool_result,
-                    messages,
-                    response.tool_call,
-                    tool_result,
-                    TOOLS,
-                )
-                return final
-            except Exception as e:
-                logger.error("complete_with_tool_result failed: %s", e)
-                return f"I retrieved the data but couldn't generate a response: {tool_result}"
+            return await asyncio.to_thread(
+                self.llm.complete_with_tool_result,
+                messages,
+                response.tool_call,
+                tool_result,
+                TOOLS,
+            )
 
         return "I wasn't able to generate a response. Please try again."
 
@@ -643,12 +662,7 @@ class EnhancedChatEngine:
 
         # Existing static-context path (unchanged)
         prompt = self._build_enhanced_prompt(message, context, session_id, db)
-        try:
-            response = await asyncio.to_thread(self.llm.generate, prompt)
-            return response
-        except Exception as e:
-            logger.error(f"LLM API error: {e}")
-            return "I apologize, but I'm having trouble accessing the AI service right now. Please try again later."
+        return await asyncio.to_thread(self.llm.generate, prompt)
 
     def _build_enhanced_prompt(
         self, message: str, context: Dict[str, Any], session_id: str, db: Database
@@ -871,10 +885,7 @@ async def extract_transactions_from_text(
         )
 
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to extract transactions: {str(e)}",
-        )
+        raise _llm_http_exception(e, "Transaction extraction")
 
 
 @router.post("/extract-bookings", response_model=BookingExtractionResponse)
@@ -888,10 +899,7 @@ async def extract_bookings_from_text(
         bookings = gemini_client.extract_bookings(request.text)
         return BookingExtractionResponse(bookings=bookings, count=len(bookings))
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to extract bookings: {str(e)}",
-        )
+        raise _llm_http_exception(e, "Cash movement extraction")
 
 
 @router.post("/extract-deposits", response_model=DepositExtractionResponse)
@@ -905,10 +913,7 @@ async def extract_deposits_from_text(
         deposits = gemini_client.extract_deposits(request.text)
         return DepositExtractionResponse(deposits=deposits, count=len(deposits))
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to extract deposits: {str(e)}",
-        )
+        raise _llm_http_exception(e, "Deposit extraction")
 
 
 # ---------------------------------------------------------------------------
@@ -965,7 +970,9 @@ def _run_extraction_job(job_id: str, text: str) -> None:
     except Exception as e:  # noqa: BLE001
         logger.exception("Async extraction failed")
         with _EXTRACT_JOBS_LOCK:
-            _EXTRACT_JOBS[job_id].update(status="error", error=str(e))
+            _EXTRACT_JOBS[job_id].update(
+                status="error", error=f"Extraction failed: {e}"
+            )
 
 
 @router.post("/extract-async")

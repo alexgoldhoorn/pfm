@@ -8,6 +8,12 @@ from portf_manager.services.research import get_symbols_needing_refresh
 from portf_server.routers.research import _BULK_RESEARCH, _run_bulk_research_refresh
 
 
+@pytest.fixture(autouse=True)
+def _no_live_quotes(monkeypatch):
+    """The worker falls back to a live quote when no price is stored; stub it."""
+    monkeypatch.setattr("portf_manager.market._fetch_quote_live", lambda symbol: None)
+
+
 def _held_asset(db, symbol="AAPL", name="Apple Inc.", qty=10.0, asset_type="stock"):
     aid = db.create_asset(symbol, name, asset_type, currency="USD")
     pid = db.get_or_create_portfolio("TestBroker", base_currency="EUR")
@@ -310,3 +316,24 @@ class TestBulkRefreshEndpoints:
         )
         assert status_resp.status_code == 200
         assert "running" in status_resp.json()
+
+
+def test_llm_failure_is_reported_as_failed_with_the_reason(test_database, mocker):
+    _held_asset(test_database)
+    mocker.patch("portf_manager.services.research.fetch_fundamentals", return_value={})
+    mocker.patch("portf_manager.services.research.fetch_recent_news", return_value=[])
+    mocker.patch(
+        "portf_manager.services.research.generate_valuation_report",
+        return_value={
+            "error": "Gemini (m) generate failed after 3 attempts: 503",
+            "fair_value": None,
+            "buy_below": None,
+            "sell_above": None,
+        },
+    )
+
+    _run_bulk_research_refresh(test_database)
+
+    (result,) = _BULK_RESEARCH["results"]
+    assert result["status"] == "failed"
+    assert "after 3 attempts" in result["detail"]

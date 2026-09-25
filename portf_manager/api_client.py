@@ -21,8 +21,6 @@ import yfinance as yf
 import requests
 import pandas as pd
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 

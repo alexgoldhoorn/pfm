@@ -45,6 +45,7 @@ dev-dependencies = [
     "pytest-playwright",
     "pytest-mock",
     "pytest-cov",
+    "pytest-timeout",
     "pytest-xvfb",
     "flake8>=7.3.0",
     "ruff",
