@@ -49,12 +49,10 @@ async def test_sectors_endpoint(async_test_client: AsyncClient, auth_headers):
 @pytest.mark.asyncio
 @pytest.mark.api
 async def test_portfolios_endpoint(async_test_client: AsyncClient, auth_headers):
-    """Test portfolios endpoint.
-    Retrieves available portfolios including performance metrics."""
+    """Test portfolios endpoint returns a list."""
     response = await async_test_client.get("/api/v1/portfolios", headers=auth_headers)
     assert response.status_code == status.HTTP_200_OK
-    data = response.json()
-    assert "message" in data and "under construction" in data["message"]
+    assert isinstance(response.json(), list)
 
 
 @pytest.mark.asyncio

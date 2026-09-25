@@ -9,6 +9,7 @@ import pytest
 from fastapi import status
 from httpx import AsyncClient
 
+from portf_manager import currency_utils
 from portf_manager.llm_client import (
     OpenRouterLLMClient,
     get_llm_client,
@@ -16,6 +17,17 @@ from portf_manager.llm_client import (
 )
 from portf_manager.llm_types import LLMTransaction
 from portf_manager.parsers.indexacapital_csv_parser import parse_indexacapital_csv
+
+
+@pytest.fixture(autouse=True)
+def gbx_symbols(monkeypatch):
+    """Stub the live Yahoo GBX lookup; add a symbol to the set to make it GBX."""
+    symbols: set[str] = set()
+    monkeypatch.setattr(
+        currency_utils, "is_gbx", lambda s: bool(s) and s.upper() in symbols
+    )
+    return symbols
+
 
 # ---------------------------------------------------------------------------
 # OpenRouterLLMClient
@@ -441,6 +453,37 @@ class TestImportSave:
         data = response.json()
         assert data["saved"] == 1
         assert data["errors"] == []
+
+    @pytest.mark.asyncio
+    async def test_save_converts_gbx_pence_to_gbp(
+        self, async_test_client: AsyncClient, auth_headers, test_database, gbx_symbols
+    ):
+        """A GBX-quoted symbol is stored in pounds, not pence (cost basis ÷100)."""
+        gbx_symbols.add("GB0000000001")
+        payload = {
+            "transactions": [
+                {
+                    "symbol": "GB0000000001",
+                    "name": "Example UK Plc",
+                    "asset_type": "stock",
+                    "tx_type": "buy",
+                    "date": "2024-06-01",
+                    "quantity": 10.0,
+                    "price": 9759.0,
+                    "currency": "GBX",
+                    "fees": 500.0,
+                }
+            ]
+        }
+        response = await async_test_client.post(
+            "/api/v1/import/save", json=payload, headers=auth_headers
+        )
+        assert response.status_code == status.HTTP_200_OK
+        assert response.json()["saved"] == 1
+        (tx,) = test_database.get_all_transactions()
+        assert tx["price"] == pytest.approx(97.59)
+        assert tx["fees"] == pytest.approx(5.0)
+        assert tx["currency"] == "GBP"
 
     @pytest.mark.asyncio
     async def test_save_reuses_existing_asset(

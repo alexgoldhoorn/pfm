@@ -8,7 +8,7 @@ from unittest.mock import patch, MagicMock
 import json
 
 from portf_manager.gemini_client import GeminiClient, _normalize_booking_date
-from portf_manager.llm_client import reset_llm_client
+from portf_manager.llm_client import LLMError, LLMResponseError, reset_llm_client
 from portf_manager.llm_types import LLMTransaction
 
 
@@ -133,15 +133,17 @@ class TestGeminiClient:
         assert transactions[0].symbol == "AAPL"
 
     def test_parse_response_invalid_json(self):
-        """Test parsing invalid JSON response."""
+        """A non-JSON reply is an error, not "no transactions"."""
         client = GeminiClient(api_key=self.api_key)
 
-        # Test with invalid JSON
-        response_text = "invalid json response"
+        with pytest.raises(LLMResponseError, match="wasn't valid JSON"):
+            client._parse_response("invalid json response", "original text")
 
-        transactions = client._parse_response(response_text, "original text")
+    def test_parse_response_json_that_is_not_a_list(self):
+        client = GeminiClient(api_key=self.api_key)
 
-        assert len(transactions) == 0
+        with pytest.raises(LLMResponseError, match="not a list"):
+            client._parse_response('"just a string"', "original text")
 
     def test_parse_response_empty_array(self):
         """Test parsing empty array response."""
@@ -245,17 +247,15 @@ class TestGeminiClient:
 
     @patch("google.genai.Client")
     def test_extract_transactions_api_error(self, mock_client_class):
-        """Test handling API errors during extraction."""
+        """A provider failure surfaces as LLMError, not an empty result."""
         mock_client_class.return_value.models.generate_content.side_effect = Exception(
             "API Error"
         )
 
         client = GeminiClient(api_key=self.api_key)
 
-        # Should return empty list on error
-        transactions = client.extract_transactions("Test transaction text")
-
-        assert len(transactions) == 0
+        with pytest.raises(LLMError, match="API Error"):
+            client.extract_transactions("Test transaction text")
 
     @patch("google.genai.Client")
     def test_extract_transactions_spanish_text(self, mock_client_class):
@@ -761,3 +761,67 @@ class TestNormalizeBookingDate:
     def test_ambiguous_date_is_day_first(self):
         # 05/08/2026 -> 5 August, not 8 May (European default)
         assert _normalize_booking_date("05/08/2026") == "2026-08-05"
+
+
+class _Reply:
+    """A minimal LLM client returning a fixed reply."""
+
+    model_name = "fake"
+
+    def __init__(self, text: str):
+        self.text = text
+
+    def generate(self, prompt: str) -> str:
+        return self.text
+
+
+class TestExtractionReplies:
+    """Bookings and deposits extraction against canned model replies."""
+
+    def test_deposits_are_parsed_and_bad_rows_skipped(self):
+        reply = json.dumps(
+            [
+                {
+                    "name": "Deposit 12m",
+                    "principal": 10000,
+                    "currency": "eur",
+                    "interest_rate": 2.5,
+                    "start_date": "2025-01-01",
+                    "maturity_date": "2026-01-01",
+                },
+                {"name": "Broken", "principal": "lots"},
+            ]
+        )
+        deposits = GeminiClient(llm=_Reply(reply)).extract_deposits("text")
+        assert deposits == [
+            {
+                "name": "Deposit 12m",
+                "principal": 10000.0,
+                "currency": "EUR",
+                "interest_rate": 2.5,
+                "start_date": "2025-01-01",
+                "maturity_date": "2026-01-01",
+            }
+        ]
+
+    def test_fenced_json_is_accepted(self):
+        reply = (
+            '```json\n[{"action": "deposit", "amount": 50, "date": "01/02/2025"}]\n```'
+        )
+        (booking,) = GeminiClient(llm=_Reply(reply)).extract_bookings("text")
+        assert (booking["action"], booking["amount"], booking["date"]) == (
+            "Deposit",
+            50.0,
+            "2025-02-01",
+        )
+
+    @pytest.mark.parametrize("method", ["extract_bookings", "extract_deposits"])
+    def test_unreadable_reply_raises_instead_of_empty(self, method):
+        client = GeminiClient(llm=_Reply("Sorry, I cannot do that."))
+        with pytest.raises(LLMResponseError) as info:
+            getattr(client, method)("text")
+        # Only the start of the reply is quoted: it can echo the statement
+        assert len(str(info.value)) < 300
+
+    def test_empty_list_is_a_valid_answer(self):
+        assert GeminiClient(llm=_Reply("[]")).extract_bookings("text") == []

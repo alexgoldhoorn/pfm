@@ -4107,12 +4107,12 @@ function setupResearchPage() {
                 } else {
                     const updated = s.results.filter(x => x.status === 'updated').length;
                     const noData = s.results.filter(x => x.status === 'no_data').length;
-                    const errored = s.results.filter(x => x.status === 'error').length;
+                    const errored = s.results.filter(x => x.status === 'error' || x.status === 'failed').length;
                     let text = s.total === 0
                         ? 'Nothing needed refreshing.'
                         : `Updated ${updated} of ${s.total}` +
                           (noData ? ` · ${noData} had no usable data` : '') +
-                          (errored ? ` · ${errored} failed` : '');
+                          (errored ? ` · ${errored} failed (reasons in Diagnostics → Logs)` : '');
                     if ($('researchCompare').style.display !== 'none') loadCompare();
                     else if (R.symbol) load(R.symbol);
                     else text += ' — load a symbol or open the Compare tab to see the results.';
@@ -4600,7 +4600,7 @@ function setupResearchPage() {
                 recompute();
             });
         } catch (e) {
-            $('rvLlmBody').innerHTML = '<span class="text-danger small">' + (e.message || 'failed') + '</span>';
+            $('rvLlmBody').innerHTML = '<span class="text-danger small">' + esc(e.message || 'failed') + '</span>';
         } finally { btn.disabled = false; btn.innerHTML = orig; }
     });
 

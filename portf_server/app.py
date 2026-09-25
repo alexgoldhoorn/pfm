@@ -54,6 +54,11 @@ from .routers import (
     fund_profiles,
     reports,
 )
+from portf_manager.event_log import (
+    configure_logging,
+    install_db_log_handler,
+    remove_db_log_handler,
+)
 from .dependencies import (
     get_database,
     get_auth_manager,
@@ -61,10 +66,7 @@ from .dependencies import (
     require_api_key_dep,
 )
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
+configure_logging()
 logger = logging.getLogger(__name__)
 
 # Global database, auth manager, and API key manager instances
@@ -90,9 +92,10 @@ async def lifespan(app: FastAPI):
                 "Refusing to start in production with a weak PORTF_SECRET_KEY"
             )
 
-    # Configure logging based on settings
-    log_level = getattr(logging, settings.log_level.upper())
-    logging.getLogger().setLevel(log_level)
+    # Configure logging based on settings ("trace" has no stdlib level)
+    configure_logging(
+        level="DEBUG" if settings.log_level == "trace" else settings.log_level
+    )
 
     # Startup
     logger.info(
@@ -105,6 +108,8 @@ async def lifespan(app: FastAPI):
         logger.info(f"Database initialized successfully ({settings.database_url})")
         # Register the DB handle for the cross-worker FX cache (kv_cache layer).
         portfolios.set_shared_db(database)
+        # Persist warnings/errors and LLM calls to app_logs (Diagnostics > Logs)
+        install_db_log_handler(database)
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")
         raise
@@ -176,6 +181,7 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down Portfolio Management API server...")
+    remove_db_log_handler()
     database = None
     auth_manager = None
     api_key_manager = None
