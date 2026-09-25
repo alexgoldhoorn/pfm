@@ -5,7 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-09-24
+Last updated: 2026-09-25
+
+**Recent (observability):** **Optional metrics, error tracking and tracing, all off by default.** `PORTF_METRICS_ENABLED` exposes Prometheus metrics on `/metrics`: per-endpoint request rate, latency histograms and status codes, plus `pfm_llm_calls_total`/`pfm_llm_call_duration_seconds`/`pfm_llm_call_attempts_total` for every LLM call. Optionally behind `PORTF_METRICS_TOKEN`. `PORTF_SENTRY_DSN` sends unhandled exceptions and ERROR logs to any Sentry-protocol server, with no PII and no request bodies. `PORTF_OTEL_ENDPOINT` exports OpenTelemetry spans per request and OpenInference LLM spans (Phoenix-compatible). Prompt text is attached only with `PORTF_OTEL_CAPTURE_LLM_CONTENT`. New `portf_server/observability.py`, `portf_manager/telemetry.py`, `docs/features/observability.md`; 9 new tests.
 
 **Recent (LLM reliability + logging):** **LLM failures are retried, explained and logged.** Every provider call now retries transient failures (timeouts, connection errors, 429, 5xx, empty replies) up to 3 times with backoff and then raises `LLMError` naming provider, model, attempts and cause. Extraction, chat and research used to hide failures: extraction returned an empty list ("nothing found"), chat stored a canned apology as the answer, and research returned and cached a placeholder HOLD recommendation. They now answer 502 with the reason, and the web client shows it. New logging service: `configure_logging()`, plus an `app_logs` table (db v31) that keeps pfm warnings/errors and every LLM call (attempts, duration, errors) for 30 days, exposed at `GET /api/v1/system/logs` and on a new Diagnostics → Logs tab. Also fixed: chat fetched a live quote for the pronoun "I"; the research Workbench error was rendered unescaped. New tests for retry and logging, Portfolio Health, Compare, chat success/failure, and bookings/deposits extraction; unit 1463 passing, integration+e2e 28, JS 168.
 

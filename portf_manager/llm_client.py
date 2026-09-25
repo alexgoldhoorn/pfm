@@ -43,6 +43,8 @@ from typing import Callable, List, Optional, Protocol, runtime_checkable
 
 import requests
 
+from . import telemetry
+
 logger = logging.getLogger(__name__)
 
 # Default models per provider
@@ -232,32 +234,34 @@ def _call_with_retry(client: object, operation: str, fn: Callable, args, kwargs)
     errors: List[str] = []
     started = time.monotonic()
     attempt = 0
-    while True:
-        attempt += 1
-        try:
-            result = fn(client, *args, **kwargs)
-        except Exception as exc:
-            errors.append(f"{type(exc).__name__}: {exc}")
-            if attempt < max_attempts and is_transient_llm_error(exc):
-                logger.info(
-                    "%s %s attempt %d/%d failed, retrying in %.1fs: %s",
-                    provider,
-                    operation,
-                    attempt,
-                    max_attempts,
-                    delay,
-                    exc,
+    with telemetry.llm_span(provider, model, operation, args) as span:
+        while True:
+            attempt += 1
+            try:
+                result = fn(client, *args, **kwargs)
+            except Exception as exc:
+                errors.append(f"{type(exc).__name__}: {exc}")
+                if attempt < max_attempts and is_transient_llm_error(exc):
+                    logger.info(
+                        "%s %s attempt %d/%d failed, retrying in %.1fs: %s",
+                        provider,
+                        operation,
+                        attempt,
+                        max_attempts,
+                        delay,
+                        exc,
+                    )
+                    time.sleep(delay)
+                    delay *= 2
+                    continue
+                _log_llm_call(
+                    logging.ERROR, provider, model, operation, attempt, started, errors
                 )
-                time.sleep(delay)
-                delay *= 2
-                continue
-            _log_llm_call(
-                logging.ERROR, provider, model, operation, attempt, started, errors
-            )
-            raise LLMError(provider, model, operation, attempt, exc) from exc
-        level = logging.WARNING if attempt > 1 else logging.INFO
-        _log_llm_call(level, provider, model, operation, attempt, started, errors)
-        return result
+                raise LLMError(provider, model, operation, attempt, exc) from exc
+            level = logging.WARNING if attempt > 1 else logging.INFO
+            _log_llm_call(level, provider, model, operation, attempt, started, errors)
+            telemetry.finish_llm_span(span, attempt, result)
+            return result
 
 
 def _log_llm_call(
@@ -275,7 +279,11 @@ def _log_llm_call(
         outcome = "succeeded after retry"
     else:
         outcome = "ok"
-    duration_ms = int((time.monotonic() - started) * 1000)
+    duration_s = time.monotonic() - started
+    duration_ms = int(duration_s * 1000)
+    telemetry.observe_llm_call(
+        provider, model, operation, outcome, attempts, duration_s
+    )
     logger.log(
         level,
         "LLM %s %s %s (%d attempt%s, %d ms)",

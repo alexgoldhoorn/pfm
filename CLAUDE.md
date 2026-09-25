@@ -148,6 +148,7 @@ it.** The column on the right lists only what's easy to break.
 | Action Items | `action-items.md` | Each check is wrapped independently. Net Worth checklist gaps are merged client-side (`computeNetWorthChecklist`), never duplicated server-side. Item ids are deterministic per entity. Only `consolidation_candidate` fund overlaps raise an item. |
 | Price updates, market data | `prices-market.md` | yfinance returns UK prices in GBX — ÷100 when `fast_info.currency == "GBp"`. `_CRYPTO_YF_OVERRIDES` lives only in `price_updater.py`. Read `previous_close` by subscript, never `fast_info.get()` (silently None). Currency self-healing skips crypto. |
 | Web client | `web-client.md` | See the Web Client section below. |
+| Metrics, error tracking, traces | `observability.md` | All off unless configured (`PORTF_METRICS_ENABLED`, `PORTF_SENTRY_DSN`, `PORTF_OTEL_ENDPOINT`). Telemetry must never stop the API: a feature that fails to start is logged and skipped. LLM metrics/spans hook `_call_with_retry`/`_log_llm_call`, so every `_instrument`-wrapped call is covered. Prompt text goes on spans only with `PORTF_OTEL_CAPTURE_LLM_CONTENT`. `/metrics` is `include_in_schema=False` and outside the API-key dependency, so protect it with `PORTF_METRICS_TOKEN`. |
 
 ## Web Client (`web_client/`)
 Vanilla JS + Bootstrap 5.3, no build step. `index.html` loads five files **in this

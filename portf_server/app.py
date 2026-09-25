@@ -22,6 +22,7 @@ from fastapi.responses import JSONResponse
 from portf_manager.auth import AuthManager
 from portf_manager.database_factory import get_database_adapter
 from .auth_middleware import APIKeyManager
+from .observability import setup_observability
 from .settings import get_settings
 
 from .routers import (
@@ -459,6 +460,10 @@ app.include_router(
     prefix="/api/v1/notifications",
     tags=["Notifications"],
 )
+
+
+# Metrics, error tracking and tracing — each off unless configured
+setup_observability(app, settings)
 
 
 # Dependency injection for database, auth manager, and API key manager

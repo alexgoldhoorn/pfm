@@ -10,10 +10,20 @@ swallows the error. Tests that genuinely need the network carry
 """
 
 import logging
+import os
 import sys
 from pathlib import Path
 
 import pytest
+
+# Observability is configured in the developer's .env.local, which pydantic
+# reads from the working directory. Environment variables win over .env files,
+# so blank them here — before anything imports the app — or every test run
+# would report its deliberate errors to the real Bugsink/Phoenix. Spawned
+# integration servers inherit this. test_observability passes its own settings.
+for _var in ("PORTF_SENTRY_DSN", "PORTF_OTEL_ENDPOINT"):
+    os.environ[_var] = ""
+os.environ["PORTF_METRICS_ENABLED"] = "false"
 
 # Make the project root importable when pytest is run from elsewhere
 sys.path.insert(0, str(Path(__file__).parent.parent))
