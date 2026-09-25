@@ -449,14 +449,17 @@ function createPageManager() {
             if (window.loadDashboardNetworthHistory) window.loadDashboardNetworthHistory();
             if (window.loadDashboardBudget) window.loadDashboardBudget();
 
-            setKpi('totalValue', totalValue);
+            // Headline is positions + all idle cash; the subtitle keeps the
+            // positions-only figure, which Invested and Return compare against.
+            // Without cash data the headline falls back to positions only.
+            setKpi('totalValue', haveCashData ? totalValue + totalCashEur : totalValue);
             setKpi('dashTotalCost', totalCost);
             if (haveCashData) setKpi('dashCash', totalCashEur);
             else if (el('dashCash')) el('dashCash').textContent = '—';
             if (el('dashValueSub')) {
                 el('dashValueSub').innerHTML = haveCashData
-                    ? `${Fmt.amt(esc(fmtEurWhole(totalValue + totalCashEur)))} incl. cash`
-                    : '';
+                    ? `${Fmt.amt(esc(fmtEurWhole(totalValue)))} in positions`
+                    : 'positions only (cash unavailable)';
             }
             if (el('dashInvestedBrokers')) {
                 el('dashInvestedBrokers').textContent = portfolioValues && investedBrokerCount > 0
