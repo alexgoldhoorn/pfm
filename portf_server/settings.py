@@ -102,6 +102,35 @@ class ServerSettings(BaseSettings):
         ),
     )
 
+    # Observability — every piece is off unless configured. See
+    # docs/features/observability.md.
+    metrics_enabled: bool = Field(
+        default=False,
+        description="Expose Prometheus metrics on /metrics (PORTF_METRICS_ENABLED)",
+    )
+    metrics_token: Optional[str] = Field(
+        default=None,
+        description="If set, /metrics requires 'Authorization: Bearer <token>'",
+    )
+    sentry_dsn: Optional[str] = Field(
+        default=None,
+        description="Sentry-protocol DSN (Sentry, GlitchTip, Bugsink) for errors",
+    )
+    sentry_traces_sample_rate: float = Field(
+        default=0.0,
+        description="Share of requests Sentry also records as performance traces",
+    )
+    otel_endpoint: Optional[str] = Field(
+        default=None,
+        description=(
+            "OTLP/HTTP traces URL, e.g. http://phoenix:6006/v1/traces; "
+            "enables request and LLM spans"
+        ),
+    )
+    otel_service_name: str = Field(
+        default="pfm", description="service.name reported with every span"
+    )
+
     @property
     def is_development(self) -> bool:
         """Check if running in development environment."""
