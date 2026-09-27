@@ -753,10 +753,30 @@ def test_update_rule_pattern_and_category(tmp_path):
         headers=HEADERS,
     )
     assert r.status_code == 200
-    assert r.json() == {"id": rule_id, "pattern": "MERCAT", "category": "Food"}
+    assert r.json() == {
+        "id": rule_id,
+        "pattern": "MERCAT",
+        "category": "Food",
+        "portfolio_id": None,
+        "amount_sign": None,
+        "min_amount": None,
+        "max_amount": None,
+        "priority": 100,
+    }
 
     listed = client.get("/api/v1/spending/rules", headers=HEADERS).json()
-    assert listed == [{"id": rule_id, "pattern": "MERCAT", "category": "Food"}]
+    assert listed == [
+        {
+            "id": rule_id,
+            "pattern": "MERCAT",
+            "category": "Food",
+            "portfolio_id": None,
+            "amount_sign": None,
+            "min_amount": None,
+            "max_amount": None,
+            "priority": 100,
+        }
+    ]
 
 
 def test_update_rule_pattern_only(tmp_path):
@@ -773,7 +793,16 @@ def test_update_rule_pattern_only(tmp_path):
         headers=HEADERS,
     )
     assert r.status_code == 200
-    assert r.json() == {"id": rule_id, "pattern": "MERCAT", "category": "Groceries"}
+    assert r.json() == {
+        "id": rule_id,
+        "pattern": "MERCAT",
+        "category": "Groceries",
+        "portfolio_id": None,
+        "amount_sign": None,
+        "min_amount": None,
+        "max_amount": None,
+        "priority": 100,
+    }
 
 
 def test_update_rule_empty_body_rejected(tmp_path):
@@ -1873,3 +1902,150 @@ def test_search_composes_with_other_filters(tmp_path):
     ).json()
     assert r["total"] == 1
     assert r["items"][0]["amount"] == 10.0
+
+
+def test_create_rule_with_conditions(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    r = client.post(
+        "/api/v1/spending/rules",
+        json={
+            "pattern": "BIZUM",
+            "category": "Gifts",
+            "portfolio_id": pid,
+            "amount_sign": "negative",
+            "min_amount": 1,
+            "max_amount": 100,
+            "priority": 20,
+        },
+        headers=HEADERS,
+    )
+    assert r.status_code == 201
+    d = r.json()
+    assert (d["portfolio_id"], d["amount_sign"], d["priority"]) == (
+        pid,
+        "negative",
+        20,
+    )
+    assert (d["min_amount"], d["max_amount"]) == (1.0, 100.0)
+
+
+def test_create_rule_rejects_unknown_account(tmp_path):
+    client, _ = _make_client(tmp_path)
+    r = client.post(
+        "/api/v1/spending/rules",
+        json={"pattern": "X", "category": "Gifts", "portfolio_id": 9999},
+        headers=HEADERS,
+    )
+    assert r.status_code == 400
+
+
+def test_create_rule_rejects_min_above_max(tmp_path):
+    client, _ = _make_client(tmp_path)
+    r = client.post(
+        "/api/v1/spending/rules",
+        json={"pattern": "X", "category": "Gifts", "min_amount": 50, "max_amount": 5},
+        headers=HEADERS,
+    )
+    assert r.status_code == 400
+
+
+def test_same_pattern_different_conditions_is_not_duplicate(tmp_path):
+    client, _ = _make_client(tmp_path)
+    base = {"pattern": "BIZUM", "category": "Gifts"}
+    assert (
+        client.post("/api/v1/spending/rules", json=base, headers=HEADERS).status_code
+        == 201
+    )
+    signed = {**base, "amount_sign": "negative"}
+    assert (
+        client.post("/api/v1/spending/rules", json=signed, headers=HEADERS).status_code
+        == 201
+    )
+    assert (
+        client.post("/api/v1/spending/rules", json=signed, headers=HEADERS).status_code
+        == 409
+    )
+
+
+def test_update_rule_null_clears_and_omitted_keeps(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    rid = db.create_spending_rule(
+        "SHOP", "Groceries", portfolio_id=pid, amount_sign="negative"
+    )
+    r = client.put(
+        f"/api/v1/spending/rules/{rid}", json={"portfolio_id": None}, headers=HEADERS
+    )
+    assert r.status_code == 200
+    d = r.json()
+    assert d["portfolio_id"] is None
+    assert d["amount_sign"] == "negative"
+
+
+def test_update_rule_validates_merged_range(tmp_path):
+    client, db = _make_client(tmp_path)
+    rid = db.create_spending_rule("SHOP", "Groceries", max_amount=10.0)
+    r = client.put(
+        f"/api/v1/spending/rules/{rid}", json={"min_amount": 20}, headers=HEADERS
+    )
+    assert r.status_code == 400
+
+
+def test_rescan_uses_sign_conditions(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_rule("BIZUM", "Gifts", amount_sign="negative")
+    db.create_spending_rule("BIZUM", "Other income", amount_sign="positive")
+    spend_id = db.find_spending_category_by_name("Spend")["id"]
+    income_id = db.find_spending_category_by_name("Income")["id"]
+    db.create_spending_category("Gifts", parent_id=spend_id)
+    db.create_spending_category("Other income", parent_id=income_id)
+    out_id = _add(db, pid, "BIZUM ENVIADO: Example Person", amount=-20.0)
+    in_id = _add(db, pid, "BIZUM RECIBIDO: Example Person", amount=20.0)
+    r = client.post("/api/v1/spending/rescan-categories", headers=HEADERS)
+    assert r.json()["recategorized"] == 2
+    assert db.get_spending_transaction(out_id)["category"] == "Gifts"
+    assert db.get_spending_transaction(in_id)["category"] == "Other income"
+
+
+def test_rule_preview_counts_uncategorized_matches(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    keep = _add(db, pid, "123456789012EXAMPLE SHOP MADRID 010012345")
+    other = _add(db, pid, "123456789012EXAMPLE SHOP MADRID 010099999")
+    done = _add(db, pid, "123456789012EXAMPLE SHOP MADRID 010088888")
+    db.update_spending_transaction(done, category="Groceries")
+    _add(db, pid, "UNRELATED")
+    r = client.post(
+        "/api/v1/spending/rules/preview",
+        json={"pattern": "EXAMPLE SHOP MADRID", "exclude_ids": [keep]},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+    d = r.json()
+    assert d["match_count"] == 1
+    assert [row["id"] for row in d["sample"]] == [other]
+
+
+def test_rule_preview_respects_category_sign(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    spend_id = db.find_spending_category_by_name("Spend")["id"]
+    db.create_spending_category("Groceries", parent_id=spend_id)
+    _add(db, pid, "EXAMPLE SHOP", amount=-5.0)
+    _add(db, pid, "EXAMPLE SHOP REFUND", amount=5.0)
+    r = client.post(
+        "/api/v1/spending/rules/preview",
+        json={"pattern": "EXAMPLE SHOP", "category": "Groceries"},
+        headers=HEADERS,
+    )
+    assert r.json()["match_count"] == 1
+
+
+def test_rule_preview_rejects_blank_pattern(tmp_path):
+    client, _ = _make_client(tmp_path)
+    r = client.post(
+        "/api/v1/spending/rules/preview", json={"pattern": "  "}, headers=HEADERS
+    )
+    assert r.status_code == 400

@@ -22,12 +22,14 @@ from fastapi import (
     UploadFile,
     status,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from portf_manager.parsers.generic_bank_csv_parser import parse_generic_bank_csv
 from portf_manager.parsers.aeb43_parser import looks_like_aeb43, parse_aeb43
 from portf_manager.services.transfer_matcher import find_all_transfer_matches
 from portf_manager.services.budget import build_children_index, subtree_names
+from portf_manager.services.merchant import normalize_merchant
+from portf_manager.services.spending_rules import pick_category, rule_matches
 from portf_manager.llm_client import get_llm_client
 
 from ..dependencies import get_database
@@ -63,6 +65,7 @@ class PreviewSpendingRow(BaseModel):
     category: str = "uncategorized"
     is_duplicate: bool = False
     balance: Optional[float] = None
+    merchant: Optional[str] = None
 
 
 class SpendingUploadResponse(BaseModel):
@@ -114,6 +117,11 @@ class SpendingTransactionResponse(BaseModel):
     merchant: Optional[str] = None
 
 
+class RulePreviewResponse(BaseModel):
+    match_count: int
+    sample: List[SpendingTransactionResponse]
+
+
 class SpendingTransactionListResponse(BaseModel):
     items: List[SpendingTransactionResponse]
     total: int
@@ -127,17 +135,43 @@ class CategoryUpdateBody(BaseModel):
 class SpendingRuleBody(BaseModel):
     pattern: str
     category: str
+    portfolio_id: Optional[int] = None
+    amount_sign: Optional[Literal["positive", "negative"]] = None
+    min_amount: Optional[float] = Field(default=None, ge=0)
+    max_amount: Optional[float] = Field(default=None, ge=0)
+    priority: int = Field(default=100, ge=0, le=10000)
 
 
 class SpendingRuleResponse(BaseModel):
     id: int
     pattern: str
     category: str
+    portfolio_id: Optional[int] = None
+    amount_sign: Optional[str] = None
+    min_amount: Optional[float] = None
+    max_amount: Optional[float] = None
+    priority: int = 100
 
 
 class SpendingRuleUpdateBody(BaseModel):
     pattern: Optional[str] = None
     category: Optional[str] = None
+    portfolio_id: Optional[int] = None
+    amount_sign: Optional[Literal["positive", "negative"]] = None
+    min_amount: Optional[float] = Field(default=None, ge=0)
+    max_amount: Optional[float] = Field(default=None, ge=0)
+    priority: Optional[int] = Field(default=None, ge=0, le=10000)
+
+
+class RulePreviewBody(BaseModel):
+    pattern: str
+    category: Optional[str] = None
+    portfolio_id: Optional[int] = None
+    amount_sign: Optional[Literal["positive", "negative"]] = None
+    min_amount: Optional[float] = Field(default=None, ge=0)
+    max_amount: Optional[float] = Field(default=None, ge=0)
+    only_uncategorized: bool = True
+    exclude_ids: List[int] = []
 
 
 class SpendingCategoryBody(BaseModel):
@@ -168,27 +202,31 @@ def _sign_matches_root(root: Optional[str], amount: float) -> bool:
     return (root == "Spend") == (amount < 0)
 
 
-def _apply_rules(description: str, rules: List[dict], amount: float, db) -> str:
-    """First-match-wins, case-insensitive substring match.
+def _apply_rules(
+    description: str,
+    rules: List[dict],
+    amount: float,
+    db,
+    merchant: Optional[str] = None,
+    portfolio_id: Optional[int] = None,
+) -> str:
+    """Category for a row from the rules, or "uncategorized".
 
-    Rules are already ordered by id (oldest = highest priority) by
-    db.list_spending_rules(). A blank pattern is skipped rather than
-    treated as a match-everything wildcard — "" is a substring of every
-    string in Python, so an unguarded empty pattern would silently
-    recategorize an entire backlog to one category. A rule matching a
-    category whose tree root doesn't match the transaction's amount sign
-    is treated as a non-match (falls back to uncategorized) rather than
-    applied incorrectly or raising -- this runs unattended over many rows.
+    Rule order, conditions and the blank-pattern guard live in
+    services.spending_rules. A rule whose category's tree root doesn't match
+    the amount's sign is skipped — this runs unattended over many rows, so it
+    must never apply a wrong-signed category or raise.
     """
-    desc_lower = description.lower()
-    for rule in rules:
-        pattern = rule["pattern"].strip()
-        if pattern and pattern.lower() in desc_lower:
-            category = rule["category"]
-            if _sign_matches_root(db.get_spending_category_root(category), amount):
-                return category
-            return "uncategorized"
-    return "uncategorized"
+    return pick_category(
+        rules,
+        description,
+        merchant,
+        amount,
+        portfolio_id,
+        lambda category, amt: _sign_matches_root(
+            db.get_spending_category_root(category), amt
+        ),
+    )
 
 
 def _resolve_account(
@@ -240,7 +278,15 @@ async def upload_bank_statement(
     dup_count = 0
     rows: List[PreviewSpendingRow] = []
     for r in result.rows:
-        category = _apply_rules(r.description, rules, r.amount, db)
+        merchant = normalize_merchant(r.description)
+        category = _apply_rules(
+            r.description,
+            rules,
+            r.amount,
+            db,
+            merchant=merchant,
+            portfolio_id=portfolio_id,
+        )
         is_dup = (
             db.find_duplicate_spending_transaction(
                 portfolio_id=portfolio_id,
@@ -261,6 +307,7 @@ async def upload_bank_statement(
                 category=category,
                 is_duplicate=is_dup,
                 balance=r.balance,
+                merchant=merchant,
             )
         )
 
@@ -633,11 +680,33 @@ async def rescan_categories(
         uncategorized = [row for row in uncategorized if row["id"] in id_set]
     updated = 0
     for row in uncategorized:
-        category = _apply_rules(row["description"], rules, row["amount"], db)
+        category = _apply_rules(
+            row["description"],
+            rules,
+            row["amount"],
+            db,
+            merchant=row.get("merchant"),
+            portfolio_id=row["portfolio_id"],
+        )
         if category != "uncategorized":
             if db.update_spending_transaction(row["id"], category=category):
                 updated += 1
     return {"recategorized": updated}
+
+
+def _validate_rule_conditions(
+    db,
+    portfolio_id: Optional[int],
+    min_amount: Optional[float],
+    max_amount: Optional[float],
+) -> None:
+    """400 on an unknown account or an inverted amount range."""
+    if portfolio_id is not None and not db.get_portfolio(portfolio_id):
+        raise HTTPException(status_code=400, detail="Unknown account for this rule")
+    if min_amount is not None and max_amount is not None and min_amount > max_amount:
+        raise HTTPException(
+            status_code=400, detail="Minimum amount is above maximum amount"
+        )
 
 
 @router.get("/rules", response_model=List[SpendingRuleResponse])
@@ -659,13 +728,70 @@ async def create_rule(
         raise HTTPException(status_code=400, detail="Pattern cannot be empty")
     if not category:
         raise HTTPException(status_code=400, detail="Category cannot be empty")
-    if db.find_duplicate_spending_rule(pattern, category):
+    _validate_rule_conditions(db, body.portfolio_id, body.min_amount, body.max_amount)
+    conditions = dict(
+        portfolio_id=body.portfolio_id,
+        amount_sign=body.amount_sign,
+        min_amount=body.min_amount,
+        max_amount=body.max_amount,
+    )
+    if db.find_duplicate_spending_rule(pattern, category, **conditions):
         raise HTTPException(
             status_code=409,
-            detail=f"A rule with pattern '{pattern}' and category '{category}' already exists",
+            detail=f"A rule with pattern '{pattern}' and category '{category}' and the same conditions already exists",
         )
-    rule_id = db.create_spending_rule(pattern=pattern, category=category)
-    return SpendingRuleResponse(id=rule_id, pattern=pattern, category=category)
+    rule_id = db.create_spending_rule(
+        pattern=pattern, category=category, priority=body.priority, **conditions
+    )
+    return SpendingRuleResponse(**db.get_spending_rule(rule_id))
+
+
+@router.post("/rules/preview", response_model=RulePreviewResponse)
+async def preview_rule(
+    body: RulePreviewBody,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Rows a rule would match, without saving it.
+
+    Counts rows this rule matches on its own; a higher-priority rule could
+    still claim some of them first on a rescan. With ``category`` given, rows
+    whose sign that category can't hold are left out, as a rescan would.
+    Transfers are never counted.
+    """
+    pattern = body.pattern.strip()
+    if not pattern:
+        raise HTTPException(status_code=400, detail="Pattern cannot be empty")
+    rule = {
+        "pattern": pattern,
+        "portfolio_id": body.portfolio_id,
+        "amount_sign": body.amount_sign,
+        "min_amount": body.min_amount,
+        "max_amount": body.max_amount,
+    }
+    candidates = db.list_spending_transactions(
+        category="uncategorized" if body.only_uncategorized else None,
+        portfolio_id=body.portfolio_id,
+        is_transfer=False,
+    )
+    excluded = set(body.exclude_ids)
+    root = db.get_spending_category_root(body.category) if body.category else None
+    matches = [
+        r
+        for r in candidates
+        if r["id"] not in excluded
+        and rule_matches(
+            rule, r["description"], r.get("merchant"), r["amount"], r["portfolio_id"]
+        )
+        and _sign_matches_root(root, r["amount"])
+    ]
+    return RulePreviewResponse(
+        match_count=len(matches),
+        sample=[
+            SpendingTransactionResponse(**{**r, "is_transfer": bool(r["is_transfer"])})
+            for r in matches[:10]
+        ],
+    )
 
 
 @router.put("/rules/{rule_id}", response_model=SpendingRuleResponse)
@@ -675,8 +801,13 @@ async def update_rule(
     db=Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
-    """Edit an existing spending category rule's pattern and/or category."""
-    update_kwargs = {}
+    """Edit a rule. Pattern/category/priority change when given; a condition
+    field present in the body is set, and present-as-null clears it."""
+    existing = db.get_spending_rule(rule_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    sent = body.model_fields_set
+    update_kwargs: dict = {}
     if body.pattern is not None:
         pattern = body.pattern.strip()
         if not pattern:
@@ -687,14 +818,19 @@ async def update_rule(
         if not category:
             raise HTTPException(status_code=400, detail="Category cannot be empty")
         update_kwargs["category"] = category
+    if body.priority is not None:
+        update_kwargs["priority"] = body.priority
+    for field in ("portfolio_id", "amount_sign", "min_amount", "max_amount"):
+        if field in sent:
+            update_kwargs[field] = getattr(body, field)
     if not update_kwargs:
-        raise HTTPException(
-            status_code=400, detail="Provide at least one of pattern or category"
-        )
-    if not db.update_spending_rule(rule_id, **update_kwargs):
-        raise HTTPException(status_code=404, detail="Rule not found")
-    updated = db.get_spending_rule(rule_id)
-    return SpendingRuleResponse(**updated)
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    merged = {**existing, **update_kwargs}
+    _validate_rule_conditions(
+        db, merged["portfolio_id"], merged["min_amount"], merged["max_amount"]
+    )
+    db.update_spending_rule(rule_id, **update_kwargs)
+    return SpendingRuleResponse(**db.get_spending_rule(rule_id))
 
 
 @router.delete("/rules/{rule_id}", response_model=dict)
