@@ -50,7 +50,7 @@ class TestDatabase:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             result = cursor.fetchone()
-            assert result[0] == 31  # Current schema version
+            assert result[0] == 32  # Current schema version
 
     def test_v18_assets_have_ticker_column(self):
         """v18 adds the nullable ticker alias column to assets."""
@@ -1048,7 +1048,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 31
+            assert version == 32
 
             # Assert columns exist
             for table in ["entities", "portfolios", "transactions"]:
@@ -1078,7 +1078,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 31
+            assert version == 32
 
             # Check all tables exist
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -1149,7 +1149,7 @@ class TestDatabaseMigrations:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             )
             version = cursor.fetchone()[0]
-            assert version == 31
+            assert version == 32
 
             # Check new tables exist
             cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -1615,7 +1615,7 @@ class TestSpendingCategories:
                         "SELECT name FROM sqlite_master WHERE type = 'table'"
                     )
                 }
-            assert version == 31
+            assert version == 32
             assert {"budgets", "budget_lines"} <= tables
 
             # Pre-existing spending data is untouched by the upgrade.
@@ -1919,7 +1919,12 @@ class TestFundProfilesV30:
         # _get_database_version/_set_database_version actually read/write,
         # see database.py) so constructing a real Database() against this
         # file triggers _run_migrations and exercises the real upgrade
-        # path, the same pattern _build_v28_database uses above.
+        # path, the same pattern _build_v28_database uses above. A genuine
+        # v29 database always has spending_transactions/spending_rules
+        # (added by _migrate_to_v25), which v32's migration now touches --
+        # so those are hand-built here too, same shapes as
+        # _build_v28_database, rather than leaving this fixture at
+        # database_version-table-only.
         db_path = tmp_path / "v29.db"
         conn = sqlite3.connect(db_path)
         conn.execute(
@@ -1931,6 +1936,32 @@ class TestFundProfilesV30:
             """
         )
         conn.execute("INSERT INTO database_version (version) VALUES (29)")
+        conn.execute(
+            """
+            CREATE TABLE portfolios (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, account_type TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE spending_transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, portfolio_id INTEGER,
+                date TEXT, description TEXT, amount REAL, currency TEXT DEFAULT 'EUR',
+                category TEXT DEFAULT 'uncategorized', is_transfer INTEGER DEFAULT 0,
+                transfer_link_type TEXT, transfer_link_id INTEGER, source TEXT, balance REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE spending_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, pattern TEXT, category TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
         conn.commit()
         conn.close()
 
@@ -1946,4 +1977,4 @@ class TestFundProfilesV30:
                 "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
             ).fetchone()[0]
         assert row is not None
-        assert version == 31
+        assert version == 32

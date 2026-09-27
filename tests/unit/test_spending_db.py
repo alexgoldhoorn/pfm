@@ -265,3 +265,112 @@ def test_get_latest_bank_balance_scoped_to_portfolio(db):
     pid_b = db.create_portfolio("Bank B", account_type="bank")
     db.create_spending_transaction(pid_a, "2026-01-05", "A", -10.0, balance=100.0)
     assert db.get_latest_bank_balance(pid_b) is None
+
+
+def _bank(db):
+    return db.create_portfolio("Example Bank", account_type="bank")
+
+
+def test_merchant_is_stored_on_create(db):
+    pid = _bank(db)
+    sid = db.create_spending_transaction(
+        portfolio_id=pid,
+        date="2026-01-05",
+        description="123456789012EXAMPLE SHOP MADRID 010012345",
+        amount=-10.0,
+    )
+    assert db.get_spending_transaction(sid)["merchant"] == "EXAMPLE SHOP MADRID"
+
+
+def test_explicit_merchant_overrides_normalisation(db):
+    pid = _bank(db)
+    sid = db.create_spending_transaction(
+        portfolio_id=pid,
+        date="2026-01-05",
+        description="RAW TEXT",
+        amount=-10.0,
+        merchant="Custom Name",
+    )
+    assert db.get_spending_transaction(sid)["merchant"] == "Custom Name"
+
+
+def test_migration_v32_backfills_merchant_and_is_rerunnable(db):
+    pid = _bank(db)
+    sid = db.create_spending_transaction(
+        portfolio_id=pid,
+        date="2026-01-05",
+        description="123456789012EXAMPLE SHOP MADRID 010012345",
+        amount=-10.0,
+    )
+    with db.get_connection() as conn:
+        conn.execute("UPDATE spending_transactions SET merchant = NULL")
+        conn.commit()
+        db._migrate_to_v32(conn)
+        db._migrate_to_v32(conn)
+    assert db.get_spending_transaction(sid)["merchant"] == "EXAMPLE SHOP MADRID"
+
+
+def test_rule_conditions_round_trip(db):
+    pid = _bank(db)
+    rid = db.create_spending_rule(
+        "BIZUM",
+        "Gifts",
+        portfolio_id=pid,
+        amount_sign="negative",
+        min_amount=5.0,
+        max_amount=50.0,
+        priority=10,
+    )
+    rule = db.get_spending_rule(rid)
+    assert rule["portfolio_id"] == pid
+    assert rule["amount_sign"] == "negative"
+    assert rule["min_amount"] == 5.0
+    assert rule["max_amount"] == 50.0
+    assert rule["priority"] == 10
+
+
+def test_rule_priority_defaults_to_100(db):
+    rid = db.create_spending_rule("SHOP", "Groceries")
+    assert db.get_spending_rule(rid)["priority"] == 100
+
+
+def test_rules_listed_by_priority_then_id(db):
+    first = db.create_spending_rule("A", "Groceries")
+    second = db.create_spending_rule("B", "Groceries", priority=5)
+    third = db.create_spending_rule("C", "Groceries")
+    assert [r["id"] for r in db.list_spending_rules()] == [second, first, third]
+
+
+def test_update_rule_none_clears_condition(db):
+    pid = _bank(db)
+    rid = db.create_spending_rule("SHOP", "Groceries", portfolio_id=pid)
+    db.update_spending_rule(rid, portfolio_id=None)
+    assert db.get_spending_rule(rid)["portfolio_id"] is None
+
+
+def test_duplicate_rule_considers_conditions(db):
+    pid = _bank(db)
+    db.create_spending_rule("BIZUM", "Gifts", amount_sign="negative")
+    assert db.find_duplicate_spending_rule("bizum", "Gifts", amount_sign="negative")
+    assert db.find_duplicate_spending_rule("BIZUM", "Gifts") is None
+    assert (
+        db.find_duplicate_spending_rule(
+            "BIZUM", "Gifts", portfolio_id=pid, amount_sign="negative"
+        )
+        is None
+    )
+
+
+def test_latest_bank_balance_before(db):
+    pid = _bank(db)
+    db.create_spending_transaction(
+        portfolio_id=pid, date="2026-01-01", description="A", amount=-1, balance=99.0
+    )
+    db.create_spending_transaction(
+        portfolio_id=pid, date="2026-01-03", description="B", amount=-1, balance=98.0
+    )
+    db.create_spending_transaction(
+        portfolio_id=pid, date="2026-01-05", description="C", amount=-1, balance=97.0
+    )
+    assert db.get_latest_bank_balance_before(pid, "2026-01-05")["balance"] == 98.0
+    assert db.get_latest_bank_balance_before(pid, "2026-01-01") is None

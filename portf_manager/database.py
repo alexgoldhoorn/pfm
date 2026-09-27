@@ -13,8 +13,10 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any, Set
 from pathlib import Path
 
+from portf_manager.services.merchant import normalize_merchant
+
 # Database version for migration tracking
-DATABASE_VERSION = 31
+DATABASE_VERSION = 32
 
 
 # black
@@ -614,22 +616,30 @@ class Database:
                 transfer_link_id   INTEGER,
                 source             TEXT,
                 balance            REAL,
+                merchant           TEXT,
                 created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (portfolio_id) REFERENCES portfolios (id) ON DELETE CASCADE
             )
             """
         )
 
-        # Description → category rules for spending_transactions. Global (not
-        # per-account); case-insensitive substring match, first match (by id,
-        # i.e. oldest = highest priority) wins. See _migrate_to_v25.
+        # Description → category rules for spending_transactions. The pattern is
+        # a case-insensitive substring of the description or the merchant;
+        # optional conditions narrow it to one account, one sign and an
+        # absolute-amount range. Lowest priority first, then oldest id. See
+        # _migrate_to_v25 and _migrate_to_v32.
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS spending_rules (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                pattern     TEXT NOT NULL,
-                category    TEXT NOT NULL,
-                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                pattern      TEXT NOT NULL,
+                category     TEXT NOT NULL,
+                portfolio_id INTEGER,
+                amount_sign  TEXT,
+                min_amount   REAL,
+                max_amount   REAL,
+                priority     INTEGER NOT NULL DEFAULT 100,
+                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
@@ -821,6 +831,8 @@ class Database:
             self._migrate_to_v30(conn)
         if current_version < 31:
             self._migrate_to_v31(conn)
+        if current_version < 32:
+            self._migrate_to_v32(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -1781,6 +1793,40 @@ class Database:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_app_logs_created ON app_logs(created_at)"
         )
+        conn.commit()
+
+    def _migrate_to_v32(self, conn: sqlite3.Connection) -> None:
+        """Migrate from v31 to v32 — merchant names and rule conditions.
+
+        Adds spending_transactions.merchant (backfilled from the description
+        with normalize_merchant) and the optional rule conditions
+        portfolio_id/amount_sign/min_amount/max_amount plus priority on
+        spending_rules. Column adds are guarded so a rerun is harmless.
+        """
+        tx_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(spending_transactions)")
+        }
+        if "merchant" not in tx_cols:
+            conn.execute("ALTER TABLE spending_transactions ADD COLUMN merchant TEXT")
+        missing = conn.execute(
+            "SELECT id, description FROM spending_transactions WHERE merchant IS NULL"
+        ).fetchall()
+        conn.executemany(
+            "UPDATE spending_transactions SET merchant = ? WHERE id = ?",
+            [(normalize_merchant(row[1]), row[0]) for row in missing],
+        )
+        rule_cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(spending_rules)")
+        }
+        for name, ddl in (
+            ("portfolio_id", "INTEGER"),
+            ("amount_sign", "TEXT"),
+            ("min_amount", "REAL"),
+            ("max_amount", "REAL"),
+            ("priority", "INTEGER NOT NULL DEFAULT 100"),
+        ):
+            if name not in rule_cols:
+                conn.execute(f"ALTER TABLE spending_rules ADD COLUMN {name} {ddl}")
         conn.commit()
 
     # ── Application log ──────────────────────────────────────────────────────
@@ -3280,6 +3326,7 @@ class Database:
         category: str = "uncategorized",
         source: str = None,
         balance: float = None,
+        merchant: str = None,
     ) -> int:
         """Create a spending transaction.
 
@@ -3292,14 +3339,16 @@ class Database:
                 Used by Net Worth to derive a bank account's current balance
                 from the most recent row that has one — see
                 `get_latest_bank_balance`.
+            merchant: Cleaned merchant name; derived from description with
+                normalize_merchant when omitted.
         """
         with self.get_connection() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO spending_transactions
                     (portfolio_id, date, description, amount, currency,
-                     category, source, balance)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                     category, source, balance, merchant)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     portfolio_id,
@@ -3310,6 +3359,11 @@ class Database:
                     category,
                     source,
                     balance,
+                    (
+                        merchant
+                        if merchant is not None
+                        else normalize_merchant(description)
+                    ),
                 ),
             )
             conn.commit()
@@ -3537,6 +3591,27 @@ class Database:
             row = cursor.fetchone()
             return dict(row) if row else None
 
+    def get_latest_bank_balance_before(
+        self, portfolio_id: int, before_date: str
+    ) -> Optional[Dict]:
+        """Return the last balance-bearing row strictly before ``before_date``.
+
+        The baseline for checking that a new statement continues where the
+        previous import left off. Same tie-break as get_latest_bank_balance.
+        """
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                """
+                SELECT date, balance, currency FROM spending_transactions
+                WHERE portfolio_id = ? AND balance IS NOT NULL AND date < ?
+                ORDER BY date DESC, id DESC
+                LIMIT 1
+                """,
+                (portfolio_id, before_date),
+            )
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
     def reset_transfer_counterpart(self, spending_id: int) -> bool:
         """Un-transfer the other leg of a spending<->spending transfer pair.
 
@@ -3629,12 +3704,46 @@ class Database:
 
     # CRUD Operations for Spending Rules (description → category matching)
 
-    def create_spending_rule(self, pattern: str, category: str) -> int:
-        """Create a spending category rule (case-insensitive substring match on description)."""
+    _RULE_CONDITION_FIELDS = ("portfolio_id", "amount_sign", "min_amount", "max_amount")
+
+    def create_spending_rule(
+        self,
+        pattern: str,
+        category: str,
+        portfolio_id: Optional[int] = None,
+        amount_sign: Optional[str] = None,
+        min_amount: Optional[float] = None,
+        max_amount: Optional[float] = None,
+        priority: int = 100,
+    ) -> int:
+        """Create a spending category rule.
+
+        Args:
+            pattern: Case-insensitive substring of the description or merchant.
+            category: Category assigned on a match.
+            portfolio_id: Only match rows of this bank account.
+            amount_sign: ``"negative"`` (money out) or ``"positive"`` (money in).
+            min_amount: Minimum absolute amount, inclusive.
+            max_amount: Maximum absolute amount, inclusive.
+            priority: Lower runs first; ties fall back to the oldest rule.
+        """
         with self.get_connection() as conn:
             cursor = conn.execute(
-                "INSERT INTO spending_rules (pattern, category) VALUES (?, ?)",
-                (pattern, category),
+                """
+                INSERT INTO spending_rules
+                    (pattern, category, portfolio_id, amount_sign,
+                     min_amount, max_amount, priority)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    pattern,
+                    category,
+                    portfolio_id,
+                    amount_sign,
+                    min_amount,
+                    max_amount,
+                    priority,
+                ),
             )
             conn.commit()
             return cursor.lastrowid
@@ -3855,21 +3964,34 @@ class Database:
             }
 
     def find_duplicate_spending_rule(
-        self, pattern: str, category: str
+        self,
+        pattern: str,
+        category: str,
+        portfolio_id: Optional[int] = None,
+        amount_sign: Optional[str] = None,
+        min_amount: Optional[float] = None,
+        max_amount: Optional[float] = None,
     ) -> Optional[Dict]:
-        """Find an existing rule with the same pattern (case-insensitive) and category."""
+        """Find a rule with the same pattern (case-insensitive), category and
+        conditions. ``IS`` compares NULLs as equal, so an unconditioned rule
+        only duplicates another unconditioned one."""
         with self.get_connection() as conn:
             cursor = conn.execute(
-                "SELECT * FROM spending_rules WHERE LOWER(pattern) = LOWER(?) AND category = ?",
-                (pattern, category),
+                """
+                SELECT * FROM spending_rules
+                WHERE LOWER(pattern) = LOWER(?) AND category = ?
+                  AND portfolio_id IS ? AND amount_sign IS ?
+                  AND min_amount IS ? AND max_amount IS ?
+                """,
+                (pattern, category, portfolio_id, amount_sign, min_amount, max_amount),
             )
             row = cursor.fetchone()
             return dict(row) if row else None
 
     def list_spending_rules(self) -> List[Dict]:
-        """List all spending rules, oldest (highest priority) first."""
+        """List all spending rules in evaluation order: priority, then oldest."""
         with self.get_connection() as conn:
-            cursor = conn.execute("SELECT * FROM spending_rules ORDER BY id")
+            cursor = conn.execute("SELECT * FROM spending_rules ORDER BY priority, id")
             return [dict(row) for row in cursor.fetchall()]
 
     def get_spending_rule(self, rule_id: int) -> Optional[Dict]:
@@ -3882,8 +4004,8 @@ class Database:
             return dict(row) if row else None
 
     def update_spending_rule(self, rule_id: int, **kwargs) -> bool:
-        """Update a spending rule's pattern and/or category."""
-        valid_fields = {"pattern", "category"}
+        """Update a spending rule. A ``None`` condition value clears it."""
+        valid_fields = {"pattern", "category", "priority", *self._RULE_CONDITION_FIELDS}
         update_fields = {k: v for k, v in kwargs.items() if k in valid_fields}
         if not update_fields:
             return False
