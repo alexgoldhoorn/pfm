@@ -65,3 +65,17 @@ test("spRulePayloadFromForm converts blanks to null and numbers to numbers", () 
         portfolio_id: 3, amount_sign: "negative", min_amount: 1.5, max_amount: 20,
     });
 });
+
+test("spDeletedAccountOptionHtml labels a deleted account like ruleConditionSummary does", () => {
+    const { spDeletedAccountOptionHtml } = loadAppIntoContext();
+    assert.equal(spDeletedAccountOptionHtml(9), '<option value="9">Account #9 (deleted)</option>');
+});
+
+test("spDeletedAccountOptionHtml escapes its id", () => {
+    const { spDeletedAccountOptionHtml } = loadAppIntoContext();
+    // The id always comes from a rule's own portfolio_id/a <select> value, never
+    // free text, but the template still runs it through esc() like every other
+    // dynamic string reaching innerHTML — pin that rather than trust the source.
+    const html = spDeletedAccountOptionHtml('"><script>1</script>');
+    assert.ok(!html.includes("<script>"));
+});

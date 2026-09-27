@@ -5149,6 +5149,17 @@ function ruleConditionSummary(rule, accountNames) {
 }
 window.ruleConditionSummary = ruleConditionSummary;
 
+// Pure: the <option> to inject for a rule's account condition when that
+// portfolio isn't in the Only-for-account select (deleted) — same fallback
+// label as ruleConditionSummary, so editing the rule and saving without
+// touching that field keeps the id instead of the select silently reverting
+// to "" (which the full-payload PUT would send as amount_sign-style
+// null-clears-the-condition, dropping the restriction unnoticed).
+function spDeletedAccountOptionHtml(portfolioId) {
+    return `<option value="${escapeForAttr(portfolioId)}">${esc(`Account #${portfolioId} (deleted)`)}</option>`;
+}
+window.spDeletedAccountOptionHtml = spDeletedAccountOptionHtml;
+
 // Pure: raw Rules-form values → the API payload (blank → null, text → number).
 function spRulePayloadFromForm(v) {
     const num = s => (s === '' || s == null) ? null : Number(s);
@@ -5163,6 +5174,33 @@ function spRulePayloadFromForm(v) {
     };
 }
 window.spRulePayloadFromForm = spRulePayloadFromForm;
+
+// Rebuilds the Only-for-account <option>s from the current bank accounts
+// (window._spAccountNames) — the one place that clears away any synthetic
+// "(deleted)" option _ensureRuleAccountSelection added below, so neither a
+// data refresh nor cancelling out of an edit leaves it behind once the form
+// no longer needs it.
+function _rebuildRuleAccountOptions(select) {
+    if (!select) return;
+    const names = window._spAccountNames || {};
+    select.innerHTML = '<option value="">Any account</option>'
+        + Object.entries(names).map(([id, name]) => `<option value="${id}">${esc(name)}</option>`).join('');
+}
+
+// Sets `select`'s value to `id` (or '' when nullish), adding a synthetic
+// spDeletedAccountOptionHtml option first if `id` has no matching <option> —
+// otherwise assigning an unknown value resets a <select> to "" silently.
+// Covers both loading a rule into the form (editSpendingRule) and a
+// _refreshSpendingData rebuild while that rule is still mid-edit.
+function _ensureRuleAccountSelection(select, id) {
+    if (!select) return;
+    const value = (id == null || id === '') ? '' : String(id);
+    select.value = value;
+    if (value && select.value !== value) {
+        select.insertAdjacentHTML('beforeend', spDeletedAccountOptionHtml(value));
+        select.value = value;
+    }
+}
 
 function _readSpRuleForm() {
     const val = id => document.getElementById(id)?.value ?? '';
@@ -5187,6 +5225,9 @@ function _resetSpRuleForm() {
     document.getElementById('spRuleCancelEdit')?.classList.add('d-none');
     const preview = document.getElementById('spRulePreview');
     if (preview) preview.textContent = '';
+    // form.reset() restores values, not options — drop any synthetic
+    // "(deleted)" option _ensureRuleAccountSelection added while editing.
+    _rebuildRuleAccountOptions(document.getElementById('spRuleAccount'));
 }
 
 // Cap on unique descriptions sent to the LLM per "Suggest categories (AI)"
@@ -5448,9 +5489,8 @@ async function _refreshSpendingData() {
         const ruleAccountSel = document.getElementById('spRuleAccount');
         if (ruleAccountSel) {
             const keep = ruleAccountSel.value;
-            ruleAccountSel.innerHTML = '<option value="">Any account</option>'
-                + bankAccounts.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
-            ruleAccountSel.value = keep;
+            _rebuildRuleAccountOptions(ruleAccountSel);
+            _ensureRuleAccountSelection(ruleAccountSel, keep);
         }
         window._spBreakdownPath = ['Spend'];
         await _loadSpBreakdownLevel();
@@ -6620,7 +6660,7 @@ window.editSpendingRule = function (id) {
     set('spRulePattern', rule.pattern);
     set('spRuleCategory', rule.category);
     set('spRulePriority', rule.priority ?? 100);
-    set('spRuleAccount', rule.portfolio_id ?? '');
+    _ensureRuleAccountSelection(document.getElementById('spRuleAccount'), rule.portfolio_id);
     set('spRuleSign', rule.amount_sign ?? '');
     set('spRuleMin', rule.min_amount ?? '');
     set('spRuleMax', rule.max_amount ?? '');
