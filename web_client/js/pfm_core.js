@@ -2302,11 +2302,11 @@ function createAPIClient() {
             }
             return response.json();
         },
-        async createSpendingRule(pattern, category) {
+        async createSpendingRule(pattern, category, conditions = {}) {
             const response = await fetch(this.baseURL + '/api/v1/spending/rules', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
-                body: JSON.stringify({ pattern, category })
+                body: JSON.stringify({ pattern, category, ...conditions })
             });
             if (!response.ok) {
                 let detail = 'Failed to create rule';
@@ -2314,6 +2314,21 @@ function createAPIClient() {
                     const body = await response.json();
                     detail = body.detail || detail;
                 } catch (e) { /* response wasn't JSON, use the generic message */ }
+                throw new Error(detail);
+            }
+            return response.json();
+        },
+        // Rows a not-yet-saved rule would match (count + up to 10 examples).
+        async previewSpendingRule(payload) {
+            const response = await fetch(this.baseURL + '/api/v1/spending/rules/preview', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(payload)
+            });
+            if (!response.ok) {
+                let detail = 'Failed to preview rule';
+                try { const body = await response.json(); detail = body.detail || detail; }
+                catch (e) { /* response wasn't JSON, use the generic message */ }
                 throw new Error(detail);
             }
             return response.json();

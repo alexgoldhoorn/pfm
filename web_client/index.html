@@ -2948,24 +2948,50 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                 <div class="card-header fw-semibold">Category rules</div>
                                 <div class="table-responsive">
                                     <table class="table table-sm mb-0">
-                                        <thead><tr><th class="ps-3" data-key="pattern">Pattern</th><th data-key="category">Category</th><th class="pe-3"></th></tr></thead>
-                                        <tbody id="spRulesBody"><tr><td colspan="3" class="text-center text-muted py-2">No rules yet.</td></tr></tbody>
+                                        <thead><tr><th class="ps-3" data-key="pattern">Pattern</th><th data-key="category">Category</th><th class="d-none d-md-table-cell">Conditions</th><th data-key="priority" class="text-end">Priority</th><th class="pe-3"></th></tr></thead>
+                                        <tbody id="spRulesBody"><tr><td colspan="5" class="text-center text-muted py-2">No rules yet.</td></tr></tbody>
                                     </table>
                                 </div>
                                 <div class="card-body border-top">
                                     <form id="spRuleAddForm" class="row g-2 align-items-end">
-                                        <div class="col-6 col-sm-5">
-                                            <label class="form-label small mb-1">Pattern (matches description)</label>
+                                        <div class="col-12 col-sm-4">
+                                            <label class="form-label small mb-1" for="spRulePattern">Pattern (in description or merchant)</label>
                                             <input class="form-control form-control-sm" id="spRulePattern" placeholder="e.g. MERCADONA" required>
                                         </div>
-                                        <div class="col-6 col-sm-5">
-                                            <label class="form-label small mb-1">Category</label>
+                                        <div class="col-12 col-sm-4">
+                                            <label class="form-label small mb-1" for="spRuleCategory">Category</label>
                                             <input class="form-control form-control-sm" list="spCategoryList" id="spRuleCategory" placeholder="e.g. Groceries" required>
                                         </div>
-                                        <div class="col-12 col-sm-2">
-                                            <button type="submit" class="btn btn-sm btn-primary w-100"><i class="bi bi-plus-lg me-1"></i>Add</button>
+                                        <div class="col-6 col-sm-2">
+                                            <label class="form-label small mb-1" for="spRulePriority" title="Lower numbers are tried first">Priority</label>
+                                            <input type="number" min="0" max="10000" step="1" class="form-control form-control-sm" id="spRulePriority" value="100">
+                                        </div>
+                                        <div class="col-6 col-sm-2 d-flex gap-1">
+                                            <button type="submit" class="btn btn-sm btn-primary flex-grow-1" id="spRuleSubmitBtn"><i class="bi bi-plus-lg me-1"></i>Add</button>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="spRuleCancelEdit" title="Cancel editing"><i class="bi bi-x-lg"></i></button>
+                                        </div>
+                                        <div class="col-12 col-sm-4">
+                                            <label class="form-label small mb-1" for="spRuleAccount">Only for account</label>
+                                            <select class="form-select form-select-sm" id="spRuleAccount"><option value="">Any account</option></select>
+                                        </div>
+                                        <div class="col-12 col-sm-4">
+                                            <label class="form-label small mb-1" for="spRuleSign">Direction</label>
+                                            <select class="form-select form-select-sm" id="spRuleSign">
+                                                <option value="">Money in or out</option>
+                                                <option value="negative">Money out only</option>
+                                                <option value="positive">Money in only</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-6 col-sm-2">
+                                            <label class="form-label small mb-1" for="spRuleMin">Min amount</label>
+                                            <input type="number" min="0" step="0.01" class="form-control form-control-sm" id="spRuleMin">
+                                        </div>
+                                        <div class="col-6 col-sm-2">
+                                            <label class="form-label small mb-1" for="spRuleMax">Max amount</label>
+                                            <input type="number" min="0" step="0.01" class="form-control form-control-sm" id="spRuleMax">
                                         </div>
                                     </form>
+                                    <div id="spRulePreview" class="small text-muted mt-2"></div>
                                     <div id="spRuleStatus" class="small text-muted mt-2"></div>
                                 </div>
                             </div>
