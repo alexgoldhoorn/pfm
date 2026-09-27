@@ -1811,3 +1811,65 @@ def test_save_returns_import_summary(tmp_path):
     assert d["uncategorized"] == 3
     assert d["latest_balance"] == 1980.0
     assert d["latest_balance_date"] == "2026-01-09"
+
+
+def _add(db, pid, description, amount=-10.0, day="2026-01-05"):
+    return db.create_spending_transaction(
+        portfolio_id=pid, date=day, description=description, amount=amount
+    )
+
+
+def test_search_matches_description_case_insensitively(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    _add(db, pid, "EXAMPLE SHOP")
+    _add(db, pid, "OTHER STORE")
+    r = client.get("/api/v1/spending/?q=example sh", headers=HEADERS)
+    assert r.status_code == 200
+    d = r.json()
+    assert d["total"] == 1
+    assert d["items"][0]["description"] == "EXAMPLE SHOP"
+    assert d["items"][0]["merchant"] == "EXAMPLE SHOP"
+
+
+def test_search_matches_merchant_only(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    _add(db, pid, "123456789012EXAMPLE   SHOP \\TIANA\\ES26010112")
+    r = client.get("/api/v1/spending/?q=example shop", headers=HEADERS)
+    assert r.json()["total"] == 1
+
+
+def test_search_treats_wildcards_literally(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    _add(db, pid, "50% OFF STORE")
+    _add(db, pid, "PLAIN STORE")
+    _add(db, pid, "A_B SHOP")
+    _add(db, pid, "AXB SHOP")
+    _add(db, pid, "BACK\\SLASH")
+    assert client.get("/api/v1/spending/?q=%25", headers=HEADERS).json()["total"] == 1
+    assert client.get("/api/v1/spending/?q=_", headers=HEADERS).json()["total"] == 1
+    assert client.get("/api/v1/spending/?q=K%5CS", headers=HEADERS).json()["total"] == 1
+
+
+def test_blank_search_is_unfiltered(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    _add(db, pid, "EXAMPLE SHOP")
+    _add(db, pid, "OTHER STORE")
+    assert (
+        client.get("/api/v1/spending/?q=%20%20", headers=HEADERS).json()["total"] == 2
+    )
+
+
+def test_search_composes_with_other_filters(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    _add(db, pid, "EXAMPLE SHOP", amount=-10.0)
+    _add(db, pid, "EXAMPLE SHOP REFUND", amount=10.0)
+    r = client.get(
+        "/api/v1/spending/?q=example&amount_sign=positive", headers=HEADERS
+    ).json()
+    assert r["total"] == 1
+    assert r["items"][0]["amount"] == 10.0

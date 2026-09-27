@@ -111,6 +111,7 @@ class SpendingTransactionResponse(BaseModel):
     transfer_link_id: Optional[int] = None
     source: Optional[str] = None
     balance: Optional[float] = None
+    merchant: Optional[str] = None
 
 
 class SpendingTransactionListResponse(BaseModel):
@@ -441,6 +442,7 @@ async def list_spending(
     is_transfer: Optional[bool] = None,
     amount_sign: Optional[str] = None,
     min_abs_amount: Optional[float] = Query(default=None, ge=0),
+    q: Optional[str] = Query(default=None, max_length=200),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     sort_by: str = "date",
@@ -456,7 +458,8 @@ async def list_spending(
     filters to negative-only ("negative", i.e. expenses) or positive-only
     ("positive", i.e. income); `min_abs_amount` additionally requires
     `ABS(amount) >= min_abs_amount`, so it composes naturally with either
-    sign or neither.
+    sign or neither. `q` matches description or merchant, case-insensitively
+    and literally.
     """
     if sort_by not in _SPENDING_SORT_BY_VALUES:
         raise HTTPException(
@@ -482,6 +485,7 @@ async def list_spending(
         is_transfer=is_transfer,
         amount_sign=amount_sign,
         min_abs_amount=min_abs_amount,
+        q=(q or "").strip() or None,
     )
     rows = db.list_spending_transactions(
         limit=limit, offset=offset, sort_by=sort_by, sort_dir=sort_dir, **filters
