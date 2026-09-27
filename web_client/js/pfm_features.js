@@ -5278,6 +5278,7 @@ async function loadSpendingPage() {
     _wireSpendingRuleForm();
     _wireSpCategoryAddForm();
     _wireSpendingImportModal();
+    _wireSpCategoryCellEditing();
     const periodSel = document.getElementById('spSummaryPeriod');
     if (periodSel) {
         // Reflect the persisted choice immediately, before the first
@@ -5971,8 +5972,8 @@ async function _fetchAndRenderSpendingTable() {
                 <td>${Fmt.date(r.date)}</td>
                 <td>${esc(r.portfolio_name || '')}</td>
                 <td>${spDescriptionCellHtml(r)}</td>
-                <td>
-                    ${esc(r.category)}
+                <td class="sp-cat-cell" data-id="${r.id}" title="Click to change category" style="cursor:pointer;">
+                    <span class="sp-cat-text border-bottom border-secondary-subtle">${esc(r.category)}</span>
                     ${r.is_transfer ? '<span class="badge bg-info ms-1">Transfer</span>' : ''}
                 </td>
                 <td class="text-end ${r.amount < 0 ? 'text-danger' : 'text-success'}">${Fmt.money(r.amount, r.currency, 2)}</td>
@@ -6162,6 +6163,102 @@ function _updateSpBulkBar() {
     const rowChecks = document.querySelectorAll('#spTxBody .sp-row-check');
     if (selectAll) selectAll.checked = rowChecks.length > 0 && ids.length === rowChecks.length;
 }
+
+// Pure: the one-line offer shown after a single-row category change.
+function spRuleOfferText(merchant, category, count) {
+    if (!count) return '';
+    return `Also file ${count} other uncategorized "${merchant}" row${count === 1 ? '' : 's'} as ${category}?`;
+}
+window.spRuleOfferText = spRuleOfferText;
+
+function _wireSpCategoryCellEditing() {
+    const tbody = document.getElementById('spTxBody');
+    if (!tbody || tbody.dataset.catEditWired) return;
+    tbody.dataset.catEditWired = '1';
+    tbody.addEventListener('click', (e) => {
+        const cell = e.target.closest('.sp-cat-cell');
+        if (!cell || cell.querySelector('input')) return;
+        const id = Number(cell.dataset.id);
+        const row = (window._spendingAllRows || []).find(r => r.id === id);
+        if (!row) return;
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'form-control form-control-sm';
+        input.setAttribute('list', 'spCategoryList');
+        input.value = row.category;
+        cell.innerHTML = '';
+        cell.appendChild(input);
+        input.focus();
+        input.select();
+        let done = false;
+        const finish = async (save) => {
+            if (done) return;
+            done = true;
+            if (save) await _commitSpCategoryEdit(row, input.value);
+            else await _fetchAndRenderSpendingTable();
+        };
+        input.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Enter') { ev.preventDefault(); finish(true); }
+            if (ev.key === 'Escape') finish(false);
+        });
+        input.addEventListener('blur', () => finish(true));
+    });
+}
+window._wireSpCategoryCellEditing = _wireSpCategoryCellEditing;
+
+async function _commitSpCategoryEdit(row, rawValue) {
+    const category = _resolveCategoryInput(rawValue).trim();
+    if (!category || category === row.category) { await _fetchAndRenderSpendingTable(); return; }
+    if (!(await _warnIfSimilarCategory(category))) { await _fetchAndRenderSpendingTable(); return; }
+    try {
+        await window.apiClient.updateSpendingCategory(row.id, category);
+    } catch (err) {
+        notify('Error: ' + err.message, 'danger');
+        await _fetchAndRenderSpendingTable();
+        return;
+    }
+    await _refreshSpendingData();
+    await _offerRuleForMerchant(row, category);
+}
+window._commitSpCategoryEdit = _commitSpCategoryEdit;
+
+async function _offerRuleForMerchant(row, category) {
+    const status = document.getElementById('spBulkStatus');
+    const merchant = (row.merchant || '').trim();
+    if (!status || !merchant || category === 'Transfer' || category === 'uncategorized') return;
+    let preview;
+    try {
+        preview = await window.apiClient.previewSpendingRule({
+            pattern: merchant, category, exclude_ids: [row.id],
+        });
+    } catch (e) {
+        // No offer is better than a wrong one; the category change itself succeeded.
+        return;
+    }
+    const text = spRuleOfferText(merchant, category, preview.match_count);
+    if (!text) return;
+    status.className = 'small px-3 pt-2';
+    status.innerHTML = `${esc(text)} <button type="button" class="btn btn-sm btn-outline-primary ms-2" id="spRuleOfferBtn">Create rule</button>`;
+    document.getElementById('spRuleOfferBtn').addEventListener('click', async () => {
+        try {
+            try {
+                await window.apiClient.createSpendingRule(merchant, category);
+            } catch (err) {
+                // An identical rule already exists: rescanning is still what the user asked for.
+                if (!/already exists/i.test(err.message)) throw err;
+            }
+            const res = await window.apiClient.rescanCategories();
+            await _refreshSpendingData();
+            const n = (res && res.recategorized) || 0;
+            status.className = 'small text-success px-3 pt-2';
+            status.textContent = `Rule added. Filed ${n} more row${n === 1 ? '' : 's'} as ${category}.`;
+        } catch (err) {
+            status.className = 'small text-danger px-3 pt-2';
+            status.textContent = 'Error: ' + err.message;
+        }
+    });
+}
+window._offerRuleForMerchant = _offerRuleForMerchant;
 
 function _wireSpBulkActions() {
     document.querySelectorAll('#spTxBody .sp-row-check').forEach(cb => {

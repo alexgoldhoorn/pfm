@@ -79,3 +79,20 @@ test("spDeletedAccountOptionHtml escapes its id", () => {
     const html = spDeletedAccountOptionHtml('"><script>1</script>');
     assert.ok(!html.includes("<script>"));
 });
+
+test("spRuleOfferText: nothing to offer at zero", () => {
+    const { spRuleOfferText } = loadAppIntoContext();
+    assert.equal(spRuleOfferText("EXAMPLE SHOP", "Groceries", 0), "");
+});
+
+test("spRuleOfferText: singular and plural", () => {
+    const { spRuleOfferText } = loadAppIntoContext();
+    assert.equal(
+        spRuleOfferText("EXAMPLE SHOP", "Groceries", 1),
+        'Also file 1 other uncategorized "EXAMPLE SHOP" row as Groceries?',
+    );
+    assert.equal(
+        spRuleOfferText("EXAMPLE SHOP", "Groceries", 14),
+        'Also file 14 other uncategorized "EXAMPLE SHOP" rows as Groceries?',
+    );
+});
