@@ -3405,6 +3405,7 @@ class Database:
         is_transfer: bool = None,
         amount_sign: str = None,
         min_abs_amount: float = None,
+        q: str = None,
     ):
         """Shared WHERE-clause builder for list/count spending transactions.
 
@@ -3413,6 +3414,8 @@ class Database:
         given — in practice only one is ever passed by a given caller.
         `amount_sign` is `"negative"`/`"positive"`/`None`, mapped to a
         literal comparison, never interpolated from the caller directly.
+        `q` is a case-insensitive literal substring of description or
+        merchant; `%`, `_` and `\\` are escaped.
         """
         conditions = []
         params: List = []
@@ -3442,6 +3445,15 @@ class Database:
         if min_abs_amount is not None:
             conditions.append("ABS(s.amount) >= ?")
             params.append(min_abs_amount)
+        if q:
+            # Escape LIKE metacharacters so the text matches literally.
+            escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            like = f"%{escaped}%"
+            conditions.append(
+                "(s.description LIKE ? ESCAPE '\\' "
+                "OR COALESCE(s.merchant, '') LIKE ? ESCAPE '\\')"
+            )
+            params.extend([like, like])
         clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
         return clause, params
 
@@ -3455,6 +3467,7 @@ class Database:
         is_transfer: bool = None,
         amount_sign: str = None,
         min_abs_amount: float = None,
+        q: str = None,
         limit: int = None,
         offset: int = None,
         sort_by: str = None,
@@ -3480,6 +3493,7 @@ class Database:
                 is_transfer,
                 amount_sign,
                 min_abs_amount,
+                q,
             )
             query = (
                 "SELECT s.*, p.name AS portfolio_name FROM spending_transactions s "
@@ -3507,6 +3521,7 @@ class Database:
         is_transfer: bool = None,
         amount_sign: str = None,
         min_abs_amount: float = None,
+        q: str = None,
     ) -> int:
         """Count spending transactions matching the same filters as
         list_spending_transactions (no JOIN needed — sort/portfolio_name
@@ -3521,6 +3536,7 @@ class Database:
                 is_transfer,
                 amount_sign,
                 min_abs_amount,
+                q,
             )
             query = "SELECT COUNT(*) FROM spending_transactions s" + where_clause
             cursor = conn.execute(query, params)

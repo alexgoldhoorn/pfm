@@ -5122,6 +5122,16 @@ function dedupSpendingRowsByDescription(rows) {
 }
 window.dedupSpendingRowsByDescription = dedupSpendingRowsByDescription;
 
+// Pure: the Description cell — the cleaned merchant name first, the raw bank
+// text underneath when it differs, so both stay searchable by eye.
+function spDescriptionCellHtml(row) {
+    const desc = row.description || '';
+    const merchant = (row.merchant || '').trim();
+    if (!merchant || merchant === desc) return esc(desc);
+    return `${esc(merchant)}<div class="small text-muted">${esc(desc)}</div>`;
+}
+window.spDescriptionCellHtml = spDescriptionCellHtml;
+
 // Cap on unique descriptions sent to the LLM per "Suggest categories (AI)"
 // click — a real account's uncategorized backlog can have 1000+ unique
 // descriptions; sending them all in one request risks exceeding
@@ -5306,6 +5316,19 @@ async function loadSpendingPage() {
         minAbsAmountInput.addEventListener('change', () => {
             window._spTxState.page = 0;
             _fetchAndRenderSpendingTable();
+        });
+    }
+    const searchInput = document.getElementById('spSearch');
+    if (searchInput && !searchInput.dataset.wired) {
+        searchInput.dataset.wired = '1';
+        let searchTimer = null;
+        searchInput.addEventListener('input', () => {
+            clearTimeout(searchTimer);
+            // Wait for a pause in typing so each keystroke isn't a request.
+            searchTimer = setTimeout(() => {
+                window._spTxState.page = 0;
+                _fetchAndRenderSpendingTable();
+            }, 300);
         });
     }
     _wireSpendingTablePagination();
@@ -5823,6 +5846,8 @@ async function _fetchAndRenderSpendingTable() {
     if (window._spAmountSign) params.amount_sign = window._spAmountSign;
     const minAbsAmount = document.getElementById('spMinAbsAmount')?.value;
     if (minAbsAmount) params.min_abs_amount = minAbsAmount;
+    const q = (document.getElementById('spSearch')?.value || '').trim();
+    if (q) params.q = q;
 
     let result;
     try {
@@ -5840,7 +5865,7 @@ async function _fetchAndRenderSpendingTable() {
                 <td class="ps-3"><input type="checkbox" class="form-check-input sp-row-check" data-id="${r.id}"></td>
                 <td>${Fmt.date(r.date)}</td>
                 <td>${esc(r.portfolio_name || '')}</td>
-                <td>${esc(r.description)}</td>
+                <td>${spDescriptionCellHtml(r)}</td>
                 <td>
                     ${esc(r.category)}
                     ${r.is_transfer ? '<span class="badge bg-info ms-1">Transfer</span>' : ''}
