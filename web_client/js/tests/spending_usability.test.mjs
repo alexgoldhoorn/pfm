@@ -24,3 +24,44 @@ test("spDescriptionCellHtml escapes both lines", () => {
     const html = spDescriptionCellHtml({ description: "<b>x</b> 1", merchant: "<b>x</b>" });
     assert.ok(!html.includes("<b>"));
 });
+
+test("ruleConditionSummary: no conditions reads 'Any'", () => {
+    const { ruleConditionSummary } = loadAppIntoContext();
+    assert.equal(ruleConditionSummary({}, {}), "Any");
+});
+
+test("ruleConditionSummary: account, sign and range", () => {
+    const { ruleConditionSummary } = loadAppIntoContext();
+    const s = ruleConditionSummary(
+        { portfolio_id: 3, amount_sign: "negative", min_amount: 5, max_amount: 50 },
+        { 3: "Example Bank" },
+    );
+    assert.equal(s, "Example Bank · money out · 5.00–50.00");
+});
+
+test("ruleConditionSummary: one-sided ranges and a deleted account", () => {
+    const { ruleConditionSummary } = loadAppIntoContext();
+    assert.equal(ruleConditionSummary({ min_amount: 5 }, {}), "≥ 5.00");
+    assert.equal(ruleConditionSummary({ max_amount: 5, amount_sign: "positive" }, {}), "money in · ≤ 5.00");
+    assert.equal(ruleConditionSummary({ portfolio_id: 9 }, {}), "Account #9 (deleted)");
+});
+
+test("spRulePayloadFromForm converts blanks to null and numbers to numbers", () => {
+    const { spRulePayloadFromForm } = loadAppIntoContext();
+    const p = spRulePayloadFromForm({
+        pattern: "  SHOP ", category: " Groceries ", priority: "",
+        portfolioId: "", sign: "", min: "", max: "",
+    });
+    assert.deepEqual({ ...p }, {
+        pattern: "SHOP", category: "Groceries", priority: 100,
+        portfolio_id: null, amount_sign: null, min_amount: null, max_amount: null,
+    });
+    const q = spRulePayloadFromForm({
+        pattern: "X", category: "Y", priority: "5",
+        portfolioId: "3", sign: "negative", min: "1.5", max: "20",
+    });
+    assert.deepEqual({ ...q }, {
+        pattern: "X", category: "Y", priority: 5,
+        portfolio_id: 3, amount_sign: "negative", min_amount: 1.5, max_amount: 20,
+    });
+});

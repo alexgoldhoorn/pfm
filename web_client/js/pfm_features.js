@@ -5132,6 +5132,63 @@ function spDescriptionCellHtml(row) {
 }
 window.spDescriptionCellHtml = spDescriptionCellHtml;
 
+// Pure: one-line summary of a rule's optional conditions for the Rules table.
+// Amounts are in each row's own currency, so no currency symbol is shown.
+function ruleConditionSummary(rule, accountNames) {
+    const parts = [];
+    if (rule.portfolio_id != null) {
+        parts.push((accountNames || {})[rule.portfolio_id] || `Account #${rule.portfolio_id} (deleted)`);
+    }
+    if (rule.amount_sign === 'negative') parts.push('money out');
+    else if (rule.amount_sign === 'positive') parts.push('money in');
+    const min = rule.min_amount, max = rule.max_amount;
+    if (min != null && max != null) parts.push(`${Fmt.num(min, 2, 2)}–${Fmt.num(max, 2, 2)}`);
+    else if (min != null) parts.push(`≥ ${Fmt.num(min, 2, 2)}`);
+    else if (max != null) parts.push(`≤ ${Fmt.num(max, 2, 2)}`);
+    return parts.length ? parts.join(' · ') : 'Any';
+}
+window.ruleConditionSummary = ruleConditionSummary;
+
+// Pure: raw Rules-form values → the API payload (blank → null, text → number).
+function spRulePayloadFromForm(v) {
+    const num = s => (s === '' || s == null) ? null : Number(s);
+    return {
+        pattern: String(v.pattern || '').trim(),
+        category: String(v.category || '').trim(),
+        priority: (v.priority === '' || v.priority == null) ? 100 : Number(v.priority),
+        portfolio_id: v.portfolioId ? Number(v.portfolioId) : null,
+        amount_sign: v.sign || null,
+        min_amount: num(v.min),
+        max_amount: num(v.max),
+    };
+}
+window.spRulePayloadFromForm = spRulePayloadFromForm;
+
+function _readSpRuleForm() {
+    const val = id => document.getElementById(id)?.value ?? '';
+    return spRulePayloadFromForm({
+        pattern: val('spRulePattern'),
+        category: _resolveCategoryInput(val('spRuleCategory')),
+        priority: val('spRulePriority'),
+        portfolioId: val('spRuleAccount'),
+        sign: val('spRuleSign'),
+        min: val('spRuleMin'),
+        max: val('spRuleMax'),
+    });
+}
+
+function _resetSpRuleForm() {
+    const form = document.getElementById('spRuleAddForm');
+    if (!form) return;
+    form.reset();
+    delete form.dataset.editId;
+    const submit = document.getElementById('spRuleSubmitBtn');
+    if (submit) submit.innerHTML = '<i class="bi bi-plus-lg me-1"></i>Add';
+    document.getElementById('spRuleCancelEdit')?.classList.add('d-none');
+    const preview = document.getElementById('spRulePreview');
+    if (preview) preview.textContent = '';
+}
+
 // Cap on unique descriptions sent to the LLM per "Suggest categories (AI)"
 // click — a real account's uncategorized backlog can have 1000+ unique
 // descriptions; sending them all in one request risks exceeding
@@ -5387,6 +5444,14 @@ async function _refreshSpendingData() {
         window._spendingCategoryTree = categoryTree;
         const bankAccounts = (portfolios || []).filter(p => p.account_type === 'bank');
         _populateSpendingAccountFilters(bankAccounts);
+        window._spAccountNames = Object.fromEntries(bankAccounts.map(p => [p.id, p.name]));
+        const ruleAccountSel = document.getElementById('spRuleAccount');
+        if (ruleAccountSel) {
+            const keep = ruleAccountSel.value;
+            ruleAccountSel.innerHTML = '<option value="">Any account</option>'
+                + bankAccounts.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+            ruleAccountSel.value = keep;
+        }
         window._spBreakdownPath = ['Spend'];
         await _loadSpBreakdownLevel();
         _renderSpendingRules(rules);
@@ -6341,20 +6406,25 @@ function _renderSpendingRules(rules) {
     window._spRulesData = rules;
     const st = window._spRulesSortState;
     const sorted = st.key ? [...rules].sort((a, b) => {
-        const cmp = String(a[st.key]).toLowerCase().localeCompare(String(b[st.key]).toLowerCase());
+        const cmp = st.key === 'priority'
+            ? (a.priority ?? 100) - (b.priority ?? 100)
+            : String(a[st.key]).toLowerCase().localeCompare(String(b[st.key]).toLowerCase());
         return st.dir === 'asc' ? cmp : -cmp;
     }) : rules;
     const body = document.getElementById('spRulesBody');
     if (!body) return;
+    const names = window._spAccountNames || {};
     body.innerHTML = sorted.length ? sorted.map(r => `
         <tr>
-            <td class="ps-3" id="spRulePatternCell${r.id}" data-value="${escapeForAttr(r.pattern)}">${esc(r.pattern)}</td>
-            <td id="spRuleCategoryCell${r.id}" data-value="${escapeForAttr(r.category)}">${esc(r.category)}</td>
-            <td class="pe-3 text-end">
+            <td class="ps-3">${esc(r.pattern)}</td>
+            <td>${esc(r.category)}</td>
+            <td class="d-none d-md-table-cell small text-muted">${esc(ruleConditionSummary(r, names))}</td>
+            <td class="text-end">${esc(String(r.priority ?? 100))}</td>
+            <td class="pe-3 text-end text-nowrap">
                 <button class="btn btn-sm btn-outline-secondary" onclick="window.editSpendingRule(${r.id})" title="Edit"><i class="bi bi-pencil"></i></button>
                 <button class="btn btn-sm btn-outline-danger" onclick="window.deleteSpendingRule(${r.id})" title="Delete"><i class="bi bi-trash"></i></button>
             </td>
-        </tr>`).join('') : '<tr><td colspan="3" class="text-center text-muted py-2">No rules yet.</td></tr>';
+        </tr>`).join('') : '<tr><td colspan="5" class="text-center text-muted py-2">No rules yet.</td></tr>';
     document.querySelectorAll('#spPaneRules th[data-key]').forEach(th => {
         const arrow = th.querySelector('.pfm-sort-arrow') || (() => {
             const s = document.createElement('span');
@@ -6541,84 +6611,99 @@ window.deleteSpendingRule = async function (id) {
     } catch (err) { notify('Error: ' + err.message); }
 };
 
+// Loads a rule into the Rules form; the form's submit then saves it (PUT).
 window.editSpendingRule = function (id) {
-    const patternCell = document.getElementById(`spRulePatternCell${id}`);
-    const categoryCell = document.getElementById(`spRuleCategoryCell${id}`);
-    if (!patternCell || !categoryCell || patternCell.dataset.editing) return;
-    patternCell.dataset.editing = '1';
-    const originalPattern = patternCell.dataset.value;
-    const originalCategory = categoryCell.dataset.value;
-    patternCell.innerHTML = `<input class="form-control form-control-sm" id="spRulePatternInput${id}" value="${escapeForAttr(originalPattern)}">`;
-    categoryCell.innerHTML = `<input class="form-control form-control-sm" id="spRuleCategoryInput${id}" value="${escapeForAttr(originalCategory)}">`;
-    const patternInput = document.getElementById(`spRulePatternInput${id}`);
-    const categoryInput = document.getElementById(`spRuleCategoryInput${id}`);
-    patternInput.focus();
-    patternInput.select();
-
-    let done = false;
-    const finish = async (commit) => {
-        if (done) return;
-        done = true;
-        const newPattern = patternInput.value.trim();
-        const newCategory = categoryInput.value.trim();
-        if (!commit) { await _refreshSpendingData(); return; }
-        if (!newPattern || !newCategory) {
-            notify('Pattern and category cannot be empty.');
-            await _refreshSpendingData();
-            return;
-        }
-        if (newPattern === originalPattern && newCategory === originalCategory) {
-            await _refreshSpendingData();
-            return;
-        }
-        try {
-            await window.apiClient.updateSpendingRule(id, { pattern: newPattern, category: newCategory });
-        } catch (err) {
-            notify('Error: ' + err.message);
-        }
-        await _refreshSpendingData();
-    };
-    [patternInput, categoryInput].forEach(inp => {
-        inp.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') finish(true);
-            if (e.key === 'Escape') finish(false);
-        });
-        inp.addEventListener('blur', () => finish(true));
-    });
+    const rule = (window._spRulesData || []).find(r => r.id === id);
+    const form = document.getElementById('spRuleAddForm');
+    if (!rule || !form) return;
+    const set = (elId, v) => { const el = document.getElementById(elId); if (el) el.value = v ?? ''; };
+    set('spRulePattern', rule.pattern);
+    set('spRuleCategory', rule.category);
+    set('spRulePriority', rule.priority ?? 100);
+    set('spRuleAccount', rule.portfolio_id ?? '');
+    set('spRuleSign', rule.amount_sign ?? '');
+    set('spRuleMin', rule.min_amount ?? '');
+    set('spRuleMax', rule.max_amount ?? '');
+    form.dataset.editId = String(id);
+    const submit = document.getElementById('spRuleSubmitBtn');
+    if (submit) submit.innerHTML = '<i class="bi bi-check-lg me-1"></i>Save';
+    document.getElementById('spRuleCancelEdit')?.classList.remove('d-none');
+    document.getElementById('spRulePattern')?.focus();
+    _scheduleSpRulePreview();
 };
+
+let _spRulePreviewTimer = null;
+
+// Debounced "Matches N uncategorized rows" line under the Rules form.
+function _scheduleSpRulePreview() {
+    clearTimeout(_spRulePreviewTimer);
+    _spRulePreviewTimer = setTimeout(async () => {
+        const out = document.getElementById('spRulePreview');
+        if (!out) return;
+        const p = _readSpRuleForm();
+        if (!p.pattern) { out.textContent = ''; return; }
+        try {
+            const res = await window.apiClient.previewSpendingRule({
+                pattern: p.pattern,
+                category: p.category || null,
+                portfolio_id: p.portfolio_id,
+                amount_sign: p.amount_sign,
+                min_amount: p.min_amount,
+                max_amount: p.max_amount,
+            });
+            const examples = (res.sample || []).slice(0, 3)
+                .map(r => esc(r.merchant || r.description)).join(', ');
+            out.innerHTML = res.match_count
+                ? `Matches ${res.match_count} uncategorized row${res.match_count === 1 ? '' : 's'}${examples ? `, e.g. ${examples}` : ''}.`
+                : 'Matches no uncategorized rows right now.';
+        } catch (err) {
+            out.textContent = 'Preview unavailable: ' + err.message;
+        }
+    }, 400);
+}
 
 function _wireSpendingRuleForm() {
     const form = document.getElementById('spRuleAddForm');
-    if (form && !form.dataset.wired) {
-        form.dataset.wired = '1';
-        form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const pattern = document.getElementById('spRulePattern').value.trim();
-            const category = _resolveCategoryInput(document.getElementById('spRuleCategory').value);
-            if (!pattern || !category) return;
-            if (!(await _warnIfSimilarCategory(category))) return;
-            const status = document.getElementById('spRuleStatus');
-            try {
-                await window.apiClient.createSpendingRule(pattern, category);
-                form.reset();
-                let rescanned = 0;
-                try {
-                    const result = await window.apiClient.rescanCategories();
-                    rescanned = (result && result.recategorized) || 0;
-                } catch (e2) { /* rescan failing shouldn't block reporting the rule was added */ }
-                await _refreshSpendingData();
-                if (status) {
-                    status.className = 'small text-success mt-2';
-                    status.textContent = rescanned > 0
-                        ? `Rule added. Applied to ${rescanned} existing uncategorized row${rescanned === 1 ? '' : 's'}.`
-                        : 'Rule added.';
-                }
-            } catch (err) {
-                if (status) { status.className = 'small text-danger mt-2'; status.textContent = 'Error: ' + err.message; }
-                else notify('Error: ' + err.message);
+    if (!form || form.dataset.wired) return;
+    form.dataset.wired = '1';
+    form.querySelectorAll('input, select').forEach(el => {
+        el.addEventListener('input', _scheduleSpRulePreview);
+        el.addEventListener('change', _scheduleSpRulePreview);
+    });
+    document.getElementById('spRuleCancelEdit')?.addEventListener('click', _resetSpRuleForm);
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const p = _readSpRuleForm();
+        if (!p.pattern || !p.category) return;
+        if (!(await _warnIfSimilarCategory(p.category))) return;
+        const status = document.getElementById('spRuleStatus');
+        const editId = form.dataset.editId ? Number(form.dataset.editId) : null;
+        try {
+            if (editId) {
+                await window.apiClient.updateSpendingRule(editId, p);
+            } else {
+                const { pattern, category, ...conditions } = p;
+                await window.apiClient.createSpendingRule(pattern, category, conditions);
             }
-        });
-    }
+            _resetSpRuleForm();
+            let rescanned = 0;
+            try {
+                const result = await window.apiClient.rescanCategories();
+                rescanned = (result && result.recategorized) || 0;
+            } catch (e2) { /* rescan failing shouldn't block reporting the rule was saved */ }
+            await _refreshSpendingData();
+            if (status) {
+                status.className = 'small text-success mt-2';
+                const verb = editId ? 'Rule saved.' : 'Rule added.';
+                status.textContent = rescanned > 0
+                    ? `${verb} Applied to ${rescanned} uncategorized row${rescanned === 1 ? '' : 's'}.`
+                    : verb;
+            }
+        } catch (err) {
+            if (status) { status.className = 'small text-danger mt-2'; status.textContent = 'Error: ' + err.message; }
+            else notify('Error: ' + err.message, 'danger');
+        }
+    });
 }
 
 function _wireSpCategoryAddForm() {
