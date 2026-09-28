@@ -1882,6 +1882,17 @@ def test_search_treats_wildcards_literally(tmp_path):
     assert client.get("/api/v1/spending/?q=K%5CS", headers=HEADERS).json()["total"] == 1
 
 
+def test_search_ignores_accents_and_case(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    _add(db, pid, "COMISSIÓ MANTENIMENT")
+    _add(db, pid, "OTHER STORE")
+    for q in ("comissió", "comissio", "COMISSIO", "Comissió manteniment"):
+        r = client.get("/api/v1/spending/", params={"q": q}, headers=HEADERS).json()
+        assert r["total"] == 1, q
+        assert r["items"][0]["description"] == "COMISSIÓ MANTENIMENT"
+
+
 def test_blank_search_is_unfiltered(tmp_path):
     client, db = _make_client(tmp_path)
     pid = db.create_portfolio("Example Bank", account_type="bank")

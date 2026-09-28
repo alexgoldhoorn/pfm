@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any, Set
 from pathlib import Path
 
-from portf_manager.services.merchant import normalize_merchant
+from portf_manager.services.merchant import fold_for_search, normalize_merchant
 
 # Database version for migration tracking
 DATABASE_VERSION = 33
@@ -106,6 +106,8 @@ class Database:
         try:
             conn = sqlite3.connect(str(self.db_path))
             conn.row_factory = sqlite3.Row
+            # Accent- and case-insensitive search helper (see fold_for_search).
+            conn.create_function("pfm_fold", 1, fold_for_search, deterministic=True)
             # Enable foreign key constraints
             conn.execute("PRAGMA foreign_keys = ON")
             # WAL lets readers and a writer run concurrently (vs. the default
@@ -3428,8 +3430,9 @@ class Database:
         given — in practice only one is ever passed by a given caller.
         `amount_sign` is `"negative"`/`"positive"`/`None`, mapped to a
         literal comparison, never interpolated from the caller directly.
-        `q` is a case-insensitive literal substring of description or
-        merchant; `%`, `_` and `\\` are escaped.
+        `q` is an accent- and case-insensitive literal substring of
+        description or merchant (both sides folded with ``pfm_fold``);
+        `%`, `_` and `\\` are escaped after folding.
         """
         conditions = []
         params: List = []
@@ -3460,12 +3463,16 @@ class Database:
             conditions.append("ABS(s.amount) >= ?")
             params.append(min_abs_amount)
         if q:
-            # Escape LIKE metacharacters so the text matches literally.
-            escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            # Fold accents and case first, then escape LIKE metacharacters
+            # so the text matches literally.
+            folded = fold_for_search(q)
+            escaped = (
+                folded.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            )
             like = f"%{escaped}%"
             conditions.append(
-                "(s.description LIKE ? ESCAPE '\\' "
-                "OR COALESCE(s.merchant, '') LIKE ? ESCAPE '\\')"
+                "(pfm_fold(s.description) LIKE ? ESCAPE '\\' "
+                "OR pfm_fold(COALESCE(s.merchant, '')) LIKE ? ESCAPE '\\')"
             )
             params.extend([like, like])
         clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""

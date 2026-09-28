@@ -66,8 +66,12 @@ description available underneath/on hover, rather than only the raw text.
 ### Search (`q` on `GET /spending/`)
 
 `GET /api/v1/spending/?q=<text>` matches `description` OR `merchant`,
-case-insensitively and **literally** (a plain substring match, no wildcards
-or regex). Combines with every other filter (category, date range, account,
+ignoring case **and accents** and **literally** (a plain substring match, no
+wildcards or regex): `comissio` and `comissió` both find `COMISSIÓ`. SQLite's
+`LIKE` folds only ASCII case, so both sides go through the `pfm_fold()` SQL
+function, which `Database.get_connection` registers on every connection
+(`services/merchant.py` `fold_for_search`: NFKD, drop combining marks,
+casefold); the query is folded before `%`/`_`/`\` are escaped. Combines with every other filter (category, date range, account,
 amount sign/threshold). Web: the `#spSearch` search box on the Transactions
 tab.
 
