@@ -317,11 +317,14 @@ When writing tests, invent asset names (e.g. "Example Corp", "Global Bond Fund")
 |---|---|
 | `web_client/` JS/HTML/CSS edited | `docker compose build web && docker stop portf_web && WEB_PORT=8080 docker compose up -d web` |
 | `web_client/nginx.conf` edited | Same as above (nginx config is baked into the image) |
-| `portf_server/` or `portf_manager/` Python edited | `docker exec portf_backend_dev kill -HUP 1` |
-| `DATABASE_VERSION` bumped / new migration added | `docker compose restart portf_backend_dev` (or HUP) |
+| `portf_server/` or `portf_manager/` Python edited | Nothing — `portf_backend_dev` runs `uvicorn --reload` on the checkout bind-mounted at `/app`, so an edit in `~/repos/pfm` is live at once |
+| `DATABASE_VERSION` bumped / new migration added | Nothing — the next reload migrates the **live** DB |
 | DB schema patched manually | No restart — note what was done |
 | `docker-compose.yml` or `Dockerfile` edited | Full rebuild of affected service |
 | No code changes (docs/tests only) | Nothing — say so explicitly |
+
+⚠️ **Develop in a separate git worktree, never in `~/repos/pfm`**: the live backend
+runs whatever is checked out there, half-written code and migrations included.
 
 Never leave the user guessing. If a change is already live, say that too.
 
