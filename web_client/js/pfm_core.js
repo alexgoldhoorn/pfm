@@ -1101,18 +1101,26 @@ window.downloadGenericTemplate = downloadGenericTemplate;
 // Diagnostics page: price-data freshness + the daily update-run history.
 // Surfaces *why* a price may be stale (no Yahoo data vs. just old) and what
 // the cron actually did, so it isn't lost to stdout.
+// Readable message from a parsed FastAPI error body: a string `detail`, or
+// a 422 validation list joined by its `msg` fields; else `fallback`.
+function apiErrorDetail(body, fallback = 'Request failed') {
+    const detail = body && body.detail;
+    if (typeof detail === 'string' && detail) return detail;
+    if (Array.isArray(detail) && detail.length) {
+        return detail.map(d => (d && d.msg) || JSON.stringify(d)).join('; ');
+    }
+    return fallback;
+}
+window.apiErrorDetail = apiErrorDetail;
+
 // Readable message from an error response body: FastAPI's {"detail": ...}
 // (a string, or a list of validation errors), else the raw text.
 function errorDetailFromBody(text, fallback = 'Request failed') {
     const raw = String(text == null ? '' : text).trim();
     if (!raw) return fallback;
     try {
-        const body = JSON.parse(raw);
-        const detail = body && body.detail;
-        if (typeof detail === 'string' && detail) return detail;
-        if (Array.isArray(detail) && detail.length) {
-            return detail.map(d => (d && d.msg) || JSON.stringify(d)).join('; ');
-        }
+        const detail = apiErrorDetail(JSON.parse(raw), null);
+        if (detail) return detail;
     } catch (e) {
         // Not JSON: fall through to the raw text
     }
@@ -2319,8 +2327,7 @@ function createAPIClient() {
             if (!response.ok) {
                 let detail = 'Failed to create rule';
                 try {
-                    const body = await response.json();
-                    detail = body.detail || detail;
+                    detail = apiErrorDetail(await response.json(), detail);
                 } catch (e) { /* response wasn't JSON, use the generic message */ }
                 throw new Error(detail);
             }
@@ -2335,7 +2342,7 @@ function createAPIClient() {
             });
             if (!response.ok) {
                 let detail = 'Failed to preview rule';
-                try { const body = await response.json(); detail = body.detail || detail; }
+                try { detail = apiErrorDetail(await response.json(), detail); }
                 catch (e) { /* response wasn't JSON, use the generic message */ }
                 throw new Error(detail);
             }
@@ -2365,8 +2372,7 @@ function createAPIClient() {
             if (!response.ok) {
                 let detail = 'Failed to update rule';
                 try {
-                    const body = await response.json();
-                    detail = body.detail || detail;
+                    detail = apiErrorDetail(await response.json(), detail);
                 } catch (e) { /* response wasn't JSON, use the generic message */ }
                 throw new Error(detail);
             }
