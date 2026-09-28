@@ -2003,6 +2003,68 @@ def test_update_rule_validates_merged_range(tmp_path):
     assert r.status_code == 400
 
 
+def test_update_rule_rejects_exact_duplicate_of_another_rule(tmp_path):
+    client, _ = _make_client(tmp_path)
+    client.post(
+        "/api/v1/spending/rules",
+        json={"pattern": "MERCADONA", "category": "Groceries"},
+        headers=HEADERS,
+    )
+    other = client.post(
+        "/api/v1/spending/rules",
+        json={"pattern": "CARREFOUR", "category": "Groceries"},
+        headers=HEADERS,
+    ).json()
+
+    r = client.put(
+        f"/api/v1/spending/rules/{other['id']}",
+        json={"pattern": "mercadona"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 409
+    # The other rule must be untouched.
+    listed = client.get("/api/v1/spending/rules", headers=HEADERS).json()
+    assert next(x for x in listed if x["id"] == other["id"])["pattern"] == "CARREFOUR"
+
+
+def test_update_rule_allows_resaving_its_own_unchanged_values(tmp_path):
+    client, _ = _make_client(tmp_path)
+    rule_id = client.post(
+        "/api/v1/spending/rules",
+        json={"pattern": "MERCADONA", "category": "Groceries"},
+        headers=HEADERS,
+    ).json()["id"]
+    r = client.put(
+        f"/api/v1/spending/rules/{rule_id}",
+        json={"pattern": "MERCADONA", "category": "Groceries"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+
+
+def test_create_rule_rejects_non_bank_account(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Brokerage")  # default account_type=brokerage
+    r = client.post(
+        "/api/v1/spending/rules",
+        json={"pattern": "X", "category": "Gifts", "portfolio_id": pid},
+        headers=HEADERS,
+    )
+    assert r.status_code == 400
+
+
+def test_update_rule_rejects_non_bank_account(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Brokerage")
+    rid = db.create_spending_rule("SHOP", "Groceries")
+    r = client.put(
+        f"/api/v1/spending/rules/{rid}",
+        json={"portfolio_id": pid},
+        headers=HEADERS,
+    )
+    assert r.status_code == 400
+
+
 def test_rescan_uses_sign_conditions(tmp_path):
     client, db = _make_client(tmp_path)
     pid = db.create_portfolio("Example Bank", account_type="bank")
@@ -2060,6 +2122,63 @@ def test_rule_preview_rejects_blank_pattern(tmp_path):
         "/api/v1/spending/rules/preview", json={"pattern": "  "}, headers=HEADERS
     )
     assert r.status_code == 400
+
+
+def test_rule_preview_only_uncategorized_false_counts_categorized_rows(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    categorized = _add(db, pid, "EXAMPLE SHOP MADRID")
+    db.update_spending_transaction(categorized, category="Groceries")
+    uncategorized = _add(db, pid, "EXAMPLE SHOP MADRID 2")
+    r = client.post(
+        "/api/v1/spending/rules/preview",
+        json={"pattern": "EXAMPLE SHOP MADRID", "only_uncategorized": False},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+    d = r.json()
+    assert d["match_count"] == 2
+    assert sorted(row["id"] for row in d["sample"]) == sorted(
+        [categorized, uncategorized]
+    )
+
+
+def test_rule_preview_never_counts_transfers(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    transfer_id = _add(db, pid, "EXAMPLE SHOP MADRID")
+    db.update_spending_transaction(transfer_id, is_transfer=True)
+    r = client.post(
+        "/api/v1/spending/rules/preview",
+        json={"pattern": "EXAMPLE SHOP MADRID", "only_uncategorized": False},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+    assert r.json()["match_count"] == 0
+
+
+def test_upload_categorizes_via_rule_matching_merchant_not_raw_description(tmp_path):
+    client, db = _make_client(tmp_path)
+    # normalize_merchant strips the "AMAZON* AB12CD34E" order code, so the
+    # merchant is "AMAZON LUXEMBOURG" -- a string that never appears
+    # contiguously in the raw description below (it's split by the order
+    # code). A rule on this pattern can only match through the merchant.
+    db.create_spending_rule(pattern="AMAZON LUXEMBOURG", category="Shopping")
+    csv_text = (
+        "date,description,amount\n"
+        "2026-01-05,123456789012AMAZON* AB12CD34E LUXEMBOURG 010012345,-24.50\n"
+    )
+    r = client.post(
+        "/api/v1/spending/upload",
+        data={"account_name": "Example Bank"},
+        files={"file": ("statement.csv", _csv_bytes(csv_text), "text/csv")},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+    row = r.json()["rows"][0]
+    assert row["merchant"] == "AMAZON LUXEMBOURG"
+    assert "AMAZON LUXEMBOURG" not in row["description"]
+    assert row["category"] == "Shopping"
 
 
 def test_upload_reports_balance_break(tmp_path):
@@ -2142,6 +2261,26 @@ def test_recurring_endpoint_hides_ended_by_default(tmp_path):
         "/api/v1/spending/recurring?include_ended=true", headers=HEADERS
     ).json()
     assert [i["status"] for i in shown["items"]] == ["ended"]
+
+
+def test_recurring_totals_exclude_ended_series_even_with_include_ended(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    for month in (1, 2, 3):
+        _add(db, pid, "OLD SERVICE", amount=-5.0, day=f"2026-0{month}-10")
+    for month in (6, 7, 8):
+        _add(db, pid, "ACTIVE SERVICE", amount=-9.99, day=f"2026-0{month}-10")
+    # Pushes last_import_by_portfolio to 2026-08-20, which is what puts OLD
+    # SERVICE (last charge Mar 10) past two missed monthly cycles.
+    _add(db, pid, "SOMETHING ELSE", amount=-1.0, day="2026-08-20")
+
+    r = client.get("/api/v1/spending/recurring?include_ended=true", headers=HEADERS)
+    d = r.json()
+    assert sorted(i["status"] for i in d["items"]) == ["active", "ended"]
+    # Both series are in `items` (include_ended=true), but the totals must
+    # count only the still-active one.
+    assert d["annual_total_eur"] == round(9.99 * 12, 2)
+    assert d["monthly_total_eur"] == round(9.99 * 12 / 12, 2)
 
 
 def test_category_fits_memoises_root_lookups():
