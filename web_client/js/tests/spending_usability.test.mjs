@@ -148,6 +148,60 @@ test("recurringStatusBadges: missed, ended, price up and down", () => {
     assert.match(recurringStatusBadges({ status: "active", price_change_pct: -12.5 }), /▼ -12.5%/);
 });
 
+test("_wireSpRecurringTab: clicking a merchant scopes to its account and clears other filters", async () => {
+    const sandbox = loadAppIntoContext();
+    const classList = () => ({ add: () => {}, remove: () => {}, toggle: () => {}, contains: () => false });
+    const stub = (extra = {}) => ({
+        value: "", classList: classList(), addEventListener: () => {}, dataset: {}, ...extra,
+    });
+
+    const removed = [];
+    const elements = {
+        spTabBtnRecurring: stub(),
+        spRecurringShowEnded: stub(),
+        spAccountFilter: stub({ value: "" }),
+        spFromDate: stub({ value: "2026-01-01" }),
+        spToDate: stub({ value: "2026-01-31" }),
+        spMinAbsAmount: stub({ value: "50" }),
+        spAmountSignNegative: stub({ classList: { ...classList(), remove: (c) => removed.push(["neg", c]) } }),
+        spAmountSignPositive: stub({ classList: { ...classList(), remove: (c) => removed.push(["pos", c]) } }),
+        spSearch: stub(),
+        spTabBtnTransactions: stub(),
+        spCategoryFilterBtn: stub(),
+    };
+    let bodyClickHandler = null;
+    elements.spRecurringBody = {
+        dataset: {},
+        addEventListener: (evt, fn) => { if (evt === "click") bodyClickHandler = fn; },
+    };
+    sandbox.document.getElementById = (id) => elements[id] ?? null;
+    sandbox.bootstrap = { Tab: { getOrCreateInstance: () => ({ show: () => {} }) } };
+    sandbox.window._spTxState = { page: 3, pageSize: 50, sortBy: "date", sortDir: "desc" };
+    sandbox.window._spAmountSign = "negative";
+    sandbox.window._spCategoryFilterSelected = new Set(["Groceries"]);
+    let fetchCalled = false;
+    sandbox._fetchAndRenderSpendingTable = async () => { fetchCalled = true; };
+
+    sandbox._wireSpRecurringTab();
+    assert.ok(bodyClickHandler, "click handler was registered");
+
+    const link = { dataset: { merchant: "EXAMPLE SHOP", portfolioId: "7" } };
+    link.closest = () => link;
+    await bodyClickHandler({ target: link, preventDefault: () => {} });
+
+    assert.equal(elements.spSearch.value, "EXAMPLE SHOP");
+    assert.equal(elements.spAccountFilter.value, "7");
+    assert.equal(elements.spFromDate.value, "");
+    assert.equal(elements.spToDate.value, "");
+    assert.equal(elements.spMinAbsAmount.value, "");
+    assert.equal(sandbox.window._spAmountSign, null);
+    assert.deepEqual(removed, [["neg", "active"], ["pos", "active"]]);
+    assert.equal(sandbox.window._spCategoryFilterSelected, null);
+    assert.equal(elements.spCategoryFilterBtn.textContent, "All categories");
+    assert.equal(sandbox.window._spTxState.page, 0);
+    assert.ok(fetchCalled);
+});
+
 test("apiErrorDetail reads a string detail", () => {
     const { apiErrorDetail } = loadAppIntoContext();
     assert.equal(apiErrorDetail({ detail: "Pattern cannot be empty" }, "x"), "Pattern cannot be empty");
@@ -165,6 +219,46 @@ test("apiErrorDetail joins a FastAPI 422 validation list", () => {
         apiErrorDetail(body, "Failed to create rule"),
         "Input should be a valid number; Input should be 'positive' or 'negative'",
     );
+});
+
+test("_scheduleSpRulePreview ignores a stale out-of-order response", async () => {
+    const sandbox = loadAppIntoContext();
+    const preview = { textContent: "", innerHTML: "" };
+    const patternInput = { value: "SHOP" };
+    sandbox.document.getElementById = (id) => {
+        if (id === "spRulePreview") return preview;
+        if (id === "spRulePattern") return patternInput;
+        return null;
+    };
+    // Fire the debounce timer synchronously so the test doesn't need to
+    // wait out the real 400ms — each _scheduleSpRulePreview() call still
+    // starts its own independent request, which is what can race.
+    sandbox.setTimeout = (fn) => fn();
+    sandbox.clearTimeout = () => {};
+
+    const resolvers = [];
+    sandbox.window.apiClient = {
+        previewSpendingRule: () => new Promise((resolve) => resolvers.push(resolve)),
+    };
+
+    sandbox._scheduleSpRulePreview();
+    sandbox._scheduleSpRulePreview();
+    assert.equal(resolvers.length, 2);
+
+    // The second (newer) request's response arrives first.
+    resolvers[1]({ match_count: 2, sample: [] });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.match(preview.innerHTML, /Matches 2 uncategorized/);
+
+    // The first (now-stale) request's response arrives late and must not
+    // overwrite the newer, already-displayed result.
+    resolvers[0]({ match_count: 99, sample: [] });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.match(preview.innerHTML, /Matches 2 uncategorized/);
 });
 
 test("apiErrorDetail falls back when there is no usable detail", () => {

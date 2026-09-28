@@ -325,7 +325,7 @@ window.mergeActionItems = mergeActionItems;
 const ACTIONITEMS_CATEGORY_LABELS = {
     import: 'Broker Imports', data_quality: 'Data Quality', errors: 'Errors',
     goals: 'Goals', watchlist: 'Price Alerts', networth: 'Net Worth',
-    spending: 'Spending',
+    spending: 'Spending', budget: 'Budget', exposure: 'Fund exposure',
 };
 const ACTIONITEMS_SEVERITY_BADGE = {
     high: 'text-bg-danger', medium: 'text-bg-warning', low: 'text-bg-secondary',
@@ -5176,7 +5176,7 @@ async function _loadSpRecurring() {
     }
     body.innerHTML = items.length ? items.map(i => `
         <tr class="${i.status === 'ended' ? 'text-muted' : ''}">
-            <td class="ps-3"><a href="#" class="sp-recurring-merchant" data-merchant="${escapeForAttr(i.merchant)}" title="Show these transactions">${esc(i.merchant)}</a>
+            <td class="ps-3"><a href="#" class="sp-recurring-merchant" data-merchant="${escapeForAttr(i.merchant)}" data-portfolio-id="${escapeForAttr(i.portfolio_id)}" title="Show these transactions">${esc(i.merchant)}</a>
                 <div class="small text-muted">${esc(i.category)}</div></td>
             <td class="d-none d-md-table-cell">${esc(i.account_name || '')}</td>
             <td>${esc(recurringCadenceLabel(i.cadence))}</td>
@@ -5208,7 +5208,23 @@ function _wireSpRecurringTab() {
             e.preventDefault();
             const search = document.getElementById('spSearch');
             if (search) search.value = link.dataset.merchant;
+            // Scope to the series' own account and clear every other filter
+            // that might otherwise hide the very transactions this link
+            // promises to show (a stale date range, min-amount, sign or
+            // category filter left over from a previous look at the table).
+            const accountFilter = document.getElementById('spAccountFilter');
+            if (accountFilter) accountFilter.value = link.dataset.portfolioId;
+            const fromEl = document.getElementById('spFromDate');
+            if (fromEl) fromEl.value = '';
+            const toEl = document.getElementById('spToDate');
+            if (toEl) toEl.value = '';
+            const minAbsEl = document.getElementById('spMinAbsAmount');
+            if (minAbsEl) minAbsEl.value = '';
+            window._spAmountSign = null;
+            document.getElementById('spAmountSignNegative')?.classList.remove('active');
+            document.getElementById('spAmountSignPositive')?.classList.remove('active');
             window._spCategoryFilterSelected = null;
+            _updateCategoryFilterButtonLabel();
             window._spTxState.page = 0;
             bootstrap.Tab.getOrCreateInstance(document.getElementById('spTabBtnTransactions')).show();
             await _fetchAndRenderSpendingTable();
@@ -6868,6 +6884,10 @@ window.editSpendingRule = function (id) {
 };
 
 let _spRulePreviewTimer = null;
+// Bumped on every scheduled request; a response only writes to the DOM if
+// it's still the most recently scheduled one when it resolves, so a slow
+// earlier response can't clobber a faster later one.
+let _spRulePreviewSeq = 0;
 
 // Debounced "Matches N uncategorized rows" line under the Rules form.
 function _scheduleSpRulePreview() {
@@ -6875,6 +6895,7 @@ function _scheduleSpRulePreview() {
     _spRulePreviewTimer = setTimeout(async () => {
         const out = document.getElementById('spRulePreview');
         if (!out) return;
+        const seq = ++_spRulePreviewSeq;
         const p = _readSpRuleForm();
         if (!p.pattern) { out.textContent = ''; return; }
         try {
@@ -6886,12 +6907,14 @@ function _scheduleSpRulePreview() {
                 min_amount: p.min_amount,
                 max_amount: p.max_amount,
             });
+            if (seq !== _spRulePreviewSeq) return; // a newer request has since started
             const examples = (res.sample || []).slice(0, 3)
                 .map(r => esc(r.merchant || r.description)).join(', ');
             out.innerHTML = res.match_count
                 ? `Matches ${res.match_count} uncategorized row${res.match_count === 1 ? '' : 's'}${examples ? `, e.g. ${examples}` : ''}.`
                 : 'Matches no uncategorized rows right now.';
         } catch (err) {
+            if (seq !== _spRulePreviewSeq) return;
             out.textContent = 'Preview unavailable: ' + err.message;
         }
     }, 400);
