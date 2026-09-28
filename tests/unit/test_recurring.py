@@ -78,6 +78,20 @@ def test_price_change_uses_run_since_last_change_not_whole_history():
     assert s.price_change_pct == 20.0
 
 
+def test_price_change_needs_a_three_charge_flat_run():
+    # The anchor (57) has only one earlier charge within 2% of it (58), a
+    # flat run of two: too short to call the 64 a price rise on a utility.
+    rows = _monthly([50.0, 58.0, 57.0, 64.0], merchant="EXAMPLE UTILITY")
+    [s] = detect_recurring(rows, {1: date(2026, 4, 20)})
+    assert s.price_change_pct is None
+
+
+def test_price_change_run_of_two_is_not_enough():
+    rows = _monthly([10.0, 10.0, 12.0])
+    [s] = detect_recurring(rows, {1: date(2026, 3, 20)})
+    assert s.price_change_pct is None
+
+
 def test_irregular_amounts_are_not_recurring():
     rows = [
         _tx("2026-01-03", -12.0, merchant="EXAMPLE SUPERMARKET"),
@@ -162,7 +176,7 @@ def test_second_due_date_computed_from_last_charge_not_clamped_next():
 def test_second_due_date_not_shortened_by_clamped_next_expected():
     # Same series as above, imported a day later: computing the second
     # cycle from the already-clamped next_expected (Feb 28 -> Mar 28)
-    # would call this "ended" a week early. Two full months from the
+    # would call this "ended" three days early. Two full months from the
     # actual last charge (Jan 31 -> Mar 31) still calls it "missed".
     rows = [
         _tx("2025-11-30", -9.99),

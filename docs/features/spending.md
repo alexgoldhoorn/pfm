@@ -156,9 +156,10 @@ amount (within 25% of the median, at least 75% of charges "regular" to
 qualify); a cadence needs at least 3 occurrences unless it's yearly. Each
 series reports `cadence`, `occurrences`, `typical_amount`, `annual_amount`
 (+ `annual_amount_eur`), `next_expected`, `status` and `price_change_pct`
-(set only for a flat *run* — at least two charges immediately before the
-latest one, each within 2% (`PRICE_FLAT_TOLERANCE`) of the charge right
-before the latest, walking back only as far as that run stays flat — when
+(set only for a flat *run* — at least three charges immediately before the
+latest one (`PRICE_FLAT_MIN_RUN`: the charge right before the latest plus two
+earlier ones, each within 2% (`PRICE_FLAT_TOLERANCE`) of it), walking back
+only as far as that run stays flat — when
 the latest charge moved ≥5% from the one before it; otherwise `null`, so a
 bill that varies month to month, like a utility, never shows a "price rise".
 Flatness is judged on that recent run, not the whole history: an earlier
