@@ -612,7 +612,9 @@ class TestRecurringChargeItems:
             portfolio_id=pid, date="2026-04-25", description="OTHER", amount=-1.0
         )
         items = check_recurring_charges(db, today=date(2026, 4, 26))
-        assert [i["id"] for i in items] == [f"recurring:missed:{pid}:EXAMPLE STREAMING"]
+        assert [i["id"] for i in items] == [
+            f"recurring:missed:{pid}:EXAMPLE STREAMING:2026-04-15"
+        ]
         assert items[0]["severity"] == "medium"
         assert items[0]["link_page"] == "spending"
 

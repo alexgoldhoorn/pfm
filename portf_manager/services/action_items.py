@@ -488,7 +488,7 @@ def check_recurring_charges(db, today: date = None) -> list[dict]:
         if s.status == "missed":
             items.append(
                 {
-                    "id": f"recurring:missed:{key}",
+                    "id": f"recurring:missed:{key}:{s.next_expected}",
                     "category": "spending",
                     "severity": "medium",
                     "title": f"Expected charge from {s.merchant} didn't arrive",
