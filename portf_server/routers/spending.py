@@ -30,6 +30,7 @@ from portf_manager.services.balance_check import find_balance_breaks
 from portf_manager.services.transfer_matcher import find_all_transfer_matches
 from portf_manager.services.budget import build_children_index, subtree_names
 from portf_manager.services.merchant import normalize_merchant
+from portf_manager.services.recurring import load_recurring
 from portf_manager.services.spending_rules import pick_category, rule_matches
 from portf_manager.llm_client import get_llm_client
 
@@ -204,6 +205,32 @@ class SpendingSummaryResponse(BaseModel):
     income_eur: float
     transferred_eur: float
     by_category_eur: dict
+
+
+class RecurringItem(BaseModel):
+    merchant: str
+    portfolio_id: int
+    account_name: Optional[str] = None
+    currency: str
+    category: str
+    cadence: str
+    occurrences: int
+    first_date: str
+    last_date: str
+    last_amount: float
+    typical_amount: float
+    annual_amount: float
+    annual_amount_eur: float
+    next_expected: str
+    status: str
+    price_change_pct: Optional[float] = None
+    transaction_ids: List[int]
+
+
+class RecurringResponse(BaseModel):
+    items: List[RecurringItem]
+    monthly_total_eur: float
+    annual_total_eur: float
 
 
 def _sign_matches_root(root: Optional[str], amount: float) -> bool:
@@ -1075,6 +1102,37 @@ def get_spending_summary(
         income_eur=round(income_eur, 2),
         transferred_eur=round(transferred_eur, 2),
         by_category_eur={k: round(v, 2) for k, v in by_category_eur.items()},
+    )
+
+
+@router.get("/recurring", response_model=RecurringResponse)
+def list_recurring(
+    portfolio_id: Optional[int] = None,
+    include_ended: bool = False,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Recurring charges (subscriptions, bills) detected from bank outflows.
+
+    Totals are EUR at today's rate (same convention as /summary) over
+    series that haven't ended. Ended series are hidden unless asked for.
+    A plain ``def`` because the FX lookup can do blocking network I/O.
+    """
+    names = {p["id"]: p["name"] for p in db.get_all_portfolios()}
+    items: List[RecurringItem] = []
+    for s in load_recurring(db, portfolio_id=portfolio_id):
+        if s.status == "ended" and not include_ended:
+            continue
+        items.append(
+            RecurringItem(
+                **vars(s),
+                account_name=names.get(s.portfolio_id),
+                annual_amount_eur=round(s.annual_amount * _fx(s.currency), 2),
+            )
+        )
+    annual = round(sum(i.annual_amount_eur for i in items if i.status != "ended"), 2)
+    return RecurringResponse(
+        items=items, monthly_total_eur=round(annual / 12, 2), annual_total_eur=annual
     )
 
 
