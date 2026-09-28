@@ -25,6 +25,7 @@ _MONTHS_AHEAD = {"monthly": 1, "quarterly": 3, "yearly": 12}
 AMOUNT_TOLERANCE = 0.25
 REGULAR_SHARE = 0.75
 PRICE_CHANGE_MIN_PCT = 5.0
+PRICE_FLAT_TOLERANCE = 0.02
 _STATUS_ORDER = {"missed": 0, "active": 1, "ended": 2}
 
 
@@ -73,6 +74,32 @@ def _classify(gaps: List[int]) -> Optional[tuple]:
         if regular / len(gaps) >= REGULAR_SHARE:
             return cadence
     return None
+
+
+def _price_change_pct(amounts: List[float]) -> Optional[float]:
+    """Percent change of the last charge versus the one before it.
+
+    Only reported for a flat series: at least two charges before the last
+    one, all within ``PRICE_FLAT_TOLERANCE`` of their own median. A bill that
+    varies (utilities) has no meaningful "price rise".
+
+    Args:
+        amounts: Charge amounts in date order (positive).
+
+    Returns:
+        The rounded percent change when it is at least
+        ``PRICE_CHANGE_MIN_PCT`` in size, else None.
+    """
+    prior = amounts[:-1]
+    if len(prior) < 2:
+        return None
+    prior_median = median(prior)
+    if any(abs(a - prior_median) > PRICE_FLAT_TOLERANCE * prior_median for a in prior):
+        return None
+    change = (amounts[-1] - amounts[-2]) / amounts[-2] * 100
+    if abs(change) < PRICE_CHANGE_MIN_PCT:
+        return None
+    return round(change, 1)
 
 
 def _status(
@@ -143,7 +170,6 @@ def detect_recurring(
             continue
         last_day = charges[-1][0]
         next_expected = _advance(last_day, name)
-        change = (amounts[-1] - amounts[-2]) / amounts[-2] * 100
         latest = charges[-1][3]
         found.append(
             RecurringSeries(
@@ -165,9 +191,7 @@ def detect_recurring(
                     tol,
                     last_import_by_portfolio.get(portfolio_id),
                 ),
-                price_change_pct=(
-                    round(change, 1) if abs(change) >= PRICE_CHANGE_MIN_PCT else None
-                ),
+                price_change_pct=_price_change_pct(amounts),
                 transaction_ids=[i for c in charges for i in c[2]],
             )
         )
