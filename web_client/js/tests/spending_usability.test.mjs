@@ -96,3 +96,19 @@ test("spRuleOfferText: singular and plural", () => {
         'Also file 14 other uncategorized "EXAMPLE SHOP" rows as Groceries?',
     );
 });
+
+test("spCategoryCellInnerHtml: plain category, no Transfer badge", () => {
+    const { spCategoryCellInnerHtml } = loadAppIntoContext();
+    assert.equal(
+        spCategoryCellInnerHtml({ category: "Groceries", is_transfer: false }),
+        '<span class="sp-cat-text border-bottom border-secondary-subtle">Groceries</span>',
+    );
+});
+
+test("spCategoryCellInnerHtml: escapes the category and appends the Transfer badge", () => {
+    const { spCategoryCellInnerHtml } = loadAppIntoContext();
+    assert.equal(
+        spCategoryCellInnerHtml({ category: "<b>x</b>", is_transfer: true }),
+        '<span class="sp-cat-text border-bottom border-secondary-subtle">&lt;b&gt;x&lt;/b&gt;</span> <span class="badge bg-info ms-1">Transfer</span>',
+    );
+});

@@ -5972,10 +5972,7 @@ async function _fetchAndRenderSpendingTable() {
                 <td>${Fmt.date(r.date)}</td>
                 <td>${esc(r.portfolio_name || '')}</td>
                 <td>${spDescriptionCellHtml(r)}</td>
-                <td class="sp-cat-cell" data-id="${r.id}" title="Click to change category" style="cursor:pointer;">
-                    <span class="sp-cat-text border-bottom border-secondary-subtle">${esc(r.category)}</span>
-                    ${r.is_transfer ? '<span class="badge bg-info ms-1">Transfer</span>' : ''}
-                </td>
+                <td class="sp-cat-cell" data-id="${r.id}" title="Click to change category" style="cursor:pointer;">${spCategoryCellInnerHtml(r)}</td>
                 <td class="text-end ${r.amount < 0 ? 'text-danger' : 'text-success'}">${Fmt.money(r.amount, r.currency, 2)}</td>
                 <td class="pe-3"></td>
             </tr>`).join('') : '<tr><td colspan="7" class="text-center text-muted py-3">No transactions match the current filters.</td></tr>';
@@ -6171,6 +6168,16 @@ function spRuleOfferText(merchant, category, count) {
 }
 window.spRuleOfferText = spRuleOfferText;
 
+// Pure: the category cell's inner markup (text + optional Transfer badge).
+// Shared by the row template and the cancel/no-op revert path below, so a
+// cancelled edit can restore the cell locally without re-rendering the whole
+// table (which would drop every other row's checked checkbox).
+function spCategoryCellInnerHtml(row) {
+    const badge = row.is_transfer ? ' <span class="badge bg-info ms-1">Transfer</span>' : '';
+    return `<span class="sp-cat-text border-bottom border-secondary-subtle">${esc(row.category)}</span>${badge}`;
+}
+window.spCategoryCellInnerHtml = spCategoryCellInnerHtml;
+
 function _wireSpCategoryCellEditing() {
     const tbody = document.getElementById('spTxBody');
     if (!tbody || tbody.dataset.catEditWired) return;
@@ -6194,8 +6201,8 @@ function _wireSpCategoryCellEditing() {
         const finish = async (save) => {
             if (done) return;
             done = true;
-            if (save) await _commitSpCategoryEdit(row, input.value);
-            else await _fetchAndRenderSpendingTable();
+            if (save) await _commitSpCategoryEdit(row, input.value, cell);
+            else cell.innerHTML = spCategoryCellInnerHtml(row);
         };
         input.addEventListener('keydown', (ev) => {
             if (ev.key === 'Enter') { ev.preventDefault(); finish(true); }
@@ -6206,13 +6213,19 @@ function _wireSpCategoryCellEditing() {
 }
 window._wireSpCategoryCellEditing = _wireSpCategoryCellEditing;
 
-async function _commitSpCategoryEdit(row, rawValue) {
+async function _commitSpCategoryEdit(row, rawValue, cell) {
     const category = _resolveCategoryInput(rawValue).trim();
-    if (!category || category === row.category) { await _fetchAndRenderSpendingTable(); return; }
-    if (!(await _warnIfSimilarCategory(category))) { await _fetchAndRenderSpendingTable(); return; }
+    // No real change or a declined near-duplicate: revert just this cell,
+    // no network round-trip and no full-table re-render (which would clear
+    // every other row's checked checkbox).
+    if (!category || category === row.category) { cell.innerHTML = spCategoryCellInnerHtml(row); return; }
+    if (!(await _warnIfSimilarCategory(category))) { cell.innerHTML = spCategoryCellInnerHtml(row); return; }
     try {
         await window.apiClient.updateSpendingCategory(row.id, category);
     } catch (err) {
+        // A real failure did reach the server and nothing changed there, so a
+        // full refetch (and the bulk-selection reset that comes with it) is an
+        // acceptable cost here — unlike the cancel/no-op paths above.
         notify('Error: ' + err.message, 'danger');
         await _fetchAndRenderSpendingTable();
         return;
@@ -6251,7 +6264,7 @@ async function _offerRuleForMerchant(row, category) {
             await _refreshSpendingData();
             const n = (res && res.recategorized) || 0;
             status.className = 'small text-success px-3 pt-2';
-            status.textContent = `Rule added. Filed ${n} more row${n === 1 ? '' : 's'} as ${category}.`;
+            status.textContent = `Rule added. ${n} uncategorized row${n === 1 ? '' : 's'} newly categorized.`;
         } catch (err) {
             status.className = 'small text-danger px-3 pt-2';
             status.textContent = 'Error: ' + err.message;
