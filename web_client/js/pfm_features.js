@@ -325,7 +325,7 @@ window.mergeActionItems = mergeActionItems;
 const ACTIONITEMS_CATEGORY_LABELS = {
     import: 'Broker Imports', data_quality: 'Data Quality', errors: 'Errors',
     goals: 'Goals', watchlist: 'Price Alerts', networth: 'Net Worth',
-    spending: 'Spending', budget: 'Budget', exposure: 'Fund exposure',
+    spending: 'Spending', budget: 'Budget', exposure: 'Fund Exposure',
 };
 const ACTIONITEMS_SEVERITY_BADGE = {
     high: 'text-bg-danger', medium: 'text-bg-warning', low: 'text-bg-secondary',
@@ -6907,7 +6907,8 @@ function _scheduleSpRulePreview() {
                 min_amount: p.min_amount,
                 max_amount: p.max_amount,
             });
-            if (seq !== _spRulePreviewSeq) return; // a newer request has since started
+            // A newer request has since started; its result wins.
+            if (seq !== _spRulePreviewSeq) return;
             const examples = (res.sample || []).slice(0, 3)
                 .map(r => esc(r.merchant || r.description)).join(', ');
             out.innerHTML = res.match_count
