@@ -11,6 +11,8 @@ used for search, rule matching and recurring-charge grouping.
 """
 
 import re
+import unicodedata
+from typing import Optional
 
 # Everything from the first backslash: "\CITY\ES26010112" location suffix.
 _LOCATION_SUFFIX = re.compile(r"\\.*$")
@@ -55,3 +57,26 @@ def normalize_merchant(description: str) -> str:
     text = _WHITESPACE.sub(" ", text).strip()
     text = _TRAILING_NUMBERS.sub("", text).strip(" -,")
     return text or raw
+
+
+def fold_for_search(text: Optional[str]) -> str:
+    """Accent- and case-insensitive form of ``text`` for substring search.
+
+    SQLite's LIKE folds only ASCII case, so ``comissió`` would miss
+    ``COMISSIÓ`` and ``comissio`` would miss both. Registered as the SQLite
+    function ``pfm_fold`` on every connection and applied to both sides of
+    the comparison.
+
+    Args:
+        text: Any text; None is treated as empty.
+
+    Returns:
+        The casefolded text with combining marks removed after NFKD
+        decomposition (``"Café Ñandú"`` -> ``"cafe nandu"``).
+    """
+    if not text:
+        return ""
+    # Casefold first so characters that fold into a base letter plus a
+    # combining mark (e.g. dotted capital I) lose the mark too.
+    decomposed = unicodedata.normalize("NFKD", text.casefold())
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch))

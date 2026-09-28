@@ -2,7 +2,7 @@
 
 import pytest
 
-from portf_manager.services.merchant import normalize_merchant
+from portf_manager.services.merchant import fold_for_search, normalize_merchant
 
 
 @pytest.mark.parametrize(
@@ -52,3 +52,19 @@ def test_whitespace_is_collapsed():
 def test_idempotent(description):
     once = normalize_merchant(description)
     assert normalize_merchant(once) == once
+
+
+@pytest.mark.parametrize(
+    "text, expected",
+    [
+        ("COMISSIÓ MANTENIMENT", "comissio manteniment"),
+        ("comissió", "comissio"),
+        ("Café Ñandú", "cafe nandu"),
+        ("STRASSE Straße", "strasse strasse"),
+        ("50% A_B\\C", "50% a_b\\c"),
+        ("", ""),
+        (None, ""),
+    ],
+)
+def test_fold_for_search(text, expected):
+    assert fold_for_search(text) == expected
