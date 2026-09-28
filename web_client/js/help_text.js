@@ -227,6 +227,11 @@ window.PAGE_HELP = {
         <li><strong>Transfers</strong> between your own accounts (e.g. checking → savings, or checking → a brokerage account already tracked here) are detected automatically by matching an outflow in one account to an inflow of the same amount within a few days in another — shown separately, not counted as spending. Use "Re-scan transfers" if you import a matching account's statement later.</li>
         <li>Click a row's category to change it by hand at any time.</li>
         <li>Select one or more rows with the checkbox column to <strong>bulk recategorize or delete</strong> them via the action bar that appears above the table — there's no single-row delete button, so even one row needs to be checked first.</li>
+        <li><strong>Search</strong> matches the bank's description and the cleaned-up merchant name (card numbers, towns and reference codes stripped).</li>
+        <li><strong>Click a category</strong> in the table to change it. If other uncategorized rows share the merchant, you're offered a rule that files them all.</li>
+        <li><strong>Rules</strong> can be limited to one account, money in or out, and an amount range. Lower priority numbers are tried first.</li>
+        <li><strong>Recurring</strong> lists charges that arrive at a steady interval for a steady amount. <em>Missed</em> means a statement covering the due date is imported but the charge isn't in it.</li>
+        <li>When a statement has a balance column, the import preview warns if the balances don't add up, which usually means missing rows.</li>
       </ul>
       <p class="text-muted small mb-0">A read-only summary of the last 30 days also appears on the Net Worth page, next to your manual Monthly Cash Flow entries, for comparison.</p>`
   },

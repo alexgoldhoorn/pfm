@@ -2865,6 +2865,9 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         <li class="nav-item">
                             <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#spPaneAnalytics" id="spTabBtnAnalytics"><i class="bi bi-graph-up me-1"></i>Analytics</button>
                         </li>
+                        <li class="nav-item">
+                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#spPaneRecurring" id="spTabBtnRecurring"><i class="bi bi-arrow-repeat me-1"></i>Recurring</button>
+                        </li>
                     </ul>
                     <div class="tab-content">
                         <div class="tab-pane fade show active" id="spPaneTransactions">
@@ -3020,6 +3023,34 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                         <canvas id="spCategoryChartCanvas"></canvas>
                                     </div>
                                     <div id="spCategoryChartError" class="text-danger small" style="display:none;"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="tab-pane fade" id="spPaneRecurring">
+                            <div class="card">
+                                <div class="card-header d-flex flex-wrap align-items-center gap-2">
+                                    <span class="fw-semibold">Recurring charges</span>
+                                    <span class="small text-muted ms-auto" id="spRecurringTotals"></span>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm mb-0">
+                                        <thead><tr>
+                                            <th class="ps-3">Merchant</th>
+                                            <th class="d-none d-md-table-cell">Account</th>
+                                            <th>Every</th>
+                                            <th class="text-end">Typical</th>
+                                            <th>Next</th>
+                                            <th class="text-end d-none d-sm-table-cell">Per year</th>
+                                            <th class="pe-3"></th>
+                                        </tr></thead>
+                                        <tbody id="spRecurringBody"><tr><td colspan="7" class="text-center text-muted py-3">Loading…</td></tr></tbody>
+                                    </table>
+                                </div>
+                                <div class="card-body py-2 border-top">
+                                    <div class="form-check small mb-0">
+                                        <input class="form-check-input" type="checkbox" id="spRecurringShowEnded">
+                                        <label class="form-check-label" for="spRecurringShowEnded">Show ended</label>
+                                    </div>
                                 </div>
                             </div>
                         </div>

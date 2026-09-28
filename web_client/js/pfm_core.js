@@ -2210,6 +2210,14 @@ function createAPIClient() {
             }
             return response.json();
         },
+        async getSpendingRecurring({ includeEnded = false } = {}) {
+            const qs = includeEnded ? '?include_ended=true' : '';
+            const response = await fetch(this.baseURL + '/api/v1/spending/recurring' + qs, {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) throw new Error('Failed to load recurring charges');
+            return response.json();
+        },
         async getSpendingCategories() {
             const response = await fetch(this.baseURL + '/api/v1/spending/categories', {
                 headers: { 'X-API-Key': this.apiKey }
