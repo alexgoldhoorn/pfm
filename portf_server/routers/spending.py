@@ -9,7 +9,7 @@ different dedup + transfer semantics.
 
 import json
 import logging
-from typing import Dict, List, Literal, Optional
+from typing import Callable, Dict, List, Literal, Optional
 
 from fastapi import (
     APIRouter,
@@ -241,11 +241,33 @@ def _sign_matches_root(root: Optional[str], amount: float) -> bool:
     return (root == "Spend") == (amount < 0)
 
 
+def _category_fits(db) -> Callable[[str, float], bool]:
+    """A ``category_fits(category, amount)`` check with memoised root lookups.
+
+    Build one per request: every row of an upload or rescan asks about the
+    same handful of rule categories, and each root lookup walks the tree.
+
+    Args:
+        db: Database used for ``get_spending_category_root``.
+
+    Returns:
+        A function telling whether ``category`` can hold ``amount``'s sign.
+    """
+    roots: Dict[str, Optional[str]] = {}
+
+    def fits(category: str, amount: float) -> bool:
+        if category not in roots:
+            roots[category] = db.get_spending_category_root(category)
+        return _sign_matches_root(roots[category], amount)
+
+    return fits
+
+
 def _apply_rules(
     description: str,
     rules: List[dict],
     amount: float,
-    db,
+    category_fits: Callable[[str, float], bool],
     merchant: Optional[str] = None,
     portfolio_id: Optional[int] = None,
 ) -> str:
@@ -255,16 +277,20 @@ def _apply_rules(
     services.spending_rules. A rule whose category's tree root doesn't match
     the amount's sign is skipped — this runs unattended over many rows, so it
     must never apply a wrong-signed category or raise.
+
+    Args:
+        description: Raw bank description.
+        rules: Rules from ``db.list_spending_rules()``.
+        amount: Signed amount.
+        category_fits: From ``_category_fits(db)``, built once per request.
+        merchant: Normalised merchant name, if known.
+        portfolio_id: The row's bank account.
+
+    Returns:
+        The first fitting rule's category, or "uncategorized".
     """
     return pick_category(
-        rules,
-        description,
-        merchant,
-        amount,
-        portfolio_id,
-        lambda category, amt: _sign_matches_root(
-            db.get_spending_category_root(category), amt
-        ),
+        rules, description, merchant, amount, portfolio_id, category_fits
     )
 
 
@@ -314,6 +340,7 @@ async def upload_bank_statement(
         )
 
     rules = db.list_spending_rules()
+    fits = _category_fits(db)
     dup_count = 0
     rows: List[PreviewSpendingRow] = []
     for r in result.rows:
@@ -322,7 +349,7 @@ async def upload_bank_statement(
             r.description,
             rules,
             r.amount,
-            db,
+            fits,
             merchant=merchant,
             portfolio_id=portfolio_id,
         )
@@ -425,9 +452,10 @@ async def save_spending_transactions(
 ):
     """Save previewed spending rows, honoring duplicate_action, then auto-link transfers."""
 
+    fits = _category_fits(db)
+
     def _resolve_row_category(row) -> str:
-        root = db.get_spending_category_root(row.category)
-        return row.category if _sign_matches_root(root, row.amount) else "uncategorized"
+        return row.category if fits(row.category, row.amount) else "uncategorized"
 
     saved = 0
     duplicates_skipped = 0
@@ -730,13 +758,14 @@ async def rescan_categories(
     if body and body.ids is not None:
         id_set = set(body.ids)
         uncategorized = [row for row in uncategorized if row["id"] in id_set]
+    fits = _category_fits(db)
     updated = 0
     for row in uncategorized:
         category = _apply_rules(
             row["description"],
             rules,
             row["amount"],
-            db,
+            fits,
             merchant=row.get("merchant"),
             portfolio_id=row["portfolio_id"],
         )
@@ -827,7 +856,7 @@ async def preview_rule(
         is_transfer=False,
     )
     excluded = set(body.exclude_ids)
-    root = db.get_spending_category_root(body.category) if body.category else None
+    fits = _category_fits(db)
     matches = [
         r
         for r in candidates
@@ -835,7 +864,7 @@ async def preview_rule(
         and rule_matches(
             rule, r["description"], r.get("merchant"), r["amount"], r["portfolio_id"]
         )
-        and _sign_matches_root(root, r["amount"])
+        and (not body.category or fits(body.category, r["amount"]))
     ]
     return RulePreviewResponse(
         match_count=len(matches),

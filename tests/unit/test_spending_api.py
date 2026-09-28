@@ -2142,3 +2142,22 @@ def test_recurring_endpoint_hides_ended_by_default(tmp_path):
         "/api/v1/spending/recurring?include_ended=true", headers=HEADERS
     ).json()
     assert [i["status"] for i in shown["items"]] == ["ended"]
+
+
+def test_category_fits_memoises_root_lookups():
+    from portf_server.routers.spending import _category_fits
+
+    class _CountingDB:
+        calls = 0
+
+        def get_spending_category_root(self, category):
+            self.calls += 1
+            return "Spend" if category == "Groceries" else None
+
+    db = _CountingDB()
+    fits = _category_fits(db)
+    assert fits("Groceries", -10.0) is True
+    assert fits("Groceries", 10.0) is False
+    assert fits("Groceries", -5.0) is True
+    assert fits("Loose", 10.0) is True
+    assert db.calls == 2
