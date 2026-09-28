@@ -433,6 +433,21 @@ def test_duplicate_rule_considers_conditions(db):
     )
 
 
+def test_duplicate_rule_exclude_id_skips_only_that_rule(db):
+    first = db.create_spending_rule("BIZUM", "Gifts")
+    second = db.create_spending_rule("BIZUM", "Gifts")
+    assert (
+        db.find_duplicate_spending_rule("BIZUM", "Gifts", exclude_id=first)["id"]
+        == second
+    )
+    assert (
+        db.find_duplicate_spending_rule("BIZUM", "Gifts", exclude_id=second)["id"]
+        == first
+    )
+    db.delete_spending_rule(second)
+    assert db.find_duplicate_spending_rule("BIZUM", "Gifts", exclude_id=first) is None
+
+
 def test_latest_bank_balance_before(db):
     pid = _bank(db)
     db.create_spending_transaction(

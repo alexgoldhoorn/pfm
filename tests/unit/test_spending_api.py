@@ -2027,6 +2027,39 @@ def test_update_rule_rejects_exact_duplicate_of_another_rule(tmp_path):
     assert next(x for x in listed if x["id"] == other["id"])["pattern"] == "CARREFOUR"
 
 
+def test_update_rule_excludes_itself_even_with_a_pre_existing_identical_twin(
+    tmp_path,
+):
+    # Two identical rules already exist (created directly via the DB layer,
+    # bypassing the API's own create-time duplicate check -- e.g. left over
+    # from before that check existed). find_duplicate_spending_rule returns
+    # whichever one SQLite hands back first, which need not be "the other
+    # one": a priority-only edit on EITHER must still exclude itself, not
+    # just "the first row found for these values".
+    client, db = _make_client(tmp_path)
+    rid1 = db.create_spending_rule("MERCADONA", "Groceries")
+    rid2 = db.create_spending_rule("MERCADONA", "Groceries")
+
+    r1 = client.put(
+        f"/api/v1/spending/rules/{rid1}", json={"priority": 5}, headers=HEADERS
+    )
+    assert r1.status_code == 200
+    r2 = client.put(
+        f"/api/v1/spending/rules/{rid2}", json={"priority": 5}, headers=HEADERS
+    )
+    assert r2.status_code == 200
+
+    # A real would-be duplicate (copying the OTHER rule's pattern/category)
+    # must still 409.
+    rid3 = db.create_spending_rule("CARREFOUR", "Groceries")
+    r3 = client.put(
+        f"/api/v1/spending/rules/{rid3}",
+        json={"pattern": "MERCADONA"},
+        headers=HEADERS,
+    )
+    assert r3.status_code == 409
+
+
 def test_update_rule_allows_resaving_its_own_unchanged_values(tmp_path):
     client, _ = _make_client(tmp_path)
     rule_id = client.post(
