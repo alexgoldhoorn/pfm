@@ -2099,3 +2099,35 @@ def test_upload_without_balance_column_checks_nothing(tmp_path):
     d = r.json()
     assert d["balance_rows_checked"] == 0
     assert d["balance_breaks"] == []
+
+
+def test_recurring_endpoint(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    for month in (1, 2, 3):
+        _add(db, pid, "EXAMPLE STREAMING", amount=-9.99, day=f"2026-0{month}-15")
+    r = client.get("/api/v1/spending/recurring", headers=HEADERS)
+    assert r.status_code == 200
+    d = r.json()
+    assert len(d["items"]) == 1
+    item = d["items"][0]
+    assert item["merchant"] == "EXAMPLE STREAMING"
+    assert item["account_name"] == "Example Bank"
+    assert item["cadence"] == "monthly"
+    assert d["annual_total_eur"] == round(9.99 * 12, 2)
+    assert d["monthly_total_eur"] == round(9.99 * 12 / 12, 2)
+
+
+def test_recurring_endpoint_hides_ended_by_default(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    for month in (1, 2, 3):
+        _add(db, pid, "OLD SERVICE", amount=-5.0, day=f"2026-0{month}-10")
+    _add(db, pid, "SOMETHING ELSE", amount=-1.0, day="2026-08-01")
+    assert (
+        client.get("/api/v1/spending/recurring", headers=HEADERS).json()["items"] == []
+    )
+    shown = client.get(
+        "/api/v1/spending/recurring?include_ended=true", headers=HEADERS
+    ).json()
+    assert [i["status"] for i in shown["items"]] == ["ended"]
