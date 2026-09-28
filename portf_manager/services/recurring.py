@@ -77,10 +77,13 @@ def _classify(gaps: List[int]) -> Optional[tuple]:
 
 
 def _price_change_pct(amounts: List[float]) -> Optional[float]:
-    """Percent change of the last charge versus the one before it.
+    """Percent change of the last charge versus the run of charges before it.
 
-    Only reported for a flat series: at least two charges before the last
-    one, all within ``PRICE_FLAT_TOLERANCE`` of their own median. A bill that
+    Flatness is judged on the run of charges since the *last* price change,
+    not the whole history: walk back from the charge before the last one
+    while each earlier charge is within ``PRICE_FLAT_TOLERANCE`` of it, and
+    require at least two charges in that run. An earlier price change (e.g.
+    8 -> 10) must not blind this to a later one (10 -> 12). A bill that
     varies (utilities) has no meaningful "price rise".
 
     Args:
@@ -90,28 +93,50 @@ def _price_change_pct(amounts: List[float]) -> Optional[float]:
         The rounded percent change when it is at least
         ``PRICE_CHANGE_MIN_PCT`` in size, else None.
     """
-    prior = amounts[:-1]
-    if len(prior) < 2:
+    if len(amounts) < 2:
         return None
-    prior_median = median(prior)
-    if any(abs(a - prior_median) > PRICE_FLAT_TOLERANCE * prior_median for a in prior):
+    anchor = amounts[-2]
+    run_length = 1
+    for a in reversed(amounts[:-2]):
+        if anchor == 0 or abs(a - anchor) > PRICE_FLAT_TOLERANCE * anchor:
+            break
+        run_length += 1
+    if run_length < 2:
         return None
     # A sub-cent charge rounds to 0.00; there is no percentage to report.
-    if amounts[-2] == 0:
+    if anchor == 0:
         return None
-    change = (amounts[-1] - amounts[-2]) / amounts[-2] * 100
+    change = (amounts[-1] - anchor) / anchor * 100
     if abs(change) < PRICE_CHANGE_MIN_PCT:
         return None
     return round(change, 1)
 
 
+def _second_due(last_day: date, cadence: str) -> date:
+    """The due date two cycles after the last charge.
+
+    Computed straight from the last charge, not by advancing the
+    already-clamped ``next_expected`` a second time: chaining two clamped
+    month-adds from a month-end charge can land a few days short (e.g. a
+    monthly charge on Jan 31 clamps to Feb 28, and advancing *that* a month
+    lands on Mar 28 rather than the correct Mar 31).
+    """
+    if cadence == "weekly":
+        return last_day + timedelta(days=14)
+    return _add_months(last_day, 2 * _MONTHS_AHEAD[cadence])
+
+
 def _status(
-    next_expected: date, cadence: str, tol: float, last_import: Optional[date]
+    next_expected: date,
+    cadence: str,
+    tol: float,
+    last_import: Optional[date],
+    last_day: date,
 ) -> str:
     grace = timedelta(days=tol)
     if last_import is None or last_import <= next_expected + grace:
         return "active"
-    if last_import <= _advance(next_expected, cadence) + grace:
+    if last_import <= _second_due(last_day, cadence) + grace:
         return "missed"
     return "ended"
 
@@ -174,6 +199,7 @@ def detect_recurring(
         last_day = charges[-1][0]
         next_expected = _advance(last_day, name)
         latest = charges[-1][3]
+        typical_amount = round(typical, 2)
         found.append(
             RecurringSeries(
                 merchant=(latest.get("merchant") or latest.get("description")).strip(),
@@ -185,14 +211,15 @@ def detect_recurring(
                 first_date=charges[0][0].isoformat(),
                 last_date=last_day.isoformat(),
                 last_amount=amounts[-1],
-                typical_amount=round(typical, 2),
-                annual_amount=round(typical * per_year, 2),
+                typical_amount=typical_amount,
+                annual_amount=round(typical_amount * per_year, 2),
                 next_expected=next_expected.isoformat(),
                 status=_status(
                     next_expected,
                     name,
                     tol,
                     last_import_by_portfolio.get(portfolio_id),
+                    last_day,
                 ),
                 price_change_pct=_price_change_pct(amounts),
                 transaction_ids=[i for c in charges for i in c[2]],
