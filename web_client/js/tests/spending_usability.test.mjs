@@ -130,3 +130,20 @@ test("spBalanceWarningHtml: names the gap kinds and escapes descriptions", () =>
     assert.match(html, /missing from this file/);
     assert.ok(!html.includes("<b>A</b>"));
 });
+
+test("recurringCadenceLabel", () => {
+    const { recurringCadenceLabel } = loadAppIntoContext();
+    assert.equal(recurringCadenceLabel("weekly"), "Week");
+    assert.equal(recurringCadenceLabel("monthly"), "Month");
+    assert.equal(recurringCadenceLabel("quarterly"), "Quarter");
+    assert.equal(recurringCadenceLabel("yearly"), "Year");
+});
+
+test("recurringStatusBadges: missed, ended, price up and down", () => {
+    const { recurringStatusBadges } = loadAppIntoContext();
+    assert.equal(recurringStatusBadges({ status: "active", price_change_pct: null }), "");
+    assert.match(recurringStatusBadges({ status: "missed" }), /bg-danger[^>]*>Missed</);
+    assert.match(recurringStatusBadges({ status: "ended" }), /bg-secondary[^>]*>Ended</);
+    assert.match(recurringStatusBadges({ status: "active", price_change_pct: 20 }), /▲ \+20%/);
+    assert.match(recurringStatusBadges({ status: "active", price_change_pct: -12.5 }), /▼ -12.5%/);
+});

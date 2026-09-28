@@ -5132,6 +5132,89 @@ function spDescriptionCellHtml(row) {
 }
 window.spDescriptionCellHtml = spDescriptionCellHtml;
 
+const _SP_CADENCE_LABELS = { weekly: 'Week', monthly: 'Month', quarterly: 'Quarter', yearly: 'Year' };
+
+// Pure: short cadence label for the Recurring table's "Every" column.
+function recurringCadenceLabel(cadence) {
+    return _SP_CADENCE_LABELS[cadence] || cadence;
+}
+window.recurringCadenceLabel = recurringCadenceLabel;
+
+// Pure: status + price-change badges for one recurring series.
+function recurringStatusBadges(item) {
+    const badges = [];
+    if (item.status === 'missed') badges.push('<span class="badge bg-danger" title="A statement covering the due date is imported, but the charge isn\'t in it">Missed</span>');
+    if (item.status === 'ended') badges.push('<span class="badge bg-secondary">Ended</span>');
+    const pct = item.price_change_pct;
+    if (pct != null) {
+        badges.push(pct > 0
+            ? `<span class="badge bg-warning text-dark" title="Last charge vs the one before">▲ +${pct}%</span>`
+            : `<span class="badge bg-info text-dark" title="Last charge vs the one before">▼ ${pct}%</span>`);
+    }
+    return badges.join(' ');
+}
+window.recurringStatusBadges = recurringStatusBadges;
+
+async function _loadSpRecurring() {
+    const body = document.getElementById('spRecurringBody');
+    const totals = document.getElementById('spRecurringTotals');
+    if (!body) return;
+    const includeEnded = !!document.getElementById('spRecurringShowEnded')?.checked;
+    let data;
+    try {
+        data = await window.apiClient.getSpendingRecurring({ includeEnded });
+    } catch (err) {
+        body.innerHTML = `<tr><td colspan="7" class="text-center text-danger py-3">${esc(err.message)}</td></tr>`;
+        return;
+    }
+    const items = data.items || [];
+    if (totals) {
+        totals.innerHTML = items.length
+            ? `≈ ${Fmt.money(data.monthly_total_eur, 'EUR', 0)}/month · ${Fmt.money(data.annual_total_eur, 'EUR', 0)}/year`
+            : '';
+    }
+    body.innerHTML = items.length ? items.map(i => `
+        <tr class="${i.status === 'ended' ? 'text-muted' : ''}">
+            <td class="ps-3"><a href="#" class="sp-recurring-merchant" data-merchant="${escapeForAttr(i.merchant)}" title="Show these transactions">${esc(i.merchant)}</a>
+                <div class="small text-muted">${esc(i.category)}</div></td>
+            <td class="d-none d-md-table-cell">${esc(i.account_name || '')}</td>
+            <td>${esc(recurringCadenceLabel(i.cadence))}</td>
+            <td class="text-end">${Fmt.money(i.typical_amount, i.currency, 2)}</td>
+            <td>${Fmt.date(i.next_expected)}</td>
+            <td class="text-end d-none d-sm-table-cell">${Fmt.money(i.annual_amount, i.currency, 0)}</td>
+            <td class="pe-3 text-end">${recurringStatusBadges(i)}</td>
+        </tr>`).join('')
+        : '<tr><td colspan="7" class="text-center text-muted py-3">No recurring charges found yet. They show up after three regular charges (two for yearly ones).</td></tr>';
+}
+
+function _wireSpRecurringTab() {
+    const tabBtn = document.getElementById('spTabBtnRecurring');
+    if (tabBtn && !tabBtn.dataset.wired) {
+        tabBtn.dataset.wired = '1';
+        tabBtn.addEventListener('shown.bs.tab', _loadSpRecurring);
+    }
+    const showEnded = document.getElementById('spRecurringShowEnded');
+    if (showEnded && !showEnded.dataset.wired) {
+        showEnded.dataset.wired = '1';
+        showEnded.addEventListener('change', _loadSpRecurring);
+    }
+    const body = document.getElementById('spRecurringBody');
+    if (body && !body.dataset.wired) {
+        body.dataset.wired = '1';
+        body.addEventListener('click', async (e) => {
+            const link = e.target.closest('.sp-recurring-merchant');
+            if (!link) return;
+            e.preventDefault();
+            const search = document.getElementById('spSearch');
+            if (search) search.value = link.dataset.merchant;
+            window._spCategoryFilterSelected = null;
+            window._spTxState.page = 0;
+            bootstrap.Tab.getOrCreateInstance(document.getElementById('spTabBtnTransactions')).show();
+            await _fetchAndRenderSpendingTable();
+        });
+    }
+}
+
 // Pure: one-line summary of a rule's optional conditions for the Rules table.
 // Amounts are in each row's own currency, so no currency symbol is shown.
 function ruleConditionSummary(rule, accountNames) {
@@ -5279,6 +5362,7 @@ async function loadSpendingPage() {
     _wireSpCategoryAddForm();
     _wireSpendingImportModal();
     _wireSpCategoryCellEditing();
+    _wireSpRecurringTab();
     const periodSel = document.getElementById('spSummaryPeriod');
     if (periodSel) {
         // Reflect the persisted choice immediately, before the first
