@@ -53,7 +53,7 @@ of its tools. A change here affects that surface too — see `~/mcp/CLAUDE.md`,
 ### Database
 SQLite by default (`portfolio.db`), PostgreSQL via `DATABASE_URL` env var. Use `portf_manager/database.py` for SQLite, `database_factory.py` for auto-detection.
 
-**Current schema version: 32.** Migrations run automatically on startup.
+**Current schema version: 33.** Migrations run automatically on startup.
 
 Migration history (condensed — see `_migrate_to_vN` for full schema detail):
 - v5: `bookings` table (deposits/withdrawals); `tax` on `transactions`
@@ -73,6 +73,7 @@ Migration history (condensed — see `_migrate_to_vN` for full schema detail):
 - v30: `fund_profiles` (asset_id PK REFERENCES assets(id) ON DELETE CASCADE, benchmark_key, source [`benchmark`|`llm`|`manual`], asset_class/regions/sectors [JSON weight maps], currency_hedged, hedge_currency, as_of, notes, updated_at) — one row per fund-like asset (`etf`/`mutual_fund`/`index`), holding the weight maps that let a fund be "seen through" into asset class, region and sector instead of counted as one opaque line. Nothing is backfilled on migration — an asset with no row is reported as unclassified rather than guessed at. See `docs/features/analytics.md`.
 - v31: `app_logs` (id, created_at [UTC ISO], level, source [logger name], event, message, details [JSON]) — the persistent application log. See `docs/features/llm.md`.
 - v32: `spending_transactions.merchant` (`normalize_merchant`, backfilled); `spending_rules.portfolio_id`/`amount_sign`/`min_amount`/`max_amount`/`priority` — rules evaluate by priority then id. See `docs/features/spending.md`.
+- v33: re-runs v32's guarded steps; heals a DB stamped 32 without the columns.
 
 ⚠️ **New tables must appear in BOTH `_create_all_tables` (fresh DBs) AND `_migrate_to_vN` (existing DBs)** — migration-only adds break fresh installs/tests with "no such table".
 ⚠️ **CHECK constraint rebuilds** require `PRAGMA legacy_alter_table=ON` around the `RENAME` — see `_migrate_to_v13`.
@@ -210,7 +211,7 @@ Full reference (dashboard layout, chart helpers, page-by-page wiring):
 - Pre-push hook runs the full unit suite. F541 fixer:
   `uv run python scripts/fix_f541.py`. Reset the LLM singleton with
   `portf_manager.llm_client.reset_llm_client()`.
-- DB version bump: update every `== 32` assertion in `tests/test_database.py`.
+- DB version bump: update every `== 33` assertion in `tests/test_database.py`.
 
 ## Documentation (Default Behaviour)
 When adding or changing a feature, always update:

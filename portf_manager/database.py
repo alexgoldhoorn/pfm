@@ -16,7 +16,7 @@ from pathlib import Path
 from portf_manager.services.merchant import normalize_merchant
 
 # Database version for migration tracking
-DATABASE_VERSION = 32
+DATABASE_VERSION = 33
 
 
 # black
@@ -833,6 +833,8 @@ class Database:
             self._migrate_to_v31(conn)
         if current_version < 32:
             self._migrate_to_v32(conn)
+        if current_version < 33:
+            self._migrate_to_v33(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -1828,6 +1830,18 @@ class Database:
             if name not in rule_cols:
                 conn.execute(f"ALTER TABLE spending_rules ADD COLUMN {name} {ddl}")
         conn.commit()
+
+    def _migrate_to_v33(self, conn: sqlite3.Connection) -> None:
+        """Migrate from v32 to v33 — re-run v32's guarded steps.
+
+        A half-written build once hot-reloaded and stamped a live database
+        v32 without adding v32's columns. ``_migrate_to_v32`` only runs while
+        the version is below 32, so such a database could never heal on its
+        own. Every step in it is guarded (columns are added only when absent,
+        merchants backfilled only where NULL), so running it again here is
+        harmless on a correct v32 database and repairs a broken one.
+        """
+        self._migrate_to_v32(conn)
 
     # ── Application log ──────────────────────────────────────────────────────
 
