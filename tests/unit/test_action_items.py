@@ -6,14 +6,17 @@ from unittest.mock import patch
 import pytest
 from httpx import AsyncClient
 
+from portf_manager.database import Database
 from portf_manager.services.action_items import (
     check_budget_overruns,
     check_data_quality,
     check_goals_off_track,
     check_price_alerts,
     check_price_update_failures,
+    check_recurring_charges,
     check_stale_imports,
     check_stale_research,
+    checks_for_tests,
     get_action_items,
 )
 
@@ -585,3 +588,51 @@ class TestFundExposure:
         from portf_manager.services import action_items
 
         assert action_items.check_fund_exposure in action_items.checks_for_tests()
+
+
+def _charges(db, pid, merchant, amounts, months):
+    for amount, month in zip(amounts, months):
+        db.create_spending_transaction(
+            portfolio_id=pid,
+            date=f"2026-{month:02d}-15",
+            description=merchant,
+            amount=-amount,
+        )
+
+
+class TestRecurringChargeItems:
+    def test_recurring_check_is_registered(self):
+        assert check_recurring_charges in checks_for_tests()
+
+    def test_missed_recurring_charge_raises_item(self, tmp_path):
+        db = Database(str(tmp_path / "t.db"))
+        pid = db.create_portfolio("Example Bank", account_type="bank")
+        _charges(db, pid, "EXAMPLE STREAMING", [9.99] * 3, [1, 2, 3])
+        db.create_spending_transaction(
+            portfolio_id=pid, date="2026-04-25", description="OTHER", amount=-1.0
+        )
+        items = check_recurring_charges(db, today=date(2026, 4, 26))
+        assert [i["id"] for i in items] == [f"recurring:missed:{pid}:EXAMPLE STREAMING"]
+        assert items[0]["severity"] == "medium"
+        assert items[0]["link_page"] == "spending"
+
+    def test_recent_price_rise_raises_low_item(self, tmp_path):
+        db = Database(str(tmp_path / "t.db"))
+        pid = db.create_portfolio("Example Bank", account_type="bank")
+        _charges(db, pid, "EXAMPLE STREAMING", [10.0, 10.0, 10.0, 12.0], [1, 2, 3, 4])
+        items = check_recurring_charges(db, today=date(2026, 4, 20))
+        assert len(items) == 1
+        assert items[0]["severity"] == "low"
+        assert items[0]["id"] == f"recurring:price:{pid}:EXAMPLE STREAMING:2026-04-15"
+
+    def test_old_price_rise_and_price_drop_are_quiet(self, tmp_path):
+        db = Database(str(tmp_path / "t.db"))
+        pid = db.create_portfolio("Example Bank", account_type="bank")
+        _charges(db, pid, "RISE", [10.0, 10.0, 10.0, 12.0], [1, 2, 3, 4])
+        _charges(db, pid, "DROP", [10.0, 10.0, 10.0, 8.0], [1, 2, 3, 4])
+        # Last import is 2026-04-15, before the 05-15 due date: both series are
+        # active; the rise is 77 days old and a drop never nags.
+        assert check_recurring_charges(db, today=date(2026, 7, 1)) == []
+        assert [
+            i["id"] for i in check_recurring_charges(db, today=date(2026, 4, 20))
+        ] == [f"recurring:price:{pid}:RISE:2026-04-15"]
