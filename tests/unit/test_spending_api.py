@@ -2049,3 +2049,53 @@ def test_rule_preview_rejects_blank_pattern(tmp_path):
         "/api/v1/spending/rules/preview", json={"pattern": "  "}, headers=HEADERS
     )
     assert r.status_code == 400
+
+
+def test_upload_reports_balance_break(tmp_path):
+    client, _ = _make_client(tmp_path)
+    csv_text = (
+        "date,description,amount,balance\n"
+        "2026-01-01,A,-10.00,90.00\n"
+        "2026-01-03,B,-5.00,80.00\n"
+    )
+    r = client.post(
+        "/api/v1/spending/upload",
+        data={"account_name": "Example Bank"},
+        files={"file": ("s.csv", _csv_bytes(csv_text), "text/csv")},
+        headers=HEADERS,
+    )
+    d = r.json()
+    assert d["balance_rows_checked"] == 2
+    assert len(d["balance_breaks"]) == 1
+    assert d["balance_breaks"][0]["expected"] == 85.0
+    assert d["balance_breaks"][0]["kind"] == "within_file"
+
+
+def test_upload_checks_continuity_with_previous_import(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_transaction(
+        portfolio_id=pid, date="2026-01-31", description="OLD", amount=-1, balance=100
+    )
+    csv_text = "date,description,amount,balance\n2026-02-01,A,-10.00,90.00\n"
+    r = client.post(
+        "/api/v1/spending/upload",
+        data={"account_portfolio_id": str(pid)},
+        files={"file": ("s.csv", _csv_bytes(csv_text), "text/csv")},
+        headers=HEADERS,
+    )
+    assert r.json()["balance_breaks"] == []
+
+
+def test_upload_without_balance_column_checks_nothing(tmp_path):
+    client, _ = _make_client(tmp_path)
+    csv_text = "date,description,amount\n2026-01-01,A,-10.00\n"
+    r = client.post(
+        "/api/v1/spending/upload",
+        data={"account_name": "Example Bank"},
+        files={"file": ("s.csv", _csv_bytes(csv_text), "text/csv")},
+        headers=HEADERS,
+    )
+    d = r.json()
+    assert d["balance_rows_checked"] == 0
+    assert d["balance_breaks"] == []

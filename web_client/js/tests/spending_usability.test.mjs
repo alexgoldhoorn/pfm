@@ -112,3 +112,21 @@ test("spCategoryCellInnerHtml: escapes the category and appends the Transfer bad
         '<span class="sp-cat-text border-bottom border-secondary-subtle">&lt;b&gt;x&lt;/b&gt;</span> <span class="badge bg-info ms-1">Transfer</span>',
     );
 });
+
+test("spBalanceWarningHtml: empty for no breaks", () => {
+    const { spBalanceWarningHtml } = loadAppIntoContext();
+    assert.equal(spBalanceWarningHtml([]), "");
+    assert.equal(spBalanceWarningHtml(undefined), "");
+});
+
+test("spBalanceWarningHtml: names the gap kinds and escapes descriptions", () => {
+    const { spBalanceWarningHtml } = loadAppIntoContext();
+    const html = spBalanceWarningHtml([
+        { date: "2026-02-01", description: "<b>A</b>", currency: "EUR", expected: 110, actual: 90, kind: "gap_before_file" },
+        { date: "2026-02-03", description: "B", currency: "EUR", expected: 85, actual: 80, kind: "within_file" },
+    ]);
+    assert.match(html, /alert-warning/);
+    assert.match(html, /since your last import/);
+    assert.match(html, /missing from this file/);
+    assert.ok(!html.includes("<b>A</b>"));
+});

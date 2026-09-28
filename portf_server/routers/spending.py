@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field
 
 from portf_manager.parsers.generic_bank_csv_parser import parse_generic_bank_csv
 from portf_manager.parsers.aeb43_parser import looks_like_aeb43, parse_aeb43
+from portf_manager.services.balance_check import find_balance_breaks
 from portf_manager.services.transfer_matcher import find_all_transfer_matches
 from portf_manager.services.budget import build_children_index, subtree_names
 from portf_manager.services.merchant import normalize_merchant
@@ -68,12 +69,23 @@ class PreviewSpendingRow(BaseModel):
     merchant: Optional[str] = None
 
 
+class BalanceBreakOut(BaseModel):
+    date: str
+    description: str
+    currency: str
+    expected: float
+    actual: float
+    kind: str
+
+
 class SpendingUploadResponse(BaseModel):
     account_portfolio_id: int
     rows: List[PreviewSpendingRow]
     skipped_count: int
     skipped: List[dict]
     duplicate_count: int
+    balance_rows_checked: int = 0
+    balance_breaks: List[BalanceBreakOut] = []
 
 
 class SpendingSaveRequest(BaseModel):
@@ -311,6 +323,17 @@ async def upload_bank_statement(
             )
         )
 
+    # Warn (never block) when stated balances don't add up: rows missing from
+    # this file, or between the previous import and this one.
+    balance_rows = [r for r in result.rows if r.balance is not None]
+    breaks = []
+    if balance_rows:
+        first_date = min(str(r.date)[:10] for r in result.rows)
+        prior = db.get_latest_bank_balance_before(portfolio_id, first_date)
+        breaks = find_balance_breaks(
+            result.rows, opening_balance=prior["balance"] if prior else None
+        )
+
     skipped = [{"row": row, "reason": reason} for row, reason in result.skipped]
     return SpendingUploadResponse(
         account_portfolio_id=portfolio_id,
@@ -318,6 +341,8 @@ async def upload_bank_statement(
         skipped_count=len(skipped),
         skipped=skipped,
         duplicate_count=dup_count,
+        balance_rows_checked=len(balance_rows),
+        balance_breaks=[BalanceBreakOut(**vars(b)) for b in breaks],
     )
 
 
