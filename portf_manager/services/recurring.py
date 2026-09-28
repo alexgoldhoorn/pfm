@@ -26,6 +26,8 @@ AMOUNT_TOLERANCE = 0.25
 REGULAR_SHARE = 0.75
 PRICE_CHANGE_MIN_PCT = 5.0
 PRICE_FLAT_TOLERANCE = 0.02
+# Charges in the flat run before the latest one, the anchor included.
+PRICE_FLAT_MIN_RUN = 3
 _STATUS_ORDER = {"missed": 0, "active": 1, "ended": 2}
 
 
@@ -82,7 +84,8 @@ def _price_change_pct(amounts: List[float]) -> Optional[float]:
     Flatness is judged on the run of charges since the *last* price change,
     not the whole history: walk back from the charge before the last one
     while each earlier charge is within ``PRICE_FLAT_TOLERANCE`` of it, and
-    require at least two charges in that run. An earlier price change (e.g.
+    require at least ``PRICE_FLAT_MIN_RUN`` charges in that run (the anchor
+    plus two earlier ones; a run of two let varying utilities raise alerts). An earlier price change (e.g.
     8 -> 10) must not blind this to a later one (10 -> 12). A bill that
     varies (utilities) has no meaningful "price rise".
 
@@ -101,7 +104,7 @@ def _price_change_pct(amounts: List[float]) -> Optional[float]:
         if anchor == 0 or abs(a - anchor) > PRICE_FLAT_TOLERANCE * anchor:
             break
         run_length += 1
-    if run_length < 2:
+    if run_length < PRICE_FLAT_MIN_RUN:
         return None
     # A sub-cent charge rounds to 0.00; there is no percentage to report.
     if anchor == 0:
