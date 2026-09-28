@@ -310,6 +310,78 @@ def test_migration_v32_backfills_merchant_and_is_rerunnable(db):
     assert db.get_spending_transaction(sid)["merchant"] == "EXAMPLE SHOP MADRID"
 
 
+def test_migration_v33_heals_db_stamped_32_without_v32_columns(tmp_path):
+    path = str(tmp_path / "stamped32.db")
+    db = Database(path)
+    pid = _bank(db)
+    with db.get_connection() as conn:
+        # Recreate both tables in their v31 shape: a DB stamped 32 by a
+        # half-written build that never ran v32's column adds.
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("DROP TABLE spending_transactions")
+        conn.execute("DROP TABLE spending_rules")
+        conn.execute(
+            """
+            CREATE TABLE spending_transactions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                portfolio_id INTEGER NOT NULL,
+                date DATE NOT NULL,
+                description TEXT NOT NULL,
+                amount REAL NOT NULL,
+                currency TEXT NOT NULL DEFAULT 'EUR',
+                category TEXT NOT NULL DEFAULT 'uncategorized',
+                is_transfer INTEGER NOT NULL DEFAULT 0,
+                transfer_link_type TEXT,
+                transfer_link_id INTEGER,
+                source TEXT,
+                balance REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE spending_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pattern TEXT NOT NULL,
+                category TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO spending_transactions (portfolio_id, date, description, "
+            "amount) VALUES (?, '2026-01-05', "
+            "'123456789012EXAMPLE SHOP MADRID 010012345', -10.0)",
+            (pid,),
+        )
+        conn.execute(
+            "INSERT INTO spending_rules (pattern, category) VALUES ('SHOP', 'Misc')"
+        )
+        conn.execute("DELETE FROM database_version")
+        conn.execute("INSERT INTO database_version (version) VALUES (32)")
+        conn.commit()
+
+    healed = Database(path)
+    with healed.get_connection() as conn:
+        tx_cols = {
+            r[1] for r in conn.execute("PRAGMA table_info(spending_transactions)")
+        }
+        rule_cols = {r[1] for r in conn.execute("PRAGMA table_info(spending_rules)")}
+        merchant = conn.execute(
+            "SELECT merchant FROM spending_transactions"
+        ).fetchone()[0]
+        version = conn.execute(
+            "SELECT version FROM database_version ORDER BY version DESC LIMIT 1"
+        ).fetchone()[0]
+    assert "merchant" in tx_cols
+    assert {"portfolio_id", "amount_sign", "min_amount", "max_amount", "priority"} <= (
+        rule_cols
+    )
+    assert merchant == "EXAMPLE SHOP MADRID"
+    assert version == 33
+
+
 def test_rule_conditions_round_trip(db):
     pid = _bank(db)
     rid = db.create_spending_rule(
