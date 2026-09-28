@@ -47,6 +47,21 @@ def test_price_increase_flagged():
     assert s.price_change_pct == 20.0
 
 
+def test_varying_bill_gets_no_price_change():
+    # Every charge is within ±25% of the median, so it is still recurring,
+    # but the earlier charges are not flat, so a rise is just noise.
+    rows = _monthly([50.0, 58.0, 46.0, 57.0], merchant="EXAMPLE UTILITY")
+    [s] = detect_recurring(rows, {1: date(2026, 4, 20)})
+    assert s.price_change_pct is None
+
+
+def test_price_change_needs_two_prior_charges():
+    rows = [_tx("2025-03-01", -100.0), _tx("2026-03-02", -120.0)]
+    [s] = detect_recurring(rows, {1: date(2026, 3, 10)})
+    assert s.cadence == "yearly"
+    assert s.price_change_pct is None
+
+
 def test_irregular_amounts_are_not_recurring():
     rows = [
         _tx("2026-01-03", -12.0, merchant="EXAMPLE SUPERMARKET"),

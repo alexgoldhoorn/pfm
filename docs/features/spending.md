@@ -142,9 +142,12 @@ amount (within 25% of the median, at least 75% of charges "regular" to
 qualify); a cadence needs at least 3 occurrences unless it's yearly. Each
 series reports `cadence`, `occurrences`, `typical_amount`, `annual_amount`
 (+ `annual_amount_eur`), `next_expected`, `status` and `price_change_pct`
-(set whenever the latest charge moved ≥5% from the one before it, with no
-time window — the 45-day recency gate below applies only to raising the
-Action Item, not to this field).
+(set only for a flat series — at least two charges before the latest, all
+within 2% (`PRICE_FLAT_TOLERANCE`) of their own median — when the latest
+charge moved ≥5% from the one before it; otherwise `null`, so a bill that
+varies month to month, like a utility, never shows a "price rise". There is
+no time window here — the 45-day recency gate below applies only to raising
+the Action Item, not to this field).
 
 `status` is the important part: a charge only counts as **`missed`** once a
 statement covering the due date has actually been imported for that
