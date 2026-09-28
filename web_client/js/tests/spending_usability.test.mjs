@@ -147,3 +147,30 @@ test("recurringStatusBadges: missed, ended, price up and down", () => {
     assert.match(recurringStatusBadges({ status: "active", price_change_pct: 20 }), /▲ \+20%/);
     assert.match(recurringStatusBadges({ status: "active", price_change_pct: -12.5 }), /▼ -12.5%/);
 });
+
+test("apiErrorDetail reads a string detail", () => {
+    const { apiErrorDetail } = loadAppIntoContext();
+    assert.equal(apiErrorDetail({ detail: "Pattern cannot be empty" }, "x"), "Pattern cannot be empty");
+});
+
+test("apiErrorDetail joins a FastAPI 422 validation list", () => {
+    const { apiErrorDetail } = loadAppIntoContext();
+    const body = {
+        detail: [
+            { loc: ["body", "min_amount"], msg: "Input should be a valid number" },
+            { loc: ["body", "amount_sign"], msg: "Input should be 'positive' or 'negative'" },
+        ],
+    };
+    assert.equal(
+        apiErrorDetail(body, "Failed to create rule"),
+        "Input should be a valid number; Input should be 'positive' or 'negative'",
+    );
+});
+
+test("apiErrorDetail falls back when there is no usable detail", () => {
+    const { apiErrorDetail } = loadAppIntoContext();
+    assert.equal(apiErrorDetail(null, "Failed to update rule"), "Failed to update rule");
+    assert.equal(apiErrorDetail({}, "Failed"), "Failed");
+    assert.equal(apiErrorDetail({ detail: [] }, "Failed"), "Failed");
+    assert.equal(apiErrorDetail({ detail: "" }, "Failed"), "Failed");
+});
