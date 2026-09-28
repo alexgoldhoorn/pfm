@@ -781,9 +781,16 @@ def _validate_rule_conditions(
     min_amount: Optional[float],
     max_amount: Optional[float],
 ) -> None:
-    """400 on an unknown account or an inverted amount range."""
-    if portfolio_id is not None and not db.get_portfolio(portfolio_id):
-        raise HTTPException(status_code=400, detail="Unknown account for this rule")
+    """400 on an unknown or non-bank account, or an inverted amount range."""
+    if portfolio_id is not None:
+        portfolio = db.get_portfolio(portfolio_id)
+        if not portfolio:
+            raise HTTPException(status_code=400, detail="Unknown account for this rule")
+        if portfolio.get("account_type") != "bank":
+            raise HTTPException(
+                status_code=400,
+                detail="Rules only apply to bank accounts, not this account type",
+            )
     if min_amount is not None and max_amount is not None and min_amount > max_amount:
         raise HTTPException(
             status_code=400, detail="Minimum amount is above maximum amount"
@@ -910,6 +917,22 @@ async def update_rule(
     _validate_rule_conditions(
         db, merged["portfolio_id"], merged["min_amount"], merged["max_amount"]
     )
+    duplicate = db.find_duplicate_spending_rule(
+        merged["pattern"],
+        merged["category"],
+        portfolio_id=merged["portfolio_id"],
+        amount_sign=merged["amount_sign"],
+        min_amount=merged["min_amount"],
+        max_amount=merged["max_amount"],
+    )
+    if duplicate and duplicate["id"] != rule_id:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"A rule with pattern '{merged['pattern']}' and category "
+                f"'{merged['category']}' and the same conditions already exists"
+            ),
+        )
     db.update_spending_rule(rule_id, **update_kwargs)
     return SpendingRuleResponse(**db.get_spending_rule(rule_id))
 
