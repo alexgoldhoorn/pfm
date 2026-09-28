@@ -70,8 +70,10 @@ ignoring case **and accents** and **literally** (a plain substring match, no
 wildcards or regex): `comissio` and `comissió` both find `COMISSIÓ`. SQLite's
 `LIKE` folds only ASCII case, so both sides go through the `pfm_fold()` SQL
 function, which `Database.get_connection` registers on every connection
-(`services/merchant.py` `fold_for_search`: NFKD, drop combining marks,
-casefold); the query is folded before `%`/`_`/`\` are escaped. Combines with every other filter (category, date range, account,
+(`services/merchant.py` `fold_for_search`: casefold first, then NFKD
+decompose and drop combining marks — casefolding first matters for a
+character that folds into a base letter plus a combining mark, e.g. a
+dotted capital I); the query is folded before `%`/`_`/`\` are escaped. Combines with every other filter (category, date range, account,
 amount sign/threshold). Web: the `#spSearch` search box on the Transactions
 tab.
 
@@ -79,7 +81,10 @@ tab.
 
 Beyond `pattern` + `category`, a rule (`spending_rules`, v32) can carry:
 
-- `portfolio_id` — restrict to one account.
+- `portfolio_id` — restrict to one account. Must be a `bank` account
+  (`_validate_rule_conditions`, 400 otherwise) — a rule against a brokerage
+  or other non-bank portfolio can never match anything, since only bank
+  accounts populate `spending_transactions`.
 - `amount_sign` (`"positive"`/`"negative"`) — money in vs. money out.
 - `min_amount`/`max_amount` — bounds on `abs(amount)`.
 - `priority` (default `100`, lower runs first) — evaluation order is
@@ -98,7 +103,12 @@ and `/rules/preview` alike.
 `PUT /api/v1/spending/rules/{id}` — a condition field present in the body and
 set to an explicit `null` **clears** that condition (vs. a field simply
 omitted, which leaves it unchanged); `pattern`/`category`/`priority` update
-when given.
+when given. After merging the update onto the existing rule, it's rejected
+with 409 if the merged result would be an exact duplicate — same pattern
+(case-insensitive), category and all four conditions — of a **different**
+rule (`find_duplicate_spending_rule`, excluding the rule being edited itself,
+so resaving a rule's own unchanged values is always fine); same duplicate
+check `POST /rules` already applies on create.
 
 `POST /api/v1/spending/rules/preview` — rows a candidate rule (not yet saved)
 would match, without writing anything: `{pattern, category?, portfolio_id?,
@@ -146,12 +156,19 @@ amount (within 25% of the median, at least 75% of charges "regular" to
 qualify); a cadence needs at least 3 occurrences unless it's yearly. Each
 series reports `cadence`, `occurrences`, `typical_amount`, `annual_amount`
 (+ `annual_amount_eur`), `next_expected`, `status` and `price_change_pct`
-(set only for a flat series — at least two charges before the latest, all
-within 2% (`PRICE_FLAT_TOLERANCE`) of their own median — when the latest
-charge moved ≥5% from the one before it; otherwise `null`, so a bill that
-varies month to month, like a utility, never shows a "price rise". There is
-no time window here — the 45-day recency gate below applies only to raising
-the Action Item, not to this field).
+(set only for a flat *run* — at least two charges immediately before the
+latest one, each within 2% (`PRICE_FLAT_TOLERANCE`) of the charge right
+before the latest, walking back only as far as that run stays flat — when
+the latest charge moved ≥5% from the one before it; otherwise `null`, so a
+bill that varies month to month, like a utility, never shows a "price rise".
+Flatness is judged on that recent run, not the whole history: an earlier
+price change further back (e.g. 8 → 10 a year ago) doesn't blind this to a
+later one (10 → 12 now). There is no time window here — the 45-day recency
+gate below applies only to raising the Action Item, not to this field).
+`annual_amount` is `typical_amount * charges/year`, computed from the
+already-rounded `typical_amount` so the two figures never visibly disagree
+(a raw median landing on a half cent, e.g. 10.005, would otherwise round to
+10.0 for display while annualizing the unrounded 10.005).
 
 `status` is the important part: a charge only counts as **`missed`** once a
 statement covering the due date has actually been imported for that
@@ -160,10 +177,19 @@ series becomes `active` while the last import is still at or before the next
 expected date (plus tolerance); `missed` once an import passes that date
 without the charge showing up; **`ended`** only after a *second* consecutive
 cycle goes by with no charge (i.e. it survives one missed cycle before being
-written off). Totals (`monthly_total_eur`/`annual_total_eur`) sum only
-non-ended series. Web: the Recurring tab on the Spending page, sorted
-missed → active → ended, then by annual amount; the merchant name links to
-the Transactions tab pre-filtered by search to that merchant.
+written off). That second cycle's due date is computed two cadence steps
+straight from the *last actual charge*, not by advancing the
+already-clamped `next_expected` a second time — chaining two clamped
+month-adds from a month-end charge can land a few days short (a monthly
+charge on Jan 31 clamps `next_expected` to Feb 28, and advancing *that* a
+month lands on Mar 28 rather than the correct Mar 31, calling the series
+`ended` up to three days early). Totals (`monthly_total_eur`/
+`annual_total_eur`) sum only non-ended series, even when `include_ended=true`
+also returns the ended ones in `items`. Web: the Recurring tab on the
+Spending page, sorted missed → active → ended, then by annual amount; the
+merchant name links to the Transactions tab pre-filtered by search to that
+merchant, scoped to the series' own account, with every other transaction
+filter (date range, min amount, sign, category) reset first.
 
 ### Action Item: missed recurring charges & price rises
 
