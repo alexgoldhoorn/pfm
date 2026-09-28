@@ -96,6 +96,9 @@ def _price_change_pct(amounts: List[float]) -> Optional[float]:
     prior_median = median(prior)
     if any(abs(a - prior_median) > PRICE_FLAT_TOLERANCE * prior_median for a in prior):
         return None
+    # A sub-cent charge rounds to 0.00; there is no percentage to report.
+    if amounts[-2] == 0:
+        return None
     change = (amounts[-1] - amounts[-2]) / amounts[-2] * 100
     if abs(change) < PRICE_CHANGE_MIN_PCT:
         return None

@@ -62,6 +62,13 @@ def test_price_change_needs_two_prior_charges():
     assert s.price_change_pct is None
 
 
+def test_price_change_with_zero_previous_amount_is_none():
+    # Sub-cent charges round to 0.00, which must not divide by zero.
+    rows = _monthly([0.001, 0.001, 0.001, 10.0])
+    [s] = detect_recurring(rows, {1: date(2026, 4, 20)})
+    assert s.price_change_pct is None
+
+
 def test_irregular_amounts_are_not_recurring():
     rows = [
         _tx("2026-01-03", -12.0, merchant="EXAMPLE SUPERMARKET"),
