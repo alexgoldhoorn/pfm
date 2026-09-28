@@ -467,6 +467,68 @@ def check_fund_exposure(db) -> list[dict]:
     return items
 
 
+RECURRING_PRICE_RISE_PCT = 10.0
+RECURRING_PRICE_RECENT_DAYS = 45
+
+
+def check_recurring_charges(db, today: date = None) -> list[dict]:
+    """Recurring charges that didn't arrive, and recent price rises.
+
+    "Missed" only fires once a statement covering the due date is imported
+    (see services.recurring), so a late import never looks like a cancelled
+    subscription. Price drops aren't worth a nag.
+    """
+    from portf_manager.services.recurring import load_recurring
+
+    today = today or date.today()
+    items = []
+    for s in load_recurring(db):
+        key = f"{s.portfolio_id}:{s.merchant}"
+        context = {"portfolio_id": s.portfolio_id, "merchant": s.merchant}
+        if s.status == "missed":
+            items.append(
+                {
+                    "id": f"recurring:missed:{key}",
+                    "category": "spending",
+                    "severity": "medium",
+                    "title": f"Expected charge from {s.merchant} didn't arrive",
+                    "detail": (
+                        f"Usually {s.typical_amount:,.2f} {s.currency} every "
+                        f"{s.cadence.removesuffix('ly')}, due around "
+                        f"{s.next_expected}. Cancelled, or paid another way?"
+                    ),
+                    "link_page": "spending",
+                    "context": context,
+                }
+            )
+            continue
+        recent = (
+            today - date.fromisoformat(s.last_date)
+        ).days <= RECURRING_PRICE_RECENT_DAYS
+        if (
+            s.status == "active"
+            and recent
+            and s.price_change_pct is not None
+            and s.price_change_pct >= RECURRING_PRICE_RISE_PCT
+        ):
+            items.append(
+                {
+                    "id": f"recurring:price:{key}:{s.last_date}",
+                    "category": "spending",
+                    "severity": "low",
+                    "title": f"{s.merchant} went up {s.price_change_pct:.0f}%",
+                    "detail": (
+                        f"Last charge {s.last_amount:,.2f} {s.currency} on "
+                        f"{s.last_date}, up from the usual "
+                        f"{s.typical_amount:,.2f}."
+                    ),
+                    "link_page": "spending",
+                    "context": context,
+                }
+            )
+    return items
+
+
 _SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
 # Every registered check, run independently by get_action_items(). A
@@ -481,6 +543,7 @@ _CHECKS = (
     check_price_alerts,
     check_budget_overruns,
     check_fund_exposure,
+    check_recurring_charges,
 )
 
 

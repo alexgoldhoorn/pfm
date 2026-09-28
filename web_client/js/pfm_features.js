@@ -325,6 +325,7 @@ window.mergeActionItems = mergeActionItems;
 const ACTIONITEMS_CATEGORY_LABELS = {
     import: 'Broker Imports', data_quality: 'Data Quality', errors: 'Errors',
     goals: 'Goals', watchlist: 'Price Alerts', networth: 'Net Worth',
+    spending: 'Spending',
 };
 const ACTIONITEMS_SEVERITY_BADGE = {
     high: 'text-bg-danger', medium: 'text-bg-warning', low: 'text-bg-secondary',
