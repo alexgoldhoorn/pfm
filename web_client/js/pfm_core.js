@@ -1098,9 +1098,6 @@ function downloadGenericTemplate() {
 }
 window.downloadGenericTemplate = downloadGenericTemplate;
 
-// Diagnostics page: price-data freshness + the daily update-run history.
-// Surfaces *why* a price may be stale (no Yahoo data vs. just old) and what
-// the cron actually did, so it isn't lost to stdout.
 // Readable message from a parsed FastAPI error body: a string `detail`, or
 // a 422 validation list joined by its `msg` fields; else `fallback`.
 function apiErrorDetail(body, fallback = 'Request failed') {
@@ -1113,6 +1110,9 @@ function apiErrorDetail(body, fallback = 'Request failed') {
 }
 window.apiErrorDetail = apiErrorDetail;
 
+// Diagnostics page: price-data freshness + the daily update-run history.
+// Surfaces *why* a price may be stale (no Yahoo data vs. just old) and what
+// the cron actually did, so it isn't lost to stdout.
 // Readable message from an error response body: FastAPI's {"detail": ...}
 // (a string, or a list of validation errors), else the raw text.
 function errorDetailFromBody(text, fallback = 'Request failed') {
