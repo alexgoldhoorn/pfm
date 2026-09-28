@@ -4008,10 +4008,18 @@ class Database:
         amount_sign: Optional[str] = None,
         min_amount: Optional[float] = None,
         max_amount: Optional[float] = None,
+        exclude_id: Optional[int] = None,
     ) -> Optional[Dict]:
         """Find a rule with the same pattern (case-insensitive), category and
         conditions. ``IS`` compares NULLs as equal, so an unconditioned rule
-        only duplicates another unconditioned one."""
+        only duplicates another unconditioned one.
+
+        ``exclude_id`` leaves one rule id out of the search — an edit must
+        never treat the rule being edited as its own duplicate, and with two
+        pre-existing identical rules, filtering the *result* by id isn't
+        enough: SQLite can hand back either one first, so the exclusion has
+        to be in the query itself.
+        """
         with self.get_connection() as conn:
             cursor = conn.execute(
                 """
@@ -4019,8 +4027,18 @@ class Database:
                 WHERE LOWER(pattern) = LOWER(?) AND category = ?
                   AND portfolio_id IS ? AND amount_sign IS ?
                   AND min_amount IS ? AND max_amount IS ?
+                  AND (? IS NULL OR id != ?)
                 """,
-                (pattern, category, portfolio_id, amount_sign, min_amount, max_amount),
+                (
+                    pattern,
+                    category,
+                    portfolio_id,
+                    amount_sign,
+                    min_amount,
+                    max_amount,
+                    exclude_id,
+                    exclude_id,
+                ),
             )
             row = cursor.fetchone()
             return dict(row) if row else None

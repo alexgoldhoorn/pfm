@@ -917,22 +917,37 @@ async def update_rule(
     _validate_rule_conditions(
         db, merged["portfolio_id"], merged["min_amount"], merged["max_amount"]
     )
-    duplicate = db.find_duplicate_spending_rule(
-        merged["pattern"],
-        merged["category"],
-        portfolio_id=merged["portfolio_id"],
-        amount_sign=merged["amount_sign"],
-        min_amount=merged["min_amount"],
-        max_amount=merged["max_amount"],
+    # Only an edit that changes the rule's identity (pattern, category or a
+    # condition; priority isn't part of it) can create a duplicate. Excluding
+    # this rule alone isn't enough: with two pre-existing identical rules a
+    # priority-only edit would still find the twin and 409.
+    identity_fields = (
+        "pattern",
+        "category",
+        "portfolio_id",
+        "amount_sign",
+        "min_amount",
+        "max_amount",
     )
-    if duplicate and duplicate["id"] != rule_id:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"A rule with pattern '{merged['pattern']}' and category "
-                f"'{merged['category']}' and the same conditions already exists"
-            ),
+    identity_changed = any(merged[f] != existing[f] for f in identity_fields)
+    if identity_changed:
+        duplicate = db.find_duplicate_spending_rule(
+            merged["pattern"],
+            merged["category"],
+            portfolio_id=merged["portfolio_id"],
+            amount_sign=merged["amount_sign"],
+            min_amount=merged["min_amount"],
+            max_amount=merged["max_amount"],
+            exclude_id=rule_id,
         )
+        if duplicate:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"A rule with pattern '{merged['pattern']}' and category "
+                    f"'{merged['category']}' and the same conditions already exists"
+                ),
+            )
     db.update_spending_rule(rule_id, **update_kwargs)
     return SpendingRuleResponse(**db.get_spending_rule(rule_id))
 
