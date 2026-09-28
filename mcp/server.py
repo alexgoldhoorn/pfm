@@ -1135,14 +1135,16 @@ def action_items(category: Optional[str] = None) -> str:
     """
     Open action items pfm has detected, most severe first: stale broker/bank
     imports (with the date to upload from), data-quality issues, failed price
-    updates, stale research on held positions, off-track goals, budget overruns
-    and watchlist/price-target alerts. Items dismissed in the web UI still show
+    updates, stale research on held positions, off-track goals, budget overruns,
+    missed recurring charges / price rises on bank accounts and
+    watchlist/price-target alerts. Items dismissed in the web UI still show
     here (dismissal is per-browser), and the Net Worth setup checklist is not
     included (it is computed in the web client).
 
     Args:
         category: Optional filter — 'import', 'data_quality', 'errors', 'goals',
-            'budget' or 'watchlist'.
+            'budget', 'spending' (missed recurring charges / price rises) or
+            'watchlist'.
     """
     try:
         data = _get("/api/v1/action-items/")
