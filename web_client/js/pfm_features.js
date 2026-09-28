@@ -7000,12 +7000,31 @@ function _spDupAction(dupSelectId) {
     return el ? el.value : 'skip';
 }
 
+// Pure: warning above the import preview when stated balances don't add up.
+function spBalanceWarningHtml(breaks) {
+    if (!breaks || !breaks.length) return '';
+    const lines = breaks.slice(0, 5).map(b => {
+        const where = b.kind === 'gap_before_file'
+            ? 'since your last import'
+            : 'missing from this file';
+        return `<li>${esc(Fmt.date(b.date))} · ${esc(b.description)}: expected ${Fmt.money(b.expected, b.currency, 2)}, statement says ${Fmt.money(b.actual, b.currency, 2)} (rows likely ${where})</li>`;
+    }).join('');
+    const more = breaks.length > 5 ? `<li>…and ${breaks.length - 5} more</li>` : '';
+    return `<div class="alert alert-warning small py-2">
+        <strong>Balance doesn't add up at ${breaks.length} point${breaks.length === 1 ? '' : 's'}.</strong>
+        Some transactions may be missing. You can still save.
+        <ul class="mb-0 mt-1">${lines}${more}</ul>
+    </div>`;
+}
+window.spBalanceWarningHtml = spBalanceWarningHtml;
+
 // ids defaults to the original Spending-page preview/dup-select ids.
 function _renderSpImportPreview(result, ids) {
     ids = ids || { preview: 'spImportPreview', dupSelectId: 'spDuplicateAction' };
     const preview = document.getElementById(ids.preview);
     if (!preview) return;
     preview.innerHTML = `
+        ${spBalanceWarningHtml(result.balance_breaks)}
         ${_spDupControl(result.rows, ids.dupSelectId)}
         <div class="table-responsive" style="max-height:300px;">
             <table class="table table-sm">
