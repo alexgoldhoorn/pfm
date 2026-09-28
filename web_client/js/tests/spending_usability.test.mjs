@@ -261,6 +261,39 @@ test("_scheduleSpRulePreview ignores a stale out-of-order response", async () =>
     assert.match(preview.innerHTML, /Matches 2 uncategorized/);
 });
 
+test("_scheduleSpRulePreview ignores a stale rejection after a newer success", async () => {
+    const sandbox = loadAppIntoContext();
+    const preview = { textContent: "", innerHTML: "" };
+    const patternInput = { value: "SHOP" };
+    sandbox.document.getElementById = (id) => {
+        if (id === "spRulePreview") return preview;
+        if (id === "spRulePattern") return patternInput;
+        return null;
+    };
+    sandbox.setTimeout = (fn) => fn();
+    sandbox.clearTimeout = () => {};
+
+    const pending = [];
+    sandbox.window.apiClient = {
+        previewSpendingRule: () =>
+            new Promise((resolve, reject) => pending.push({ resolve, reject })),
+    };
+
+    sandbox._scheduleSpRulePreview();
+    sandbox._scheduleSpRulePreview();
+    assert.equal(pending.length, 2);
+
+    pending[1].resolve({ match_count: 2, sample: [] });
+    await new Promise((r) => setImmediate(r));
+    assert.match(preview.innerHTML, /Matches 2 uncategorized/);
+
+    // The older request fails late; its error must not replace the result.
+    pending[0].reject(new Error("network down"));
+    await new Promise((r) => setImmediate(r));
+    assert.match(preview.innerHTML, /Matches 2 uncategorized/);
+    assert.doesNotMatch(preview.textContent, /unavailable/);
+});
+
 test("apiErrorDetail falls back when there is no usable detail", () => {
     const { apiErrorDetail } = loadAppIntoContext();
     assert.equal(apiErrorDetail(null, "Failed to update rule"), "Failed to update rule");
