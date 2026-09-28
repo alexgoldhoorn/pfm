@@ -142,8 +142,9 @@ amount (within 25% of the median, at least 75% of charges "regular" to
 qualify); a cadence needs at least 3 occurrences unless it's yearly. Each
 series reports `cadence`, `occurrences`, `typical_amount`, `annual_amount`
 (+ `annual_amount_eur`), `next_expected`, `status` and `price_change_pct`
-(set only when the latest charge moved ≥5% from the one before, within the
-last `RECURRING_PRICE_RECENT_DAYS`).
+(set whenever the latest charge moved ≥5% from the one before it, with no
+time window — the 45-day recency gate below applies only to raising the
+Action Item, not to this field).
 
 `status` is the important part: a charge only counts as **`missed`** once a
 statement covering the due date has actually been imported for that
