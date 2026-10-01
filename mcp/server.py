@@ -40,6 +40,10 @@ mcp = FastMCP("pfm")
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
+# The transactions API returns only its newest 100 rows when `limit` is omitted.
+FULL_HISTORY_LIMIT = 100_000
+
+
 def _get(path: str, params: Optional[dict] = None) -> dict | list:
     url = f"{SERVER_URL}{path}"
     if params:
@@ -244,23 +248,27 @@ def list_transactions(
             Use 'oldest' to find first-ever buys of a symbol or asset type.
         transaction_type: Filter — 'BUY', 'SELL', 'DIVIDEND', 'INTEREST'.
         asset_type: Filter — 'stock', 'etf', 'crypto', 'p2p', etc.
-        asset_symbol: Filter to one ticker, e.g. 'NVDA', 'BTC-EUR'.
+        asset_symbol: Filter to one symbol exactly as portfolio_holdings shows it,
+            e.g. 'NVDA', 'BTC-EUR'. European stocks are stored by ISIN,
+            not by exchange ticker such as 'XYZ.DE'.
         date_from: Earliest date to include, YYYY-MM-DD (e.g. '2025-01-01').
         date_to: Latest date to include, YYYY-MM-DD (e.g. '2025-12-31').
         portfolio_id: Filter by portfolio/broker ID.
     """
-    # Fetch all when: oldest order (need to reverse full history), or date filtering
-    # (API has no date filter), or asset_type/transaction_type filtering.
-    # For recent-only with no client-side filters, use server limit for speed.
+    # Any client-side filter must see the full history, or it silently filters only
+    # the newest rows. Pass an explicit limit: omitting it gets the API's default 100.
     needs_all = (
         order.lower() == "oldest"
         or date_from
         or date_to
         or asset_type
         or transaction_type
+        or asset_symbol
     )
     try:
-        params: dict = {"limit": min(max(limit, 1), 500)} if not needs_all else {}
+        params: dict = {
+            "limit": FULL_HISTORY_LIMIT if needs_all else min(max(limit, 1), 500)
+        }
         if portfolio_id:
             params["portfolio_id"] = portfolio_id
         data = _get("/api/v1/transactions/", params)
