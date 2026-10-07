@@ -5,7 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-09-28
+Last updated: 2026-10-07
+
+**Recent (v2.5.76):** **Spending search matches category names.** `GET /spending/?q=` now also matches a row's category name and the names of the categories above it in the tree (roots excepted), so searching `taxes` finds rows filed under `Taxes` or any of its sub-categories; the `#spSearch` placeholder says so.
 
 **Recent (v2.5.75):** **Spending review-notes follow-up batch.** Recurring charges (`services/recurring.py`): price-rise flatness is now judged on the run of charges since the *last* price change rather than the whole history, so an earlier price change no longer hides a later one, and that run must be at least three charges (the one before the latest plus two earlier ones within 2% of it) — a run of two let a varying utility bill raise a price-rise item; a series' "ended" cutoff is computed two cadence steps straight from the last actual charge rather than by advancing the already-clamped `next_expected` a second time (which could call a still-current monthly charge `ended` a few days early); `annual_amount` now derives from the already-rounded `typical_amount` so the two figures can't visibly disagree at a half-cent median. Rules: `PUT /spending/rules/{id}` now rejects (409) an edit that would make the rule an exact duplicate of a *different* existing rule; a rule's `portfolio_id` must be a `bank` account (400 otherwise, both on create and update). Web: the Rules form's live match-count preview now ignores an out-of-order response (a stale slow request can no longer overwrite a newer one's result) and is `aria-live="polite"`; clicking a merchant on the Recurring tab now also scopes the Transactions tab to that series' own account and clears every other stale filter (date range, min amount, sign, category) instead of just setting search text; two Action Items category labels (`budget`, `exposure`) were missing from their display map.
 

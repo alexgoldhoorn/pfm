@@ -1915,6 +1915,58 @@ def test_search_composes_with_other_filters(tmp_path):
     assert r["items"][0]["amount"] == 10.0
 
 
+def test_search_matches_category_name(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    tax_id = _add(db, pid, "000000000001IMP:0000001")
+    db.update_spending_transaction(tax_id, category="Táxes")
+    _add(db, pid, "OTHER STORE")
+    for q in ("taxes", "TAXE", "táxes"):
+        r = client.get("/api/v1/spending/", params={"q": q}, headers=HEADERS).json()
+        assert r["total"] == 1, q
+        assert r["items"][0]["id"] == tax_id
+
+
+def test_search_matches_parent_category_name(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    for name, parent in (("Taxes", "Spend"), ("Social Security", "Taxes")):
+        r = client.post(
+            "/api/v1/spending/categories",
+            json={"name": name, "parent_name": parent},
+            headers=HEADERS,
+        )
+        assert r.status_code == 201
+    child_id = _add(db, pid, "MONTHLY QUOTA 005")
+    db.update_spending_transaction(child_id, category="Social Security")
+    _add(db, pid, "OTHER STORE")
+    r = client.get("/api/v1/spending/?q=taxes", headers=HEADERS).json()
+    assert r["total"] == 1
+    assert r["items"][0]["id"] == child_id
+
+
+def test_search_does_not_match_through_root_category(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    r = client.post(
+        "/api/v1/spending/categories",
+        json={"name": "Groceries", "parent_name": "Spend"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 201
+    row_id = _add(db, pid, "EXAMPLE SHOP")
+    db.update_spending_transaction(row_id, category="Groceries")
+    assert client.get("/api/v1/spending/?q=spend", headers=HEADERS).json()["total"] == 0
+
+
+def test_search_category_wildcards_stay_literal(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    row_id = _add(db, pid, "EXAMPLE SHOP")
+    db.update_spending_transaction(row_id, category="Groceries")
+    assert client.get("/api/v1/spending/?q=G%25s", headers=HEADERS).json()["total"] == 0
+
+
 def test_create_rule_with_conditions(tmp_path):
     client, db = _make_client(tmp_path)
     pid = db.create_portfolio("Example Bank", account_type="bank")
