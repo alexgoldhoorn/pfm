@@ -585,8 +585,8 @@ async def list_spending(
     filters to negative-only ("negative", i.e. expenses) or positive-only
     ("positive", i.e. income); `min_abs_amount` additionally requires
     `ABS(amount) >= min_abs_amount`, so it composes naturally with either
-    sign or neither. `q` matches description or merchant, case-insensitively
-    and literally.
+    sign or neither. `q` matches description, merchant or category name
+    (its own or one above it in the tree), case-insensitively and literally.
     """
     if sort_by not in _SPENDING_SORT_BY_VALUES:
         raise HTTPException(

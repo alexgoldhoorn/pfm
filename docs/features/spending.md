@@ -55,8 +55,8 @@ nothing. It is computed once at import time (`POST /spending/upload`) and
 persisted, not recomputed on read. The v32 migration backfills `merchant` for
 every existing row from its stored `description`.
 
-`merchant` feeds three surfaces: search (`q` below matches description OR
-merchant), rule matching (a rule's pattern is checked against both), and
+`merchant` feeds three surfaces: search (`q` below matches description, merchant OR
+category name), rule matching (a rule's pattern is checked against both), and
 recurring-charge grouping (`services/recurring.py` groups by
 `portfolio_id + merchant.upper() + currency`, so charges from the same shop
 group together even when the raw description varies run to run). The
@@ -65,15 +65,19 @@ description available underneath/on hover, rather than only the raw text.
 
 ### Search (`q` on `GET /spending/`)
 
-`GET /api/v1/spending/?q=<text>` matches `description` OR `merchant`,
-ignoring case **and accents** and **literally** (a plain substring match, no
+`GET /api/v1/spending/?q=<text>` matches `description`, `merchant` OR the
+category name, ignoring case **and accents** and **literally** (a plain substring match, no
 wildcards or regex): `comissio` and `comissió` both find `COMISSIÓ`. SQLite's
 `LIKE` folds only ASCII case, so both sides go through the `pfm_fold()` SQL
 function, which `Database.get_connection` registers on every connection
 (`services/merchant.py` `fold_for_search`: casefold first, then NFKD
 decompose and drop combining marks — casefolding first matters for a
 character that folds into a base letter plus a combining mark, e.g. a
-dotted capital I); the query is folded before `%`/`_`/`\` are escaped. Combines with every other filter (category, date range, account,
+dotted capital I); the query is folded before `%`/`_`/`\` are escaped. The category match also
+covers the categories above the row's own in the tree, so `taxes` finds a row
+filed under `Taxes > Social Security`; the `Income`/`Spend` roots are left out
+of that walk, or their names would match every categorised row
+(`_spending_categories_below_match`). Combines with every other filter (category, date range, account,
 amount sign/threshold). Web: the `#spSearch` search box on the Transactions
 tab.
 

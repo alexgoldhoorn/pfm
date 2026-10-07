@@ -3431,8 +3431,10 @@ class Database:
         `amount_sign` is `"negative"`/`"positive"`/`None`, mapped to a
         literal comparison, never interpolated from the caller directly.
         `q` is an accent- and case-insensitive literal substring of
-        description or merchant (both sides folded with ``pfm_fold``);
-        `%`, `_` and `\\` are escaped after folding.
+        description, merchant or category name (both sides folded with
+        ``pfm_fold``); `%`, `_` and `\\` are escaped after folding. A row
+        also matches when `q` is in the name of a category above its own
+        in the tree, the Income/Spend roots excepted.
         """
         conditions = []
         params: List = []
@@ -3470,13 +3472,43 @@ class Database:
                 folded.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             )
             like = f"%{escaped}%"
-            conditions.append(
-                "(pfm_fold(s.description) LIKE ? ESCAPE '\\' "
-                "OR pfm_fold(COALESCE(s.merchant, '')) LIKE ? ESCAPE '\\')"
+            text_match = (
+                "pfm_fold(s.description) LIKE ? ESCAPE '\\' "
+                "OR pfm_fold(COALESCE(s.merchant, '')) LIKE ? ESCAPE '\\' "
+                "OR pfm_fold(COALESCE(s.category, '')) LIKE ? ESCAPE '\\'"
             )
-            params.extend([like, like])
+            params.extend([like, like, like])
+            below = self._spending_categories_below_match(folded)
+            if below:
+                placeholders = ", ".join("?" for _ in below)
+                text_match += f" OR s.category IN ({placeholders})"
+                params.extend(below)
+            conditions.append(f"({text_match})")
         clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
         return clause, params
+
+    def _spending_categories_below_match(self, folded_q: str) -> List[str]:
+        """Names of categories that sit under a non-root category whose
+        folded name contains ``folded_q``.
+
+        Lets a search for a parent category find rows filed under its
+        children. The Income/Spend roots are skipped, or their names would
+        match every categorised row.
+        """
+        tree = self.list_spending_categories_tree()
+        by_id = {node["id"]: node for node in tree}
+        names = []
+        for node in tree:
+            parent = by_id.get(node["parent_id"])
+            # A real tree is never this deep; the bound stops a cycle.
+            for _ in range(100):
+                if parent is None or parent["is_root"]:
+                    break
+                if folded_q in fold_for_search(parent["name"]):
+                    names.append(node["name"])
+                    break
+                parent = by_id.get(parent["parent_id"])
+        return names
 
     def list_spending_transactions(
         self,
