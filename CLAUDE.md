@@ -26,6 +26,9 @@ of its tools. A change here affects that surface too — see `~/mcp/CLAUDE.md`,
   fund if it is typed `mutual_fund`, OR its exchange is `"Funds"`, OR it isn't
   `etf` and its name contains fund/idx/fondo/fonds — erring towards the year.
   Crypto, cash and the synthetic `MINTOS` asset are excluded.
+- `spending_transactions` is local-only on purpose: raw bank descriptions carry
+  tax ids, account numbers and other people's names. Don't register it on the
+  gateway without asking.
 - A new tool must be registered in three places or it stays local-only: the
   gateway (`~/mcp/remote_gateway/server.py`, including `TOOL_SPECIALIST`), the
   finance agent's tools line (`~/.claude/agents/finance.md`), and the persona
