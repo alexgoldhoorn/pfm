@@ -14,6 +14,7 @@ Credentials are read from ~/repos/pfm/.env.local at startup.
 import calendar
 import json
 import os
+import urllib.parse
 import urllib.request
 from datetime import date
 from typing import Optional
@@ -1351,6 +1352,127 @@ def spending_summary(days: int = 30, trend_months: int = 6) -> str:
         "\nOnly imported statements count: a month not imported yet reads as zero,"
         " and the current month is partial."
     )
+    return "\n".join(lines)
+
+
+# The spending API returns at most this many rows per page.
+SPENDING_PAGE_SIZE = 200
+# Most rows one call reads; totals beyond this are reported as partial.
+SPENDING_MAX_ROWS = 5000
+# Most rows one call prints.
+SPENDING_MAX_SHOWN = 500
+
+
+@mcp.tool()
+def spending_transactions(
+    query: Optional[str] = None,
+    category: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    portfolio_id: Optional[int] = None,
+    limit: int = 50,
+) -> str:
+    """
+    Individual bank-account transactions from imported statements, newest
+    first, with money-out and money-in totals over every matching row.
+    Transfers between own accounts and to brokers are listed but kept out of
+    the totals. Use spending_summary for the category breakdown and trend.
+
+    Args:
+        query: Text to find in the description, merchant or category name,
+            ignoring case and accents. A parent category's name also finds rows
+            filed under its sub-categories (e.g. "taxes").
+        category: Exact category name. It does not include sub-categories; use
+            query for that.
+        start_date: First date to include, YYYY-MM-DD.
+        end_date: Last date to include, YYYY-MM-DD.
+        portfolio_id: Bank account id (see list_portfolios). Omit for all.
+        limit: Rows to print (default 50, at most 500). Totals always cover
+            every matching row.
+    """
+    shown = max(1, min(limit, SPENDING_MAX_SHOWN))
+    rows: list[dict] = []
+    total = 0
+    try:
+        while True:
+            page = _get(
+                "/api/v1/spending/",
+                {
+                    "q": urllib.parse.quote(query) if query else None,
+                    "category": urllib.parse.quote(category) if category else None,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "portfolio_id": portfolio_id,
+                    "sort_by": "date",
+                    "sort_dir": "desc",
+                    "limit": SPENDING_PAGE_SIZE,
+                    "offset": len(rows),
+                },
+            )
+            items = page.get("items") or []
+            total = int(page.get("total") or 0)
+            rows.extend(items)
+            if not items or len(rows) >= min(total, SPENDING_MAX_ROWS):
+                break
+    except Exception as e:
+        return f"Error fetching spending transactions: {e}"
+
+    if not rows:
+        return "No spending transactions match."
+
+    filters = [
+        f"{label} {value}"
+        for label, value in (
+            ("query", repr(query) if query else None),
+            ("category", repr(category) if category else None),
+            ("from", start_date),
+            ("to", end_date),
+            ("account", portfolio_id),
+        )
+        if value is not None
+    ]
+    header = f"SPENDING TRANSACTIONS — {total} matching"
+    if filters:
+        header += f" ({', '.join(filters)})"
+    lines = [header + ":"]
+
+    # Sum per currency: the API returns each row in its account's currency.
+    money_out: dict[str, float] = {}
+    money_in: dict[str, float] = {}
+    transfers = 0
+    for r in rows:
+        if r.get("is_transfer"):
+            transfers += 1
+            continue
+        amount = float(r.get("amount") or 0)
+        bucket = money_out if amount < 0 else money_in
+        currency = r.get("currency") or "EUR"
+        bucket[currency] = bucket.get(currency, 0.0) + amount
+    for label, bucket in (("Money out:", money_out), ("Money in: ", money_in)):
+        amounts = ", ".join(
+            _fmt_currency(v, c) for c, v in sorted(bucket.items())
+        ) or _fmt_currency(0.0)
+        lines.append(f"  {label} {amounts}")
+    if transfers:
+        noun = "transfer" if transfers == 1 else "transfers"
+        lines.append(f"  {transfers} {noun} listed below but not in the totals.")
+    if total > len(rows):
+        lines.append(
+            f"  Totals cover only the newest {len(rows)} of {total} rows;"
+            " narrow the dates for a complete total."
+        )
+
+    lines.append("")
+    for r in rows[:shown]:
+        amount = _fmt_currency(float(r.get("amount") or 0), r.get("currency") or "EUR")
+        tag = " [transfer]" if r.get("is_transfer") else ""
+        lines.append(
+            f"  {r.get('date') or '?'}  {(r.get('portfolio_name') or '?')[:16]:16s}"
+            f" {amount:>16s}  {(r.get('category') or '?')[:18]:18s}"
+            f" {(r.get('description') or '')[:70]}{tag}"
+        )
+    if total > shown:
+        lines.append(f"\nShowing the newest {min(shown, len(rows))} of {total}.")
     return "\n".join(lines)
 
 
