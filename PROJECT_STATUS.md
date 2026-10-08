@@ -5,9 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-10-07
+Last updated: 2026-10-08
 
-**Recent (v2.5.77):** **MCP `spending_transactions` tool.** Lists individual bank-account transactions (search text, exact category, date range, account), newest first, with money-out and money-in totals over every matching row and transfers kept out of the totals. Local MCP only: it is deliberately not registered on the remote gateway.
+**Recent (v2.5.77):** **MCP `spending_transactions` tool.** Lists individual bank-account transactions (search text, exact category, date range, account), newest first, with money-out and money-in totals over every matching row and transfers kept out of the totals. Registered on the remote gateway on 2026-10-08, so phone sessions can use it too.
 
 **Recent (v2.5.76):** **Spending search matches category names.** `GET /spending/?q=` now also matches a row's category name and the names of the categories above it in the tree (roots excepted), so searching `taxes` finds rows filed under `Taxes` or any of its sub-categories; the `#spSearch` placeholder says so.
 
