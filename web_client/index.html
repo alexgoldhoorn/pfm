@@ -387,6 +387,17 @@
                         <div id="dashAttentionDetail" class="pfm-attn-detail" style="display:none;"></div>
                     </div>
 
+                    <!-- Your progress: rated tiles, filled by loadDashboardProgress.
+                         Hidden when there is nothing to show yet. -->
+                    <div id="dashProgress" class="mb-4" style="display:none;">
+                        <div class="dash-section-label">
+                            Your progress
+                            <a href="#" class="ms-2 text-decoration-none text-lowercase fw-normal" onclick="openAnalyticsTab('progress'); return false;">details <i class="bi bi-arrow-right-short"></i></a>
+                        </div>
+                        <div class="row g-3 row-cols-2 row-cols-md-4" id="dashProgressTiles"></div>
+                        <div class="small text-muted mt-2" id="dashProgressNote"></div>
+                    </div>
+
                     <!-- Risk, last 12 months: rated tiles, filled by loadDashboardRisk.
                          Hidden until there is enough snapshot history. -->
                     <div id="dashRisk" class="mb-4" style="display:none;">
@@ -1054,6 +1065,9 @@
                             <button type="button" class="nav-link active" data-bs-toggle="tab" data-bs-target="#anPanePerformance" id="anTabPerformance"><i class="bi bi-speedometer2 me-1"></i>Performance &amp; Net Worth</button>
                         </li>
                         <li class="nav-item">
+                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#anPaneProgress" id="anTabProgress"><i class="bi bi-graph-up-arrow me-1"></i>Progress</button>
+                        </li>
+                        <li class="nav-item">
                             <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#anPaneDividends" id="anTabDividends"><i class="bi bi-cash-coin me-1"></i>Dividends</button>
                         </li>
                         <li class="nav-item">
@@ -1269,6 +1283,17 @@
                     </div>
 
                     </div><!-- /#anPaneFees -->
+                    <div class="tab-pane fade" id="anPaneProgress">
+                    <div class="card mb-4">
+                        <div class="card-header fw-semibold d-flex align-items-center justify-content-between">
+                            <span><i class="bi bi-graph-up-arrow me-2 text-primary"></i>Your progress</span>
+                            <button class="btn btn-sm btn-link p-0 ms-2" onclick="showPageHelp('progress')" title="What do these numbers mean?"><i class="bi bi-question-circle"></i></button>
+                        </div>
+                        <div class="card-body" id="anProgressBody">
+                            <div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading&hellip;</div>
+                        </div>
+                    </div>
+                    </div><!-- /#anPaneProgress -->
                     <div class="tab-pane fade" id="anPaneStress">
                     <!-- h) Stress Test -->
                     <div class="card mb-4">

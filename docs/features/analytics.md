@@ -7,6 +7,7 @@
 - `GET /api/v1/analytics/networth-history` | `POST /api/v1/analytics/snapshot` | `POST /api/v1/analytics/backfill-snapshots[?force=]`
 - `period_return` is a **time-weighted return** (chains daily returns, removes contributions via cost-basis delta)
 - `GET /api/v1/analytics/portfolio-comparison` — per-portfolio figures from the same `compute_performance` (it used to multiply an already-percent IRR by 100).
+- `GET /api/v1/analytics/progress?benchmark=VWCE.DE` — `contributions` (`net_contributions_eur`, `growth_eur`, monthly `months`), `income_eur`, `calendar_years` (`year`, `return_pct`, `benchmark_return_pct`, `inflation_pct`, `real_return_pct`, `start`/`end`, `partial`), `monthly_returns` (`{YYYY: {MM: pct}}`), `real` (`irr_pct`, `inflation_annual_pct`, `real_irr_pct`, `inflation_to`, `source`), `latent_tax`, `savings`, `notes`. Plain `def`. See "Progress metrics" below.
 - `GET /api/v1/analytics/dividends` — every amount in EUR at the payment date's rate; yield-on-cost over the EUR cost basis.
 - `GET /api/v1/analytics/tax-estimate?year=` — IRPF savings base (realised gains + dividends + interest); `irpf_savings_tax()` progressive brackets (19/21/23/27/28%)
 - `GET /api/v1/analytics/diversification` — sector/country/currency/type + Herfindahl HHI (slow, fetches yfinance), plus fund look-through: `by_region_equity`, `by_currency_exposure`, and a `coverage` block (`classified_pct`, `sector_classified_pct`, `unprofiled`, `stale_profiles`). See "Fund look-through" section below.
@@ -124,6 +125,42 @@ GIPS 2020.
   simulator's inputs are real returns.
 `metricTile({...})` renders one tile with the word beside the colour and the
 bands in the tooltip. Low-confidence history greys rated tiles out.
+
+### Progress metrics (`portf_manager/services/progress.py`, `services/inflation.py`)
+
+Numbers a long-term, learning investor needs beyond return and risk.
+
+- **Contributions vs growth.** Net contributions = purchases − sale proceeds,
+  each at its own date's FX; growth = value − net contributions (= realised +
+  unrealised gains). Dividends/interest are reported apart (`income_eur`),
+  since they leave the positions as cash. Monthly series from the first trade;
+  a month's value is its last snapshot, the current month shows today's value.
+- **Calendar-year and monthly TWR** chain the same flow-adjusted daily returns
+  as the risk metrics. A year runs from the previous year's last snapshot;
+  `partial` marks a late start or the running year. The benchmark comes from
+  `_benchmark_closes_eur` (EUR) over the same window (`window_return`).
+- **Real returns** use the Fisher relation `(1 + r)/(1 + π) − 1` with Spanish
+  HICP (ECB Data Portal series `ICP.M.ES.N.000000.4.INX`, cached 24h).
+  Calendar year: December-to-December, or to the latest published month for
+  the running year. Real IRR: inflation annualised from the month before the
+  first trade. **No fallback**: without HICP the real fields are null and
+  `notes` says so; unit tests stub `_fetch_hicp` autouse.
+- **Latent tax** = `savings_tax(realised_ytd + unrealised, income_ytd) −
+  savings_tax(realised_ytd, income_ytd)` — the IRPF savings base on top of what
+  this year already owes. `savings_tax` (moved here from the tax optimizer,
+  which now imports it) nets gains and losses and lets a net loss offset 25%
+  of dividend/interest income (art. 49 LIRPF). Unrealised is on average cost at
+  transaction-date FX. `fund_unrealised_gain_eur` uses `is_fund_like` (type
+  `mutual_fund`/`index`, exchange `"Funds"`, or a fund-like name; never ETFs)
+  for gains a traspaso can move tax-free.
+- **Savings rate and emergency fund** from non-transfer bank rows (EUR at
+  today's rate, the `/spending/trend` convention) over the last 12 **complete
+  months that have imports** — the running month and empty months would read
+  as "spent nothing". Cash = bank balances + `cash`-category manual assets;
+  `None` when neither exists, never 0.
+- Bands (`METRIC_RATINGS`: `emergencyMonths` 3/6, `savingsRate` 10/20 —
+  the 50/30/20 rule —, `realReturn` 0/3) are rules of thumb, said in the help.
+- The MCP `performance` tool appends a PROGRESS block for `period="all"`.
 
 ### Fund look-through (`portf_manager/services/exposure.py` + `services/fund_profiles.py` + `services/benchmarks.py`, db v30)
 
