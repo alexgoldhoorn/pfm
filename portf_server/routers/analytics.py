@@ -17,15 +17,34 @@ from pydantic import BaseModel
 
 from portf_manager.services.analytics_service import (
     compute_beta_alpha,
-    compute_cagr,
     current_year_savings_components,
     dividend_income,
     dividend_ttm_enrichment,
     irpf_savings_tax,
-    money_weighted_irr,
     period_return,
     period_start_date,
-    simple_return,
+    weekly_from_closes,
+    weekly_from_daily,
+)
+from portf_manager.services.performance import (
+    DEFAULT_BENCHMARK,
+    PERFORMANCE_BENCHMARKS,
+    benchmark_info,
+    compute_performance,
+    lifetime_twr,
+    portfolio_totals,
+    to_eur_closes,
+    to_eur_transactions,
+)
+from portf_manager.services import inflation
+from portf_manager.services.progress import (
+    calendar_returns,
+    contributions_vs_growth,
+    is_fund_like,
+    latent_tax,
+    savings_and_buffer,
+    savings_tax,
+    window_return,
 )
 from portf_manager.services.risk_metrics import (
     compute_portfolio_risk,
@@ -46,6 +65,8 @@ from ..dependencies import get_api_key_manager, get_database
 # can't make us re-hit the network per position — the cause of the tax-estimate
 # 504 gateway timeouts).
 from .portfolios import _get_fx_rate as _fx
+
+_KNOWN_BENCHMARKS = set(PERFORMANCE_BENCHMARKS)
 
 # Historical rates are immutable — memoise per (currency, date) for the
 # lifetime of the worker so per-lot loops don't re-hit the kv_cache.
@@ -268,12 +289,17 @@ def _compute_positions(db):
 
 @router.get("/dividends")
 async def get_dividends(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
-    """Dividend income by year, month, symbol + projected forward annual income."""
-    txns = db.get_all_transactions()
+    """Dividend income by year, month, symbol + projected forward annual income.
+
+    Every amount is in EUR, each payment converted at its own date's rate, and
+    yield-on-cost divides by the EUR cost basis at purchase-date rates — so a
+    USD dividend and a EUR one add up, and neither ratio moves with today's FX.
+    """
+    txns = to_eur_transactions(db.get_all_transactions(), _fx_on_db(db))
     income = dividend_income(txns)
 
     # Build cost_by_symbol from current open positions (for yield-on-cost)
-    positions, _ = _compute_positions(db)
+    positions, _ = compute_positions(txns)
     cost_by_symbol: dict = {}
     for aid, pos in positions.items():
         if pos["quantity"] <= 0:
@@ -290,6 +316,7 @@ async def get_dividends(db=Depends(get_database), api_key_info: dict = Depends(_
     return {
         **income,
         **ttm_data,
+        "currency": "EUR",
         "names": names,
     }
 
@@ -297,143 +324,296 @@ async def get_dividends(db=Depends(get_database), api_key_info: dict = Depends(_
 # ── Performance ───────────────────────────────────────────────────────────────
 
 
+def _fx_on_db(db):
+    """``(currency, date)`` → EUR rate on that date, bound to *db*."""
+    return lambda cur, d: _fx_on(db, cur, d)
+
+
+def _benchmark_currency(ticker: str) -> Optional[str]:
+    """Quote currency of a ticker outside the known benchmark list."""
+    try:
+        return str(yf.Ticker(ticker).fast_info["currency"] or "").upper() or None
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"Benchmark currency lookup failed for {ticker}: {e}")
+        return None
+
+
+def _benchmark_closes_eur(db, ticker: str, start: date) -> tuple[list, dict]:
+    """Daily benchmark closes from *start*, in EUR, plus the benchmark's info.
+
+    Raw closes are cached 12h (history is immutable except for the latest
+    day); the EUR conversion uses each day's rate.
+    """
+    info = benchmark_info(ticker)
+    if ticker not in _KNOWN_BENCHMARKS:
+        cur = cached(
+            db,
+            f"yf:bench-cur:{ticker}",
+            30 * 86400,
+            lambda: _benchmark_currency(ticker),
+        )
+        info = benchmark_info(ticker, cur)
+
+    def _fetch():
+        hist = yf.download(
+            ticker, start=start.isoformat(), progress=False, auto_adjust=True
+        )
+        if hist.empty:
+            return []
+        closes = hist["Close"]
+        # yfinance may return multi-index columns -> take the first column
+        if hasattr(closes, "columns"):
+            closes = closes.iloc[:, 0]
+        closes = closes.dropna()
+        return [
+            (str(dt.date()), float(p)) for dt, p in zip(closes.index, closes.tolist())
+        ]
+
+    raw = cached(
+        db,
+        f"yf:bench-daily:{ticker}:{start.isoformat()}:{date.today().isoformat()}",
+        12 * 3600,
+        _fetch,
+    )
+    return to_eur_closes(raw or [], info["currency"], _fx_on_db(db)), info
+
+
 @router.get("/performance")
 def get_performance(
-    benchmark: str = Query("^GSPC", description="Benchmark ticker for comparison"),
+    benchmark: str = Query(
+        DEFAULT_BENCHMARK, description="Benchmark ticker for comparison"
+    ),
     period: str = Query("all", description="Return window: ytd | 1m | 1y | all"),
     db=Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
-    """Total return, money-weighted IRR, benchmark comparison, and period return.
+    """Total return, money-weighted IRR, and time-weighted return vs a benchmark.
 
     ``total_return_pct`` / ``money_weighted_irr_pct`` are lifetime figures.
-    ``period_return_pct`` is the change over the selected window, derived from
-    daily snapshots (null when history is shorter than the window).
+    ``period_return_pct`` is the time-weighted return over the window, from
+    daily snapshots — for ``all`` it runs from the first trade, and is null
+    when the snapshot history doesn't reach back that far. The benchmark is
+    measured in EUR over the same days. See
+    ``portf_manager/services/performance.py``.
     """
-    positions, realised = _compute_positions(db)
+    fx_on = _fx_on_db(db)
+    perf = compute_performance(db, _fx, fx_on)
+    cash_flows = perf.pop("cash_flows")
+    inception = date.fromisoformat(perf["inception_date"]) if cash_flows else None
 
-    # Prefetch all assets once (avoids a get_asset() query per position AND per
-    # transaction — the latter was ~one query per trade in the IRR loop).
-    assets_by_id = {a["id"]: a for a in db.get_all_assets(active_only=False)}
+    snapshots = db.get_snapshots(limit=100_000)
+    realised_by_day = daily_realised_gains(db.get_all_transactions(), fx_on)
+    twr_total, twr_annual = lifetime_twr(snapshots, realised_by_day, inception)
+    if (period or "all").lower() == "all":
+        period_ret = twr_total
+        start = inception
+    else:
+        period_ret = period_return(
+            snapshots, perf["current_value_eur"], period, realised=realised_by_day
+        )
+        start = period_start_date(period)
 
-    invested = 0.0
-    current_value = 0.0
+    benchmark_ret = None
+    info = benchmark_info(benchmark)
+    if start is not None:
+        try:
+            closes, info = _benchmark_closes_eur(db, benchmark, start)
+            if len(closes) > 1 and closes[0][1] > 0:
+                benchmark_ret = round((closes[-1][1] / closes[0][1] - 1) * 100, 2)
+        except Exception as e:
+            logger.warning(f"Benchmark fetch failed: {e}")
+
+    return {
+        **perf,
+        "period": period,
+        "period_return_pct": period_ret,
+        "twr_since_inception_pct": twr_total,
+        "annualised_twr_pct": twr_annual,
+        "benchmark": benchmark,
+        "benchmark_label": info["label"],
+        "benchmark_total_return": info["total_return"],
+        "benchmark_return_pct": benchmark_ret,
+    }
+
+
+# ── Progress ─────────────────────────────────────────────────────────────────
+
+
+def _cash_eur(db) -> Optional[float]:
+    """Bank balances plus cash-type manual assets (EUR); None if neither exists."""
+    from .networth import _bank_accounts_eur
+
+    bank, accounts = _bank_accounts_eur(db)
+    manual = [
+        a
+        for a in db.get_manual_assets()
+        if (a.get("category") or "").lower() == "cash" and not a.get("is_liability")
+    ]
+    if not manual and not any(a["balance"] is not None for a in accounts):
+        return None
+    return bank + sum(
+        float(a["amount"] or 0) * _fx(a.get("currency") or "EUR") for a in manual
+    )
+
+
+@router.get("/progress")
+def get_progress(
+    benchmark: str = Query(
+        DEFAULT_BENCHMARK, description="Benchmark ticker for the yearly comparison"
+    ),
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Contributions vs growth, yearly/monthly returns (nominal and real),
+    latent tax, savings rate and emergency-fund cover.
+
+    See ``portf_manager/services/progress.py``. Each block degrades on its
+    own: missing inflation data leaves the real figures null with a note,
+    missing bank statements leave the savings block null.
+    """
+    fx_on = _fx_on_db(db)
+    today = date.today()
+    perf = compute_performance(db, _fx, fx_on)
+    perf.pop("cash_flows")
+    txs = [t for t in db.get_all_transactions() if t.get("transaction_date")]
+    eur_txs = to_eur_transactions(txs, fx_on)
+    snapshots = db.get_snapshots(limit=100_000)
+    realised_by_day = daily_realised_gains(txs, fx_on)
+
+    out: dict = {
+        "contributions": contributions_vs_growth(
+            eur_txs, snapshots, perf["current_value_eur"], today
+        ),
+        "income_eur": perf["income_eur"],
+        "notes": [],
+    }
+
+    # Calendar years, with the benchmark and inflation over the same windows.
+    cal = calendar_returns(snapshots, realised_by_day, today)
+    info = benchmark_info(benchmark)
+    closes: list = []
+    if cal["years"]:
+        try:
+            closes, info = _benchmark_closes_eur(
+                db, benchmark, date.fromisoformat(cal["years"][0]["start"])
+            )
+        except Exception as e:
+            logger.warning(f"Benchmark fetch failed: {e}")
+            out["notes"].append("Benchmark prices unavailable.")
+    first_month = perf["inception_date"] or (
+        cal["years"][0]["start"] if cal["years"] else None
+    )
+    index = (
+        inflation.hicp_index(db, date.fromisoformat(first_month[:10]))
+        if first_month
+        else None
+    )
+    if first_month and not index:
+        out["notes"].append(
+            "Inflation data (ECB) unavailable, so real returns are not shown."
+        )
+    this_month = today.strftime("%Y-%m")
+    for row in cal["years"]:
+        row["benchmark_return_pct"] = window_return(closes, row["start"], row["end"])
+        row["inflation_pct"] = row["real_return_pct"] = None
+        if index:
+            # Match the return's window by month: from the month before it
+            # starts (Dec of the prior year for a full year) to its end.
+            sy, sm = int(row["start"][:4]), int(row["start"][5:7])
+            if sy < row["year"]:
+                base = f"{row['year'] - 1}-12"
+            else:
+                base = f"{sy - 1}-12" if sm == 1 else f"{sy}-{sm - 1:02d}"
+            pi = inflation.inflation_between(
+                index, base, min(f"{row['year']}-12", this_month)
+            )
+            if pi is not None:
+                row["inflation_pct"] = round(pi * 100, 2)
+                row["real_return_pct"] = round(
+                    inflation.real_return(row["return_pct"] / 100, pi) * 100, 2
+                )
+                row["inflation_to"] = inflation.latest_month(index, f"{row['year']}-12")
+    out["calendar_years"] = cal["years"]
+    out["monthly_returns"] = cal["months"]
+    out["benchmark"] = benchmark
+    out["benchmark_label"] = info["label"]
+
+    # Real money-weighted return: IRR deflated by annualised inflation since
+    # the month before the first trade.
+    real = {
+        "irr_pct": perf["money_weighted_irr_pct"],
+        "inflation_annual_pct": None,
+        "real_irr_pct": None,
+        "inflation_to": None,
+        "source": inflation.SOURCE_LABEL,
+    }
+    if index and perf["inception_date"] and perf["money_weighted_irr_pct"] is not None:
+        inc = date.fromisoformat(perf["inception_date"])
+        base = date(inc.year, inc.month, 1)
+        base_month = (
+            f"{base.year - 1}-12"
+            if base.month == 1
+            else f"{base.year}-{base.month - 1:02d}"
+        )
+        last = inflation.latest_month(index, this_month)
+        pi = inflation.inflation_between(index, base_month, this_month)
+        if pi is not None and last:
+            n = (
+                (int(last[:4]) - int(base_month[:4])) * 12
+                + int(last[5:])
+                - int(base_month[5:])
+            )
+            annual = (1 + pi) ** (12 / n) - 1
+            real.update(
+                inflation_annual_pct=round(annual * 100, 2),
+                real_irr_pct=round(
+                    inflation.real_return(perf["money_weighted_irr_pct"] / 100, annual)
+                    * 100,
+                    2,
+                ),
+                inflation_to=last,
+            )
+    out["real"] = real
+
+    # Latent tax: sell everything today on top of this year's savings base.
+    assets = {a["id"]: a for a in db.get_all_assets(active_only=False)}
+    positions, _ = compute_positions(txs)
+    eur_positions, _ = compute_positions(eur_txs)
+    open_positions = []
     for aid, pos in positions.items():
         if pos["quantity"] <= 0:
             continue
-        asset = assets_by_id.get(aid)
-        if not asset:
-            continue
-        cur = asset.get("currency", "EUR")
-        invested += pos["cost"] * _fx(cur)
-        price_data = db.get_latest_price(aid)
-        price = float(price_data["price"]) if price_data else 0.0
-        current_value += pos["quantity"] * price * _fx(cur)
-
-    # Build cash flows for IRR: buys negative, sells positive (EUR)
-    cash_flows = []
-    for tx in db.get_all_transactions():
-        d = tx.get("transaction_date", "")
-        try:
-            dd = datetime.strptime(str(d)[:10], "%Y-%m-%d").date()
-        except ValueError:
-            continue
-        asset = assets_by_id.get(tx["asset_id"])
-        cur = asset.get("currency", "EUR") if asset else "EUR"
-        amount_eur = float(tx["total_amount"] or 0) * _fx(cur)
-        t = tx["transaction_type"].lower()
-        if t == "buy":
-            cash_flows.append((dd, -amount_eur))
-        elif t == "sell":
-            cash_flows.append((dd, amount_eur))
-        elif t == "dividend":
-            cash_flows.append((dd, amount_eur))
-
-    irr = money_weighted_irr(cash_flows, current_value)
-    total_ret = simple_return(invested, current_value, realised)
-
-    inception_date = min((d for d, _ in cash_flows), default=None)
-    inception_date_str = inception_date.isoformat() if inception_date else None
-    cagr_pct = (
-        compute_cagr(invested, current_value, realised, inception_date)
-        if inception_date
-        else None
-    )
-    annualized_gain_eur = (
-        round(invested * cagr_pct / 100, 2) if cagr_pct is not None else None
-    )
-
-    # Period return.
-    # "All-time" is a lifetime figure, so it must equal the cost-basis total
-    # return — deriving it from snapshots[0] instead understates it whenever
-    # the daily-snapshot history started after the portfolio's inception
-    # (which is why All-time previously showed ~0% next to a +12% Total Return).
-    # Named windows (ytd/1m/1y) use the snapshot-based time-weighted return.
-    if (period or "all").lower() == "all":
-        period_ret = total_ret
-    else:
-        period_ret = period_return(
-            db.get_snapshots(),
-            current_value,
-            period,
-            current_cost=invested,
-            realised=daily_realised_gains(db.get_all_transactions(), _fx),
+        asset = assets.get(aid) or {}
+        row = db.get_latest_price(aid)
+        price = float(row["price"]) if row else 0.0
+        open_positions.append(
+            {
+                "value_eur": pos["quantity"]
+                * price
+                * _fx(asset.get("currency") or "EUR"),
+                "cost_eur": eur_positions.get(aid, {}).get("cost", 0.0),
+                "fund": is_fund_like(asset),
+            }
         )
-    bench_start = period_start_date(period)
+    ytd = current_year_savings_components(db)
+    out["latent_tax"] = latent_tax(
+        open_positions,
+        ytd["realised_gain_eur"],
+        ytd["dividend_income_eur"] + ytd["interest_income_eur"],
+    )
 
-    # Benchmark: total return over the selected window (or full history for
-    # 'all'). Cached ~12h keyed by ticker+start — the historical close series
-    # is immutable except for the most recent day.
-    benchmark_ret = None
-    try:
-        if bench_start is not None:
-            start = bench_start
-        elif cash_flows:
-            start = min(c[0] for c in cash_flows)
-        else:
-            start = None
-        if start is not None:
-
-            def _fetch_benchmark_ret(b=benchmark, s=start):
-                hist = yf.download(
-                    b, start=s.isoformat(), progress=False, auto_adjust=True
-                )
-                if hist.empty:
-                    return None
-                closes = hist["Close"]
-                # yfinance may return multi-index columns -> take the first column
-                if hasattr(closes, "columns"):
-                    closes = closes.iloc[:, 0]
-                closes = closes.dropna()
-                if len(closes) <= 1:
-                    return None
-                first = float(closes.iloc[0])
-                last = float(closes.iloc[-1])
-                return round((last - first) / first * 100, 2)
-
-            benchmark_ret = cached(
-                db,
-                f"yf:bench:{benchmark}:{start.isoformat()}",
-                12 * 3600,
-                _fetch_benchmark_ret,
-            )
-    except Exception as e:
-        logger.warning(f"Benchmark fetch failed: {e}")
-
-    return {
-        "invested_eur": round(invested, 2),
-        "current_value_eur": round(current_value, 2),
-        "realised_pnl_eur": round(realised, 2),
-        "total_return_pct": total_ret,
-        "money_weighted_irr_pct": irr,
-        "period": period,
-        "period_return_pct": period_ret,
-        "benchmark": benchmark,
-        "benchmark_return_pct": benchmark_ret,
-        "inception_date": inception_date_str,
-        "cagr_pct": cagr_pct,
-        "annualized_gain_eur": annualized_gain_eur,
-    }
+    # Savings rate and emergency fund, from bank statements (EUR at today's
+    # rate, the /spending/trend convention).
+    start = date(today.year - 1, today.month, 1).isoformat()
+    rows = [
+        {
+            "date": r["date"],
+            "amount_eur": float(r["amount"]) * _fx(r.get("currency") or "EUR"),
+        }
+        for r in db.list_spending_transactions(start_date=start, is_transfer=False)
+    ]
+    out["savings"] = savings_and_buffer(rows, _cash_eur(db), today)
+    return out
 
 
 # ── Net-worth history ─────────────────────────────────────────────────────────
@@ -449,20 +629,26 @@ async def get_networth_history(
 
 @router.post("/snapshot")
 def take_snapshot(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
-    """Record today's portfolio value/cost snapshot (called by the price cron)."""
-    positions, _ = _compute_positions(db)
-    value = cost = 0.0
-    for aid, pos in positions.items():
-        if pos["quantity"] <= 0:
-            continue
-        asset = db.get_asset(aid)
-        if not asset:
-            continue
-        cur = asset.get("currency", "EUR")
-        cost += pos["cost"] * _fx(cur)
-        price_data = db.get_latest_price(aid)
-        price = float(price_data["price"]) if price_data else 0.0
-        value += pos["quantity"] * price * _fx(cur)
+    """Record today's portfolio value/cost snapshot (called by the price cron).
+
+    Cost is the EUR cost basis at transaction-date rates, so it only changes
+    when a trade lands — a currency move shows up as a change in value (a
+    gain or loss), never as money moving in or out.
+    """
+    txs = [t for t in db.get_all_transactions() if t.get("transaction_date")]
+    assets = {a["id"]: a for a in db.get_all_assets(active_only=False)}
+
+    def price_of(aid):
+        row = db.get_latest_price(aid)
+        return float(row["price"]) if row else 0.0
+
+    value, cost = portfolio_totals(
+        txs,
+        to_eur_transactions(txs, _fx_on_db(db)),
+        price_of,
+        lambda aid: (assets.get(aid) or {}).get("currency") or "EUR",
+        _fx,
+    )
     db.record_snapshot(date.today().isoformat(), round(value, 2), round(cost, 2))
     return {
         "date": date.today().isoformat(),
@@ -492,10 +678,19 @@ def _yf_symbol(asset: dict) -> str:
     if asset.get("asset_type") == "crypto":
         yf_ticker, _ = _CRYPTO_YF_OVERRIDES.get(sym, (f"{sym}-EUR", "EUR"))
         return yf_ticker
-    return sym
+    # Assets stored under an ISIN carry their Yahoo ticker separately.
+    return asset.get("ticker") or sym
 
 
 def _run_backfill(db, force: bool = False) -> None:
+    """Rebuild daily snapshots from transactions, stored and Yahoo prices.
+
+    Prices: the app's own stored price for the day wins (it is what the daily
+    cron recorded), then the Yahoo close, then the last earlier price of
+    either kind; with none at all the position is valued at cost. Value uses
+    the day's FX rate; cost uses each trade's own date (see
+    ``performance.portfolio_totals``), the same as the live snapshot.
+    """
     try:
         _BACKFILL.update(running=True, error=None, done=0, added=0)
         txs = [t for t in db.get_all_transactions() if t.get("transaction_date")]
@@ -512,14 +707,14 @@ def _run_backfill(db, force: bool = False) -> None:
         today = date.today()
         aids = {t["asset_id"] for t in txs}
         assets = {aid: db.get_asset(aid) for aid in aids}
+        fx_on = _fx_on_db(db)
+        eur_txs = to_eur_transactions(txs, fx_on)
 
-        # Per-asset historical close series (GBX-normalised); flat fallback to the
-        # latest stored price for assets yfinance can't resolve (unlisted/P2P).
         _BACKFILL.update(message="Fetching historical prices…", total=len(aids))
         hist: dict = {}
         for i, aid in enumerate(aids):
             a = assets[aid] or {}
-            series = []
+            merged: dict[str, float] = {}
             try:
                 yfsym = _yf_symbol(a)
                 ticker = yf.Ticker(yfsym)
@@ -530,15 +725,15 @@ def _run_backfill(db, force: bool = False) -> None:
                 except Exception:
                     pass
                 for idx, row in h.iterrows():
-                    series.append(
-                        (
-                            idx.date().isoformat(),
-                            float(row["Close"]) / (100.0 if gbx else 1.0),
-                        )
+                    merged[idx.date().isoformat()] = float(row["Close"]) / (
+                        100.0 if gbx else 1.0
                     )
             except Exception:
                 pass
-            hist[aid] = sorted(series)
+            for row in db.get_price_history(aid, start_date=start_d.isoformat()):
+                if row.get("price") is not None:
+                    merged[d10(row["price_date"])] = float(row["price"])
+            hist[aid] = sorted(merged.items())
             _BACKFILL.update(done=i + 1)
 
         def price_asof(aid, dstr):
@@ -561,19 +756,13 @@ def _run_backfill(db, force: bool = False) -> None:
         while d <= today:
             dstr = d.isoformat()
             if dstr not in existing:
-                day_txs = [t for t in txs if d10(t["transaction_date"]) <= dstr]
-                pos, _ = compute_positions(day_txs)
-                value = cost = 0.0
-                for aid, p in pos.items():
-                    if p["quantity"] <= 0:
-                        continue
-                    cur = (assets.get(aid) or {}).get("currency", "EUR")
-                    fx = _fx(cur)
-                    px = price_asof(aid, dstr)
-                    # No real price for this asset/date → value it at cost
-                    # (neutral) instead of inventing a mark-to-market figure.
-                    value += (p["quantity"] * px if px is not None else p["cost"]) * fx
-                    cost += p["cost"] * fx
+                value, cost = portfolio_totals(
+                    [t for t in txs if d10(t["transaction_date"]) <= dstr],
+                    [t for t in eur_txs if d10(t["transaction_date"]) <= dstr],
+                    lambda aid: price_asof(aid, dstr),
+                    lambda aid: (assets.get(aid) or {}).get("currency") or "EUR",
+                    lambda cur: fx_on(cur, dstr),
+                )
                 db.record_snapshot(dstr, round(value, 2), round(cost, 2))
                 added += 1
                 _BACKFILL.update(added=added)
@@ -748,15 +937,7 @@ def get_tax_optimizer(
         )
     candidates.sort(key=lambda x: x["unrealised_loss_eur"])
 
-    # Current vs after-harvest tax. Spanish savings base: capital gains/losses
-    # net together; a net capital LOSS offsets up to 25% of dividend/interest
-    # income, the rest carries forward (modelled simply here).
-    def savings_tax(capital_result, inc):
-        if capital_result >= 0:
-            return irpf_savings_tax(capital_result + inc)
-        offset = min(inc * 0.25, -capital_result)
-        return irpf_savings_tax(max(inc - offset, 0))
-
+    # Current vs after-harvest tax (see progress.savings_tax for the rules).
     tax_current = savings_tax(realised_gain, income)
     tax_after = savings_tax(realised_gain + harvestable, income)
 
@@ -816,7 +997,9 @@ def get_fund_overlap(db=Depends(get_database), api_key_info: dict = Depends(_aut
 
 @router.get("/risk")
 def get_risk(
-    benchmark: str = Query("^GSPC", description="Benchmark ticker for beta/alpha"),
+    benchmark: str = Query(
+        DEFAULT_BENCHMARK, description="Benchmark ticker for beta/alpha"
+    ),
     window: str = Query(
         "all", pattern="^(all|1y)$", description="all history, or trailing 1y"
     ),
@@ -826,63 +1009,59 @@ def get_risk(
     """Drawdowns, volatility, Sharpe, Sortino, Calmar, Beta, Alpha from snapshots.
 
     Computed from flow-adjusted (time-weighted) daily returns, so buys, sells and
-    late imports don't count as gains or losses. See
+    late imports don't count as gains or losses. Sharpe, Sortino and alpha are
+    in excess of the average €STR over the window. The benchmark is converted
+    to EUR, and beta/alpha come from **weekly** returns: daily returns of a
+    calendar-daily portfolio and a trading-day index that closes hours later
+    don't line up, which biases a daily beta towards zero. See
     ``portf_manager/services/risk_metrics.py``.
     """
-    metrics = compute_portfolio_risk(db, _fx, window=window)
+    metrics = compute_portfolio_risk(db, _fx_on_db(db), window=window)
     returns = metrics.pop("returns")
-    metrics.update(beta=None, alpha_pct=None, benchmark=benchmark)
+    info = benchmark_info(benchmark)
+    metrics.update(
+        beta=None,
+        alpha_pct=None,
+        benchmark=benchmark,
+        benchmark_label=info["label"],
+        benchmark_total_return=info["total_return"],
+        beta_observations=0,
+    )
     metrics["benchmark_return_pct"] = None
     metrics["benchmark_annualised_return_pct"] = None
     metrics["snapshots_used"] = len(returns) + 1 if returns else 0
     if not returns:
         return metrics
 
-    # Beta / Alpha / benchmark return — benchmark daily closes (cached 12h)
     try:
-        start_d = metrics["start_date"]
-        cache_key = f"yf:bench-daily:{benchmark}:{start_d}:{date.today().isoformat()}"
-
-        def _fetch_bench(b=benchmark, s=start_d):
-            hist = yf.download(b, start=s, progress=False, auto_adjust=True)
-            if hist.empty:
-                return []
-            closes = hist["Close"]
-            if hasattr(closes, "columns"):
-                closes = closes.iloc[:, 0]
-            closes = closes.dropna()
-            return [
-                (str(dt.date()), float(p))
-                for dt, p in zip(closes.index, closes.tolist())
-            ]
-
-        bench_data: list[tuple[str, float]] = cached(
-            db, cache_key, 12 * 3600, _fetch_bench
+        start_d = date.fromisoformat(metrics["start_date"])
+        bench_data, info = _benchmark_closes_eur(db, benchmark, start_d)
+        metrics.update(
+            benchmark_label=info["label"], benchmark_total_return=info["total_return"]
         )
         bench_data = [(d, p) for d, p in bench_data if d <= metrics["end_date"]]
 
-        if bench_data and len(bench_data) >= 2:
-            bench_by_date: dict[str, float] = {}
-            for (_, prev_p), (d_str, curr_p) in zip(bench_data, bench_data[1:]):
-                if prev_p > 0:
-                    bench_by_date[d_str] = (curr_p - prev_p) / prev_p
-            aligned_p = [r for d, r in returns if d in bench_by_date]
-            aligned_b = [bench_by_date[d] for d, _ in returns if d in bench_by_date]
+        if len(bench_data) >= 2 and bench_data[0][1] > 0:
+            growth = bench_data[-1][1] / bench_data[0][1]
+            metrics["benchmark_return_pct"] = round((growth - 1) * 100, 2)
+            bench_annual = None
+            if metrics["annualised_return_pct"] is not None:
+                bench_annual = growth ** (365.25 / metrics["history_days"]) - 1
+                metrics["benchmark_annualised_return_pct"] = round(
+                    bench_annual * 100, 2
+                )
 
-            first_p, last_p = bench_data[0][1], bench_data[-1][1]
-            bench_cagr = None
-            if first_p > 0:
-                growth = last_p / first_p
-                metrics["benchmark_return_pct"] = round((growth - 1) * 100, 2)
-                if metrics["annualised_return_pct"] is not None:
-                    bench_cagr = growth ** (365.25 / metrics["history_days"]) - 1
-                    metrics["benchmark_annualised_return_pct"] = round(
-                        bench_cagr * 100, 2
-                    )
-
+            port_w = weekly_from_daily(returns)
+            bench_w = weekly_from_closes(bench_data)
+            weeks = sorted(set(port_w) & set(bench_w))
+            metrics["beta_observations"] = len(weeks)
             ann = metrics["annualised_return_pct"]
             metrics["beta"], metrics["alpha_pct"] = compute_beta_alpha(
-                aligned_p, aligned_b, ann / 100 if ann is not None else None, bench_cagr
+                [port_w[w] for w in weeks],
+                [bench_w[w] for w in weeks],
+                ann / 100 if ann is not None else None,
+                bench_annual,
+                risk_free=(metrics.get("risk_free_rate_pct") or 0.0) / 100,
             )
     except Exception as e:
         logger.warning(f"Beta/alpha computation failed: {e}")
@@ -1868,71 +2047,29 @@ def get_portfolio_comparison(
 ):
     """Performance comparison across all portfolios.
 
-    Returns invested, current value, return %, IRR, and asset count per
-    portfolio, sorted by current value descending.
+    Returns invested, current value, total gain and return (incl. dividends
+    and interest), IRR, and asset count per portfolio, sorted by current
+    value descending. Same definitions as ``/performance``.
     """
-    portfolios = db.get_all_portfolios()
-    assets_by_id = {a["id"]: a for a in db.get_all_assets(active_only=False)}
-
+    fx_on = _fx_on_db(db)
     results = []
-    for portfolio in portfolios:
+    for portfolio in db.get_all_portfolios():
         pid = portfolio["id"]
         txs = db.get_all_transactions(portfolio_id=pid)
         if not txs:
             continue
-
+        perf = compute_performance(db, _fx, fx_on, portfolio_id=pid)
         positions, _ = compute_positions(txs)
-
-        invested_eur = 0.0
-        current_value_eur = 0.0
-        for aid, pos in positions.items():
-            if pos["quantity"] <= 0:
-                continue
-            asset = assets_by_id.get(aid)
-            if not asset:
-                continue
-            cur = asset.get("currency", "EUR")
-            invested_eur += pos["cost"] * _fx(cur)
-            price_data = db.get_latest_price(aid)
-            price = float(price_data["price"]) if price_data else 0.0
-            current_value_eur += pos["quantity"] * price * _fx(cur)
-
-        # Cash flows for IRR: buys negative, sells and dividends positive (EUR).
-        cash_flows: list[tuple[date, float]] = []
-        for tx in txs:
-            d = tx.get("transaction_date", "")
-            try:
-                dd = datetime.strptime(str(d)[:10], "%Y-%m-%d").date()
-            except ValueError:
-                continue
-            asset = assets_by_id.get(tx["asset_id"])
-            cur = asset.get("currency", "EUR") if asset else "EUR"
-            amount_eur = float(tx["total_amount"] or 0) * _fx(cur)
-            t = tx["transaction_type"].lower()
-            if t == "buy":
-                cash_flows.append((dd, -amount_eur))
-            elif t == "sell":
-                cash_flows.append((dd, amount_eur))
-            elif t == "dividend":
-                cash_flows.append((dd, amount_eur))
-
-        irr = money_weighted_irr(cash_flows, current_value_eur)
-        total_return_pct = (
-            round((current_value_eur - invested_eur) / invested_eur * 100, 2)
-            if invested_eur > 0
-            else 0.0
-        )
         asset_count = sum(1 for pos in positions.values() if pos["quantity"] > 0.001)
-
         results.append(
             {
                 "portfolio_id": pid,
                 "name": portfolio["name"],
-                "invested_eur": round(invested_eur, 2),
-                "current_value_eur": round(current_value_eur, 2),
-                "gain_loss_eur": round(current_value_eur - invested_eur, 2),
-                "total_return_pct": total_return_pct,
-                "irr_pct": round(irr * 100, 2) if irr is not None else None,
+                "invested_eur": perf["invested_eur"],
+                "current_value_eur": perf["current_value_eur"],
+                "gain_loss_eur": perf["total_gain_eur"],
+                "total_return_pct": perf["total_return_pct"],
+                "irr_pct": perf["money_weighted_irr_pct"],
                 "asset_count": asset_count,
                 "transaction_count": len(txs),
             }
