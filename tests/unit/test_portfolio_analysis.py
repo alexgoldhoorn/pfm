@@ -19,7 +19,8 @@ class TestGatherPerformance:
         result = gather_performance(_mock_db(), portfolio_id=None)
         assert result["invested_eur"] == 0.0
         assert result["current_value_eur"] == 0.0
-        assert result["cagr_pct"] is None
+        assert result["total_return_pct"] is None
+        assert result["irr_pct"] is None
 
     def test_returns_required_keys(self):
         from portf_manager.services.portfolio_advisor import gather_performance
@@ -28,8 +29,8 @@ class TestGatherPerformance:
         for key in (
             "invested_eur",
             "current_value_eur",
+            "total_gain_eur",
             "total_return_pct",
-            "cagr_pct",
             "irr_pct",
             "inception_date",
         ):

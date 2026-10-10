@@ -989,8 +989,8 @@ async function loadDashboardReturn(period) {
     el.textContent = '…';
     try {
         const d = await window.apiClient.getPerformance(null, period || 'all');
-        // 'All' = lifetime return (cost-basis based). Named periods use the
-        // snapshot-based period return, which needs accumulated daily history.
+        // 'All' = lifetime total return (gain incl. income ÷ purchases). Named
+        // periods use the snapshot-based time-weighted return.
         const pct = (period && period !== 'all')
             ? d.period_return_pct
             : d.total_return_pct;
@@ -999,26 +999,27 @@ async function loadDashboardReturn(period) {
             el.title = (period && period !== 'all')
                 ? 'Not enough daily snapshot history for this period yet'
                 : 'No data';
-            const cagrEl2 = document.getElementById('dashCagrLine');
-            if (cagrEl2) cagrEl2.textContent = '';
+            const irrLine = document.getElementById('dashCagrLine');
+            if (irrLine) irrLine.textContent = '';
             return;
         }
         const n = parseFloat(pct);
         el.textContent = (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
         el.title = (period && period !== 'all')
             ? 'Change over the selected period (from daily snapshots)'
-            : 'Lifetime return vs cost basis';
-        const cagrEl = document.getElementById('dashCagrLine');
-        if (cagrEl) {
-            if (d.cagr_pct != null) {
+            : 'Total gain (price, sales, dividends, interest) ÷ everything bought';
+        // The per-year figure is the money-weighted return (IRR): it accounts
+        // for when you added money, which a simple annualised total can't.
+        const irrEl = document.getElementById('dashCagrLine');
+        if (irrEl) {
+            if (d.money_weighted_irr_pct != null) {
                 // Plain white text: the tile itself is already green/red, so a
                 // text-success span here was green-on-green and unreadable.
-                const cagrN = parseFloat(d.cagr_pct);
-                const cagrSign = cagrN >= 0 ? '+' : '';
-                cagrEl.innerHTML = 'CAGR <span class="fw-semibold">' + cagrSign + cagrN.toFixed(1) + '%/yr</span>';
-                cagrEl.title = 'Compound annual growth rate since your first investment';
+                const irrN = parseFloat(d.money_weighted_irr_pct);
+                irrEl.innerHTML = 'IRR <span class="fw-semibold">' + (irrN >= 0 ? '+' : '') + irrN.toFixed(1) + '%/yr</span>';
+                irrEl.title = METRIC_HELP.irr;
             } else {
-                cagrEl.textContent = '';
+                irrEl.textContent = '';
             }
         }
     } catch (err) {
@@ -1056,7 +1057,7 @@ async function loadAnalyticsPerformance() {
     const body = document.getElementById('anPerformanceBody');
     const select = document.getElementById('anBenchmark');
     if (!body) return;
-    const benchmark = select ? select.value : '^GSPC';
+    const benchmark = select ? select.value : PREFS.benchmark;
     const periodEl = document.querySelector('input[name="anPeriod"]:checked');
     const period = periodEl ? periodEl.value : 'all';
     body.innerHTML = `
@@ -1076,10 +1077,11 @@ async function loadAnalyticsPerformance() {
         const periodVal = parseFloat(periodPct || 0);
         const periodCls = periodHas ? (periodVal >= 0 ? 'text-success' : 'text-danger') : 'text-muted';
         const periodTxt = periodHas ? anFmtPct(periodVal) : '—';
+        const benchHas = d.benchmark_return_pct != null;
         const benchReturn = parseFloat(d.benchmark_return_pct || 0);
-        // Compare the period return (when available) to the period-scoped benchmark
-        const myReturn = periodHas ? periodVal : totalPct;
-        const beat = myReturn - benchReturn;
+        // Only a time-weighted return is comparable with a benchmark; with no
+        // TWR for the window there's no comparison rather than a wrong one.
+        const beat = periodVal - benchReturn;
         const beatCls = beat >= 0 ? 'text-success' : 'text-danger';
         const beatWord = beat >= 0 ? 'ahead of' : 'behind';
         body.innerHTML = `
@@ -1117,16 +1119,26 @@ async function loadAnalyticsPerformance() {
             </div>
             <div class="small">
                 <i class="bi bi-flag me-1"></i>
-                vs <strong data-bs-toggle="tooltip" title="${METRIC_HELP.benchmark}">${d.benchmark || benchmark}</strong> (${anFmtPct(benchReturn)}, ${anPeriodLabel(period)}):
-                <span class="${beatCls} fw-semibold">${anFmtPct(beat)} ${beatWord} benchmark</span>
+                vs <strong data-bs-toggle="tooltip" title="${esc(METRIC_HELP.benchmark)}">${esc(d.benchmark_label || d.benchmark || benchmark)}</strong>${
+                    periodHas && benchHas
+                        ? ` (${anFmtPct(benchReturn)} in EUR, ${anPeriodLabel(period)}): <span class="${beatCls} fw-semibold">${anFmtPct(beat)} ${beatWord} benchmark</span>`
+                        : `: <span class="text-muted">no comparison — ${periodHas ? 'benchmark data unavailable' : 'daily history doesn\'t cover this window (Rebuild history on the Net worth tab)'}</span>`
+                }
             </div>
             <div class="row g-3 mt-1">
                 <div class="col-6 col-md-4">
                     <div class="border rounded p-3 h-100">
-                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.cagr}">CAGR</div>
+                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.totalGain}">Total gain</div>
+                        <div class="fs-5 fw-bold ${d.total_gain_eur >= 0 ? 'text-success' : 'text-danger'}">${anFmtEur(d.total_gain_eur)}</div>
+                        <div class="small text-muted">incl. ${anFmtEur(d.income_eur)} dividends &amp; interest</div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-4">
+                    <div class="border rounded p-3 h-100">
+                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.annualisedTwr}">Time-weighted, per year</div>
                         ${(() => {
-                            const v = d.cagr_pct;
-                            if (v == null) return '<div class="fs-5 fw-bold text-muted">—</div><div class="small text-muted">Need 1+ year of history</div>';
+                            const v = d.annualised_twr_pct;
+                            if (v == null) return '<div class="fs-5 fw-bold text-muted">—</div><div class="small text-muted">Needs a year of daily history from your first trade</div>';
                             const n = parseFloat(v);
                             const cls = n >= 0 ? 'text-success' : 'text-danger';
                             return '<div class="fs-5 fw-bold ' + cls + '">' + (n >= 0 ? '+' : '') + n.toFixed(2) + '%/yr</div>';
@@ -1137,18 +1149,6 @@ async function loadAnalyticsPerformance() {
                     <div class="border rounded p-3 h-100">
                         <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.inception}">Inception Date</div>
                         <div class="fs-5 fw-bold">${d.inception_date ? Fmt.date(d.inception_date) : '—'}</div>
-                    </div>
-                </div>
-                <div class="col-6 col-md-4">
-                    <div class="border rounded p-3 h-100">
-                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.annualizedGain}">Ann. Gain (€/yr)</div>
-                        ${(() => {
-                            const v = d.annualized_gain_eur;
-                            if (v == null) return '<div class="fs-5 fw-bold text-muted">—</div>';
-                            const n = parseFloat(v);
-                            const cls = n >= 0 ? 'text-success' : 'text-danger';
-                            return '<div class="fs-5 fw-bold ' + cls + '">' + anFmtEur(n) + '</div>';
-                        })()}
                     </div>
                 </div>
             </div>`;
@@ -1165,11 +1165,11 @@ function _wireBackfillButton() {
     if (!btn || btn.dataset.wired) return;
     btn.dataset.wired = '1';
     btn.addEventListener('click', async () => {
-        if (!(await confirmDialog({ title: 'Rebuild net-worth history', message: 'Reconstruct daily net-worth history from your transactions and historical prices?\n\nThis can take a minute. Only missing dates are filled; existing snapshots are kept.', confirmLabel: 'Rebuild history' }))) return;
+        if (!(await confirmDialog({ title: 'Rebuild net-worth history', message: 'Recompute every day of net-worth history from your transactions, the prices stored here (Yahoo closes fill the gaps) and each day\'s exchange rate?\n\nThis can take a minute. Every daily snapshot is rewritten, so returns, risk metrics and the chart all use the same definitions.', confirmLabel: 'Rebuild history' }))) return;
         const orig = btn.innerHTML;
         btn.disabled = true;
         try {
-            await window.apiClient.startBackfill(false);
+            await window.apiClient.startBackfill(true);
             for (let i = 0; i < 60; i++) {
                 await new Promise(r => setTimeout(r, 3000));
                 const s = await window.apiClient.getBackfillStatus();
@@ -1645,6 +1645,7 @@ const _AN_TAB_MAP = {
     anTabFees:        { key: 'fees',        loader: () => { loadAnalyticsFees(); } },
     anTabStress:      { key: 'stress',      loader: () => { loadAnalyticsStress('2008'); } },
     anTabPortfolios:  { key: 'portfolios',  loader: () => { loadPortfolioComparison(); } },
+    anTabProgress:    { key: 'progress',    loader: () => { loadAnalyticsProgress(); } },
 };
 let _analyticsLoaded = {};
 let _analyticsActiveTab = 'performance';
@@ -2270,7 +2271,7 @@ async function loadDashboardRisk() {
     const noteEl = document.getElementById('dashRiskNote');
     if (!wrap || !tilesEl) return;
     try {
-        const d = await window.apiClient.getRisk('^GSPC', '1y');
+        const d = await window.apiClient.getRisk(PREFS.benchmark, '1y');
         if (d.sharpe_ratio == null && d.note) {
             wrap.style.display = 'none';
             return;
@@ -2280,8 +2281,9 @@ async function loadDashboardRisk() {
         const vsBench = d.period_return_pct != null && d.benchmark_return_pct != null
             ? d.period_return_pct - d.benchmark_return_pct : null;
         const tiles = [
-            { key: 'vsBenchmark', label: 'vs S&P 500', value: vsBench,
-              text: fmtSignedPct(vsBench, 1, ' pts'), help: METRIC_HELP.vsBenchmark,
+            { key: 'vsBenchmark', label: 'vs benchmark', value: vsBench,
+              text: fmtSignedPct(vsBench, 1, ' pts'),
+              help: `${METRIC_HELP.vsBenchmark} Benchmark: ${d.benchmark_label || d.benchmark}.`,
               sub: `You ${fmtSignedPct(d.period_return_pct, 1)} · index ${fmtSignedPct(d.benchmark_return_pct, 1)}` },
             { key: 'currentDrawdown', label: 'Below 12-mo high', value: d.current_drawdown_pct,
               text: fmtSignedPct(d.current_drawdown_pct, 1), help: METRIC_HELP.currentDrawdown,
@@ -2311,12 +2313,210 @@ async function loadDashboardRisk() {
 }
 window.loadDashboardRisk = loadDashboardRisk;
 
-// Jump from the dashboard to Analytics → Risk & Diversification.
-function openAnalyticsRisk() {
-    _analyticsActiveTab = 'risk';
+// "risk-free rate 2.15% (€STR, ECB)" — says when the published rate wasn't used.
+function fmtRiskFree(d) {
+    if (d.risk_free_rate_pct == null) return 'risk-free rate unavailable';
+    const src = { ecb_estr: '€STR average, ECB', setting: 'your setting — ECB unreachable', default: 'assumed — ECB unreachable' }[d.risk_free_source] || d.risk_free_source || '';
+    return `risk-free rate ${Number(d.risk_free_rate_pct).toFixed(2)}%/yr${src ? ` (${src})` : ''}`;
+}
+window.fmtRiskFree = fmtRiskFree;
+
+// Jump from the dashboard to an Analytics tab ('risk', 'progress', …).
+function openAnalyticsTab(key) {
+    _analyticsActiveTab = key;
     if (window.navigationManager) window.navigationManager.showPage('analytics');
 }
+window.openAnalyticsTab = openAnalyticsTab;
+function openAnalyticsRisk() { openAnalyticsTab('risk'); }
 window.openAnalyticsRisk = openAnalyticsRisk;
+
+// ---------------------------------------------------------------------------
+// Progress: contributions vs growth, real return, savings habit, safety net
+// ---------------------------------------------------------------------------
+
+// Pure: the four rated progress tiles from a /analytics/progress payload.
+// No euro amounts in tile text: tiles are escaped plain text, so they can't
+// carry the privacy blur; amounts live on the Progress tab. Unit-tested.
+function progressTiles(d) {
+    const help = window.METRIC_HELP || {};
+    const c = d.contributions || {};
+    const growthPct = c.net_contributions_eur > 0 ? c.growth_eur / c.net_contributions_eur * 100 : null;
+    const r = d.real || {};
+    const sv = d.savings || {};
+    const months = (sv.months_used || []).length;
+    const historyMonths = (c.months || []).length;
+    return [
+        { key: 'growth', label: 'Market growth', value: growthPct,
+          text: fmtSignedPct(growthPct, 1), help: help.marketGrowth,
+          sub: 'on top of the money you put in' },
+        { key: 'realReturn', label: 'Real return', value: r.real_irr_pct,
+          text: fmtSignedPct(r.real_irr_pct, 1, '%/yr'), help: help.realReturn,
+          sub: r.real_irr_pct == null ? 'inflation data unavailable'
+              : `IRR ${fmtSignedPct(r.irr_pct, 1)} − inflation ${Number(r.inflation_annual_pct).toFixed(1)}%`,
+          lowConfidence: historyMonths < 12, months: historyMonths },
+        { key: 'emergencyMonths', label: 'Emergency fund', value: sv.emergency_months,
+          text: sv.emergency_months == null ? '—' : `${Number(sv.emergency_months).toFixed(1)} mo`,
+          help: help.emergencyFund,
+          sub: sv.emergency_months == null ? 'needs bank balances and statements' : 'of average monthly spending' },
+        { key: 'savingsRate', label: 'Savings rate', value: sv.savings_rate_pct,
+          text: sv.savings_rate_pct == null ? '—' : `${Number(sv.savings_rate_pct).toFixed(0)}%`,
+          help: help.savingsRate,
+          sub: months ? `last ${months} imported month${months === 1 ? '' : 's'}` : 'needs imported bank statements',
+          lowConfidence: months > 0 && months < 6, months },
+    ];
+}
+window.progressTiles = progressTiles;
+
+// Pure: monthly-return grid rows, newest year first, 12 cells each (null = no data).
+function monthlyGridRows(monthly) {
+    return Object.keys(monthly || {}).sort().reverse().map(year => ({
+        year,
+        cells: Array.from({ length: 12 }, (_, i) => {
+            const v = monthly[year][String(i + 1).padStart(2, '0')];
+            return v == null ? null : v;
+        }),
+    }));
+}
+window.monthlyGridRows = monthlyGridRows;
+
+function _progressTilesHtml(d) {
+    return progressTiles(d)
+        .map(t => `<div class="col">${metricTile(t)}</div>`)
+        .join('');
+}
+
+// Dashboard row: four progress tiles, hidden while there is nothing to show.
+async function loadDashboardProgress() {
+    const wrap = document.getElementById('dashProgress');
+    const tilesEl = document.getElementById('dashProgressTiles');
+    const noteEl = document.getElementById('dashProgressNote');
+    if (!wrap || !tilesEl) return;
+    try {
+        const d = await window.apiClient.getProgress(PREFS.benchmark);
+        if (!(d.contributions && d.contributions.months && d.contributions.months.length)) {
+            wrap.style.display = 'none';
+            return;
+        }
+        tilesEl.innerHTML = _progressTilesHtml(d);
+        if (noteEl) noteEl.textContent = (d.notes || []).join(' ');
+        wrap.style.display = '';
+        initTooltips();
+    } catch (err) {
+        tilesEl.innerHTML = '';
+        if (noteEl) noteEl.textContent = 'Could not load progress: ' + err.message;
+        wrap.style.display = '';
+    }
+}
+window.loadDashboardProgress = loadDashboardProgress;
+
+let _progressChart = null;
+const _MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+function _pctCell(v, digits = 1) {
+    if (v == null) return '<span class="text-muted">—</span>';
+    const cls = v > 0 ? 'text-success' : (v < 0 ? 'text-danger' : '');
+    return `<span class="${cls}">${esc(fmtSignedPct(v, digits))}</span>`;
+}
+
+async function loadAnalyticsProgress() {
+    const body = document.getElementById('anProgressBody');
+    if (!body) return;
+    body.innerHTML = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading…</div>';
+    try {
+        const benchmark = document.getElementById('anBenchmark')?.value || PREFS.benchmark;
+        const d = await window.apiClient.getProgress(benchmark);
+        const c = d.contributions || {};
+        const lt = d.latent_tax || {};
+        const sv = d.savings || {};
+        const years = d.calendar_years || [];
+        const grid = monthlyGridRows(d.monthly_returns);
+
+        const yearRows = years.slice().reverse().map(y => `
+            <tr>
+                <td>${y.year}${y.partial ? ` <span class="text-muted small" title="${esc(`${y.start} → ${y.end}`)}">(part)</span>` : ''}</td>
+                <td class="text-end">${_pctCell(y.return_pct)}</td>
+                <td class="text-end">${_pctCell(y.benchmark_return_pct)}</td>
+                <td class="text-end">${y.inflation_pct == null ? '<span class="text-muted">—</span>' : esc(Number(y.inflation_pct).toFixed(1) + '%')}</td>
+                <td class="text-end">${_pctCell(y.real_return_pct)}</td>
+            </tr>`).join('');
+        const gridRows = grid.map(r => `
+            <tr><td>${esc(r.year)}</td>${r.cells.map(v => `<td class="text-end">${_pctCell(v)}</td>`).join('')}</tr>`).join('');
+
+        body.innerHTML = `
+            <div class="row g-3 row-cols-2 row-cols-md-4 mb-4">${_progressTilesHtml(d)}</div>
+
+            <h6 class="fw-semibold" data-bs-toggle="tooltip" title="${esc(METRIC_HELP.marketGrowth)}">Money in vs market growth</h6>
+            <p class="small mb-2">You put in <strong>${anFmtEur(c.net_contributions_eur)}</strong> (purchases minus sale proceeds). The market added <strong class="${c.growth_eur >= 0 ? 'text-success' : 'text-danger'}">${anFmtEur(c.growth_eur)}</strong>, and dividends and interest paid out <strong>${anFmtEur(d.income_eur)}</strong>.</p>
+            <div class="mb-4" style="position:relative;height:240px;"><canvas id="anProgressChart" aria-label="Net contributions and market value by month"></canvas></div>
+
+            <h6 class="fw-semibold" data-bs-toggle="tooltip" title="${esc(METRIC_HELP.calendarYears)}">Year by year</h6>
+            <div class="table-responsive mb-1">
+                <table class="table table-sm align-middle mb-0">
+                    <thead><tr><th>Year</th><th class="text-end">You (TWR)</th><th class="text-end">${esc(d.benchmark_label || d.benchmark || 'Benchmark')}</th><th class="text-end">Inflation</th><th class="text-end">Real</th></tr></thead>
+                    <tbody>${yearRows || '<tr><td colspan="5" class="text-muted small">Needs daily snapshot history — Rebuild history on the Performance tab.</td></tr>'}</tbody>
+                </table>
+            </div>
+            <p class="small text-muted mb-4">Time-weighted, in EUR. Real = (1 + return) ÷ (1 + inflation) − 1. Inflation: ${esc((d.real || {}).source || '')}.</p>
+
+            ${grid.length ? `
+            <h6 class="fw-semibold">Month by month</h6>
+            <div class="table-responsive mb-4">
+                <table class="table table-sm small mb-0"><thead><tr><th></th>${_MONTH_ABBR.map(m => `<th class="text-end">${m}</th>`).join('')}</tr></thead><tbody>${gridRows}</tbody></table>
+            </div>` : ''}
+
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <div class="border rounded p-3 h-100">
+                        <h6 class="fw-semibold" data-bs-toggle="tooltip" title="${esc(METRIC_HELP.latentTax)}">If you sold everything today</h6>
+                        <div class="small">Unrealised gain: <strong>${anFmtEur(lt.unrealised_gain_eur)}</strong></div>
+                        <div class="small">Extra IRPF this year: <strong>${anFmtEur(lt.latent_tax_eur)}</strong></div>
+                        <div class="small">Value after that tax: <strong>${anFmtEur(lt.after_tax_value_eur)}</strong></div>
+                        <div class="small text-muted mt-2">${anFmtEur(lt.fund_unrealised_gain_eur)} of the gain is in index or mutual funds, which you can switch to another fund (traspaso) without paying tax. Estimate, not tax advice.</div>
+                    </div>
+                </div>
+                <div class="col-md-6">
+                    <div class="border rounded p-3 h-100">
+                        <h6 class="fw-semibold" data-bs-toggle="tooltip" title="${esc(METRIC_HELP.savingsRate)}">Savings habit &amp; safety net</h6>
+                        ${sv.months_used && sv.months_used.length ? `
+                        <div class="small">Last ${sv.months_used.length} imported months: income <strong>${anFmtEur(sv.income_eur)}</strong>, spending <strong>${anFmtEur(sv.spent_eur)}</strong></div>
+                        <div class="small">Average spending: <strong>${anFmtEur(sv.avg_monthly_spend_eur)}</strong>/month</div>
+                        <div class="small">Cash in bank accounts: <strong>${sv.cash_eur == null ? '—' : anFmtEur(sv.cash_eur)}</strong></div>
+                        <div class="small text-muted mt-2">Transfers between your own accounts are left out. Spending includes taxes paid from the account.</div>`
+                        : '<div class="small text-muted">Import bank statements (Spending page) to see your savings rate and how many months of spending your cash covers.</div>'}
+                    </div>
+                </div>
+            </div>
+            ${(d.notes || []).length ? `<div class="small text-warning-emphasis mt-3">${d.notes.map(esc).join(' ')}</div>` : ''}`;
+
+        const canvas = document.getElementById('anProgressChart');
+        if (canvas && typeof Chart !== 'undefined') {
+            if (_progressChart) { _progressChart.destroy(); _progressChart = null; }
+            const ms = c.months || [];
+            _progressChart = new Chart(canvas, {
+                type: 'line',
+                data: {
+                    labels: ms.map(m => monthKeyLabel(m.month)),
+                    datasets: [
+                        { label: 'Money put in', data: ms.map(m => m.net_contributions_eur), stepped: true,
+                          borderColor: cssVar('--viz-cost'), backgroundColor: 'transparent', pointRadius: 0, borderWidth: 2 },
+                        { label: 'Market value', data: ms.map(m => m.value_eur), spanGaps: true,
+                          borderColor: cssVar('--viz-1'), backgroundColor: 'transparent', pointRadius: 0, borderWidth: 2 },
+                    ],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { tooltip: { callbacks: { label: item => ` ${item.dataset.label}: ${fmtEurWhole(item.raw)}` } } },
+                    scales: { y: { ticks: { callback: v => fmtEurWhole(v) } } },
+                },
+            });
+        }
+    } catch (err) {
+        body.innerHTML = `<div class="text-danger small">Error loading progress: ${esc(err.message)}</div>`;
+    }
+    initTooltips();
+}
+window.loadAnalyticsProgress = loadAnalyticsProgress;
 
 // f) Risk section
 async function loadAnalyticsRisk() {
@@ -2331,8 +2531,7 @@ async function loadAnalyticsRisk() {
     body.innerHTML = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading…</div>';
     try {
         const benchmarkSel = document.getElementById('anBenchmark');
-        const benchmark = benchmarkSel?.value || '^GSPC';
-        const benchName = benchmarkSel?.selectedOptions?.[0]?.textContent || benchmark;
+        const benchmark = benchmarkSel?.value || PREFS.benchmark;
         const d = await window.apiClient.getRisk(benchmark, win);
         // Insufficient history: API returns null metrics plus a note
         if (d.sharpe_ratio == null && d.note) {
@@ -2346,7 +2545,7 @@ async function loadAnalyticsRisk() {
         const tiles = [
             { key: 'vsBenchmark', label: 'Return vs benchmark', value: vsBench,
               text: fmtSignedPct(vsBench, 1, ' pts'), help: METRIC_HELP.vsBenchmark,
-              sub: `You ${fmtSignedPct(d.period_return_pct, 1)} · ${benchName} ${fmtSignedPct(d.benchmark_return_pct, 1)}` },
+              sub: `You ${fmtSignedPct(d.period_return_pct, 1)} · ${d.benchmark_label || benchmark} ${fmtSignedPct(d.benchmark_return_pct, 1)} (EUR)` },
             { key: 'currentDrawdown', label: 'Current drawdown', value: d.current_drawdown_pct,
               text: fmtSignedPct(d.current_drawdown_pct, 1), help: METRIC_HELP.currentDrawdown },
             { key: 'maxDrawdown', label: 'Max drawdown', value: d.max_drawdown_pct,
@@ -2360,7 +2559,8 @@ async function loadAnalyticsRisk() {
             { key: 'calmar', label: 'Calmar ratio', value: d.calmar_ratio,
               text: d.calmar_ratio == null ? '—' : Number(d.calmar_ratio).toFixed(2), help: METRIC_HELP.calmar },
             { key: 'beta', label: 'Beta', value: d.beta,
-              text: d.beta == null ? '—' : Number(d.beta).toFixed(2), help: METRIC_HELP.beta },
+              text: d.beta == null ? '—' : Number(d.beta).toFixed(2), help: METRIC_HELP.beta,
+              sub: d.beta_observations ? `${d.beta_observations} weekly returns` : '' },
             { key: 'alpha', label: 'Alpha', value: d.alpha_pct,
               text: fmtSignedPct(d.alpha_pct, 1, '%/yr'), help: METRIC_HELP.alpha },
         ];
@@ -2374,7 +2574,7 @@ async function loadAnalyticsRisk() {
                 ${tiles.map(t => `<div class="col">${metricTile({ ...t, lowConfidence, months })}</div>`).join('')}
             </div>
             <div class="small text-muted mt-3" data-bs-toggle="tooltip" title="${esc(METRIC_HELP.riskReturns)}">
-                <i class="bi bi-info-circle me-1"></i>${esc(range)} · ${d.snapshots_used ?? '—'} daily snapshots · flow-adjusted returns, risk-free rate 0${confNote}
+                <i class="bi bi-info-circle me-1"></i>${esc(range)} · ${d.snapshots_used ?? '—'} daily snapshots · flow-adjusted returns · ${esc(fmtRiskFree(d))}${confNote}
             </div>`;
     } catch (err) {
         body.innerHTML = `<div class="text-danger small">Error loading risk metrics: ${esc(err.message)}</div>`;
