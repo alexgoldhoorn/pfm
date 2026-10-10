@@ -23,6 +23,12 @@ window.METRIC_HELP = {
   fairValue: "Fair Value: an estimate of intrinsic worth from fundamentals + an LLM analyst. Compare to current price.",
   yieldOnCost: "Yield on Cost: trailing-12-month dividends from a position divided by what you paid for it.",
   feeDrag: "Fee Drag: total fees paid as a percentage of the amount invested — how much costs eat your capital.",
+  marketGrowth: "Market growth: current value minus the money you put in (purchases minus sale proceeds), as a share of that money. Early on most of a portfolio is your own savings; over decades growth should take over. Dividends and interest paid out to cash are shown separately.",
+  realReturn: "Real return: your money-weighted return per year (IRR) after Spanish inflation, using (1 + IRR) ÷ (1 + inflation) − 1. This is the growth in what your money can buy — what matters for a pension 20 years out. Inflation: HICP Spain (Eurostat, via the ECB). The bands are a rule of thumb.",
+  emergencyFund: "Emergency fund: cash in your bank accounts (and cash entered on Net Worth) divided by your average monthly spending over the last imported months. The usual guideline is 3–6 months; with freelance income, aim for the top of that range before investing more. A rule of thumb, not an official threshold.",
+  savingsRate: "Savings rate: (income − spending) ÷ income over the last 12 complete months that have imported bank statements, transfers between your own accounts left out. 20% is the savings share of the 50/30/20 rule (E. Warren & A. Warren Tyagi, All Your Worth, 2005). A rule of thumb.",
+  calendarYears: "Year by year: the time-weighted return of each calendar year (CFA Institute, GIPS 2020), next to the benchmark in EUR and Spanish inflation over the same months. 'part' marks a year that started late or is still running.",
+  latentTax: "If you sold everything today: the extra IRPF savings-base tax this year (19–28%) on your unrealised gains, on top of what this year's sales and dividends already owe; net losses would lower it. Fund gains can be moved to another fund by traspaso without paying tax. Average-cost estimate, not tax advice.",
   benchmark: "Benchmark: a market index measured in EUR over the same days. Choose one with dividends reinvested (an accumulating ETF such as VWCE or IWDA): a price-only index like the S&P 500 leaves out about 1.5–2%/yr of dividends, which flatters the comparison.",
   netWorth: "Net Worth: total portfolio value in EUR (all currencies converted at current FX rates).",
   invested: "Invested: cost basis of your currently-held positions (what you paid, in EUR).",
@@ -244,6 +250,27 @@ window.PAGE_HELP = {
         <li>When a statement has a balance column, the import preview warns if the balances don't add up, which usually means missing rows.</li>
       </ul>
       <p class="text-muted small mb-0">A read-only summary of the last 30 days also appears on the Net Worth page, next to your manual Monthly Cash Flow entries, for comparison.</p>`
+  },
+  progress: {
+    title: "Your progress",
+    body: `
+      <p>Numbers for a long-term investor: where your money came from, how each year went after inflation, what tax would take, and whether your saving habit and cash buffer are in place.</p>
+      <ul class="small mb-2">
+        <li><strong>Market growth</strong> — value minus the money you put in (purchases minus sale proceeds). Early on most of a portfolio is your own savings; with time, growth should take over.</li>
+        <li><strong>Real return</strong> — your yearly return (IRR) after Spanish inflation. If it's above zero, your money buys more than it did.</li>
+        <li><strong>Year by year</strong> — time-weighted return per calendar year, the way funds report theirs, next to the benchmark in EUR and inflation. Bad years are normal: the MSCI World index fell about 18% in US dollars in 2022 (about 13% in euros).</li>
+        <li><strong>If you sold everything today</strong> — the IRPF savings-base tax (19–28%) your unrealised gains would add this year. Funds can be switched with a traspaso without paying it; ETFs and shares can't.</li>
+        <li><strong>Savings rate</strong> — share of income not spent, from imported bank statements.</li>
+        <li><strong>Emergency fund</strong> — months of spending your bank cash covers. Build this before investing more.</li>
+      </ul>
+      <p class="fw-semibold mb-1">Sources</p>
+      <ul class="small mb-2">
+        <li>Time-weighted and money-weighted returns: CFA Institute, <em>GIPS 2020</em>.</li>
+        <li>Inflation: HICP Spain, Eurostat (via the ECB Data Portal).</li>
+        <li>Savings tax: Ley 35/2006 del IRPF (base del ahorro; art. 49 for offsetting losses against dividends and interest).</li>
+        <li>Savings-rate band: the 50/30/20 rule (E. Warren &amp; A. Warren Tyagi, <em>All Your Worth</em>, 2005).</li>
+      </ul>
+      <p class="small text-muted mb-0">The coloured bands are rules of thumb, not official thresholds. Not tax or investment advice.</p>`
   },
   stressTest: {
     title: "Stress Testing — Methodology",

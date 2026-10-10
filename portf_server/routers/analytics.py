@@ -36,6 +36,16 @@ from portf_manager.services.performance import (
     to_eur_closes,
     to_eur_transactions,
 )
+from portf_manager.services import inflation
+from portf_manager.services.progress import (
+    calendar_returns,
+    contributions_vs_growth,
+    is_fund_like,
+    latent_tax,
+    savings_and_buffer,
+    savings_tax,
+    window_return,
+)
 from portf_manager.services.risk_metrics import (
     compute_portfolio_risk,
     daily_realised_gains,
@@ -426,6 +436,186 @@ def get_performance(
     }
 
 
+# ── Progress ─────────────────────────────────────────────────────────────────
+
+
+def _cash_eur(db) -> Optional[float]:
+    """Bank balances plus cash-type manual assets (EUR); None if neither exists."""
+    from .networth import _bank_accounts_eur
+
+    bank, accounts = _bank_accounts_eur(db)
+    manual = [
+        a
+        for a in db.get_manual_assets()
+        if (a.get("category") or "").lower() == "cash" and not a.get("is_liability")
+    ]
+    if not manual and not any(a["balance"] is not None for a in accounts):
+        return None
+    return bank + sum(
+        float(a["amount"] or 0) * _fx(a.get("currency") or "EUR") for a in manual
+    )
+
+
+@router.get("/progress")
+def get_progress(
+    benchmark: str = Query(
+        DEFAULT_BENCHMARK, description="Benchmark ticker for the yearly comparison"
+    ),
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Contributions vs growth, yearly/monthly returns (nominal and real),
+    latent tax, savings rate and emergency-fund cover.
+
+    See ``portf_manager/services/progress.py``. Each block degrades on its
+    own: missing inflation data leaves the real figures null with a note,
+    missing bank statements leave the savings block null.
+    """
+    fx_on = _fx_on_db(db)
+    today = date.today()
+    perf = compute_performance(db, _fx, fx_on)
+    perf.pop("cash_flows")
+    txs = [t for t in db.get_all_transactions() if t.get("transaction_date")]
+    eur_txs = to_eur_transactions(txs, fx_on)
+    snapshots = db.get_snapshots(limit=100_000)
+    realised_by_day = daily_realised_gains(txs, fx_on)
+
+    out: dict = {
+        "contributions": contributions_vs_growth(
+            eur_txs, snapshots, perf["current_value_eur"], today
+        ),
+        "income_eur": perf["income_eur"],
+        "notes": [],
+    }
+
+    # Calendar years, with the benchmark and inflation over the same windows.
+    cal = calendar_returns(snapshots, realised_by_day, today)
+    info = benchmark_info(benchmark)
+    closes: list = []
+    if cal["years"]:
+        try:
+            closes, info = _benchmark_closes_eur(
+                db, benchmark, date.fromisoformat(cal["years"][0]["start"])
+            )
+        except Exception as e:
+            logger.warning(f"Benchmark fetch failed: {e}")
+            out["notes"].append("Benchmark prices unavailable.")
+    first_month = perf["inception_date"] or (
+        cal["years"][0]["start"] if cal["years"] else None
+    )
+    index = (
+        inflation.hicp_index(db, date.fromisoformat(first_month[:10]))
+        if first_month
+        else None
+    )
+    if first_month and not index:
+        out["notes"].append(
+            "Inflation data (ECB) unavailable, so real returns are not shown."
+        )
+    this_month = today.strftime("%Y-%m")
+    for row in cal["years"]:
+        row["benchmark_return_pct"] = window_return(closes, row["start"], row["end"])
+        row["inflation_pct"] = row["real_return_pct"] = None
+        if index:
+            # Match the return's window by month: from the month before it
+            # starts (Dec of the prior year for a full year) to its end.
+            sy, sm = int(row["start"][:4]), int(row["start"][5:7])
+            if sy < row["year"]:
+                base = f"{row['year'] - 1}-12"
+            else:
+                base = f"{sy - 1}-12" if sm == 1 else f"{sy}-{sm - 1:02d}"
+            pi = inflation.inflation_between(
+                index, base, min(f"{row['year']}-12", this_month)
+            )
+            if pi is not None:
+                row["inflation_pct"] = round(pi * 100, 2)
+                row["real_return_pct"] = round(
+                    inflation.real_return(row["return_pct"] / 100, pi) * 100, 2
+                )
+                row["inflation_to"] = inflation.latest_month(index, f"{row['year']}-12")
+    out["calendar_years"] = cal["years"]
+    out["monthly_returns"] = cal["months"]
+    out["benchmark"] = benchmark
+    out["benchmark_label"] = info["label"]
+
+    # Real money-weighted return: IRR deflated by annualised inflation since
+    # the month before the first trade.
+    real = {
+        "irr_pct": perf["money_weighted_irr_pct"],
+        "inflation_annual_pct": None,
+        "real_irr_pct": None,
+        "inflation_to": None,
+        "source": inflation.SOURCE_LABEL,
+    }
+    if index and perf["inception_date"] and perf["money_weighted_irr_pct"] is not None:
+        inc = date.fromisoformat(perf["inception_date"])
+        base = date(inc.year, inc.month, 1)
+        base_month = (
+            f"{base.year - 1}-12"
+            if base.month == 1
+            else f"{base.year}-{base.month - 1:02d}"
+        )
+        last = inflation.latest_month(index, this_month)
+        pi = inflation.inflation_between(index, base_month, this_month)
+        if pi is not None and last:
+            n = (
+                (int(last[:4]) - int(base_month[:4])) * 12
+                + int(last[5:])
+                - int(base_month[5:])
+            )
+            annual = (1 + pi) ** (12 / n) - 1
+            real.update(
+                inflation_annual_pct=round(annual * 100, 2),
+                real_irr_pct=round(
+                    inflation.real_return(perf["money_weighted_irr_pct"] / 100, annual)
+                    * 100,
+                    2,
+                ),
+                inflation_to=last,
+            )
+    out["real"] = real
+
+    # Latent tax: sell everything today on top of this year's savings base.
+    assets = {a["id"]: a for a in db.get_all_assets(active_only=False)}
+    positions, _ = compute_positions(txs)
+    eur_positions, _ = compute_positions(eur_txs)
+    open_positions = []
+    for aid, pos in positions.items():
+        if pos["quantity"] <= 0:
+            continue
+        asset = assets.get(aid) or {}
+        row = db.get_latest_price(aid)
+        price = float(row["price"]) if row else 0.0
+        open_positions.append(
+            {
+                "value_eur": pos["quantity"]
+                * price
+                * _fx(asset.get("currency") or "EUR"),
+                "cost_eur": eur_positions.get(aid, {}).get("cost", 0.0),
+                "fund": is_fund_like(asset),
+            }
+        )
+    ytd = current_year_savings_components(db)
+    out["latent_tax"] = latent_tax(
+        open_positions,
+        ytd["realised_gain_eur"],
+        ytd["dividend_income_eur"] + ytd["interest_income_eur"],
+    )
+
+    # Savings rate and emergency fund, from bank statements (EUR at today's
+    # rate, the /spending/trend convention).
+    start = date(today.year - 1, today.month, 1).isoformat()
+    rows = [
+        {
+            "date": r["date"],
+            "amount_eur": float(r["amount"]) * _fx(r.get("currency") or "EUR"),
+        }
+        for r in db.list_spending_transactions(start_date=start, is_transfer=False)
+    ]
+    out["savings"] = savings_and_buffer(rows, _cash_eur(db), today)
+    return out
+
+
 # ── Net-worth history ─────────────────────────────────────────────────────────
 
 
@@ -747,15 +937,7 @@ def get_tax_optimizer(
         )
     candidates.sort(key=lambda x: x["unrealised_loss_eur"])
 
-    # Current vs after-harvest tax. Spanish savings base: capital gains/losses
-    # net together; a net capital LOSS offsets up to 25% of dividend/interest
-    # income, the rest carries forward (modelled simply here).
-    def savings_tax(capital_result, inc):
-        if capital_result >= 0:
-            return irpf_savings_tax(capital_result + inc)
-        offset = min(inc * 0.25, -capital_result)
-        return irpf_savings_tax(max(inc - offset, 0))
-
+    # Current vs after-harvest tax (see progress.savings_tax for the rules).
     tax_current = savings_tax(realised_gain, income)
     tax_after = savings_tax(realised_gain + harvestable, income)
 

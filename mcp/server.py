@@ -515,7 +515,58 @@ def performance(period: str = "all", benchmark: str = "VWCE.DE") -> str:
         if br is not None
         else f"  Benchmark (EUR):  n/a  [{bname}]"
     )
+    if period == "all":
+        lines.extend(_progress_lines(benchmark))
     return "\n".join(lines)
+
+
+def _progress_lines(benchmark: str) -> list[str]:
+    """Contributions vs growth, real return, years, latent tax, savings."""
+    try:
+        p = _get("/api/v1/analytics/progress", {"benchmark": benchmark})
+    except Exception as e:
+        return [f"PROGRESS: unavailable ({e})"]
+
+    def pct(v, suffix: str = "%") -> str:
+        return "n/a" if v is None else f"{v:+.2f}{suffix}"
+
+    c = p.get("contributions") or {}
+    r = p.get("real") or {}
+    t = p.get("latent_tax") or {}
+    s = p.get("savings") or {}
+    lines = ["PROGRESS:"]
+    lines.append(
+        f"  Money put in:     {_fmt_currency(c.get('net_contributions_eur') or 0)}"
+        f"  | market growth {_fmt_currency(c.get('growth_eur') or 0)}"
+    )
+    infl = r.get("inflation_annual_pct")
+    lines.append(
+        f"  Real IRR:         {pct(r.get('real_irr_pct'), '%/yr')}"
+        f"  (inflation {'n/a' if infl is None else f'{infl:.2f}%/yr'},"
+        f" HICP Spain to {r.get('inflation_to') or 'n/a'})"
+    )
+    for y in p.get("calendar_years") or []:
+        part = " (part)" if y.get("partial") else ""
+        lines.append(
+            f"  {y.get('year')}{part}: TWR {pct(y.get('return_pct'))}"
+            f" | benchmark {pct(y.get('benchmark_return_pct'))}"
+            f" | real {pct(y.get('real_return_pct'))}"
+        )
+    lines.append(
+        f"  Sell-all IRPF:    {_fmt_currency(t.get('latent_tax_eur') or 0)}"
+        f" on {_fmt_currency(t.get('unrealised_gain_eur') or 0)} unrealised"
+        f" ({_fmt_currency(t.get('fund_unrealised_gain_eur') or 0)} in funds,"
+        " traspaso-eligible)"
+    )
+    sr, em = s.get("savings_rate_pct"), s.get("emergency_months")
+    lines.append(
+        f"  Savings rate:     {'n/a' if sr is None else f'{sr:.1f}%'}"
+        f" over {len(s.get('months_used') or [])} imported months"
+        f"  | emergency fund {'n/a' if em is None else f'{em:.1f} months'}"
+    )
+    for note in p.get("notes") or []:
+        lines.append(f"  Note: {note}")
+    return lines
 
 
 @mcp.tool()

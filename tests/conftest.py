@@ -64,6 +64,10 @@ def _no_estr_fetch(monkeypatch):
     monkeypatch.setattr(
         "portf_manager.services.risk_free._fetch_estr", lambda start, end: None
     )
+    # Real returns ask the ECB for Spanish HICP; unit tests see "unavailable".
+    monkeypatch.setattr(
+        "portf_manager.services.inflation._fetch_hicp", lambda start_month: None
+    )
 
 
 class RealNetworkCall(ConnectionError):
