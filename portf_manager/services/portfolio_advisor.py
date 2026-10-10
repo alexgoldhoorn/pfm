@@ -4,19 +4,17 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date, datetime
+from datetime import date
 from typing import Any, Optional
 
 from portf_manager.cache import cached
 from portf_manager.market import get_fundamentals
 from portf_manager.positions import compute_positions
 from portf_manager.services.analytics_service import (
-    compute_cagr,
     dividend_income,
     irpf_savings_tax,
-    money_weighted_irr,
-    simple_return,
 )
+from portf_manager.services.performance import compute_performance
 from portf_manager.services.risk_metrics import compute_portfolio_risk
 from portf_manager.tax_calculator import TaxCalculator
 
@@ -30,63 +28,31 @@ def _fx(currency: str) -> float:
     return _get_fx_rate(currency)
 
 
+def _fx_on(db, currency: str, on_date) -> float:
+    """EUR rate on *on_date* — delegates to the portfolios router helper."""
+    from portf_server.routers.portfolios import _get_fx_rate_on
+
+    return _get_fx_rate_on(db, currency, on_date)
+
+
 def gather_performance(db, portfolio_id: Optional[int] = None) -> dict[str, Any]:
-    """Invested, current value, total return, CAGR, IRR, inception date."""
-    txns = db.get_all_transactions(portfolio_id=portfolio_id)
-    assets_by_id = {a["id"]: a for a in db.get_all_assets(active_only=False)}
-    positions, realised = compute_positions(txns)
-
-    invested = 0.0
-    current_value = 0.0
-    cash_flows: list[tuple[date, float]] = []
-
-    for aid, pos in positions.items():
-        if pos["quantity"] <= 0:
-            continue
-        asset = assets_by_id.get(aid)
-        if not asset:
-            continue
-        cur = asset.get("currency", "EUR")
-        invested += pos["cost"] * _fx(cur)
-        price_data = db.get_latest_price(aid)
-        price = float(price_data["price"]) if price_data else 0.0
-        current_value += pos["quantity"] * price * _fx(cur)
-
-    for tx in txns:
-        d = tx.get("transaction_date", "")
-        try:
-            dd = datetime.strptime(str(d)[:10], "%Y-%m-%d").date()
-        except ValueError:
-            continue
-        asset = assets_by_id.get(tx["asset_id"])
-        cur = asset.get("currency", "EUR") if asset else "EUR"
-        amount_eur = float(tx["total_amount"] or 0) * _fx(cur)
-        t = tx["transaction_type"].lower()
-        if t == "buy":
-            cash_flows.append((dd, -amount_eur))
-        elif t in ("sell", "dividend"):
-            cash_flows.append((dd, amount_eur))
-
-    inception = min((d for d, _ in cash_flows), default=None)
-    cagr = (
-        compute_cagr(invested, current_value, realised, inception)
-        if inception
-        else None
+    """Invested, current value, total gain and return, IRR, inception date."""
+    perf = compute_performance(
+        db, _fx, lambda cur, d: _fx_on(db, cur, d), portfolio_id=portfolio_id
     )
-
     return {
-        "invested_eur": round(invested, 2),
-        "current_value_eur": round(current_value, 2),
-        "total_return_pct": simple_return(invested, current_value, realised),
-        "cagr_pct": cagr,
-        "irr_pct": money_weighted_irr(cash_flows, current_value),
-        "inception_date": inception.isoformat() if inception else None,
+        "invested_eur": perf["invested_eur"],
+        "current_value_eur": perf["current_value_eur"],
+        "total_gain_eur": perf["total_gain_eur"],
+        "total_return_pct": perf["total_return_pct"],
+        "irr_pct": perf["money_weighted_irr_pct"],
+        "inception_date": perf["inception_date"],
     }
 
 
 def gather_risk(db) -> dict[str, Any]:
     """Flow-adjusted risk metrics from daily snapshots (portfolio-wide)."""
-    metrics = compute_portfolio_risk(db, _fx)
+    metrics = compute_portfolio_risk(db, lambda cur, d: _fx_on(db, cur, d))
     metrics.pop("returns", None)
     return metrics
 
@@ -327,7 +293,7 @@ def build_analysis_prompt(bundle: dict) -> str:
 
 ### Performance
 - Invested: €{perf.get('invested_eur', 0):,.0f}  |  Current value: €{perf.get('current_value_eur', 0):,.0f}
-- Total return: {perf.get('total_return_pct', 'N/A')}%  |  CAGR: {perf.get('cagr_pct', 'N/A')}%  |  IRR: {perf.get('irr_pct', 'N/A')}%
+- Total return: {perf.get('total_return_pct', 'N/A')}%  |  IRR (money-weighted, per year): {perf.get('irr_pct', 'N/A')}%
 - Inception: {perf.get('inception_date', 'N/A')}
 
 ### Risk

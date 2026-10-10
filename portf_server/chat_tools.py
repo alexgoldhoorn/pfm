@@ -12,6 +12,7 @@ from datetime import date
 from typing import Optional
 
 from portf_manager.database import Database
+from portf_manager.services.performance import DEFAULT_BENCHMARK
 from portf_manager.llm_client import ToolDefinition
 
 logger = logging.getLogger(__name__)
@@ -165,45 +166,25 @@ def _get_performance(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
 ) -> str:
-    from portf_manager.positions import compute_positions
+    from portf_manager.services.performance import compute_performance
+    from portf_server.routers.portfolios import _get_fx_rate_on
 
-    txns = db.get_all_transactions(
-        portfolio_id=int(portfolio_id) if portfolio_id else None
+    perf = compute_performance(
+        db,
+        _fx,
+        lambda cur, d: _get_fx_rate_on(db, cur, d),
+        portfolio_id=int(portfolio_id) if portfolio_id else None,
     )
-    pos_map, realised = compute_positions(txns)
-
-    invested = current = 0.0
-    inception_date = None
-    for aid, p in pos_map.items():
-        if p["quantity"] <= 0:
-            continue
-        asset = db.get_asset(aid)
-        if not asset:
-            continue
-        cur = asset.get("currency", "EUR")
-        pd_ = db.get_latest_price(aid)
-        price = float(pd_["price"]) if pd_ else 0.0
-        fx = _fx(cur)
-        invested += p["cost"] * fx
-        current += p["quantity"] * price * fx
-
-    all_txns = db.get_all_transactions(
-        portfolio_id=int(portfolio_id) if portfolio_id else None
-    )
-    dates = [
-        t.get("transaction_date", "") for t in all_txns if t.get("transaction_date")
-    ]
-    if dates:
-        inception_date = min(dates)
-
-    total_return_pct = ((current - invested) / invested * 100) if invested else 0.0
     return _j(
         {
-            "total_value_eur": round(current, 2),
-            "invested_eur": round(invested, 2),
-            "total_return_pct": round(total_return_pct, 2),
-            "realised_gain_eur": round(realised, 2),
-            "inception_date": str(inception_date)[:10] if inception_date else None,
+            "total_value_eur": perf["current_value_eur"],
+            "invested_eur": perf["invested_eur"],
+            "total_gain_eur": perf["total_gain_eur"],
+            "total_return_pct": perf["total_return_pct"],
+            "money_weighted_irr_pct": perf["money_weighted_irr_pct"],
+            "realised_gain_eur": perf["realised_pnl_eur"],
+            "income_eur": perf["income_eur"],
+            "inception_date": perf["inception_date"],
         }
     )
 
@@ -215,7 +196,7 @@ def _get_risk(db: Database, portfolio_id: Optional[str] = None) -> str:
     try:
         # Called directly, so every Query-defaulted parameter must be passed.
         result = {
-            w: _risk_fn(benchmark="^GSPC", window=w, db=db, api_key_info={})
+            w: _risk_fn(benchmark=DEFAULT_BENCHMARK, window=w, db=db, api_key_info={})
             for w in ("1y", "all")
         }
         return _j(result)

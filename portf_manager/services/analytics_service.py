@@ -15,6 +15,9 @@ from collections import defaultdict
 from datetime import date, datetime
 from typing import Any, Optional
 
+# Re-exported: the IRR lives with the rest of the lifetime performance figures.
+from portf_manager.services.performance import money_weighted_irr  # noqa: F401,E402
+
 logger = logging.getLogger(__name__)
 
 
@@ -210,60 +213,7 @@ def dividend_ttm_enrichment(
     }
 
 
-# ── Performance: cash flows, TWR, IRR ──────────────────────────────────────────
-
-
-def money_weighted_irr(
-    cash_flows: list[tuple[date, float]], final_value: float
-) -> Optional[float]:
-    """
-    Compute annualised money-weighted return (IRR) via Newton's method.
-
-    cash_flows: list of (date, amount) where deposits/buys are NEGATIVE
-                (money in) and withdrawals/sells are POSITIVE (money out).
-    final_value: current portfolio value (treated as a final positive flow).
-    """
-    if not cash_flows:
-        return None
-    flows = sorted(cash_flows, key=lambda x: x[0])
-    t0 = flows[0][0]
-    # Append the current value as a terminal inflow at today
-    today = date.today()
-    series = [(d, amt) for d, amt in flows] + [(today, final_value)]
-
-    def npv(rate: float) -> float:
-        total = 0.0
-        for d, amt in series:
-            years = (d - t0).days / 365.25
-            total += amt / ((1 + rate) ** years)
-        return total
-
-    # Bisection between -0.99 and 10.0
-    lo, hi = -0.99, 10.0
-    f_lo, f_hi = npv(lo), npv(hi)
-    if f_lo * f_hi > 0:
-        return None  # no sign change → IRR not bracketed
-    for _ in range(100):
-        mid = (lo + hi) / 2
-        f_mid = npv(mid)
-        if abs(f_mid) < 1e-6:
-            return round(mid * 100, 2)
-        if f_lo * f_mid < 0:
-            hi = mid
-            f_hi = f_mid
-        else:
-            lo = mid
-            f_lo = f_mid
-    return round((lo + hi) / 2 * 100, 2)
-
-
-def simple_return(
-    invested: float, current_value: float, realised: float = 0.0
-) -> Optional[float]:
-    """Total return % = (current + realised - invested) / invested."""
-    if invested <= 0:
-        return None
-    return round((current_value + realised - invested) / invested * 100, 2)
+# ── Performance: period TWR ──────────────────────────────────────────────────
 
 
 def period_start_date(period: str, today: Optional[date] = None) -> Optional[date]:
@@ -349,61 +299,39 @@ def period_return(
     return round((factor - 1) * 100, 2)
 
 
-# ── New performance metrics ───────────────────────────────────────────────────
-
-
-def compute_cagr(
-    invested: float,
-    current_value: float,
-    realised: float,
-    inception_date: Optional[date],
-    today: Optional[date] = None,
-) -> Optional[float]:
-    """Compound Annual Growth Rate since inception.
-
-    Returns None when invested is zero, inception is unknown, or history
-    is shorter than one year (CAGR is misleading over shorter spans).
-
-    Args:
-        invested: Total cost basis.
-        current_value: Current market value.
-        realised: Realised gain/loss to date.
-        inception_date: Date of first investment.
-        today: Reference date (defaults to today).
-    """
-    if invested <= 0 or inception_date is None:
-        return None
-    today = today or date.today()
-    years = (today - inception_date).days / 365.25
-    if years < 1:
-        return None
-    ratio = (current_value + realised) / invested
-    if ratio <= 0:
-        return None
-    return round((ratio ** (1.0 / years) - 1) * 100, 2)
+# ── Risk-adjusted ratios ──────────────────────────────────────────────────────
 
 
 def sortino_ratio(
-    returns: list[float], periods_per_year: float = 252
+    returns: list[float], periods_per_year: float = 252, risk_free: float = 0.0
 ) -> Optional[float]:
-    """Annualised Sortino ratio (rf=0) from a list of raw periodic returns.
+    """Annualised Sortino ratio from raw periodic returns.
 
-    Penalises only downside volatility (negative-return periods).
-    Returns None when fewer than 2 downside observations are available.
+    Follows Sortino & Price (1994), "Performance Measurement in a Downside Risk
+    Framework", Journal of Investing: the denominator is the *downside
+    deviation* — the root mean square of shortfalls below the target, taken
+    over **all** periods (a period above the target contributes zero). The
+    target is the risk-free rate, and so is what the numerator subtracts.
+
+    Returns None when fewer than 2 periods fall below the target.
 
     Args:
         returns: raw (not %) returns, one per period.
         periods_per_year: observations per year used to annualise.
+        risk_free: annual risk-free rate as a fraction (0.02 = 2%).
     """
     if not returns:
         return None
-    downside = [r for r in returns if r < 0]
-    if len(downside) < 2:
+    target = risk_free / periods_per_year
+    shortfalls = [min(r - target, 0.0) for r in returns]
+    if sum(1 for s in shortfalls if s < 0) < 2:
         return None
-    downside_std = _stats.stdev(downside) * math.sqrt(periods_per_year)
-    if downside_std == 0:
+    downside_dev = math.sqrt(sum(s * s for s in shortfalls) / len(returns))
+    downside_dev *= math.sqrt(periods_per_year)
+    if downside_dev == 0:
         return None
-    return round((_stats.mean(returns) * periods_per_year) / downside_std, 2)
+    excess = _stats.mean(returns) * periods_per_year - risk_free
+    return round(excess / downside_dev, 2)
 
 
 def calmar_ratio(
@@ -424,16 +352,21 @@ def calmar_ratio(
 def compute_beta_alpha(
     portfolio_returns: list[float],
     benchmark_returns: list[float],
-    snapshot_cagr: Optional[float],
-    benchmark_cagr: Optional[float],
+    portfolio_annual: Optional[float],
+    benchmark_annual: Optional[float],
+    risk_free: float = 0.0,
 ) -> tuple[Optional[float], Optional[float]]:
-    """Beta and alpha (annualised, rf=0, CAPM) from aligned daily return series.
+    """Beta and Jensen's alpha from aligned return series.
+
+    Beta is ``cov(Rp, Rb) / var(Rb)``. Alpha is Jensen's (1968) CAPM alpha on
+    annualised returns: ``(Rp − rf) − β·(Rb − rf)``.
 
     Args:
-        portfolio_returns: daily raw returns (not %) aligned to benchmark.
-        benchmark_returns: daily raw returns (not %) for the same dates.
-        snapshot_cagr: portfolio annualised return as a fraction (e.g. 0.10).
-        benchmark_cagr: benchmark annualised return as a fraction.
+        portfolio_returns: raw (not %) periodic returns aligned to the benchmark.
+        benchmark_returns: raw periodic returns for the same periods.
+        portfolio_annual: portfolio annualised return as a fraction (0.10).
+        benchmark_annual: benchmark annualised return as a fraction.
+        risk_free: annual risk-free rate as a fraction.
 
     Returns:
         (beta, alpha_pct) — alpha_pct is in %, rounded to 2 dp.
@@ -452,7 +385,37 @@ def compute_beta_alpha(
             return None, None
     else:
         beta = round(_stats.covariance(portfolio_returns, benchmark_returns) / var_b, 3)
-    if snapshot_cagr is None or benchmark_cagr is None:
+    if portfolio_annual is None or benchmark_annual is None:
         return beta, None
-    alpha_pct = round((snapshot_cagr - beta * benchmark_cagr) * 100, 2)
-    return beta, alpha_pct
+    alpha = (portfolio_annual - risk_free) - beta * (benchmark_annual - risk_free)
+    return beta, round(alpha * 100, 2)
+
+
+def weekly_from_daily(daily: list[tuple[str, float]]) -> dict[str, float]:
+    """Compound daily ``(date, return)`` pairs into ISO-week returns.
+
+    Keyed ``"YYYY-Www"``. A week with fewer than 5 daily observations (the
+    partial first or last week of a series) is left out.
+    """
+    weeks: dict[str, list[float]] = defaultdict(list)
+    for d, r in daily:
+        iso = date.fromisoformat(d[:10]).isocalendar()
+        weeks[f"{iso.year}-W{iso.week:02d}"].append(r)
+    return {
+        k: math.prod(1 + r for r in rs) - 1 for k, rs in weeks.items() if len(rs) >= 5
+    }
+
+
+def weekly_from_closes(closes: list[tuple[str, float]]) -> dict[str, float]:
+    """ISO-week returns from ``(date, close)`` pairs, last close to last close.
+
+    The first week has no prior close, so it has no return.
+    """
+    last: dict[str, float] = {}
+    for d, p in sorted(closes):
+        iso = date.fromisoformat(d[:10]).isocalendar()
+        last[f"{iso.year}-W{iso.week:02d}"] = p
+    keys = sorted(last)
+    return {
+        k: last[k] / last[prev] - 1 for prev, k in zip(keys, keys[1:]) if last[prev] > 0
+    }

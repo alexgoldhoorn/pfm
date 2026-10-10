@@ -217,7 +217,9 @@ test("historyToForecast: returns rate+vol from IRR/volatility with enough snapsh
     const { historyToForecast } = loadAppIntoContext();
     const h = historyToForecast({ money_weighted_irr_pct: 24.7 }, { volatility_pct: 49.8, snapshots_used: 553 });
     assert.equal(h.ok, true);
-    assert.equal(h.rate, 24.7);
+    // IRR is nominal; the simulator wants a real rate (minus 2% inflation).
+    assert.equal(h.nominalRate, 24.7);
+    assert.equal(h.rate, 22.7);
     assert.equal(h.vol, 49.8);
     assert.equal(h.snapshots, 553);
 });

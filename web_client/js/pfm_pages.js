@@ -568,6 +568,7 @@ function createPageManager() {
             }
             loadDashboardReturn(periodSel ? periodSel.value : 'all');
             loadDashboardRisk();
+            loadDashboardProgress();
 
             initTooltips();
             this.hideLoadingSpinners();

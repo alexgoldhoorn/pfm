@@ -13,7 +13,6 @@ from portf_manager.services.analytics_service import (
     irpf_savings_tax,
     dividend_income,
     money_weighted_irr,
-    simple_return,
 )
 from portf_server.routers import analytics as analytics_router
 
@@ -51,10 +50,6 @@ class TestAnalyticsService:
         assert result["total"] == 25
         assert result["by_year"]["2025"] == 25
         assert result["by_symbol"]["AAA"] == 25
-
-    def test_simple_return(self):
-        assert simple_return(1000, 1200) == 20.0
-        assert simple_return(0, 100) is None
 
     def test_irr_basic(self):
         # Invest 1000 one year ago, now worth 1100 → ~10% IRR
@@ -110,7 +105,7 @@ class TestAnalyticsRouter:
         assert "total_value_eur" in resp.json()
 
     @pytest.mark.asyncio
-    async def test_cagr_fields_in_perf_response(
+    async def test_lifetime_fields_in_perf_response(
         self, async_test_client: AsyncClient, auth_headers
     ):
         resp = await async_test_client.get(
@@ -118,13 +113,12 @@ class TestAnalyticsRouter:
         )
         assert resp.status_code == status.HTTP_200_OK
         d = resp.json()
-        assert "inception_date" in d
-        assert "cagr_pct" in d
-        assert "annualized_gain_eur" in d
         # Empty DB → no cash flows → None values are expected
         assert d["inception_date"] is None
-        assert d["cagr_pct"] is None
-        assert d["annualized_gain_eur"] is None
+        assert d["annualised_twr_pct"] is None
+        assert d["total_return_pct"] is None
+        assert d["benchmark"] == "VWCE.DE"
+        assert "cagr_pct" not in d and "annualized_gain_eur" not in d
 
     @pytest.mark.asyncio
     async def test_risk_has_sortino_calmar_fields(
@@ -229,26 +223,6 @@ class TestPublicView:
 
 
 class TestNewMetrics:
-    def test_compute_cagr_basic(self):
-        from datetime import date
-        from portf_manager.services.analytics_service import compute_cagr
-
-        today = date(2026, 6, 19)
-        inception = date(2024, 6, 19)  # exactly 2 years
-        result = compute_cagr(1000.0, 1210.0, 0.0, inception, today=today)
-        assert result is not None
-        assert abs(result - 10.0) < 0.5
-
-    def test_compute_cagr_none_cases(self):
-        from datetime import date
-        from portf_manager.services.analytics_service import compute_cagr
-
-        today = date(2026, 6, 19)
-        recent = date(2026, 1, 1)  # less than 1 year before today
-        assert compute_cagr(1000.0, 1200.0, 0.0, recent, today=today) is None
-        assert compute_cagr(0.0, 1200.0, 0.0, date(2020, 1, 1), today=today) is None
-        assert compute_cagr(1000.0, 1200.0, 0.0, None, today=today) is None
-
     def test_sortino_ratio_basic(self):
         from portf_manager.services.analytics_service import sortino_ratio
 
@@ -257,6 +231,21 @@ class TestNewMetrics:
         result = sortino_ratio(rets)
         assert result is not None
         assert isinstance(result, float)
+
+    def test_sortino_uses_downside_deviation_over_all_periods(self):
+        from portf_manager.services.analytics_service import sortino_ratio
+
+        # Sortino & Price (1994): RMS of the shortfalls over ALL periods.
+        rets = [0.02, -0.01, 0.03, -0.03]
+        dd = (((0.01**2) + (0.03**2)) / 4) ** 0.5
+        expected = (sum(rets) / 4 * 12) / (dd * 12**0.5)
+        assert sortino_ratio(rets, periods_per_year=12) == round(expected, 2)
+
+    def test_sortino_subtracts_risk_free(self):
+        from portf_manager.services.analytics_service import sortino_ratio
+
+        rets = [0.02, -0.01, 0.03, -0.03]
+        assert sortino_ratio(rets, 12, risk_free=0.12) < sortino_ratio(rets, 12)
 
     def test_sortino_ratio_none_when_no_downside(self):
         from portf_manager.services.analytics_service import sortino_ratio
@@ -311,6 +300,9 @@ class TestNewMetrics:
         # alpha = (0.10 - 1.2 * 0.08) * 100 = 0.4%
         assert alpha is not None
         assert abs(alpha - 0.4) < 0.2
+        # Jensen's alpha with rf=2%: (0.10-0.02) - 1.2*(0.08-0.02) = 0.8%
+        _, alpha_rf = compute_beta_alpha(port, bench, 0.10, 0.08, risk_free=0.02)
+        assert alpha_rf == pytest.approx(0.8, abs=0.01)
 
     def test_compute_beta_alpha_none_cases(self):
         from portf_manager.services.analytics_service import compute_beta_alpha

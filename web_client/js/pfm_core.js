@@ -16,7 +16,7 @@ const PREFS_DEFAULTS = {
     dateFormat: 'iso',     // 'iso' (2026-05-28) | 'dmy' (28-05-2026) | 'mdy' (05-28-2026)
     theme: 'auto',         // 'auto' | 'light' | 'dark'
     privacy: false,        // blur monetary amounts
-    benchmark: '^GSPC',
+    benchmark: 'VWCE.DE',  // FTSE All-World in EUR with dividends reinvested
     landingPage: 'dashboard',
     rowsPerPage: 50,
     defaultCurrency: 'EUR',   // pre-fills currency on new assets/transactions/bookings
@@ -30,6 +30,14 @@ window.PREFS = Object.assign({}, PREFS_DEFAULTS, (() => {
     try { return JSON.parse(localStorage.getItem(PREFS_KEY) || '{}'); } catch (e) { return {}; }
 })());
 function savePrefs() { localStorage.setItem(PREFS_KEY, JSON.stringify(window.PREFS)); }
+// ^GSPC was the default until 2026-10, and saving any setting stored it, so a
+// stored ^GSPC almost always means "never chose". Move it to the new default
+// once; a later explicit choice of ^GSPC sticks.
+if (!window.PREFS.benchmarkV2) {
+    if (window.PREFS.benchmark === '^GSPC') window.PREFS.benchmark = PREFS_DEFAULTS.benchmark;
+    window.PREFS.benchmarkV2 = true;
+    try { savePrefs(); } catch (e) { /* storage unavailable: keep in memory */ }
+}
 
 const Fmt = {
     loc() { return window.PREFS.numberLocale || undefined; },
@@ -172,10 +180,28 @@ const METRIC_RATINGS = {
         bands: [[1, 'good', 'Good'], [-1, 'ok', 'Neutral'], [-Infinity, 'bad', 'Negative']],
         range: 'Good ≥ +1%/yr · Neutral within ±1%/yr · Negative < −1%/yr',
     },
+    // EU PRIIPs SRI market-risk classes by annualised volatility (Delegated
+    // Regulation (EU) 2017/653, Annex II) — the 1–7 scale on every fund KID.
+    // Rules of thumb: 3–6 months of spending is the usual guideline; a
+    // freelancer with lumpy income is advised to aim for the top of it.
+    emergencyMonths: {
+        bands: [[6, 'good', 'Covered'], [3, 'ok', 'Thin'], [-Infinity, 'bad', 'Short']],
+        range: 'Covered ≥ 6 months · Thin 3–6 · Short < 3 — of your average monthly spending',
+    },
+    // The "20" of the 50/30/20 budgeting rule (E. Warren & A. Warren Tyagi,
+    // All Your Worth, 2005).
+    savingsRate: {
+        bands: [[20, 'good', 'Good'], [10, 'ok', 'OK'], [-Infinity, 'bad', 'Low']],
+        range: 'Good ≥ 20% · OK 10–20% · Low < 10% of income',
+    },
+    realReturn: {
+        bands: [[3, 'good', 'Growing'], [0, 'ok', 'Keeping up'], [-Infinity, 'bad', 'Losing to inflation']],
+        range: 'Growing ≥ +3%/yr · Keeping up 0–3%/yr · Losing to inflation < 0',
+    },
     volatility: {
         neutral: true,
-        bands: [[20, 'High'], [10, 'Equity-like'], [-Infinity, 'Low']],
-        range: 'Low < 10% · Equity-like 10–20% · High ≥ 20% — neither good nor bad, it depends on your risk appetite',
+        bands: [[80, 'SRI 7 · very high'], [30, 'SRI 6 · high'], [20, 'SRI 5 · medium-high'], [12, 'SRI 4 · medium'], [5, 'SRI 3 · medium-low'], [0.5, 'SRI 2 · low'], [-Infinity, 'SRI 1 · very low']],
+        range: 'EU risk class (SRI): 1 < 0.5% · 2 0.5–5% · 3 5–12% · 4 12–20% · 5 20–30% · 6 30–80% · 7 ≥ 80% — neither good nor bad, it depends on your risk appetite',
     },
     beta: {
         neutral: true,
@@ -420,6 +446,13 @@ window.makeSortableTable = makeSortableTable;
 // presentation attributes can't read var(), so marks set them via style=.
 const VIZ_SLOTS = 8;
 function vizColor(i) { return `var(--viz-${(i % VIZ_SLOTS) + 1})`; }
+// Resolved value of a CSS custom property — canvas (Chart.js) can't read var().
+function cssVar(name, fallback = '#888') {
+    try {
+        return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
+    } catch (e) { return fallback; }
+}
+window.cssVar = cssVar;
 
 // Asset types keep the same colour everywhere (colour follows the entity,
 // never its rank), so ETF is always blue whatever its share this month.
@@ -3196,6 +3229,16 @@ function createAPIClient() {
                 headers: { 'X-API-Key': this.apiKey }
             });
             if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Suggestion failed');
+            return resp.json();
+        },
+
+        async getProgress(benchmark) {
+            const qs = new URLSearchParams();
+            if (benchmark) qs.set('benchmark', benchmark);
+            const resp = await fetch(this.baseURL + '/api/v1/analytics/progress?' + qs, {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(await resp.text());
             return resp.json();
         },
 
