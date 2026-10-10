@@ -16,6 +16,10 @@ late-imported lots built up before the import lands on the import day.
 Snapshots are calendar-daily (weekends included), so annualisation uses the
 observed number of return observations per year, not the 252-trading-day
 convention.
+
+Sharpe and Sortino measure return in excess of the risk-free rate (the average
+€STR over the window, see ``risk_free.py``); passing ``risk_free=0`` reproduces
+the raw return-over-volatility ratio.
 """
 
 from __future__ import annotations
@@ -34,23 +38,31 @@ WINDOW_DAYS = {"1y": 365}
 
 
 def daily_realised_gains(
-    transactions: list[dict], fx: Callable[[str], float]
+    transactions: list[dict], fx_on: Callable[[str, str], float]
 ) -> dict[str, float]:
     """Realised gain booked by sells per day, in EUR.
 
+    Each transaction is converted at its own date's rate before the average
+    cost is computed, so the gain matches the EUR cost basis the snapshots
+    carry (see ``performance.to_eur_transactions``).
+
     Args:
         transactions: transaction rows (all types; only sells book a gain).
-        fx: currency → EUR rate.
+        fx_on: ``(currency, date)`` → EUR rate on that date.
     """
+    from portf_manager.services.performance import to_eur_transactions
+
     gains: dict[str, float] = {}
 
     def _record(tx: dict, gain: float) -> None:
         day = str(tx.get("transaction_date") or "")[:10]
-        eur = gain * fx(tx.get("currency") or "EUR")
-        gains[day] = gains.get(day, 0.0) + eur
+        gains[day] = gains.get(day, 0.0) + gain
 
     compute_positions(
-        [t for t in transactions if t.get("transaction_date")], on_sell=_record
+        to_eur_transactions(
+            [t for t in transactions if t.get("transaction_date")], fx_on
+        ),
+        on_sell=_record,
     )
     return gains
 
@@ -101,14 +113,17 @@ def compute_risk_metrics(
     realised: dict[str, float],
     window: str = "all",
     today: Optional[date] = None,
+    risk_free: float = 0.0,
 ) -> dict[str, Any]:
-    """Volatility, Sharpe, Sortino, Calmar and drawdowns (rf = 0).
+    """Volatility, Sharpe, Sortino, Calmar and drawdowns.
 
     Args:
         snapshots: daily ``{snapshot_date, total_value_eur, total_cost_eur}``.
         realised: realised EUR gain per day (see :func:`daily_realised_gains`).
         window: ``"all"`` or ``"1y"`` (trailing 365 days).
         today: reference date for the window (defaults to today).
+        risk_free: annual risk-free rate as a fraction, subtracted in Sharpe
+            and Sortino.
 
     Returns:
         Metrics dict. Both drawdowns are measured within the window, so
@@ -126,6 +141,7 @@ def compute_risk_metrics(
         "sharpe_ratio": None,
         "sortino_ratio": None,
         "calmar_ratio": None,
+        "risk_free_rate_pct": None,
         "annualised_return_pct": None,
         "period_return_pct": None,
         "start_date": None,
@@ -176,8 +192,9 @@ def compute_risk_metrics(
         max_drawdown_pct=max_dd_pct,
         current_drawdown_pct=round(current_dd * 100, 2),
         volatility_pct=round(vol * 100, 2) if vol else None,
-        sharpe_ratio=round(mean * ppy / vol, 2) if vol else None,
-        sortino_ratio=sortino_ratio(rs, periods_per_year=ppy),
+        sharpe_ratio=round((mean * ppy - risk_free) / vol, 2) if vol else None,
+        sortino_ratio=sortino_ratio(rs, periods_per_year=ppy, risk_free=risk_free),
+        risk_free_rate_pct=round(risk_free * 100, 3),
         calmar_ratio=calmar_ratio(ann_pct, max_dd_pct),
         annualised_return_pct=ann_pct,
         period_return_pct=round((growth - 1) * 100, 2),
@@ -192,9 +209,32 @@ def compute_risk_metrics(
 
 
 def compute_portfolio_risk(
-    db, fx: Callable[[str], float], window: str = "all"
+    db, fx_on: Callable[[str, str], float], window: str = "all"
 ) -> dict[str, Any]:
-    """:func:`compute_risk_metrics` over the database's snapshots and trades."""
+    """:func:`compute_risk_metrics` over the database's snapshots and trades.
+
+    The risk-free rate is the average €STR over the window's span (see
+    ``risk_free.risk_free_rate``); ``risk_free_source`` says where it came from.
+
+    Args:
+        db: Database handle.
+        fx_on: ``(currency, date)`` → EUR rate on that date.
+        window: ``"all"`` or ``"1y"``.
+    """
+    from portf_manager.services.risk_free import risk_free_rate
+
     snapshots = db.get_snapshots(limit=100_000)
-    realised = daily_realised_gains(db.get_all_transactions(), fx)
-    return compute_risk_metrics(snapshots, realised, window=window)
+    realised = daily_realised_gains(db.get_all_transactions(), fx_on)
+    # A first pass finds the window's span; the rate is the average over it.
+    probe = compute_risk_metrics(snapshots, realised, window=window)
+    if probe["start_date"] is None:
+        probe["risk_free_source"] = None
+        return probe
+    rf, source = risk_free_rate(
+        db,
+        date.fromisoformat(probe["start_date"]),
+        date.fromisoformat(probe["end_date"]),
+    )
+    metrics = compute_risk_metrics(snapshots, realised, window=window, risk_free=rf)
+    metrics["risk_free_source"] = source
+    return metrics

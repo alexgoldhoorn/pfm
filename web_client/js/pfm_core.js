@@ -16,7 +16,7 @@ const PREFS_DEFAULTS = {
     dateFormat: 'iso',     // 'iso' (2026-05-28) | 'dmy' (28-05-2026) | 'mdy' (05-28-2026)
     theme: 'auto',         // 'auto' | 'light' | 'dark'
     privacy: false,        // blur monetary amounts
-    benchmark: '^GSPC',
+    benchmark: 'VWCE.DE',  // FTSE All-World in EUR with dividends reinvested
     landingPage: 'dashboard',
     rowsPerPage: 50,
     defaultCurrency: 'EUR',   // pre-fills currency on new assets/transactions/bookings
@@ -30,6 +30,14 @@ window.PREFS = Object.assign({}, PREFS_DEFAULTS, (() => {
     try { return JSON.parse(localStorage.getItem(PREFS_KEY) || '{}'); } catch (e) { return {}; }
 })());
 function savePrefs() { localStorage.setItem(PREFS_KEY, JSON.stringify(window.PREFS)); }
+// ^GSPC was the default until 2026-10, and saving any setting stored it, so a
+// stored ^GSPC almost always means "never chose". Move it to the new default
+// once; a later explicit choice of ^GSPC sticks.
+if (!window.PREFS.benchmarkV2) {
+    if (window.PREFS.benchmark === '^GSPC') window.PREFS.benchmark = PREFS_DEFAULTS.benchmark;
+    window.PREFS.benchmarkV2 = true;
+    try { savePrefs(); } catch (e) { /* storage unavailable: keep in memory */ }
+}
 
 const Fmt = {
     loc() { return window.PREFS.numberLocale || undefined; },
@@ -172,10 +180,12 @@ const METRIC_RATINGS = {
         bands: [[1, 'good', 'Good'], [-1, 'ok', 'Neutral'], [-Infinity, 'bad', 'Negative']],
         range: 'Good ≥ +1%/yr · Neutral within ±1%/yr · Negative < −1%/yr',
     },
+    // EU PRIIPs SRI market-risk classes by annualised volatility (Delegated
+    // Regulation (EU) 2017/653, Annex II) — the 1–7 scale on every fund KID.
     volatility: {
         neutral: true,
-        bands: [[20, 'High'], [10, 'Equity-like'], [-Infinity, 'Low']],
-        range: 'Low < 10% · Equity-like 10–20% · High ≥ 20% — neither good nor bad, it depends on your risk appetite',
+        bands: [[80, 'SRI 7 · very high'], [30, 'SRI 6 · high'], [20, 'SRI 5 · medium-high'], [12, 'SRI 4 · medium'], [5, 'SRI 3 · medium-low'], [0.5, 'SRI 2 · low'], [-Infinity, 'SRI 1 · very low']],
+        range: 'EU risk class (SRI): 1 < 0.5% · 2 0.5–5% · 3 5–12% · 4 12–20% · 5 20–30% · 6 30–80% · 7 ≥ 80% — neither good nor bad, it depends on your risk appetite',
     },
     beta: {
         neutral: true,

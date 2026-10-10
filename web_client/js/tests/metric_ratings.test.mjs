@@ -33,9 +33,12 @@ test("current drawdown bands", () => {
 test("neutral metrics describe, never colour", () => {
     assert.deepEqual(
         { ...win.rateMetric("volatility", 13) },
-        { level: "neutral", label: "Equity-like", range: win.METRIC_RATINGS.volatility.range },
+        { level: "neutral", label: "SRI 4 · medium", range: win.METRIC_RATINGS.volatility.range },
     );
-    assert.equal(win.rateMetric("volatility", 25).label, "High");
+    // PRIIPs SRI bands: 5–12% is class 3, 20–30% class 5, 30–80% class 6.
+    assert.equal(win.rateMetric("volatility", 5).label, "SRI 3 · medium-low");
+    assert.equal(win.rateMetric("volatility", 25).label, "SRI 5 · medium-high");
+    assert.equal(win.rateMetric("volatility", 33.4).label, "SRI 6 · high");
     assert.equal(win.rateMetric("beta", 0.44).label, "Swings less than market");
     assert.equal(win.rateMetric("maxDrawdown", -41).label, "Severe");
     assert.equal(win.rateMetric("maxDrawdown", -41).level, "neutral");

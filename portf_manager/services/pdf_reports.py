@@ -312,11 +312,19 @@ def _performance_section(story: list, performance: dict, risk: dict) -> None:
         ("Invested", _eur(performance.get("invested_eur"))),
         ("Current value", _eur(performance.get("current_value_eur"))),
         ("Realised P&L", _eur(performance.get("realised_pnl_eur"))),
+        ("Dividends & interest", _eur(performance.get("income_eur"))),
+        ("Total gain", _eur(performance.get("total_gain_eur"))),
         ("Total return", _pct(performance.get("total_return_pct"))),
-        ("Money-weighted IRR", _pct(performance.get("money_weighted_irr_pct"))),
-        ("CAGR", _pct(performance.get("cagr_pct"))),
         (
-            f"Benchmark ({performance.get('benchmark', '—')}) return",
+            "Money-weighted IRR (per year)",
+            _pct(performance.get("money_weighted_irr_pct")),
+        ),
+        ("Time-weighted return", _pct(performance.get("period_return_pct"))),
+        (
+            "Benchmark return (EUR): "
+            + str(
+                performance.get("benchmark_label") or performance.get("benchmark", "—")
+            ),
             _pct(performance.get("benchmark_return_pct")),
         ),
     ]

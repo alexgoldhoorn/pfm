@@ -41,17 +41,20 @@ class TestDailyRealisedGains:
             _tx("sell", "2025-01-05 10:00:00", 5, 600),
             _tx("dividend", "2025-01-06", 0, 50),
         ]
-        assert daily_realised_gains(txs, lambda c: 1.0) == {
+        assert daily_realised_gains(txs, lambda c, d: 1.0) == {
             "2025-01-05": pytest.approx(100.0)
         }
 
-    def test_converts_to_eur(self):
+    def test_converts_each_trade_at_its_own_date(self):
+        # Bought for $100 at 0.8 (€80), sold for $200 at 0.5 (€100): the
+        # EUR gain is €20, not $100 × either rate.
         txs = [
             _tx("buy", "2025-01-01", 1, 100, "USD"),
             _tx("sell", "2025-01-02", 1, 200, "USD"),
         ]
-        gains = daily_realised_gains(txs, lambda c: 0.5 if c == "USD" else 1.0)
-        assert gains == {"2025-01-02": pytest.approx(50.0)}
+        rates = {"2025-01-01": 0.8, "2025-01-02": 0.5}
+        gains = daily_realised_gains(txs, lambda c, d: rates[d] if c == "USD" else 1.0)
+        assert gains == {"2025-01-02": pytest.approx(20.0)}
 
 
 class TestFlowAdjustedReturns:

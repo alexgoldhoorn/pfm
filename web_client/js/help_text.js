@@ -3,19 +3,19 @@
 
 // Short metric explanations for tooltips (data-bs-toggle="tooltip" title=...).
 window.METRIC_HELP = {
-  irr: "Money-Weighted IRR: annualised return accounting for the timing and size of your buys/sells. Like the interest rate that makes your cash flows balance.",
-  totalReturn: "Total Return: current value + realised gains − amount invested, divided by amount invested. Lifetime, not annualised.",
-  periodReturn: "Period Return: change in portfolio value over the selected window, measured from daily snapshots.",
+  irr: "Money-Weighted IRR: the yearly interest rate that makes all your purchases, sales, dividends and today's value balance out — the return you earned on your money, including the effect of when you added it. Source: CFA Institute, GIPS 2020 (money-weighted return).",
+  totalReturn: "Total Return: total gain (price changes on what you hold, gains on what you sold, dividends and interest) divided by everything you've spent on purchases, all in EUR at the rates on the day. Lifetime, not annualised.",
+  totalGain: "Total Gain: unrealised gain on what you hold + realised gain on what you sold + dividends and interest received, in EUR. Costs paid on trades are already inside the purchase and sale amounts; ongoing fund fees are inside the fund's price.",
+  annualisedTwr: "Time-weighted return per year since your first trade: daily returns chained with deposits and purchases taken out, so it measures the investments rather than when you added money. This is the figure to compare with a benchmark or a fund's published return. Source: CFA Institute, GIPS 2020.",
+  periodReturn: "Period Return: time-weighted return over the selected window from daily snapshots — purchases and sales don't count as gains or losses. Source: CFA Institute, GIPS 2020.",
   hhi: "Herfindahl Index (HHI): concentration score 0–10000. Above 2500 = concentrated, below 1500 = well diversified.",
-  sharpe: "Sharpe Ratio: annualised return per unit of volatility (risk-free rate taken as 0). Higher is better; >1 is good.",
-  cagr:          "CAGR: Compound Annual Growth Rate — average annual growth since inception assuming constant compounding. Formula: (end/start)^(1/years) − 1. Unlike IRR it ignores contribution timing.",
-  annualizedGain:"Annualized Gain: average annual profit in euros — CAGR × invested capital. A rough sense of how much the portfolio earns per year.",
-  inception:     "Inception Date: date of your first transaction — the start point for CAGR.",
-  sortino:       "Sortino Ratio: like Sharpe but only penalises downside volatility (negative-return days). Ignores upside swings that inflate Sharpe's denominator. >1 is good.",
-  calmar:        "Calmar Ratio: annualised return ÷ max drawdown. >1 means your annual gain exceeds your worst peak-to-trough drop. Needs about a year of history.",
-  beta:          "Beta: sensitivity to the benchmark. 1.0 = moves with the market; >1 amplifies swings; <1 is more stable. Computed from flow-adjusted daily returns.",
-  alpha:         "Alpha: annualised excess return above what Beta predicts (CAPM, rf=0). Positive = outperformance beyond market exposure.",
-  volatility: "Volatility: annualised standard deviation of daily returns — how much the portfolio value swings.",
+  sharpe: "Sharpe Ratio: yearly return above the risk-free rate (the euro overnight rate, €STR), divided by volatility — how much extra return each unit of swing earned. The bands are a common rule of thumb, not an official scale. Source: W. F. Sharpe, 'The Sharpe Ratio', Journal of Portfolio Management, 1994.",
+  inception:     "Inception Date: date of your first transaction — where lifetime returns start.",
+  sortino:       "Sortino Ratio: like Sharpe, but the denominator only counts swings below the risk-free rate (the downside deviation), so upside jumps aren't treated as risk. The bands are a rule of thumb. Source: F. Sortino & L. Price, 'Performance Measurement in a Downside Risk Framework', Journal of Investing, 1994.",
+  calmar:        "Calmar Ratio: annualised return ÷ the size of the worst drop. Above 1 means a typical year earns more than the worst fall cost. The original definition uses 36 months; here it uses the selected window, so treat a 1-year figure as indicative. Source: T. Young, 'Calmar Ratio: A Smoother Tool', Futures, 1991.",
+  beta:          "Beta: how much the portfolio tends to move when the benchmark moves, both in EUR. 1.0 = moves with it; above 1 swings more; below 1 swings less. Measured on weekly returns, because daily returns of markets that close at different hours don't line up.",
+  alpha:         "Alpha: yearly return above what the portfolio's beta and the benchmark would predict, after the risk-free rate (Jensen's alpha). Positive = beat the market-risk-adjusted expectation. Source: M. Jensen, Journal of Finance, 1968.",
+  volatility: "Volatility: annualised standard deviation of daily returns — how much the portfolio value swings. The SRI class is the EU's 1–7 risk scale printed on every fund's key information document (KID), by volatility band; the official class uses 5 years of returns, so this is an indication. Source: Commission Delegated Regulation (EU) 2017/653, Annex II.",
   maxDrawdown: "Max Drawdown: largest peak-to-trough drop over the window, measured on returns (buys and sells don't count as rises or drops).",
   currentDrawdown: "Current Drawdown: how far the portfolio sits below its highest point in the window, measured on returns (buys and sells don't count).",
   vsBenchmark: "Return vs benchmark: your time-weighted return over the window minus the benchmark's return over the same days, in percentage points.",
@@ -23,7 +23,7 @@ window.METRIC_HELP = {
   fairValue: "Fair Value: an estimate of intrinsic worth from fundamentals + an LLM analyst. Compare to current price.",
   yieldOnCost: "Yield on Cost: trailing-12-month dividends from a position divided by what you paid for it.",
   feeDrag: "Fee Drag: total fees paid as a percentage of the amount invested — how much costs eat your capital.",
-  benchmark: "Benchmark: total return of a market index over the same window, for comparison.",
+  benchmark: "Benchmark: a market index measured in EUR over the same days. Choose one with dividends reinvested (an accumulating ETF such as VWCE or IWDA): a price-only index like the S&P 500 leaves out about 1.5–2%/yr of dividends, which flatters the comparison.",
   netWorth: "Net Worth: total portfolio value in EUR (all currencies converted at current FX rates).",
   invested: "Invested: cost basis of your currently-held positions (what you paid, in EUR).",
   savingsBase: "Savings Base (base del ahorro): the Spanish IRPF income category for investment income — realised capital gains plus dividends. Taxed on a progressive scale (19/21/23/27/28%), separate from your salary.",
@@ -79,21 +79,32 @@ window.PAGE_HELP = {
       <h6 class="fw-semibold">Metrics Explained</h6>
       <p class="fw-semibold mb-1">Return metrics</p>
       <ul class="mb-2">
-        <li><strong>Total Return</strong> — lifetime (current + realised − invested) / invested. Simple, no time-weighting.</li>
-        <li><strong>CAGR</strong> — annualised version of Total Return. Best for headline comparisons between portfolios.</li>
-        <li><strong>IRR (MWRR)</strong> — accounts for contribution timing. Use when you invest irregularly.</li>
-        <li><strong>TWR (Period Return)</strong> — strips out deposits/withdrawals. Best for comparing to a benchmark.</li>
-        <li><strong>Alpha</strong> — excess return above what market exposure (Beta) predicts.</li>
+        <li><strong>Total Return</strong> — total gain (price, sales, dividends, interest) ÷ everything you bought. Simple, not annualised.</li>
+        <li><strong>IRR (money-weighted)</strong> — your return per year, including the effect of when you added money. Answers "how did <em>my</em> money do?"</li>
+        <li><strong>TWR (time-weighted, Period Return)</strong> — strips out deposits and purchases. Answers "how did my <em>investments</em> do?" — the one to compare with a benchmark or a fund's published return.</li>
+        <li><strong>Alpha</strong> — return beyond what market exposure (Beta) and the risk-free rate predict.</li>
       </ul>
+      <p class="small text-muted mb-2">All amounts are in EUR: what you paid at the exchange rate on the day you paid it, what you hold at today's rate — so currency gains and losses count as return. Benchmarks are converted to EUR the same way.</p>
       <p class="fw-semibold mb-1">Risk metrics</p>
       <ul class="mb-2">
         <li><strong>Volatility</strong> — annualised std dev of daily returns. Higher = bumpier ride.</li>
-        <li><strong>Sharpe</strong> — return per unit of total volatility. Penalises all swings equally.</li>
-        <li><strong>Sortino</strong> — like Sharpe but only penalises losses. Better for portfolios with positive skew.</li>
+        <li><strong>Sharpe</strong> — return above the risk-free rate (€STR) per unit of total volatility. Penalises all swings equally.</li>
+        <li><strong>Sortino</strong> — like Sharpe but only penalises swings below the risk-free rate.</li>
         <li><strong>Max Drawdown</strong> — worst peak-to-trough drop in the window. <strong>Current Drawdown</strong> — how far below the window's high you are now.</li>
-        <li><strong>Calmar</strong> — CAGR ÷ drawdown. Combines return and worst-case loss in one number.</li>
-        <li><strong>Beta</strong> — market sensitivity. Not good or bad by itself; depends on your goals.</li>
-      </ul>`
+        <li><strong>Calmar</strong> — annualised return ÷ worst drop. Combines return and worst-case loss in one number.</li>
+        <li><strong>Beta</strong> — market sensitivity, from weekly returns. Not good or bad by itself; depends on your goals.</li>
+      </ul>
+      <p class="fw-semibold mb-1">Sources</p>
+      <ul class="small mb-2">
+        <li>Time- and money-weighted returns: CFA Institute, <em>Global Investment Performance Standards (GIPS) 2020</em>.</li>
+        <li>Sharpe ratio: W. F. Sharpe, "The Sharpe Ratio", <em>Journal of Portfolio Management</em>, 1994.</li>
+        <li>Sortino ratio: F. Sortino &amp; L. Price, "Performance Measurement in a Downside Risk Framework", <em>Journal of Investing</em>, 1994.</li>
+        <li>Calmar ratio: T. Young, "Calmar Ratio: A Smoother Tool", <em>Futures</em>, 1991.</li>
+        <li>Alpha: M. Jensen, "The Performance of Mutual Funds in the Period 1945–1964", <em>Journal of Finance</em>, 1968.</li>
+        <li>Risk-free rate: ECB, euro short-term rate (€STR), ECB Data Portal.</li>
+        <li>SRI risk classes: Commission Delegated Regulation (EU) 2017/653 (PRIIPs KID), Annex II.</li>
+      </ul>
+      <p class="small text-muted mb-0">The Good / OK / Weak bands for Sharpe, Sortino, Calmar and alpha are common rules of thumb, not official thresholds.</p>`
   },
   watchlist: {
     title: "Watchlist",
@@ -126,7 +137,7 @@ window.PAGE_HELP = {
       <ul class="small mb-2">
         <li><strong>Stocks / ETFs</strong> value is auto-populated from your live holdings when the page loads. Hit the refresh icon <i class="bi bi-arrow-clockwise"></i> to reload it.</li>
         <li><strong>Load from Net Worth</strong> pre-fills Cash, Bonds and Mortgage amounts from your Net Worth page, plus <strong>Monthly contribution</strong> and the mortgage <strong>Monthly Payment</strong> from your Monthly Cash Flow entries (all still manually editable afterwards).</li>
-        <li><strong>Use my history</strong> sets the Stocks annual return (money-weighted IRR since inception) and volatility (last 12 months) from your own portfolio's recorded snapshot history, replacing the defaults.</li>
+        <li><strong>Use my history</strong> sets the Stocks annual return from your money-weighted IRR since inception, minus 2% assumed inflation (the ECB's target) to make it a real return like the other inputs, and the volatility from the last 12 months of daily snapshots.</li>
         <li><strong>Annual return %</strong> per asset class is your assumed long-run real return, e.g. 8% for stocks, 4% for bonds, 1.5% for cash.</li>
         <li><strong>Volatility %</strong> (stocks only) controls how wide the confidence band is. Default 16%; your historical figure may differ.</li>
         <li><strong>Monthly contribution</strong> (under Stocks / ETFs) is added to the stocks bucket each month before compounding — it does not apply to cash or bonds.</li>

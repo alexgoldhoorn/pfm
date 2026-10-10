@@ -989,8 +989,8 @@ async function loadDashboardReturn(period) {
     el.textContent = '…';
     try {
         const d = await window.apiClient.getPerformance(null, period || 'all');
-        // 'All' = lifetime return (cost-basis based). Named periods use the
-        // snapshot-based period return, which needs accumulated daily history.
+        // 'All' = lifetime total return (gain incl. income ÷ purchases). Named
+        // periods use the snapshot-based time-weighted return.
         const pct = (period && period !== 'all')
             ? d.period_return_pct
             : d.total_return_pct;
@@ -999,26 +999,27 @@ async function loadDashboardReturn(period) {
             el.title = (period && period !== 'all')
                 ? 'Not enough daily snapshot history for this period yet'
                 : 'No data';
-            const cagrEl2 = document.getElementById('dashCagrLine');
-            if (cagrEl2) cagrEl2.textContent = '';
+            const irrLine = document.getElementById('dashCagrLine');
+            if (irrLine) irrLine.textContent = '';
             return;
         }
         const n = parseFloat(pct);
         el.textContent = (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
         el.title = (period && period !== 'all')
             ? 'Change over the selected period (from daily snapshots)'
-            : 'Lifetime return vs cost basis';
-        const cagrEl = document.getElementById('dashCagrLine');
-        if (cagrEl) {
-            if (d.cagr_pct != null) {
+            : 'Total gain (price, sales, dividends, interest) ÷ everything bought';
+        // The per-year figure is the money-weighted return (IRR): it accounts
+        // for when you added money, which a simple annualised total can't.
+        const irrEl = document.getElementById('dashCagrLine');
+        if (irrEl) {
+            if (d.money_weighted_irr_pct != null) {
                 // Plain white text: the tile itself is already green/red, so a
                 // text-success span here was green-on-green and unreadable.
-                const cagrN = parseFloat(d.cagr_pct);
-                const cagrSign = cagrN >= 0 ? '+' : '';
-                cagrEl.innerHTML = 'CAGR <span class="fw-semibold">' + cagrSign + cagrN.toFixed(1) + '%/yr</span>';
-                cagrEl.title = 'Compound annual growth rate since your first investment';
+                const irrN = parseFloat(d.money_weighted_irr_pct);
+                irrEl.innerHTML = 'IRR <span class="fw-semibold">' + (irrN >= 0 ? '+' : '') + irrN.toFixed(1) + '%/yr</span>';
+                irrEl.title = METRIC_HELP.irr;
             } else {
-                cagrEl.textContent = '';
+                irrEl.textContent = '';
             }
         }
     } catch (err) {
@@ -1056,7 +1057,7 @@ async function loadAnalyticsPerformance() {
     const body = document.getElementById('anPerformanceBody');
     const select = document.getElementById('anBenchmark');
     if (!body) return;
-    const benchmark = select ? select.value : '^GSPC';
+    const benchmark = select ? select.value : PREFS.benchmark;
     const periodEl = document.querySelector('input[name="anPeriod"]:checked');
     const period = periodEl ? periodEl.value : 'all';
     body.innerHTML = `
@@ -1076,10 +1077,11 @@ async function loadAnalyticsPerformance() {
         const periodVal = parseFloat(periodPct || 0);
         const periodCls = periodHas ? (periodVal >= 0 ? 'text-success' : 'text-danger') : 'text-muted';
         const periodTxt = periodHas ? anFmtPct(periodVal) : '—';
+        const benchHas = d.benchmark_return_pct != null;
         const benchReturn = parseFloat(d.benchmark_return_pct || 0);
-        // Compare the period return (when available) to the period-scoped benchmark
-        const myReturn = periodHas ? periodVal : totalPct;
-        const beat = myReturn - benchReturn;
+        // Only a time-weighted return is comparable with a benchmark; with no
+        // TWR for the window there's no comparison rather than a wrong one.
+        const beat = periodVal - benchReturn;
         const beatCls = beat >= 0 ? 'text-success' : 'text-danger';
         const beatWord = beat >= 0 ? 'ahead of' : 'behind';
         body.innerHTML = `
@@ -1117,16 +1119,26 @@ async function loadAnalyticsPerformance() {
             </div>
             <div class="small">
                 <i class="bi bi-flag me-1"></i>
-                vs <strong data-bs-toggle="tooltip" title="${METRIC_HELP.benchmark}">${d.benchmark || benchmark}</strong> (${anFmtPct(benchReturn)}, ${anPeriodLabel(period)}):
-                <span class="${beatCls} fw-semibold">${anFmtPct(beat)} ${beatWord} benchmark</span>
+                vs <strong data-bs-toggle="tooltip" title="${esc(METRIC_HELP.benchmark)}">${esc(d.benchmark_label || d.benchmark || benchmark)}</strong>${
+                    periodHas && benchHas
+                        ? ` (${anFmtPct(benchReturn)} in EUR, ${anPeriodLabel(period)}): <span class="${beatCls} fw-semibold">${anFmtPct(beat)} ${beatWord} benchmark</span>`
+                        : `: <span class="text-muted">no comparison — ${periodHas ? 'benchmark data unavailable' : 'daily history doesn\'t cover this window (Rebuild history on the Net worth tab)'}</span>`
+                }
             </div>
             <div class="row g-3 mt-1">
                 <div class="col-6 col-md-4">
                     <div class="border rounded p-3 h-100">
-                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.cagr}">CAGR</div>
+                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.totalGain}">Total gain</div>
+                        <div class="fs-5 fw-bold ${d.total_gain_eur >= 0 ? 'text-success' : 'text-danger'}">${anFmtEur(d.total_gain_eur)}</div>
+                        <div class="small text-muted">incl. ${anFmtEur(d.income_eur)} dividends &amp; interest</div>
+                    </div>
+                </div>
+                <div class="col-6 col-md-4">
+                    <div class="border rounded p-3 h-100">
+                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.annualisedTwr}">Time-weighted, per year</div>
                         ${(() => {
-                            const v = d.cagr_pct;
-                            if (v == null) return '<div class="fs-5 fw-bold text-muted">—</div><div class="small text-muted">Need 1+ year of history</div>';
+                            const v = d.annualised_twr_pct;
+                            if (v == null) return '<div class="fs-5 fw-bold text-muted">—</div><div class="small text-muted">Needs a year of daily history from your first trade</div>';
                             const n = parseFloat(v);
                             const cls = n >= 0 ? 'text-success' : 'text-danger';
                             return '<div class="fs-5 fw-bold ' + cls + '">' + (n >= 0 ? '+' : '') + n.toFixed(2) + '%/yr</div>';
@@ -1137,18 +1149,6 @@ async function loadAnalyticsPerformance() {
                     <div class="border rounded p-3 h-100">
                         <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.inception}">Inception Date</div>
                         <div class="fs-5 fw-bold">${d.inception_date ? Fmt.date(d.inception_date) : '—'}</div>
-                    </div>
-                </div>
-                <div class="col-6 col-md-4">
-                    <div class="border rounded p-3 h-100">
-                        <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${METRIC_HELP.annualizedGain}">Ann. Gain (€/yr)</div>
-                        ${(() => {
-                            const v = d.annualized_gain_eur;
-                            if (v == null) return '<div class="fs-5 fw-bold text-muted">—</div>';
-                            const n = parseFloat(v);
-                            const cls = n >= 0 ? 'text-success' : 'text-danger';
-                            return '<div class="fs-5 fw-bold ' + cls + '">' + anFmtEur(n) + '</div>';
-                        })()}
                     </div>
                 </div>
             </div>`;
@@ -1165,11 +1165,11 @@ function _wireBackfillButton() {
     if (!btn || btn.dataset.wired) return;
     btn.dataset.wired = '1';
     btn.addEventListener('click', async () => {
-        if (!(await confirmDialog({ title: 'Rebuild net-worth history', message: 'Reconstruct daily net-worth history from your transactions and historical prices?\n\nThis can take a minute. Only missing dates are filled; existing snapshots are kept.', confirmLabel: 'Rebuild history' }))) return;
+        if (!(await confirmDialog({ title: 'Rebuild net-worth history', message: 'Recompute every day of net-worth history from your transactions, the prices stored here (Yahoo closes fill the gaps) and each day\'s exchange rate?\n\nThis can take a minute. Every daily snapshot is rewritten, so returns, risk metrics and the chart all use the same definitions.', confirmLabel: 'Rebuild history' }))) return;
         const orig = btn.innerHTML;
         btn.disabled = true;
         try {
-            await window.apiClient.startBackfill(false);
+            await window.apiClient.startBackfill(true);
             for (let i = 0; i < 60; i++) {
                 await new Promise(r => setTimeout(r, 3000));
                 const s = await window.apiClient.getBackfillStatus();
@@ -2270,7 +2270,7 @@ async function loadDashboardRisk() {
     const noteEl = document.getElementById('dashRiskNote');
     if (!wrap || !tilesEl) return;
     try {
-        const d = await window.apiClient.getRisk('^GSPC', '1y');
+        const d = await window.apiClient.getRisk(PREFS.benchmark, '1y');
         if (d.sharpe_ratio == null && d.note) {
             wrap.style.display = 'none';
             return;
@@ -2280,8 +2280,9 @@ async function loadDashboardRisk() {
         const vsBench = d.period_return_pct != null && d.benchmark_return_pct != null
             ? d.period_return_pct - d.benchmark_return_pct : null;
         const tiles = [
-            { key: 'vsBenchmark', label: 'vs S&P 500', value: vsBench,
-              text: fmtSignedPct(vsBench, 1, ' pts'), help: METRIC_HELP.vsBenchmark,
+            { key: 'vsBenchmark', label: 'vs benchmark', value: vsBench,
+              text: fmtSignedPct(vsBench, 1, ' pts'),
+              help: `${METRIC_HELP.vsBenchmark} Benchmark: ${d.benchmark_label || d.benchmark}.`,
               sub: `You ${fmtSignedPct(d.period_return_pct, 1)} · index ${fmtSignedPct(d.benchmark_return_pct, 1)}` },
             { key: 'currentDrawdown', label: 'Below 12-mo high', value: d.current_drawdown_pct,
               text: fmtSignedPct(d.current_drawdown_pct, 1), help: METRIC_HELP.currentDrawdown,
@@ -2311,6 +2312,14 @@ async function loadDashboardRisk() {
 }
 window.loadDashboardRisk = loadDashboardRisk;
 
+// "risk-free rate 2.15% (€STR, ECB)" — says when the published rate wasn't used.
+function fmtRiskFree(d) {
+    if (d.risk_free_rate_pct == null) return 'risk-free rate unavailable';
+    const src = { ecb_estr: '€STR average, ECB', setting: 'your setting — ECB unreachable', default: 'assumed — ECB unreachable' }[d.risk_free_source] || d.risk_free_source || '';
+    return `risk-free rate ${Number(d.risk_free_rate_pct).toFixed(2)}%/yr${src ? ` (${src})` : ''}`;
+}
+window.fmtRiskFree = fmtRiskFree;
+
 // Jump from the dashboard to Analytics → Risk & Diversification.
 function openAnalyticsRisk() {
     _analyticsActiveTab = 'risk';
@@ -2331,8 +2340,7 @@ async function loadAnalyticsRisk() {
     body.innerHTML = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading…</div>';
     try {
         const benchmarkSel = document.getElementById('anBenchmark');
-        const benchmark = benchmarkSel?.value || '^GSPC';
-        const benchName = benchmarkSel?.selectedOptions?.[0]?.textContent || benchmark;
+        const benchmark = benchmarkSel?.value || PREFS.benchmark;
         const d = await window.apiClient.getRisk(benchmark, win);
         // Insufficient history: API returns null metrics plus a note
         if (d.sharpe_ratio == null && d.note) {
@@ -2346,7 +2354,7 @@ async function loadAnalyticsRisk() {
         const tiles = [
             { key: 'vsBenchmark', label: 'Return vs benchmark', value: vsBench,
               text: fmtSignedPct(vsBench, 1, ' pts'), help: METRIC_HELP.vsBenchmark,
-              sub: `You ${fmtSignedPct(d.period_return_pct, 1)} · ${benchName} ${fmtSignedPct(d.benchmark_return_pct, 1)}` },
+              sub: `You ${fmtSignedPct(d.period_return_pct, 1)} · ${d.benchmark_label || benchmark} ${fmtSignedPct(d.benchmark_return_pct, 1)} (EUR)` },
             { key: 'currentDrawdown', label: 'Current drawdown', value: d.current_drawdown_pct,
               text: fmtSignedPct(d.current_drawdown_pct, 1), help: METRIC_HELP.currentDrawdown },
             { key: 'maxDrawdown', label: 'Max drawdown', value: d.max_drawdown_pct,
@@ -2360,7 +2368,8 @@ async function loadAnalyticsRisk() {
             { key: 'calmar', label: 'Calmar ratio', value: d.calmar_ratio,
               text: d.calmar_ratio == null ? '—' : Number(d.calmar_ratio).toFixed(2), help: METRIC_HELP.calmar },
             { key: 'beta', label: 'Beta', value: d.beta,
-              text: d.beta == null ? '—' : Number(d.beta).toFixed(2), help: METRIC_HELP.beta },
+              text: d.beta == null ? '—' : Number(d.beta).toFixed(2), help: METRIC_HELP.beta,
+              sub: d.beta_observations ? `${d.beta_observations} weekly returns` : '' },
             { key: 'alpha', label: 'Alpha', value: d.alpha_pct,
               text: fmtSignedPct(d.alpha_pct, 1, '%/yr'), help: METRIC_HELP.alpha },
         ];
@@ -2374,7 +2383,7 @@ async function loadAnalyticsRisk() {
                 ${tiles.map(t => `<div class="col">${metricTile({ ...t, lowConfidence, months })}</div>`).join('')}
             </div>
             <div class="small text-muted mt-3" data-bs-toggle="tooltip" title="${esc(METRIC_HELP.riskReturns)}">
-                <i class="bi bi-info-circle me-1"></i>${esc(range)} · ${d.snapshots_used ?? '—'} daily snapshots · flow-adjusted returns, risk-free rate 0${confNote}
+                <i class="bi bi-info-circle me-1"></i>${esc(range)} · ${d.snapshots_used ?? '—'} daily snapshots · flow-adjusted returns · ${esc(fmtRiskFree(d))}${confNote}
             </div>`;
     } catch (err) {
         body.innerHTML = `<div class="text-danger small">Error loading risk metrics: ${esc(err.message)}</div>`;

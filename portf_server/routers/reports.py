@@ -12,6 +12,8 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 
+from portf_manager.services.performance import DEFAULT_BENCHMARK
+
 from ..dependencies import get_database
 
 router = APIRouter()
@@ -64,9 +66,11 @@ def get_portfolio_report_pdf(
         bundle["holdings"] = get_holdings(portfolio_id=None, database=db)["holdings"]
     if "performance" in requested:
         bundle["performance"] = get_performance(
-            benchmark="^GSPC", period="all", db=db, api_key_info={}
+            benchmark=DEFAULT_BENCHMARK, period="all", db=db, api_key_info={}
         )
-        bundle["risk"] = get_risk(benchmark="^GSPC", db=db, api_key_info={})
+        bundle["risk"] = get_risk(
+            benchmark=DEFAULT_BENCHMARK, window="all", db=db, api_key_info={}
+        )
     if "diversification" in requested:
         bundle["diversification"] = get_diversification(db=db, api_key_info={})
     if "health" in requested:
