@@ -58,6 +58,14 @@ def _no_llm_retry_sleep(monkeypatch):
     monkeypatch.setenv("PORTF_LLM_RETRY_DELAY", "0")
 
 
+@pytest.fixture(autouse=True)
+def _no_estr_fetch(monkeypatch):
+    """Risk metrics ask the ECB for €STR; unit tests use the fallback rate."""
+    monkeypatch.setattr(
+        "portf_manager.services.risk_free._fetch_estr", lambda start, end: None
+    )
+
+
 class RealNetworkCall(ConnectionError):
     """Raised in place of a real outbound HTTP request during tests."""
 

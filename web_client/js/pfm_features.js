@@ -2274,17 +2274,24 @@ function mapNetworthToForecast(items) {
 }
 window.mapNetworthToForecast = mapNetworthToForecast;
 
+// Inflation assumed when turning a nominal return into the real return the
+// simulator's inputs expect: the ECB's 2% medium-term target.
+const ASSUMED_INFLATION_PCT = 2;
+window.ASSUMED_INFLATION_PCT = ASSUMED_INFLATION_PCT;
+
 // Pure: turn the analytics performance + risk payloads into forecast inputs.
-// Uses money-weighted IRR for the return and annualised volatility; needs ≥3
-// snapshots. Returns { ok, rate, vol, snapshots } or { ok:false, reason }.
+// The money-weighted IRR is nominal, so the real rate takes off
+// ASSUMED_INFLATION_PCT; volatility is annualised. Needs ≥3 snapshots.
+// Returns { ok, rate, nominalRate, vol, snapshots } or { ok:false, reason }.
 // Unit-tested in web_client/js/tests/.
 function historyToForecast(perf, risk) {
     const snaps = (risk && risk.snapshots_used) || 0;
     if (snaps < 3) return { ok: false, reason: 'Not enough history yet — need a few more daily snapshots.' };
-    const rate = perf && typeof perf.money_weighted_irr_pct === 'number' ? perf.money_weighted_irr_pct : null;
+    const nominal = perf && typeof perf.money_weighted_irr_pct === 'number' ? perf.money_weighted_irr_pct : null;
     const vol = risk && typeof risk.volatility_pct === 'number' ? risk.volatility_pct : null;
-    if (rate == null || vol == null) return { ok: false, reason: 'Return/volatility unavailable.' };
-    return { ok: true, rate, vol, snapshots: snaps };
+    if (nominal == null || vol == null) return { ok: false, reason: 'Return/volatility unavailable.' };
+    const rate = Math.round((nominal - ASSUMED_INFLATION_PCT) * 100) / 100;
+    return { ok: true, rate, nominalRate: nominal, vol, snapshots: snaps };
 }
 window.historyToForecast = historyToForecast;
 
@@ -2910,7 +2917,7 @@ function setupForecastPage() {
                 stocksRateInput.value = h.rate.toFixed(1);
                 if (stocksVolInput) stocksVolInput.value = Math.round(h.vol);
                 if (histNote) {
-                    histNote.textContent = `Set from your history: return ${h.rate.toFixed(1)}%/yr (money-weighted IRR), volatility ${Math.round(h.vol)}% over the last 12 months (${h.snapshots} daily snapshots). This is your whole-portfolio figure (incl. crypto), a proxy for the stocks bucket.`;
+                    histNote.textContent = `Set from your history: real return ${h.rate.toFixed(1)}%/yr (money-weighted IRR ${h.nominalRate.toFixed(1)}% minus ${ASSUMED_INFLATION_PCT}% assumed inflation), volatility ${Math.round(h.vol)}% over the last 12 months (${h.snapshots} daily snapshots). This is your whole-portfolio figure (incl. crypto), a proxy for the stocks bucket.`;
                 }
             } catch (e) {
                 if (histNote) histNote.textContent = 'Could not load history: ' + e.message;

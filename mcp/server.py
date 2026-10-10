@@ -458,14 +458,17 @@ def quote(symbols: str, max_age: int = 86400) -> str:
 
 
 @mcp.tool()
-def performance(period: str = "all", benchmark: str = "^GSPC") -> str:
+def performance(period: str = "all", benchmark: str = "VWCE.DE") -> str:
     """
-    Portfolio performance: total return, money-weighted IRR, and period return
-    vs a benchmark.
+    Portfolio performance in EUR: total gain (incl. dividends and interest),
+    total return, money-weighted IRR, and time-weighted period return vs a
+    benchmark measured in EUR.
 
     Args:
         period: Return window — 'ytd', '1m', '1y', or 'all' (default).
-        benchmark: Yahoo ticker for comparison, default '^GSPC' (S&P 500).
+        benchmark: Yahoo ticker for comparison, default 'VWCE.DE' (FTSE
+            All-World, EUR, dividends reinvested). '^GSPC' is the S&P 500
+            price index (no dividends), converted to EUR.
     """
     try:
         data = _get(
@@ -482,6 +485,8 @@ def performance(period: str = "all", benchmark: str = "^GSPC") -> str:
     lines.append(
         f"  Realised P&L:     {_fmt_currency(data.get('realised_pnl_eur', 0))}"
     )
+    lines.append(f"  Div. + interest:  {_fmt_currency(data.get('income_eur', 0))}")
+    lines.append(f"  Total gain:       {_fmt_currency(data.get('total_gain_eur', 0))}")
     tr = data.get("total_return_pct")
     lines.append(
         f"  Total return:     {tr:+.2f}%"
@@ -490,22 +495,25 @@ def performance(period: str = "all", benchmark: str = "^GSPC") -> str:
     )
     irr = data.get("money_weighted_irr_pct")
     lines.append(
-        f"  IRR (MWRR):       {irr:+.2f}%"
+        f"  IRR (MWRR):       {irr:+.2f}%/yr"
         if irr is not None
         else "  IRR (MWRR):       n/a"
     )
     pr = data.get("period_return_pct")
     lines.append(
-        f"  Period return:    {pr:+.2f}%"
+        f"  TWR (period):     {pr:+.2f}%"
         if pr is not None
-        else "  Period return:    n/a"
+        else "  TWR (period):     n/a (daily history doesn't cover the window)"
     )
+    ann = data.get("annualised_twr_pct")
+    if ann is not None:
+        lines.append(f"  TWR per year:     {ann:+.2f}%")
     br = data.get("benchmark_return_pct")
-    bname = data.get("benchmark", benchmark)
+    bname = data.get("benchmark_label") or data.get("benchmark", benchmark)
     lines.append(
-        f"  {bname} return:    {br:+.2f}%"
+        f"  Benchmark (EUR):  {br:+.2f}%  [{bname}]"
         if br is not None
-        else f"  {bname}:          n/a"
+        else f"  Benchmark (EUR):  n/a  [{bname}]"
     )
     return "\n".join(lines)
 
@@ -641,16 +649,18 @@ def diversification() -> str:
 def risk() -> str:
     """
     Portfolio risk metrics from daily snapshot history, for the trailing year
-    and for all history: annualised return vs the S&P 500, current and max
-    drawdown, annualised volatility, Sharpe, Sortino, Calmar, beta and alpha.
-    Returns are flow-adjusted (buys, sells and imports are not gains/losses).
-    Under ~a year of history a window is flagged low-confidence.
+    and for all history: annualised return vs a EUR benchmark (FTSE All-World,
+    dividends reinvested), current and max drawdown, annualised volatility,
+    Sharpe, Sortino (both over the €STR risk-free rate), Calmar, beta (weekly
+    returns) and Jensen's alpha. Returns are flow-adjusted (buys, sells and
+    imports are not gains/losses). Under ~a year of history a window is
+    flagged low-confidence.
     """
 
     def _fmt(v, spec: str = ".2f", suffix: str = "") -> str:
         return "n/a" if v is None else f"{v:{spec}}{suffix}"
 
-    lines = ["RISK METRICS (flow-adjusted, rf=0):"]
+    lines = ["RISK METRICS (flow-adjusted, EUR):"]
     for window, label in (("1y", "Last 12 months"), ("all", "All history")):
         try:
             d = _get(f"/api/v1/analytics/risk?window={window}")
@@ -680,10 +690,13 @@ def risk() -> str:
         lines.append(
             f"    Sharpe / Sortino / Calmar: {_fmt(d.get('sharpe_ratio'))} / "
             f"{_fmt(d.get('sortino_ratio'))} / {_fmt(d.get('calmar_ratio'))}"
+            f"  (rf {_fmt(d.get('risk_free_rate_pct'), '.2f', '%')}"
+            f" {d.get('risk_free_source') or ''})"
         )
         lines.append(
             f"    Beta / Alpha:     {_fmt(d.get('beta'))} / "
             f"{_fmt(d.get('alpha_pct'), '+.2f', '%/yr')}"
+            f"  ({d.get('beta_observations') or 0} weekly obs)"
         )
     return "\n".join(lines)
 
