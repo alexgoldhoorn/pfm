@@ -440,20 +440,22 @@ def get_performance(
 
 
 def _cash_eur(db) -> Optional[float]:
-    """Bank balances plus cash-type manual assets (EUR); None if neither exists."""
-    from .networth import _bank_accounts_eur
+    """Liquid money (EUR) from the balance sheet; None if no cash is known.
 
-    bank, accounts = _bank_accounts_eur(db)
-    manual = [
-        a
-        for a in db.get_manual_assets()
-        if (a.get("category") or "").lower() == "cash" and not a.get("is_liability")
-    ]
-    if not manual and not any(a["balance"] is not None for a in accounts):
+    None when no bank balance or manual cash line gives a figure (broker ledger
+    cash alone does not count: it is negative until deposits are imported), so
+    the emergency-fund metric reads "unknown" rather than zero.
+    """
+    from portf_manager.services.balance_sheet import build_balance_sheet
+
+    sheet = build_balance_sheet(db)
+    cash = next(g for g in sheet["groups"] if g["key"] == "cash")
+    if not any(
+        ln["amount_eur"] is not None and ln["source"] != "cash_ledger"
+        for ln in cash["lines"]
+    ):
         return None
-    return bank + sum(
-        float(a["amount"] or 0) * _fx(a.get("currency") or "EUR") for a in manual
-    )
+    return sheet["totals"]["liquid_eur"]
 
 
 @router.get("/progress")

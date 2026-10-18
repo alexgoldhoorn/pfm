@@ -104,6 +104,19 @@ def _payments(loan: dict) -> list[dict]:
     return rows
 
 
+def payment_of(loan: dict) -> float:
+    """Return the regular monthly payment, extra payment included.
+
+    Computed on the anchor (start, or the recorded balance and rate date) over
+    the payments that remain; 0 when none remain.
+    """
+    _, balance, remaining = _anchor(loan)
+    if remaining <= 0:
+        return 0.0
+    pay = round(monthly_payment(balance, loan["annual_rate_pct"], remaining), 2)
+    return round(pay + float(loan.get("extra_payment_eur") or 0), 2)
+
+
 def balance_on(loan: dict, day: DateLike) -> float:
     """Return the outstanding balance on ``day``.
 
