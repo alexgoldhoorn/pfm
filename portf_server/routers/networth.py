@@ -7,12 +7,13 @@ net worth reflects the whole picture, not just investments.
 """
 
 import logging
+from datetime import date
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from portf_manager.positions import compute_positions
+from portf_manager.services.balance_sheet import build_balance_sheet
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
@@ -36,6 +37,7 @@ class ManualAssetBody(BaseModel):
     currency: str = "EUR"
     is_liability: bool = False
     notes: Optional[str] = None
+    as_of: Optional[str] = None
 
 
 class ManualAssetUpdate(BaseModel):
@@ -45,6 +47,7 @@ class ManualAssetUpdate(BaseModel):
     currency: Optional[str] = None
     is_liability: Optional[bool] = None
     notes: Optional[str] = None
+    as_of: Optional[str] = None
 
 
 _CF_INCOME_CATS = {"salary", "other_income"}
@@ -57,22 +60,6 @@ class CashflowBody(BaseModel):
     amount: float = 0.0
     currency: str = "EUR"
     notes: Optional[str] = None
-
-
-def _brokerage_value_eur(db) -> float:
-    """EUR value of currently-held tracked positions."""
-    positions, _ = compute_positions(db.get_all_transactions())
-    total = 0.0
-    for aid, pos in positions.items():
-        if pos["quantity"] <= 0:
-            continue
-        asset = db.get_asset(aid)
-        if not asset:
-            continue
-        pd_ = db.get_latest_price(aid)
-        price = float(pd_["price"]) if pd_ else 0.0
-        total += pos["quantity"] * price * _fx(asset.get("currency", "EUR"))
-    return total
 
 
 def _bank_accounts_eur(db) -> tuple:
@@ -126,37 +113,24 @@ def _bank_accounts_eur(db) -> tuple:
 
 
 def net_worth_eur(db) -> float:
-    """Total net worth = brokerage + bank accounts + manual assets
-    − liabilities + active deposits (EUR).
+    """Total net worth in EUR, taken from the balance sheet.
 
-    Shared with Goals projections (see goals.py) so the two never drift apart.
+    Shared with Goals projections (see goals.py) and Action Items so the
+    figures never drift apart.
     """
-    items = db.get_manual_assets()
-    assets_eur = 0.0
-    liabilities_eur = 0.0
-    for it in items:
-        amt_eur = float(it["amount"] or 0) * _fx(it.get("currency", "EUR"))
-        if it["is_liability"]:
-            liabilities_eur += amt_eur
-        else:
-            assets_eur += amt_eur
-    deposits_eur = sum(
-        float(d["principal"]) * _fx(d.get("currency", "EUR"))
-        for d in db.get_fixed_deposits(status="active")
-    )
-    bank_eur, _ = _bank_accounts_eur(db)
-    return (
-        _brokerage_value_eur(db)
-        + bank_eur
-        + assets_eur
-        - liabilities_eur
-        + deposits_eur
-    )
+    return build_balance_sheet(db)["totals"]["net_worth_eur"]
+
+
+@router.get("/balance-sheet")
+def get_balance_sheet(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+    """Every asset and liability as a sourced, dated line, with totals."""
+    return build_balance_sheet(db)
 
 
 @router.get("/")
 def get_networth(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
     """Brokerage value + manual assets/liabilities + deposits + total net worth (EUR)."""
+    sheet = build_balance_sheet(db)
     items = db.get_manual_assets()
     assets_eur = 0.0
     liabilities_eur = 0.0
@@ -174,11 +148,17 @@ def get_networth(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
         float(d["principal"]) * _fx(d.get("currency", "EUR")) for d in raw_deposits
     )
 
-    brokerage = round(_brokerage_value_eur(db), 2)
-    bank_eur, bank_accounts = _bank_accounts_eur(db)
-    net_worth = round(
-        brokerage + bank_eur + assets_eur - liabilities_eur + deposits_eur, 2
+    # Investments minus manual investment lines (pensions, external accounts).
+    investments = next(g for g in sheet["groups"] if g["key"] == "investments")
+    brokerage = round(
+        sum(
+            ln["amount_eur"] or 0.0
+            for ln in investments["lines"]
+            if ln["source"] != "manual"
+        ),
+        2,
     )
+    bank_eur, bank_accounts = _bank_accounts_eur(db)
     return {
         "brokerage_eur": brokerage,
         "bank_accounts_eur": round(bank_eur, 2),
@@ -187,7 +167,7 @@ def get_networth(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
         "manual_liabilities_eur": round(liabilities_eur, 2),
         "deposits_eur": round(deposits_eur, 2),
         "deposits": [_enrich_deposit(dict(d)) for d in raw_deposits],
-        "net_worth_eur": net_worth,
+        "net_worth_eur": sheet["totals"]["net_worth_eur"],
         "items": out,
     }
 
@@ -203,6 +183,7 @@ def create_manual_asset(
         currency=(body.currency or "EUR").upper(),
         is_liability=body.is_liability,
         notes=body.notes,
+        as_of=body.as_of,
     )
     return {"id": new_id}
 
@@ -217,6 +198,9 @@ def update_manual_asset(
     fields = body.model_dump(exclude_none=True)
     if "currency" in fields:
         fields["currency"] = fields["currency"].upper()
+    # a changed amount is a fresh confirmation unless the caller dates it
+    if "amount" in fields and "as_of" not in fields:
+        fields["as_of"] = date.today().isoformat()
     if not db.update_manual_asset(asset_id, **fields):
         raise HTTPException(status_code=404, detail="Not found or nothing to update")
     return {"updated": True}
