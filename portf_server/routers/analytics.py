@@ -611,6 +611,7 @@ def get_progress(
         {
             "date": r["date"],
             "amount_eur": float(r["amount"]) * _fx(r.get("currency") or "EUR"),
+            "category": r.get("category"),
         }
         for r in db.list_spending_transactions(start_date=start, is_transfer=False)
     ]

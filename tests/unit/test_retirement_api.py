@@ -128,3 +128,41 @@ def test_income_bounds(tmp_path):
             "/api/v1/retirement/incomes", json={**INCOME, **bad}, headers=HEADERS
         )
         assert r.status_code == 422, bad
+
+
+def test_readiness_endpoint_four_scenarios_and_warnings(tmp_path):
+    client = _make_client(tmp_path)
+    from portf_server.app import app
+    from portf_server.dependencies import get_database
+
+    db = app.dependency_overrides[get_database]()
+    pid = db.get_or_create_portfolio("Example Bank", account_type="bank")
+    year, month = 2026, 9
+    for _ in range(12):
+        db.create_spending_transaction(
+            pid, f"{year}-{month:02d}-05", "Rent", -1000.0, category="Rent"
+        )
+        db.create_spending_transaction(
+            pid, f"{year}-{month:02d}-06", "Pay", 3000.0, category="Salary"
+        )
+        month -= 1
+        if month == 0:
+            year, month = year - 1, 12
+    r = client.put(
+        "/api/v1/retirement/plan", json={"birth_date": "1983-07-20"}, headers=HEADERS
+    )
+    assert r.status_code == 200
+    r = client.get("/api/v1/retirement/readiness", headers=HEADERS)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "ok"
+    assert len(body["scenarios"]) == 4
+    assert any("No state pension" in w for w in body["warnings"])
+    assert client.get("/api/v1/retirement/readiness").status_code in (401, 403)
+
+
+def test_readiness_endpoint_needs_setup(tmp_path):
+    client = _make_client(tmp_path)
+    r = client.get("/api/v1/retirement/readiness", headers=HEADERS)
+    assert r.status_code == 200
+    assert r.json()["status"] == "needs_setup"
