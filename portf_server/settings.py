@@ -87,6 +87,9 @@ class ServerSettings(BaseSettings):
     openrouter_api_key: Optional[str] = Field(
         default=None, description="OpenRouter API key for LLM features"
     )
+    indexa_token: Optional[str] = Field(
+        default=None, description="Indexa Capital API token for account valuations"
+    )
 
     # LLM configuration
     # Maps to PORTF_LLM_PROVIDER and PORTF_LLM_MODEL env vars, which llm_client.py reads directly.

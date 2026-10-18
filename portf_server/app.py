@@ -48,6 +48,7 @@ from .routers import (
     goals,
     public,
     networth,
+    retirement,
     market,
     system,
     deposits,
@@ -424,6 +425,13 @@ app.include_router(
     networth.router,
     prefix="/api/v1/networth",
     tags=["Net Worth"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    retirement.router,
+    prefix="/api/v1/retirement",
+    tags=["Retirement"],
     dependencies=_PROTECTED,
 )
 
