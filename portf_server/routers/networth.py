@@ -37,7 +37,7 @@ class ManualAssetBody(BaseModel):
     currency: str = "EUR"
     is_liability: bool = False
     notes: Optional[str] = None
-    as_of: Optional[str] = None
+    as_of: Optional[date] = None
 
 
 class ManualAssetUpdate(BaseModel):
@@ -47,7 +47,7 @@ class ManualAssetUpdate(BaseModel):
     currency: Optional[str] = None
     is_liability: Optional[bool] = None
     notes: Optional[str] = None
-    as_of: Optional[str] = None
+    as_of: Optional[date] = None
 
 
 _CF_INCOME_CATS = {"salary", "other_income"}
@@ -183,7 +183,7 @@ def create_manual_asset(
         currency=(body.currency or "EUR").upper(),
         is_liability=body.is_liability,
         notes=body.notes,
-        as_of=body.as_of,
+        as_of=body.as_of.isoformat() if body.as_of else None,
     )
     return {"id": new_id}
 
@@ -196,6 +196,8 @@ def update_manual_asset(
     api_key_info: dict = Depends(_auth),
 ):
     fields = body.model_dump(exclude_none=True)
+    if "as_of" in fields:
+        fields["as_of"] = fields["as_of"].isoformat()
     if "currency" in fields:
         fields["currency"] = fields["currency"].upper()
     # a changed amount is a fresh confirmation unless the caller dates it

@@ -170,6 +170,34 @@ def test_broker_cash_line_only_when_non_zero(db):
     assert line["max_age_days"] == 60
 
 
+def test_negative_ledger_cash_is_shown_but_not_counted(db):
+    pid = db.create_portfolio("Example Broker", "EUR")
+    add_position(db, pid)
+    sheet = build(db)
+    line = lines_of(sheet)[f"cash:{pid}"]
+    assert line["amount_eur"] == -100.0
+    assert line["stale"] is True
+    assert line["in_total"] is False
+    assert line["note"] == "ledger cash is negative: deposits missing?"
+    assert group(sheet, "cash")["total_eur"] == 0.0
+    totals = sheet["totals"]
+    assert totals["liquid_eur"] == 0.0
+    assert totals["financial_assets_eur"] == 100.0
+    assert totals["net_worth_eur"] == 100.0
+    assert all(ln["in_total"] for ln in lines_of(sheet).values() if ln is not line)
+
+
+def test_positions_line_with_undated_price_is_stale_with_unknown_age(db):
+    pid = db.create_portfolio("Example Broker", "EUR")
+    aid = add_position(db, pid)
+    with db.get_connection() as conn:
+        conn.execute("UPDATE prices SET price_date = '' WHERE asset_id = ?", (aid,))
+        conn.commit()
+    line = lines_of(build(db))[f"positions:{pid}"]
+    assert line["age_days"] is None
+    assert line["stale"] is True
+
+
 def test_loan_line_balance_from_schedule_and_note(db):
     lid = db.create_loan(
         "Example Mortgage", 120000.0, 0.0, "2026-01-18", 120, lender="Example Bank"
@@ -315,6 +343,7 @@ def test_balance_sheet_endpoint_shape(tmp_path):
         "stale",
         "note",
         "edit",
+        "in_total",
     }
     assert line["edit"]["kind"] == "manual"
 
@@ -342,3 +371,7 @@ def test_manual_asset_post_accepts_as_of(tmp_path):
         headers=HEADERS,
     )
     assert inst.get_manual_assets()[0]["as_of"] == "2025-06-06"
+    bad = client.put(
+        f"/api/v1/networth/{mid}", json={"as_of": "not-a-date"}, headers=HEADERS
+    )
+    assert bad.status_code == 422
