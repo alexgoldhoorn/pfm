@@ -2283,6 +2283,23 @@ function mapNetworthToForecast(items) {
 }
 window.mapNetworthToForecast = mapNetworthToForecast;
 
+// Pure: mortgage inputs of the simulator from a loan row of
+// GET /networth/loans (balance_eur, annual_rate_pct, monthly_payment_eur).
+// Missing or non-numeric fields become 0. Unit-tested in web_client/js/tests/.
+function forecastPrefillFromLoan(loan) {
+    const num = (v) => {
+        const n = parseFloat(v);
+        return Number.isFinite(n) ? n : 0;
+    };
+    const l = loan || {};
+    return {
+        principal: num(l.balance_eur),
+        rate: num(l.annual_rate_pct),
+        payment: num(l.monthly_payment_eur),
+    };
+}
+window.forecastPrefillFromLoan = forecastPrefillFromLoan;
+
 // Inflation assumed when turning a nominal return into the real return the
 // simulator's inputs expect: the ECB's 2% medium-term target.
 const ASSUMED_INFLATION_PCT = 2;
@@ -2881,14 +2898,20 @@ function setupForecastPage() {
         loadNwBtn.addEventListener('click', async () => {
             if (nwNote) nwNote.textContent = 'Loading from Net Worth…';
             try {
-                const [d, cf] = await Promise.all([
+                const [d, cf, loans] = await Promise.all([
                     window.apiClient.getNetworth(),
                     window.apiClient.getCashflow().catch(() => null),
+                    // a failed call falls back to the manual mortgage line
+                    window.apiClient.getLoans().catch(() => null),
                 ]);
                 const m = mapNetworthToForecast(d.items || []);
+                // A loan row, when there is one, is the mortgage source.
+                const loan = loans && loans.length ? forecastPrefillFromLoan(loans[0]) : null;
+                if (loan) m.mortgage = loan.principal;
                 cashAmountInput.value = Math.round(m.cash);
                 bondsAmountInput.value = Math.round(m.bonds);
                 mortgagePrincipalInput.value = Math.round(m.mortgage);
+                if (loan) mortgageRateInput.value = loan.rate;
                 updateTotalLiquidBadge();
 
                 let msg = `Loaded Cash ${fmtEur(m.cash)} · Bonds ${fmtEur(m.bonds)} · Mortgage ${fmtEur(m.mortgage)} from Net Worth.`;
@@ -2897,8 +2920,12 @@ function setupForecastPage() {
                     const net = Math.round(Math.max(0, cf.net_monthly_eur || 0));
                     if (stocksContributionInput) stocksContributionInput.value = net;
                     const mortPayment = Math.round((cf.by_category && cf.by_category.mortgage) || 0);
-                    if (mortPayment > 0) monthlyPaymentInput.value = mortPayment;
-                    msg += ` Monthly contribution ${fmtEur(net)}${mortPayment > 0 ? ` · Mortgage payment ${fmtEur(mortPayment)}` : ''} from Cash Flow.`;
+                    if (!loan && mortPayment > 0) monthlyPaymentInput.value = mortPayment;
+                    msg += ` Monthly contribution ${fmtEur(net)}${!loan && mortPayment > 0 ? ` · Mortgage payment ${fmtEur(mortPayment)}` : ''} from Cash Flow.`;
+                }
+                if (loan) {
+                    monthlyPaymentInput.value = Math.round(loan.payment);
+                    msg += ` Mortgage from loan: balance ${fmtEur(loan.principal)} at ${loan.rate}%, payment ${fmtEur(loan.payment)}.`;
                 }
                 updateMortgageNote();
                 if (nwNote) nwNote.textContent = msg;
