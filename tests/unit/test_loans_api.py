@@ -63,6 +63,14 @@ def test_loan_put_rate_change(tmp_path):
     assert r.status_code == 200
     row = client.get("/api/v1/networth/loans", headers=HEADERS).json()[0]
     assert row["annual_rate_pct"] == 4.5 and row["rate_as_of"] == "2026-10-01"
+    cleared = client.put(
+        f"/api/v1/networth/loans/{lid}",
+        json={**LOAN, "rate_as_of": None},
+        headers=HEADERS,
+    )
+    assert cleared.status_code == 200
+    row = client.get("/api/v1/networth/loans", headers=HEADERS).json()[0]
+    assert row["rate_as_of"] is None
     missing = client.put("/api/v1/networth/loans/999", json=LOAN, headers=HEADERS)
     assert missing.status_code == 404
 

@@ -2479,8 +2479,19 @@ class Database:
             return dict(row) if row else None
 
     def update_loan(self, loan_id: int, **fields) -> bool:
-        """Update known loan columns; unknown or None fields are ignored."""
-        return self._update_row("loans", loan_id, self._LOAN_FIELDS, fields)
+        """Update known loan columns; unknown fields are ignored.
+
+        ``None`` is ignored except for the nullable columns ``lender``,
+        ``rate_as_of``, ``balance_as_of`` and ``notes``, where an explicit
+        ``None`` is written as NULL.
+        """
+        return self._update_row(
+            "loans",
+            loan_id,
+            self._LOAN_FIELDS,
+            fields,
+            nullable={"lender", "rate_as_of", "balance_as_of", "notes"},
+        )
 
     def delete_loan(self, loan_id: int) -> bool:
         """Delete a loan; True when a row was removed."""
@@ -2489,9 +2500,25 @@ class Database:
             conn.commit()
             return cur.rowcount > 0
 
-    def _update_row(self, table: str, row_id: int, allowed: set, fields: Dict) -> bool:
-        """Shared UPDATE for tables with an ``id`` and ``updated_at`` column."""
-        sets = {k: v for k, v in fields.items() if k in allowed and v is not None}
+    def _update_row(
+        self,
+        table: str,
+        row_id: int,
+        allowed: set,
+        fields: Dict,
+        nullable: Optional[set] = None,
+    ) -> bool:
+        """Shared UPDATE for tables with an ``id`` and ``updated_at`` column.
+
+        ``None`` values are skipped, except for columns named in ``nullable``,
+        which are set to NULL.
+        """
+        nullable = nullable or set()
+        sets = {
+            k: v
+            for k, v in fields.items()
+            if k in allowed and (v is not None or k in nullable)
+        }
         if not sets:
             return False
         cols = ", ".join(f"{k} = ?" for k in sets)
@@ -2627,11 +2654,20 @@ class Database:
             return [dict(r) for r in rows]
 
     def update_retirement_income(self, income_id: int, **fields) -> bool:
-        """Update known income columns; unknown or None fields are ignored."""
+        """Update known income columns; unknown fields are ignored.
+
+        ``None`` is ignored except for the nullable columns ``to_age``,
+        ``source``, ``as_of`` and ``notes``, where an explicit ``None`` is
+        written as NULL.
+        """
         if "indexed" in fields and fields["indexed"] is not None:
             fields["indexed"] = 1 if fields["indexed"] else 0
         return self._update_row(
-            "retirement_incomes", income_id, self._RETIREMENT_INCOME_FIELDS, fields
+            "retirement_incomes",
+            income_id,
+            self._RETIREMENT_INCOME_FIELDS,
+            fields,
+            nullable={"to_age", "source", "as_of", "notes"},
         )
 
     def delete_retirement_income(self, income_id: int) -> bool:

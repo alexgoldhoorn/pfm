@@ -116,3 +116,20 @@ def test_retirement_income_owner_is_checked(tmp_path):
     db = _db(tmp_path)
     with pytest.raises(Exception):
         db.create_retirement_income("x", "dog", 100, 67)
+
+
+def test_update_retirement_income_none_clears_nullable(tmp_path):
+    db = _db(tmp_path)
+    iid = db.create_retirement_income("State pension", "self", 1000, 67)
+    db.update_retirement_income(iid, to_age=90, notes="x")
+    assert db.update_retirement_income(iid, to_age=None, notes=None)
+    row = db.get_retirement_incomes()[0]
+    assert row["to_age"] is None and row["notes"] is None
+
+
+def test_update_loan_none_clears_nullable(tmp_path):
+    db = _db(tmp_path)
+    mid = db.create_loan("Example Mortgage", 100000, 3.0, "2026-01-01", 240)
+    db.update_loan(mid, balance_as_of=96000)
+    assert db.update_loan(mid, balance_as_of=None)
+    assert db.get_loan(mid)["balance_as_of"] is None

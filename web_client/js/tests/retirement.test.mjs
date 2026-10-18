@@ -91,3 +91,22 @@ test("chart series have equal lengths", () => {
     assert.equal(s.cash.length, 5);
     assert.equal(s.loans.length, 5);
 });
+
+test("goal line falls back to a setup hint for needs_setup", () => {
+    const html = win.retirementGoalLineHtml({ status: "needs_setup" });
+    assert.match(html, /Retirement readiness/);
+    assert.match(html, /set up your plan on the Net Worth page/);
+});
+
+test("goal line prints the reason for insufficient_data", () => {
+    const html = win.retirementGoalLineHtml({ status: "insufficient_data", reason: "No <b>data</b>" });
+    assert.match(html, /No &lt;b&gt;data&lt;\/b&gt;/);
+});
+
+test("zero gap is not 'short by'", () => {
+    const r = ready();
+    r.scenarios[0] = scen(65, "base", { gap_monthly_eur: 0 });
+    const html = win.retirementVerdictHtml(r);
+    assert.doesNotMatch(html, /short by/);
+    assert.match(html, /no gap/);
+});

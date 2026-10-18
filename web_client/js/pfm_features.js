@@ -87,7 +87,8 @@ async function loadGoals() {
             ? await window.apiClient.getRetirementReadiness().catch(() => null)
             : null;
         list.innerHTML = goals.map(g => {
-            const isRetire = /retire/i.test(g.name || '');
+            // A failed readiness fetch keeps the ordinary progress bar.
+            const isRetire = /retire/i.test(g.name || '') && readiness !== null;
             const readyLine = isRetire && window.retirementGoalLineHtml
                 ? window.retirementGoalLineHtml(readiness) : '';
             const progress = Math.max(0, Math.min(100, parseFloat(g.progress_pct || 0)));

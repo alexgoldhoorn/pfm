@@ -644,8 +644,10 @@ function retirementVerdictHtml(readiness) {
             : `Money lasts until age ${esc(b.lasts_until_age)}`;
         const gap = Number(b.gap_monthly_eur);
         let gapLine;
-        if (gap < 0) {
-            gapLine = `${_rtHelp('rt_sustainable', 'surplus of')} ${money(-gap)}/month`;
+        if (gap <= 0) {
+            gapLine = gap === 0
+                ? `${_rtHelp('rt_sustainable', 'no gap')}: spending is covered`
+                : `${_rtHelp('rt_sustainable', 'surplus of')} ${money(-gap)}/month`;
         } else {
             let save;
             if (b.extra_saving_needed_monthly_eur == null) {
@@ -693,12 +695,18 @@ window.retirementChartSeries = retirementChartSeries;
 
 // Pure: the "Readiness: ..." line on a retirement goal (Goals page).
 function retirementGoalLineHtml(readiness) {
-    if (!readiness || readiness.status !== 'ok') return '';
+    const link = text => `<a href="#" onclick="window.navigationManager.showPage('networth'); return false;">${text}</a>`;
+    if (!readiness) return '';
+    if (readiness.status === 'insufficient_data') {
+        return `Retirement readiness: ${esc(readiness.reason || 'not enough data yet')} ${link('Open Net Worth')}`;
+    }
     const age = (readiness.plan || {}).retirement_age;
-    const b = _rtScenario(readiness, age, 'base');
-    if (!b) return '';
+    const b = readiness.status === 'ok' ? _rtScenario(readiness, age, 'base') : null;
+    if (!b) {
+        return `Retirement readiness: ${link('set up your plan on the Net Worth page')}`;
+    }
     const v = RT_VERDICTS[b.verdict] || { label: String(b.verdict) };
-    return `<a href="#" onclick="window.navigationManager.showPage('networth'); return false;">Readiness: ${esc(v.label)}, money lasts until ${esc(b.lasts_until_age)}</a>`;
+    return link(`Readiness: ${esc(v.label)}, money lasts until ${esc(b.lasts_until_age)}`);
 }
 window.retirementGoalLineHtml = retirementGoalLineHtml;
 
