@@ -1,8 +1,10 @@
 """On-demand price update service — shared by CLI and API trigger endpoint."""
 
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
+
+from portf_manager.services import price_guard
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +17,77 @@ _CRYPTO_YF_OVERRIDES: dict[str, tuple[str, str]] = {
     "SUI": ("SUI20947-USD", "USD"),
     "INV": ("INV-USD", "USD"),
 }
+
+
+def _today() -> date:
+    """Today's date; a seam so tests can move the clock."""
+    return date.today()
+
+
+def _apply_price_guard(db, asset: dict, new_price: float, source: str) -> tuple:
+    """Run the spike guard for one fetched price.
+
+    Returns ``(store, message)``: whether the price may be stored, and an
+    ``api_errors`` line when it was held. Held, confirmed and cleared outcomes
+    are also written to app_logs.
+    """
+    today = _today()
+    sym = asset["symbol"]
+    prev = db.get_latest_price(asset["id"])
+    prev_price = float(prev["price"]) if prev and prev.get("price") else None
+    prev_date = None
+    if prev and prev.get("price_date"):
+        prev_date = date.fromisoformat(str(prev["price_date"])[:10])
+    held = price_guard.get_held(db, asset["id"])
+    decision = price_guard.evaluate(prev_price, prev_date, new_price, today, held)
+
+    details = {
+        "symbol": sym,
+        "new_price": new_price,
+        "prev_price": prev_price,
+        "ratio": decision.ratio,
+    }
+    if decision.outcome == price_guard.HOLD:
+        pct = (decision.ratio - 1) * 100
+        # A repeat out-of-band print on a later day that does not match the held
+        # one replaces it; the same day's repeat keeps the first sighting.
+        same_day = bool(held) and str(held.get("date"))[:10] == today.isoformat()
+        if not same_day:
+            price_guard.set_held(
+                db,
+                asset["id"],
+                {
+                    "price": new_price,
+                    "date": today.isoformat(),
+                    "prev_price": prev_price,
+                    "prev_date": prev_date.isoformat() if prev_date else None,
+                    "ratio": decision.ratio,
+                    "source": source,
+                },
+            )
+            db.log_event(
+                "WARNING",
+                __name__,
+                f"Price held for {sym}: {new_price} vs {prev_price}",
+                event="price.guard.held",
+                details=details,
+            )
+        message = (
+            f"Price held for {sym}: {new_price} vs {prev_price} "
+            f"({pct:+.0f} % in {decision.days} d), awaiting confirmation"
+        )
+        return False, message
+    if decision.outcome in (price_guard.CONFIRM, price_guard.CLEAR):
+        price_guard.clear_held(db, asset["id"])
+        name = "confirmed" if decision.outcome == price_guard.CONFIRM else "cleared"
+        db.log_event(
+            "INFO",
+            __name__,
+            f"Held price for {sym} {name}",
+            event=f"price.guard.{name}",
+            details=details,
+        )
+    return True, None
 
 
 def run_price_update(
@@ -32,7 +105,9 @@ def run_price_update(
 
     Returns:
         Dict with keys: updated_count, skipped_count, error_count,
-        skipped_symbols, error_symbols, api_errors, duration_seconds.
+        skipped_symbols, held_symbols (prices the spike guard is holding back,
+        also counted in skipped_symbols), error_symbols, api_errors,
+        duration_seconds.
     """
     from portf_manager.api_client import (
         APIError,
@@ -54,6 +129,7 @@ def run_price_update(
 
     updated_count = 0
     skipped_symbols: list[str] = []
+    held_symbols: list[str] = []
     error_symbols: list[str] = []
     api_errors: list[str] = []
 
@@ -75,6 +151,7 @@ def run_price_update(
             "skipped_count": 0,
             "error_count": 0,
             "skipped_symbols": [],
+            "held_symbols": [],
             "error_symbols": [],
             "api_errors": [],
             "duration_seconds": duration,
@@ -148,6 +225,14 @@ def run_price_update(
                                 stored_ccy,
                                 detected_ccy.upper(),
                             )
+                    store, held_msg = _apply_price_guard(
+                        db, asset, prices_data[sym], source
+                    )
+                    if not store:
+                        skipped_symbols.append(sym)
+                        held_symbols.append(sym)
+                        api_errors.append(held_msg)
+                        continue
                     db.insert_price_record(
                         symbol=sym,
                         price=prices_data[sym],
@@ -185,6 +270,7 @@ def run_price_update(
         "skipped_count": len(skipped_symbols),
         "error_count": len(error_symbols),
         "skipped_symbols": skipped_symbols,
+        "held_symbols": held_symbols,
         "error_symbols": error_symbols,
         "api_errors": api_errors,
         "duration_seconds": duration,

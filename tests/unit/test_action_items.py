@@ -600,6 +600,37 @@ def _charges(db, pid, merchant, amounts, months):
         )
 
 
+class TestHeldPriceItems:
+    def test_is_registered(self):
+        from portf_manager.services import action_items
+
+        assert action_items.check_held_prices in checks_for_tests()
+
+    def test_one_item_per_held_asset(self, test_database):
+        from portf_manager.services import action_items, price_guard
+
+        aid = test_database.create_asset("EXA", "Example Corp", "stock", "EUR")
+        assert action_items.check_held_prices(test_database) == []
+        price_guard.set_held(
+            test_database,
+            aid,
+            {
+                "price": 1000.0,
+                "date": "2026-10-18",
+                "prev_price": 10.0,
+                "prev_date": "2026-10-17",
+                "ratio": 100.0,
+                "source": "cron",
+            },
+        )
+        (item,) = action_items.check_held_prices(test_database)
+        assert item["id"] == f"errors:price-held:{aid}:2026-10-18"
+        assert item["category"] == "errors" and item["severity"] == "medium"
+        assert "Example Corp" in item["title"] and "+9900 %" in item["title"]
+        assert "1000" in item["detail"] and "manual price" in item["detail"]
+        assert item["link_page"] == "diagnostics"
+
+
 class TestRecurringChargeItems:
     def test_recurring_check_is_registered(self):
         assert check_recurring_charges in checks_for_tests()

@@ -143,3 +143,86 @@ def test_nothing_to_update_still_records_a_run(test_database, client):
     result = run_price_update(test_database, symbols=["NOPE"])
     assert result["updated_count"] == 0
     assert len(test_database.get_price_update_runs()) == 1
+
+
+# ── price-spike guard ──────────────────────────────────────────────────────
+
+
+def _guard_setup(db, client, monkeypatch, prev=10.0):
+    """An asset with a stored price of *prev* dated the day before 'today'."""
+    from datetime import date, datetime
+
+    monkeypatch.setattr(
+        "portf_manager.services.price_updater._today", lambda: date(2026, 10, 18)
+    )
+    db.create_asset("EXA", "Example Corp", "stock", currency="EUR")
+    db.insert_price_record(
+        "EXA", prev, datetime(2026, 10, 17, 9, 0), price_date="2026-10-17"
+    )
+    client.quote_ccy = {"EXA": "EUR"}
+
+
+def test_out_of_band_price_is_held_not_stored(test_database, client, monkeypatch):
+    _guard_setup(test_database, client, monkeypatch)
+    client.prices = {"EXA": 1000.0}
+
+    result = run_price_update(test_database)
+
+    assert result["updated_count"] == 0
+    assert result["held_symbols"] == ["EXA"]
+    assert result["skipped_symbols"] == ["EXA"]
+    assert "Price held for EXA" in result["api_errors"][0]
+    assert _price(test_database, "EXA") == 10.0
+    events = test_database.list_logs(event="price.guard.held")
+    assert len(events) == 1
+
+
+def test_held_price_is_stored_when_a_later_fetch_confirms_it(
+    test_database, client, monkeypatch
+):
+    from datetime import date
+
+    _guard_setup(test_database, client, monkeypatch)
+    client.prices = {"EXA": 1000.0}
+    run_price_update(test_database)
+
+    # The next day the same level shows up again.
+    monkeypatch.setattr(
+        "portf_manager.services.price_updater._today", lambda: date(2026, 10, 19)
+    )
+    client.prices = {"EXA": 1010.0}
+    result = run_price_update(test_database)
+
+    assert result["updated_count"] == 1 and result["held_symbols"] == []
+    assert _price(test_database, "EXA") == 1010.0
+    assert test_database.list_logs(event="price.guard.confirmed")
+
+
+def test_glitch_that_disappears_is_cleared(test_database, client, monkeypatch):
+    from datetime import date
+
+    _guard_setup(test_database, client, monkeypatch)
+    client.prices = {"EXA": 1000.0}
+    run_price_update(test_database)
+
+    monkeypatch.setattr(
+        "portf_manager.services.price_updater._today", lambda: date(2026, 10, 19)
+    )
+    client.prices = {"EXA": 10.4}
+    result = run_price_update(test_database)
+
+    assert result["updated_count"] == 1
+    assert _price(test_database, "EXA") == 10.4
+    assert test_database.list_logs(event="price.guard.cleared")
+
+
+def test_second_fetch_the_same_day_stays_held(test_database, client, monkeypatch):
+    _guard_setup(test_database, client, monkeypatch)
+    client.prices = {"EXA": 1000.0}
+    run_price_update(test_database)
+    result = run_price_update(test_database)
+
+    assert result["held_symbols"] == ["EXA"]
+    assert _price(test_database, "EXA") == 10.0
+    # Only the first sighting is logged.
+    assert len(test_database.list_logs(event="price.guard.held")) == 1
