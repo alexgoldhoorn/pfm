@@ -3293,13 +3293,20 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         </div>
                     </div>
 
-                    <!-- Summary tiles -->
-                    <div class="row g-3 mb-4">
-                        <div class="col-6 col-md-2"><div class="card h-100"><div class="card-body py-3"><div class="small text-muted mb-1">Investments</div><div class="fs-5 fw-bold" id="nwBrokerage">—</div></div></div></div>
-                        <div class="col-6 col-md-2"><div class="card h-100"><div class="card-body py-3"><div class="small text-muted mb-1">Other assets</div><div class="fs-5 fw-bold text-success" id="nwAssets">—</div></div></div></div>
-                        <div class="col-6 col-md-2"><div class="card h-100"><div class="card-body py-3"><div class="small text-muted mb-1">Fixed deposits</div><div class="fs-5 fw-bold text-info" id="nwDeposits">—</div></div></div></div>
-                        <div class="col-6 col-md-2"><div class="card h-100"><div class="card-body py-3"><div class="small text-muted mb-1">Liabilities</div><div class="fs-5 fw-bold text-danger" id="nwLiabilities">—</div></div></div></div>
-                        <div class="col-12 col-md-4"><div class="card h-100 text-white" id="nwTotalCard" style="background:#0d6efd;"><div class="card-body py-3"><div class="small opacity-75 mb-1">Net worth</div><div class="fs-4 fw-bold" id="nwTotal">—</div></div></div></div>
+                    <!-- Balance sheet -->
+                    <div class="card mb-4" id="nwBalanceSheet">
+                        <div class="card-header fw-semibold d-flex align-items-center justify-content-between">
+                            <span><i class="bi bi-journal-text me-2"></i>Balance sheet
+                                <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" title="Every line shows where it comes from and how fresh it is."></i></span>
+                            <small class="text-muted" id="nwSheetAsOf"></small>
+                        </div>
+                        <div class="table-responsive">
+                            <table class="table mb-0 align-middle">
+                                <thead><tr><th class="ps-3">Line</th><th class="d-none d-md-table-cell">Source <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip" title="Where the number comes from: positions, broker cash, account API, bank statement, deposit, loan schedule or typed by hand."></i></th><th class="d-none d-md-table-cell">As of</th><th class="text-end">EUR</th><th class="pe-3"></th></tr></thead>
+                                <tbody id="nwBalanceSheetBody"><tr><td colspan="5" class="text-center text-muted py-4">Loading…</td></tr></tbody>
+                                <tfoot id="nwBalanceSheetFoot"></tfoot>
+                            </table>
+                        </div>
                     </div>
 
                     <!-- Setup checklist -->
@@ -3357,6 +3364,10 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                             <input class="form-control form-control-sm" id="nwCurrency" value="EUR" maxlength="3">
                                         </div>
                                         <div class="col-12">
+                                            <label class="form-label small mb-1">Amount as of</label>
+                                            <input type="date" class="form-control form-control-sm" id="nwAsOf">
+                                        </div>
+                                        <div class="col-12">
                                             <input class="form-control form-control-sm" id="nwNotes" placeholder="Notes (optional)">
                                         </div>
                                         <div class="col-12">
@@ -3376,6 +3387,67 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                     <table class="table table-hover mb-0">
                                         <thead><tr><th class="ps-3">Name</th><th>Type</th><th class="text-end">Amount</th><th class="text-end">EUR</th><th class="pe-3"></th></tr></thead>
                                         <tbody id="nwItemsBody"><tr><td colspan="5" class="text-center text-muted py-4">Loading…</td></tr></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Loans -->
+                        <div class="col-12 mt-2">
+                            <div class="card">
+                                <div class="card-header fw-semibold"><i class="bi bi-cash-coin me-2"></i>Loans</div>
+                                <div class="card-body border-bottom">
+                                    <form id="nwLoanForm" class="row g-2">
+                                        <input type="hidden" id="nwLoanId">
+                                        <div class="col-12 col-md-3"><label class="form-label small mb-1">Name *</label><input class="form-control form-control-sm" id="nwLoanName" required></div>
+                                        <div class="col-6 col-md-2"><label class="form-label small mb-1">Principal *</label><input type="number" step="any" min="0" class="form-control form-control-sm" id="nwLoanPrincipal" required></div>
+                                        <div class="col-6 col-md-2"><label class="form-label small mb-1">Rate % *</label><input type="number" step="any" min="0" class="form-control form-control-sm" id="nwLoanRate" required></div>
+                                        <div class="col-6 col-md-2"><label class="form-label small mb-1">Start date *</label><input type="date" class="form-control form-control-sm" id="nwLoanStart" required></div>
+                                        <div class="col-6 col-md-1"><label class="form-label small mb-1">Months *</label><input type="number" min="1" class="form-control form-control-sm" id="nwLoanTerm" required></div>
+                                        <div class="col-12 col-md-2"><label class="form-label small mb-1">Extra / month</label><input type="number" step="any" min="0" class="form-control form-control-sm" id="nwLoanExtra" value="0"></div>
+                                        <div class="col-12 col-md-3"><input class="form-control form-control-sm" id="nwLoanLender" placeholder="Lender (optional)"></div>
+                                        <div class="col-12 col-md-5"><input class="form-control form-control-sm" id="nwLoanNotes" placeholder="Notes (optional)"></div>
+                                        <div class="col-12 col-md-4 d-flex gap-2 justify-content-md-end">
+                                            <a class="small align-self-center" data-bs-toggle="collapse" href="#nwLoanRateRow" role="button">Rate change</a>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary" id="nwLoanCancel">Clear</button>
+                                            <button type="submit" class="btn btn-sm btn-primary" id="nwLoanSubmit">Add loan</button>
+                                        </div>
+                                        <div class="collapse" id="nwLoanRateRow">
+                                            <div class="row g-2">
+                                                <div class="col-6 col-md-3"><label class="form-label small mb-1">Rate valid from</label><input type="date" class="form-control form-control-sm" id="nwLoanRateAsOf"></div>
+                                                <div class="col-6 col-md-3"><label class="form-label small mb-1">Balance known at</label><input type="date" class="form-control form-control-sm" id="nwLoanBalanceAsOf"></div>
+                                            </div>
+                                        </div>
+                                        <div class="col-12"><div class="small" id="nwLoanStatus"></div></div>
+                                    </form>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="table table-hover mb-0">
+                                        <thead><tr><th class="ps-3">Name</th><th class="text-end">Balance</th><th class="text-end">Monthly payment</th><th class="text-end">Rate</th><th>Ends</th><th class="pe-3"></th></tr></thead>
+                                        <tbody id="nwLoansBody"><tr><td colspan="6" class="text-center text-muted py-3">Loading…</td></tr></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Account valuations -->
+                        <div class="col-12 mt-2">
+                            <div class="card">
+                                <div class="card-header fw-semibold d-flex align-items-center justify-content-between">
+                                    <span><i class="bi bi-plug me-2"></i>Account valuations (API)</span>
+                                    <button class="btn btn-sm btn-outline-secondary" id="nwValuationsRefresh"><i class="bi bi-arrow-clockwise me-1"></i>Refresh now</button>
+                                </div>
+                                <div class="card-body border-bottom">
+                                    <form id="nwValuationForm" class="row g-2 align-items-end">
+                                        <div class="col-12 col-md-4"><label class="form-label small mb-1">Broker</label><select class="form-select form-select-sm" id="nwValPortfolio"></select></div>
+                                        <div class="col-6 col-md-2"><label class="form-label small mb-1">Provider</label><input class="form-control form-control-sm" value="indexa" disabled></div>
+                                        <div class="col-6 col-md-3"><label class="form-label small mb-1">Account reference *</label><input class="form-control form-control-sm" id="nwValAccountRef" required></div>
+                                        <div class="col-12 col-md-3"><button type="submit" class="btn btn-sm btn-primary w-100">Add</button></div>
+                                        <div class="col-12"><div class="small" id="nwValStatus"></div></div>
+                                    </form>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="table table-hover mb-0">
+                                        <thead><tr><th class="ps-3">Broker</th><th>Provider</th><th class="text-end">Value</th><th class="text-end">Cash</th><th>As of</th><th>Last error</th><th class="pe-3"></th></tr></thead>
+                                        <tbody id="nwValuationsBody"><tr><td colspan="7" class="text-center text-muted py-3">Loading…</td></tr></tbody>
                                     </table>
                                 </div>
                             </div>
