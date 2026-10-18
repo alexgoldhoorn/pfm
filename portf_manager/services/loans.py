@@ -7,7 +7,7 @@ both ``balance_as_of`` and ``rate_as_of`` are set, (``rate_as_of``,
 """
 
 import calendar
-from datetime import date
+from datetime import date, datetime
 from typing import Union
 
 DateLike = Union[str, date]
@@ -15,6 +15,8 @@ DateLike = Union[str, date]
 
 def _to_date(value: DateLike) -> date:
     """Coerce a ``YYYY-MM-DD`` string or a date to a date."""
+    if isinstance(value, datetime):
+        return value.date()
     if isinstance(value, date):
         return value
     return date.fromisoformat(str(value)[:10])
@@ -111,7 +113,10 @@ def balance_on(loan: dict, day: DateLike) -> float:
     day = _to_date(day)
     if day < _to_date(loan["start_date"]):
         return float(loan["principal"])
-    anchor, balance, _ = _anchor(loan)
+    anchor, balance, remaining = _anchor(loan)
+    # no payments left at the anchor: the loan has ended
+    if remaining == 0 and day >= anchor:
+        return 0.0
     for row in _payments(loan):
         if row["date"] > day:
             break
@@ -133,7 +138,10 @@ def schedule(loan: dict) -> list[dict]:
     Each entry has ``year``, ``balance_end_eur``, ``interest_paid_eur`` and
     ``payments_eur`` (all payments in that year, extra included).
     """
-    anchor, opening, _ = _anchor(loan)
+    anchor, opening, remaining = _anchor(loan)
+    # a loan with no payments left is a single zero row in the anchor year
+    if remaining == 0:
+        opening = 0.0
     rows = _payments(loan)
     last_year = rows[-1]["date"].year if rows else anchor.year
     out = []
