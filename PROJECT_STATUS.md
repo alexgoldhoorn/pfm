@@ -5,7 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-10-10
+Last updated: 2026-10-18
+
+**Recent (v2.5.80):** **Price-spike guard and ongoing charges (TER).** A fetched price outside a √time band around the last stored price (`services/price_guard.py`, `MAX_DAILY_MOVE = 0.5`) is held in `app_settings` (`price_guard:{asset_id}`) instead of stored, and confirmed or cleared by a later fetch; held prices appear in the run result (`held_symbols`), `app_logs` (`price.guard.*`) and as an Action Item (`check_held_prices`). Schema v34 adds `fund_profiles.ongoing_charges_pct`; `GET /analytics/fees` gains an `ongoing_charges` block (value-weighted TER, yearly cost, uncovered funds, 10/20/30-year cost and reduction in yield at an assumed 5 % gross return); the Fees tab shows it and the fund profile editor takes the TER.
 
 **Recent (v2.5.79):** **Progress metrics for a learning investor.** New `GET /analytics/progress` (`services/progress.py`, `services/inflation.py`): money put in vs market growth (monthly), calendar-year and monthly time-weighted returns next to the benchmark in EUR and Spanish inflation, real returns (Fisher relation, HICP Spain from the ECB Data Portal, no fallback — shown as unavailable instead), the IRPF a sell-everything-today would add this year (with the share in funds that a traspaso can move tax-free), and the savings rate and emergency-fund months from imported bank statements (complete months with imports only). Web: new Analytics → Progress tab and a dashboard "Your progress" row (no euro amounts in tiles, so privacy blur holds); bands are rules of thumb and the help cites GIPS, Eurostat/ECB, the IRPF law and the 50/30/20 rule. The tax optimizer's savings-tax rule moved to `progress.savings_tax`. MCP `performance` (period `all`) prints a PROGRESS block.
 
