@@ -8,6 +8,8 @@ from httpx import AsyncClient
 
 from portf_manager.database import Database
 from portf_manager.services.action_items import (
+    check_balance_sheet_freshness,
+    check_retirement_readiness,
     check_budget_overruns,
     check_data_quality,
     check_goals_off_track,
@@ -367,8 +369,10 @@ class TestGetActionItems:
         severities = [i["severity"] for i in items]
         assert severities == sorted(severities, key=lambda s: order[s])
 
-    def test_empty_db_returns_empty_list(self, test_database):
-        assert get_action_items(test_database) == []
+    def test_empty_db_only_asks_for_retirement_setup(self, test_database):
+        # An empty database has nothing to flag except the unset retirement plan.
+        items = get_action_items(test_database)
+        assert [i["id"] for i in items] == ["retirement_readiness"]
 
     def test_one_failing_check_does_not_take_down_others(self, test_database):
         # _CHECKS is a module-level tuple of function objects, resolved once
@@ -669,3 +673,111 @@ class TestRecurringChargeItems:
         assert [
             i["id"] for i in check_recurring_charges(db, today=date(2026, 4, 20))
         ] == [f"recurring:price:{pid}:RISE:2026-04-15"]
+
+
+def _with_fx(monkeypatch):
+    from portf_manager.services import balance_sheet
+
+    real = balance_sheet.build_balance_sheet
+    monkeypatch.setattr(
+        balance_sheet,
+        "build_balance_sheet",
+        lambda db, today=None: real(
+            db, today, fx=lambda c: 1.0, fx_on=lambda c, d: 1.0
+        ),
+    )
+
+
+def test_balance_sheet_freshness_flags_bank_without_balance(tmp_path, monkeypatch):
+    _with_fx(monkeypatch)
+    db = Database(str(tmp_path / "a.db"))
+    pid = db.create_portfolio("Example Bank", "EUR", account_type="bank")
+    items = check_balance_sheet_freshness(db, date(2026, 10, 18))
+    assert [i["id"] for i in items] == [f"balance_sheet_stale:bank:{pid}"]
+    assert items[0]["severity"] == "medium"
+    assert items[0]["title"] == "Example Bank has no balance"
+    assert items[0]["detail"] == "no statement with a balance"
+    assert items[0]["link_page"] == "networth"
+
+
+def test_balance_sheet_freshness_quiet_when_fresh(tmp_path, monkeypatch):
+    _with_fx(monkeypatch)
+    db = Database(str(tmp_path / "a.db"))
+    db.create_manual_asset("Example Flat", "property", 100000.0, as_of="2026-10-01")
+    assert check_balance_sheet_freshness(db, date(2026, 10, 18)) == []
+
+
+def test_balance_sheet_freshness_stale_manual_is_low(tmp_path, monkeypatch):
+    _with_fx(monkeypatch)
+    db = Database(str(tmp_path / "a.db"))
+    db.create_manual_asset("Example Cash", "cash", 100.0, as_of="2026-01-01")
+    items = check_balance_sheet_freshness(db, date(2026, 10, 18))
+    assert len(items) == 1
+    assert items[0]["severity"] == "low"
+    assert items[0]["title"] == "Example Cash is 290 days old"
+
+
+def test_balance_sheet_duplicate_manual_line_is_low(tmp_path, monkeypatch):
+    _with_fx(monkeypatch)
+    db = Database(str(tmp_path / "a.db"))
+    db.create_portfolio("Example Broker", "EUR")
+    mid = db.create_manual_asset(
+        "example broker", "savings_account", 10.0, as_of="2026-10-01"
+    )
+    items = check_balance_sheet_freshness(db, date(2026, 10, 18))
+    assert [(i["id"], i["severity"]) for i in items] == [
+        (f"balance_sheet_duplicate:manual:{mid}", "low")
+    ]
+
+
+def _readiness(monkeypatch, status, verdict=None):
+    from portf_manager.services import retirement
+
+    result = {"status": status, "scenarios": []}
+    if verdict:
+        result["scenarios"] = [
+            {
+                "retirement_age": 65,
+                "case": "base",
+                "verdict": verdict,
+                "lasts_until_age": 72,
+            }
+        ]
+    monkeypatch.setattr(retirement, "readiness", lambda db, **kw: result)
+
+
+def test_retirement_short_is_medium(monkeypatch):
+    _readiness(monkeypatch, "ok", "short")
+    items = check_retirement_readiness(None)
+    assert len(items) == 1
+    assert items[0]["id"] == "retirement_readiness"
+    assert items[0]["severity"] == "medium"
+    assert items[0]["title"] == "Retirement at 65: Short"
+    assert items[0]["detail"] == "Money lasts until age 72 on the base case"
+
+
+def test_retirement_at_risk_is_high(monkeypatch):
+    _readiness(monkeypatch, "ok", "at_risk")
+    assert check_retirement_readiness(None)[0]["severity"] == "high"
+
+
+def test_retirement_needs_setup_is_low(monkeypatch):
+    _readiness(monkeypatch, "needs_setup")
+    items = check_retirement_readiness(None)
+    assert [(i["severity"], i["title"]) for i in items] == [
+        ("low", "Retirement plan needs setup")
+    ]
+
+
+@pytest.mark.parametrize(
+    "status,verdict", [("ok", "on_track"), ("insufficient_data", None)]
+)
+def test_retirement_quiet_otherwise(monkeypatch, status, verdict):
+    _readiness(monkeypatch, status, verdict)
+    assert check_retirement_readiness(None) == []
+
+
+def test_new_checks_are_registered():
+    registered = checks_for_tests()
+    assert check_balance_sheet_freshness in registered
+    assert check_retirement_readiness in registered
