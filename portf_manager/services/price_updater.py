@@ -24,6 +24,25 @@ def _today() -> date:
     return date.today()
 
 
+def _refresh_valuations(db) -> tuple[int, list[str]]:
+    """Refresh provider-reported account values; never raises.
+
+    Returns:
+        ``(refreshed_count, error_messages)``.
+    """
+    try:
+        # Imported lazily to avoid an import cycle with the server package.
+        from portf_manager.services.indexa import refresh_account_valuations
+        from portf_server.settings import get_settings
+
+        results = refresh_account_valuations(db, get_settings().indexa_token)
+    except Exception as e:
+        logger.warning("Account valuation refresh failed: %s", e)
+        return 0, [str(e)]
+    refreshed = sum(1 for r in results if r["ok"])
+    return refreshed, [r["error"] for r in results if not r["ok"]]
+
+
 def _apply_price_guard(db, asset: dict, new_price: float, source: str) -> tuple:
     """Run the spike guard for one fetched price.
 
@@ -155,6 +174,8 @@ def run_price_update(
             "error_symbols": [],
             "api_errors": [],
             "duration_seconds": duration,
+            "valuations_refreshed": 0,
+            "valuation_errors": [],
         }
 
     yf_to_db: dict[str, str] = {}
@@ -253,6 +274,8 @@ def run_price_update(
     except Exception as e:
         api_errors.append(f"Unexpected error: {e}")
 
+    valuations_refreshed, valuation_errors = _refresh_valuations(db)
+
     duration = (datetime.now() - run_started).total_seconds()
     db.record_price_update_run(
         started_at=run_started.isoformat(),
@@ -274,4 +297,6 @@ def run_price_update(
         "error_symbols": error_symbols,
         "api_errors": api_errors,
         "duration_seconds": duration,
+        "valuations_refreshed": valuations_refreshed,
+        "valuation_errors": valuation_errors,
     }

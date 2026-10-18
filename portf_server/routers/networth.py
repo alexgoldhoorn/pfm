@@ -7,16 +7,19 @@ net worth reflects the whole picture, not just investments.
 """
 
 import logging
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from portf_manager.services import loans as loan_calc
 from portf_manager.services.balance_sheet import build_balance_sheet
+from portf_manager.services.indexa import refresh_account_valuations
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
+from ..settings import get_settings
 from .deposits import _enrich as _enrich_deposit
 from .portfolios import _get_fx_rate as _fx
 
@@ -119,6 +122,144 @@ def net_worth_eur(db) -> float:
     figures never drift apart.
     """
     return build_balance_sheet(db)["totals"]["net_worth_eur"]
+
+
+class LoanBody(BaseModel):
+    name: str
+    principal: float = Field(gt=0)
+    annual_rate_pct: float = Field(ge=0)
+    start_date: date
+    term_months: int = Field(gt=0)
+    currency: str = "EUR"
+    lender: Optional[str] = None
+    rate_as_of: Optional[str] = None
+    balance_as_of: Optional[float] = None
+    extra_payment_eur: float = 0.0
+    notes: Optional[str] = None
+
+    def fields(self) -> dict:
+        return {**self.model_dump(), "start_date": self.start_date.isoformat()}
+
+
+class ValuationBody(BaseModel):
+    portfolio_id: int
+    provider: str
+    account_ref: str
+
+
+def _loan_row(loan: dict) -> dict:
+    return {
+        **loan,
+        "balance_eur": loan_calc.balance_on(loan, date.today()),
+        "monthly_payment_eur": loan_calc.payment_of(loan),
+        "end_date": loan_calc.end_date(loan).isoformat(),
+    }
+
+
+def _get_loan_or_404(db, loan_id: int) -> dict:
+    loan = db.get_loan(loan_id)
+    if not loan:
+        raise HTTPException(status_code=404, detail="Loan not found")
+    return loan
+
+
+@router.get("/loans")
+def list_loans(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+    """All loans with today's balance, monthly payment and end date."""
+    return [_loan_row(loan) for loan in db.get_loans()]
+
+
+@router.post("/loans")
+def create_loan(
+    body: LoanBody, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+):
+    """Create a loan."""
+    return {"id": db.create_loan(**body.fields())}
+
+
+@router.put("/loans/{loan_id}")
+def update_loan(
+    loan_id: int,
+    body: LoanBody,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Replace a loan's fields."""
+    _get_loan_or_404(db, loan_id)
+    db.update_loan(loan_id, **body.fields())
+    return {"ok": True}
+
+
+@router.delete("/loans/{loan_id}")
+def delete_loan(
+    loan_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+):
+    """Delete a loan."""
+    if not db.delete_loan(loan_id):
+        raise HTTPException(status_code=404, detail="Loan not found")
+    return {"ok": True}
+
+
+@router.get("/loans/{loan_id}/schedule")
+def loan_schedule(
+    loan_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+):
+    """Yearly amortisation rows of one loan."""
+    return loan_calc.schedule(_get_loan_or_404(db, loan_id))
+
+
+@router.get("/valuations")
+def list_valuations(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+    """Provider-reported account valuations."""
+    return db.get_account_valuations()
+
+
+@router.post("/valuations")
+def create_valuation(
+    body: ValuationBody, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+):
+    """Link a brokerage portfolio to a provider account and refresh once."""
+    portfolio = db.get_portfolio(body.portfolio_id)
+    if not portfolio:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    if portfolio.get("account_type", "brokerage") != "brokerage":
+        raise HTTPException(
+            status_code=422, detail="Valuations apply to brokerage portfolios only"
+        )
+    db.upsert_account_valuation(
+        body.portfolio_id,
+        body.provider,
+        body.account_ref,
+        0.0,
+        0.0,
+        "EUR",
+        "1970-01-01",
+        datetime.now().isoformat(timespec="seconds"),
+    )
+    token = get_settings().indexa_token
+    refreshed = False
+    if token and body.provider == "indexa":
+        results = refresh_account_valuations(
+            db, token, only_portfolio=body.portfolio_id
+        )
+        refreshed = bool(results and results[0]["ok"])
+    return {**db.get_account_valuation(body.portfolio_id), "refreshed": refreshed}
+
+
+@router.post("/valuations/refresh")
+def refresh_valuations(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+    """Refresh every provider valuation now."""
+    return refresh_account_valuations(db, get_settings().indexa_token)
+
+
+@router.delete("/valuations/{portfolio_id}")
+def delete_valuation(
+    portfolio_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+):
+    """Unlink a portfolio from its provider account."""
+    if not db.delete_account_valuation(portfolio_id):
+        raise HTTPException(status_code=404, detail="Valuation not found")
+    return {"ok": True}
 
 
 @router.get("/balance-sheet")
