@@ -37,7 +37,7 @@ test("renders group subtotals and totals footer", () => {
     assert.match(rows, /Liabilities/);
     assert.match(rows, /Example Loan/);
     assert.match(rows, /editLoan\(3\)/);
-    assert.match(rows, /editManualAssetAmount\(7\)/);
+    assert.match(rows, /editManualAssetFromSheet\(7\)/);
     const foot = win.renderBalanceSheetTotals(sheet().totals);
     assert.match(foot, /Financial assets/);
     assert.match(foot, /Net worth/);
@@ -64,11 +64,12 @@ test("bank line without amount shows n/a not 0", () => {
 
 test("escapes labels", () => {
     const s = sheet();
-    s.groups[0].lines[0] = line({ label: "<b>x</b>", note: '"><img src=x>' });
+    s.groups[0].lines[0] = line({ label: "<b>x</b>", stale: true, note: '"><img src=x>' });
     const rows = win.renderBalanceSheetRows(s);
     assert.match(rows, /&lt;b&gt;/);
     assert.doesNotMatch(rows, /<b>x/);
     assert.doesNotMatch(rows, /<img/);
+    assert.match(rows, /title="&quot;&gt;&lt;img src=x&gt;"/);
 });
 
 test("not-in-total lines are marked", () => {

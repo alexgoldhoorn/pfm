@@ -34,6 +34,9 @@ async function loadNetworthPage() {
     _wireValuationForm();
     _wireDepositForm();
     _wireCashflowForm();
+    _loadBalanceSheet();
+    _loadLoans();
+    _loadValuations();
     const body = $('nwItemsBody');
     if (body) body.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm me-2"></span>Loading…</td></tr>';
     try {
@@ -56,9 +59,6 @@ async function loadNetworthPage() {
                 </tr>`).join('');
         }
         _renderDeposits(d.deposits || []);
-        await _loadBalanceSheet();
-        _loadLoans();
-        _loadValuations();
         const cf = await _loadCashflow();
         _loadActualSpendingComparison();
         _renderChecklist(d, cf, d.bank_accounts || []);
@@ -501,7 +501,9 @@ function _updatedLine(it) {
 
 
 function _todayIso() {
-    return new Date().toISOString().slice(0, 10);
+    const d = new Date();
+    const p = n => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
 const NW_SOURCE_LABELS = {
@@ -515,7 +517,7 @@ function _balanceSheetEditControl(edit) {
     const kind = edit && edit.kind;
     const id = Number(edit && edit.id);
     if (kind === 'manual') {
-        return `<button class="btn btn-sm btn-outline-secondary" title="Update amount" onclick="window.editManualAssetAmount(${id})"><i class="bi bi-pencil-square"></i></button>`;
+        return `<button class="btn btn-sm btn-outline-secondary" title="Update amount" onclick="window.editManualAssetFromSheet(${id})"><i class="bi bi-pencil-square"></i></button>`;
     }
     if (kind === 'loan') {
         return `<button class="btn btn-sm btn-outline-secondary" title="Edit loan" onclick="window.editLoan(${id})"><i class="bi bi-pencil-square"></i></button>`;
@@ -674,7 +676,7 @@ function _wireLoanForm() {
             lender: val('nwLoanLender') || null,
             notes: val('nwLoanNotes') || null,
             rate_as_of: val('nwLoanRateAsOf') || null,
-            balance_as_of: val('nwLoanBalanceAsOf') || null,
+            balance_as_of: val('nwLoanBalanceAsOf') === '' ? null : parseFloat(val('nwLoanBalanceAsOf')),
         };
         if (!payload.name || !payload.start_date || !payload.term_months) return;
         const editingId = val('nwLoanId');
@@ -808,6 +810,16 @@ function _wireNetworthForm() {
         refresh.addEventListener('click', () => loadNetworthPage());
     }
 }
+
+// Sheet pencil: the editor lives in the manage table, so bring it into view.
+window.editManualAssetFromSheet = function (id) {
+    const cell = document.getElementById(`nwAmtCell${id}`);
+    if (!cell) { notify('Line not found in the manage table', 'warning'); return; }
+    cell.scrollIntoView({ block: 'center' });
+    window.editManualAssetAmount(id);
+    const input = document.getElementById(`nwAmtInput${id}`);
+    if (input) input.focus();
+};
 
 window.confirmDeleteManualAsset = async function (id) {
     if (!(await confirmDialog({ title: 'Delete item', message: 'Remove this item from your net worth? This cannot be undone.', danger: true }))) return;
