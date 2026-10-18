@@ -272,7 +272,7 @@ def test_progress_savings_unchanged_without_exclude():
 # ── readiness over a real database ────────────────────────────────────────────
 
 
-def _bank_db(tmp_path, months: int, plan_birth: str | None = "1983-07-20"):
+def _bank_db(tmp_path, months: int, plan_birth: str | None = "1975-03-01"):
     db = Database(str(tmp_path / "ready.db"))
     pid = db.get_or_create_portfolio("Example Bank", account_type="bank")
     year, month = 2026, 9
@@ -312,7 +312,7 @@ def test_readiness_ok_inputs_and_scenario_order(tmp_path):
     db = _bank_db(tmp_path, 12)
     r = readiness(db, today=date(2026, 10, 19), fx=lambda c: 1.0)
     assert r["status"] == "ok"
-    assert r["inputs"]["age"] == 43
+    assert r["inputs"]["age"] == 51
     assert r["inputs"]["spending_target_monthly_eur"] == 1000
     assert r["inputs"]["spending_months_used"] == 12
     assert r["inputs"]["savings_now_yearly_eur"] == 24000
@@ -348,13 +348,14 @@ def test_readiness_splits_a_fresh_valuation_into_investments_and_cash(tmp_path):
     assert r["inputs"]["cash_eur"] >= 10000
 
 
-def test_extra_saving_zero_in_calendar_year_of_retirement():
+def test_extra_saving_none_in_calendar_year_of_retirement():
     # turns 65 on 2026-12-31: project() already treats 2026 as retired
     plan = _plan(birth_date="1961-12-31")
     got = extra_saving_needed_monthly(
         plan, 65, 0.0, _pot(), [], [], _spending(1000), date(2026, 6, 1)
     )
-    assert got == 0
+    # no saving year is left and the money runs out: nothing can fix it
+    assert got is None
 
 
 def test_extra_saving_none_when_cap_is_not_enough():
@@ -395,3 +396,12 @@ def test_save_plan_bounds_withdrawal_tax():
 class _NoDb:
     def set_setting(self, *a):
         raise AssertionError("must validate before storing")
+
+
+def test_stale_warning_separates_counted_and_left_out_lines(tmp_path):
+    db = _bank_db(tmp_path, 12)
+    db.create_manual_asset("Example Jar", "cash", 100.0, as_of="2025-01-01")
+    r = readiness(db, today=date(2026, 10, 19), fx=lambda c: 1.0)
+    msgs = [w for w in r["warnings"] if "stale line" in w]
+    assert len(msgs) == 1
+    assert "counted at their stale value" in msgs[0]

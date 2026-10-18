@@ -13,6 +13,7 @@ pfm_analytics.js, already unit-tested) and the frontend merges it into the
 same displayed list. See docs/superpowers/specs/2026-07-16-action-items-design.md.
 """
 
+import re
 from datetime import date, datetime, timedelta
 
 STALE_IMPORT_DAYS = 60
@@ -261,7 +262,8 @@ def check_goals_off_track(db) -> list[dict]:
 
     items = []
     for g in list_goals(db=db, api_key_info={}):
-        if g.get("on_track"):
+        # retirement goals are judged by the readiness verdict, not progress
+        if g.get("on_track") or re.search(r"retire", g.get("name") or "", re.I):
             continue
         items.append(
             {

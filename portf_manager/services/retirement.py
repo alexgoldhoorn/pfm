@@ -262,7 +262,8 @@ def project(
     includes = bool(plan["spending_includes_loan_payments"])
     tax = float(plan["withdrawal_tax_pct"]) / 100
     saving = spending["savings_now_yearly_eur"] + extra_saving_monthly * 12
-    tables = _loan_tables(loans)
+    # accept prebuilt tables so callers can build the schedules once
+    tables = loans if loans and "years" in loans[0] else _loan_tables(loans)
 
     invest = float(pot["investments_eur"])
     cash = float(pot["cash_eur"])
@@ -397,7 +398,7 @@ def _bisect(lo: float, hi: float, ok: Callable[[float], bool]) -> tuple[float, f
 def sustainable_monthly(
     plan, retirement_age, real_return_pct, pot, loans, incomes, spending, today
 ) -> float:
-    """The monthly spend (on top of pensions) the pot funds to the horizon."""
+    """The total monthly spend (pensions included) the plan funds to the horizon."""
     target = spending["target_monthly_eur"]
 
     def lasts(m: float) -> bool:
@@ -426,7 +427,7 @@ def extra_saving_needed_monthly(
 ) -> Optional[float]:
     """Extra monthly saving until retirement that makes the pot last.
 
-    Returns 0 when already on track or no saving year is left, and None when
+    Returns 0 when already on track, and None when no saving year is left or
     even the cap does not make the pot last.
     """
 
@@ -448,7 +449,7 @@ def extra_saving_needed_monthly(
     birth = _as_date(plan["birth_date"])
     # same calendar-age rule as project()
     if today.year - birth.year >= retirement_age:
-        return 0.0
+        return None
     if not lasts(_EXTRA_SAVING_CAP):
         return None
     # the smallest extra that lasts is the top of the failing range
@@ -554,7 +555,7 @@ def readiness(
 
     sheet = build_balance_sheet(db, today=today, fx=fx)
     pot = _pot_from_sheet(db, sheet, fx)
-    loans = db.get_loans()
+    loans = _loan_tables(db.get_loans())
     incomes = [
         {**i, "indexed": bool(i["indexed"])} for i in db.get_retirement_incomes()
     ]
@@ -600,14 +601,18 @@ def readiness(
                 }
             )
 
+    stale_lines = [ln for g in sheet["groups"] for ln in g["lines"] if ln["stale"]]
+    counted = sum(1 for ln in stale_lines if ln["in_total"])
+    left_out = len(stale_lines) - counted
     stale = int(sheet["totals"].get("stale_lines") or 0)
     warnings = []
     if not incomes:
         warnings.append("No state pension entered: the projection assumes none.")
-    if stale:
-        warnings.append(
-            f"{stale} balance-sheet lines are stale and counted at their stale value."
-        )
+    if stale_lines:
+        msg = f"{counted} stale line(s) counted at their stale value"
+        if left_out:
+            msg += f"; {left_out} left out of the total"
+        warnings.append(msg + ".")
     if not plan.get("partner_birth_date") and any(
         i["owner"] == "partner" for i in incomes
     ):
@@ -649,7 +654,7 @@ def readiness(
             "spending_includes_loan_payments": plan["spending_includes_loan_payments"],
             "savings_now_yearly_eur": spend["savings_now_yearly_eur"],
             "income_monthly_eur": spend["income_monthly_eur"],
-            "loans": _loan_summary(loans, today),
+            "loans": _loan_summary(db.get_loans(), today),
             "incomes": incomes,
             "stale_lines": stale,
         },

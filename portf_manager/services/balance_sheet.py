@@ -276,6 +276,31 @@ def build_balance_sheet(
             ),
         )
 
+    # A stale or never-fetched valuation on a portfolio with no positions line
+    # would otherwise vanish: keep its stored value, flagged stale.
+    for pid, why in valuation_notes.items():
+        if pid in per_portfolio:
+            continue
+        val = valuations[pid]
+        currency = val.get("currency") or "EUR"
+        value = float(val["value"] or 0)
+        never = why == "never fetched"
+        add(
+            f"valuation:{pid}",
+            names.get(pid, f"Portfolio {pid}"),
+            "investments",
+            value,
+            currency,
+            value * fx(currency),
+            "account_valuation",
+            None if never else val["as_of"],
+            MAX_AGE_VALUATION,
+            {"kind": "valuation", "id": pid},
+            note=f"account valuation {why}",
+            force_stale=True,
+            in_total=not (never and value == 0),
+        )
+
     # Bank accounts.
     for p in portfolios:
         if p.get("account_type") != "bank":
