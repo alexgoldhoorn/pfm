@@ -68,6 +68,8 @@ def save_plan(db, plan: dict) -> dict:
     """
     merged = _merge(plan)
     _validate_ages(merged)
+    if not 0 <= merged["withdrawal_tax_pct"] < 100:
+        raise ValueError("withdrawal_tax_pct must satisfy 0 <= x < 100")
     db.set_setting(PLAN_KEY, json.dumps(merged))
     return merged
 
@@ -162,14 +164,21 @@ def spending_inputs(db, plan: dict, today: date, fx: Callable[[str], float]) -> 
         months,
         exclude=expand_categories(tree, list(SAVINGS_EXCLUDED)),
     )
-    yearly = max(saved["income_eur"] - saved["spent_eur"], 0.0) / n * 12 if n else 0.0
+    n_saved = len(saved["months_used"])
+    yearly = (
+        max(saved["income_eur"] - saved["spent_eur"], 0.0) / n_saved * 12
+        if n_saved
+        else 0.0
+    )
     return {
         "target_monthly_eur": target["avg_monthly_spend_eur"] or 0.0,
         "months_used": used,
         "breakdown": {k: round(v, 2) for k, v in sorted(breakdown.items())},
         "excluded": sorted(excluded),
         "savings_now_yearly_eur": round(yearly, 2),
-        "income_monthly_eur": round(saved["income_eur"] / n, 2) if n else 0.0,
+        "income_monthly_eur": (
+            round(saved["income_eur"] / n_saved, 2) if n_saved else 0.0
+        ),
     }
 
 
@@ -273,6 +282,8 @@ def project(
     at_retirement: Optional[float] = None
     year = today.year
     first = True
+    # Ages are calendar ages (year - birth year): retirement, pension starts
+    # and the end of saving land in the calendar year of the birthday.
     while year - birth.year < horizon:
         age = year - birth.year
         frac = (13 - today.month) / 12 if first else 1.0
@@ -303,6 +314,13 @@ def project(
             for t in tables:
                 paid, _ = _loan_year(t, year)
                 if includes:
+                    # a loan that has not started yet has not ended either
+                    first_pay = min(
+                        (y for y, r in t["years"].items() if r["payments_eur"] > 0),
+                        default=None,
+                    )
+                    if first_pay is None or year < first_pay:
+                        continue
                     need -= (t["monthly"] * 12 - paid) * frac
                 else:
                     need += paid * frac
@@ -405,8 +423,12 @@ def sustainable_monthly(
 
 def extra_saving_needed_monthly(
     plan, retirement_age, real_return_pct, pot, loans, incomes, spending, today
-) -> float:
-    """Extra monthly saving until retirement that makes the pot last."""
+) -> Optional[float]:
+    """Extra monthly saving until retirement that makes the pot last.
+
+    Returns 0 when already on track or no saving year is left, and None when
+    even the cap does not make the pot last.
+    """
 
     def lasts(extra: float) -> bool:
         return not project(
@@ -424,10 +446,11 @@ def extra_saving_needed_monthly(
     if lasts(0.0):
         return 0.0
     birth = _as_date(plan["birth_date"])
-    if _age_on(birth, today) >= retirement_age:
+    # same calendar-age rule as project()
+    if today.year - birth.year >= retirement_age:
         return 0.0
     if not lasts(_EXTRA_SAVING_CAP):
-        return _EXTRA_SAVING_CAP
+        return None
     # the smallest extra that lasts is the top of the failing range
     return _bisect(0.0, _EXTRA_SAVING_CAP, lambda x: not lasts(x))[1]
 
@@ -555,8 +578,9 @@ def readiness(
             sc["gap_monthly_eur"] = round(
                 spending["target_monthly_eur"] - sustainable, 2
             )
-            sc["extra_saving_needed_monthly_eur"] = round(
-                extra_saving_needed_monthly(*args), 2
+            extra = extra_saving_needed_monthly(*args)
+            sc["extra_saving_needed_monthly_eur"] = (
+                None if extra is None else round(extra, 2)
             )
             scenarios.append(
                 {
