@@ -37,6 +37,7 @@ async function loadNetworthPage() {
     _loadBalanceSheet();
     _loadLoans();
     _loadValuations();
+    loadRetirementCard();
     const body = $('nwItemsBody');
     if (body) body.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm me-2"></span>Loading…</td></tr>';
     try {
@@ -594,6 +595,387 @@ async function _loadBalanceSheet() {
         body.innerHTML = `<tr><td colspan="5" class="text-center text-danger py-3">${esc(err.message)}</td></tr>`;
     }
 }
+
+// ---------------------------------------------------------------------------
+// Retirement card
+// ---------------------------------------------------------------------------
+
+const RT_VERDICTS = {
+    on_track: { label: 'On track', cls: 'text-bg-success' },
+    short: { label: 'Short', cls: 'text-bg-warning' },
+    at_risk: { label: 'At risk', cls: 'text-bg-danger' },
+};
+const RT_SETUP_COPY = 'Enter your birth date to get a retirement verdict.';
+
+function _rtHelp(key, text) {
+    const tip = (window.METRIC_HELP || {})[key] || '';
+    return `${text} <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip" title="${escapeForAttr(tip)}"></i>`;
+}
+
+// Pure: the base scenario for a retirement age (or undefined).
+function _rtScenario(readiness, age, kase) {
+    return ((readiness && readiness.scenarios) || [])
+        .find(s => s.retirement_age === age && s.case === kase);
+}
+
+// Pure: the card's verdict section as HTML (no DOM access). Unit-tested.
+function retirementVerdictHtml(readiness) {
+    const r = readiness || {};
+    if (r.status === 'needs_setup') {
+        return `<p class="mb-0">${esc(RT_SETUP_COPY)}</p>`;
+    }
+    if (r.status === 'insufficient_data') {
+        return `<p class="mb-0 text-muted">${esc(r.reason || 'Not enough data yet.')}</p>`;
+    }
+    const money = v => Fmt.money(v, 'EUR', 0);
+    const plan = r.plan || {};
+    const inputs = r.inputs || {};
+    const horizon = plan.horizon_age;
+    const ages = [];
+    (r.scenarios || []).forEach(s => {
+        if (s.case === 'base' && !ages.includes(s.retirement_age)) ages.push(s.retirement_age);
+    });
+    const cols = ages.map(age => {
+        const b = _rtScenario(r, age, 'base');
+        const p = _rtScenario(r, age, 'pessimistic');
+        const v = RT_VERDICTS[b.verdict] || { label: String(b.verdict), cls: 'text-bg-secondary' };
+        const lasts = (Number(b.pot_at_horizon_eur) >= 0 && horizon != null)
+            ? `Money lasts past ${esc(horizon)}`
+            : `Money lasts until age ${esc(b.lasts_until_age)}`;
+        const gap = Number(b.gap_monthly_eur);
+        let gapLine;
+        if (gap < 0) {
+            gapLine = `${_rtHelp('rt_sustainable', 'surplus of')} ${money(-gap)}/month`;
+        } else {
+            let save;
+            if (b.extra_saving_needed_monthly_eur == null) {
+                save = 'not reachable by saving alone';
+            } else {
+                save = `save ${money(b.extra_saving_needed_monthly_eur)}/month more`;
+            }
+            gapLine = `${_rtHelp('rt_sustainable', 'short by')} ${money(gap)}/month; ${_rtHelp('rt_extra_saving', save)}`;
+        }
+        const pess = p ? `<div class="small text-muted">Pessimistic: lasts until ${esc(p.lasts_until_age)}</div>` : '';
+        return `<div class="col-12 col-md-6">
+            <div class="fw-semibold mb-1">Retire at ${esc(age)}
+                <span class="badge ${v.cls} ms-1">${_rtHelp('rt_verdict', v.label)}</span></div>
+            <div>${lasts}</div>
+            <div>${gapLine}</div>
+            ${pess}
+        </div>`;
+    }).join('');
+    const months = inputs.spending_months_used;
+    const target = `<div class="mt-3 small">Spending target: <strong>${money(inputs.spending_target_monthly_eur)}/month</strong>
+        from ${esc(months != null ? months : '?')} imported months, ${_rtHelp('rt_before_tax', 'before tax')}.</div>`;
+    const incomes = inputs.incomes || [];
+    const pens = incomes.length
+        ? incomes.map(i => `${esc(i.name)} (${money(i.monthly_eur)}/month from ${esc(i.from_age)})`).join('; ')
+        : 'none entered';
+    const pensions = `<div class="small">Pensions assumed: ${pens}</div>`;
+    const warns = (r.warnings || []).length
+        ? `<ul class="small text-muted mt-2 mb-0">${r.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul>`
+        : '';
+    return `<div class="row g-3">${cols}</div>${target}${pensions}${warns}`;
+}
+window.retirementVerdictHtml = retirementVerdictHtml;
+
+// Pure: the arrays the chart draws, equal length, one entry per path row.
+function retirementChartSeries(scenario) {
+    const path = (scenario && scenario.path) || [];
+    return {
+        ages: path.map(p => p.age),
+        investments: path.map(p => Number(p.investments_eur) || 0),
+        cash: path.map(p => Number(p.cash_eur) || 0),
+        loans: path.map(p => Number(p.loans_eur) || 0),
+    };
+}
+window.retirementChartSeries = retirementChartSeries;
+
+// Pure: the "Readiness: ..." line on a retirement goal (Goals page).
+function retirementGoalLineHtml(readiness) {
+    if (!readiness || readiness.status !== 'ok') return '';
+    const age = (readiness.plan || {}).retirement_age;
+    const b = _rtScenario(readiness, age, 'base');
+    if (!b) return '';
+    const v = RT_VERDICTS[b.verdict] || { label: String(b.verdict) };
+    return `<a href="#" onclick="window.navigationManager.showPage('networth'); return false;">Readiness: ${esc(v.label)}, money lasts until ${esc(b.lasts_until_age)}</a>`;
+}
+window.retirementGoalLineHtml = retirementGoalLineHtml;
+
+function renderRetirementChart(readiness) {
+    const wrap = document.getElementById('nwRetirementChartWrap');
+    const svg = document.getElementById('nwRetirementChart');
+    if (!wrap || !svg) return;
+    const plan = readiness.plan || {};
+    const base = _rtScenario(readiness, plan.retirement_age, 'base');
+    const ser = retirementChartSeries(base);
+    const n = ser.ages.length;
+    if (n < 2) { wrap.style.display = 'none'; return; }
+    wrap.style.display = '';
+    const W = wrap.clientWidth || 600;
+    const H = 260;
+    const PAD = { top: 12, right: 16, bottom: 30, left: 64 };
+    const innerW = W - PAD.left - PAD.right;
+    const innerH = H - PAD.top - PAD.bottom;
+    const stack = ser.investments.map((v, i) => Math.max(0, v) + Math.max(0, ser.cash[i]));
+    const nt = niceTicks(0, Math.max(...stack, ...ser.loans, 1), 5);
+    const range = (nt.hi - nt.lo) || 1;
+    const a0 = ser.ages[0];
+    const a1 = ser.ages[n - 1];
+    const xScale = a => PAD.left + ((a - a0) / ((a1 - a0) || 1)) * innerW;
+    const yScale = v => PAD.top + innerH - ((v - nt.lo) / range) * innerH;
+    const line = arr => arr.map((v, i) =>
+        (i === 0 ? 'M' : 'L') + xScale(ser.ages[i]).toFixed(1) + ',' + yScale(v).toFixed(1)).join(' ');
+    const base0 = yScale(0).toFixed(1);
+    const inv = ser.investments.map(v => Math.max(0, v));
+    const area = (top, bottom) => line(top)
+        + ser.ages.slice().reverse().map((a, k) =>
+            'L' + xScale(a).toFixed(1) + ',' + yScale(bottom[n - 1 - k]).toFixed(1)).join(' ') + ' Z';
+    const zeros = inv.map(() => 0);
+    const markers = [plan.retirement_age, plan.statutory_age]
+        .filter((a, i, arr) => a != null && arr.indexOf(a) === i && a >= a0 && a <= a1);
+    const step = Math.max(1, Math.ceil((a1 - a0) / (W < 480 ? 4 : 8)));
+    const xTicks = [];
+    for (let a = Math.ceil(a0 / step) * step; a <= a1; a += step) xTicks.push(a);
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.innerHTML = `
+        ${nt.ticks.map(v => `<line x1="${PAD.left}" y1="${yScale(v).toFixed(1)}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${yScale(v).toFixed(1)}" ${SVG_GRID}/>`).join('')}
+        <path d="${area(stack, inv)}" style="fill:var(--viz-2)" opacity="0.35"/>
+        <path d="${area(inv, zeros)}" style="fill:var(--viz-1)" opacity="0.35"/>
+        <path d="${line(ser.loans)}" fill="none" style="stroke:var(--viz-cost)" stroke-width="1.5" stroke-dasharray="5 4"/>
+        ${markers.map(a => `<line x1="${xScale(a).toFixed(1)}" y1="${PAD.top}" x2="${xScale(a).toFixed(1)}" y2="${base0}" ${SVG_AXIS} stroke-dasharray="2 3"/><text x="${xScale(a).toFixed(1)}" y="${PAD.top + 10}" text-anchor="middle" font-size="11" ${SVG_LABEL}>${esc(a)}</text>`).join('')}
+        ${nt.ticks.map(v => `<text x="${(PAD.left - 8).toFixed(1)}" y="${(yScale(v) + 4).toFixed(1)}" text-anchor="end" font-size="11" ${SVG_LABEL}>${fmtEurTick(v, nt.step)}</text>`).join('')}
+        ${xTicks.map(a => `<text x="${xScale(a).toFixed(1)}" y="${(PAD.top + innerH + 18).toFixed(1)}" text-anchor="middle" font-size="11" ${SVG_LABEL}>${esc(a)}</text>`).join('')}
+        <line x1="${PAD.left}" y1="${base0}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${base0}" ${SVG_AXIS}/>
+    `;
+}
+
+// Plan form: one labelled input per plan key.
+const RT_PLAN_FIELDS = [
+    { key: 'birth_date', label: 'Your birth date', type: 'date' },
+    { key: 'partner_birth_date', label: 'Partner birth date', type: 'date' },
+    { key: 'retirement_age', label: 'Retirement age', type: 'int' },
+    { key: 'statutory_age', label: 'State pension age', type: 'int' },
+    { key: 'horizon_age', label: 'Plan until age', type: 'int' },
+    { key: 'spending_months', label: 'Months of spending to average', type: 'int' },
+    { key: 'real_return_pct', label: 'Real return % (base)', type: 'float' },
+    { key: 'pessimistic_real_return_pct', label: 'Real return % (pessimistic)', type: 'float' },
+    { key: 'cash_real_return_pct', label: 'Real return % on cash', type: 'float' },
+    { key: 'withdrawal_tax_pct', label: 'Tax on withdrawals %', type: 'float' },
+];
+let _rtPlan = {};
+
+function _renderPlanForm(plan, categories) {
+    const form = document.getElementById('nwPlanForm');
+    if (!form) return;
+    _rtPlan = plan || {};
+    const excluded = new Set(_rtPlan.excluded_categories || []);
+    const cats = Array.from(new Set([...(categories || []), ...excluded])).sort();
+    form.innerHTML = RT_PLAN_FIELDS.map(f => `
+        <div class="col-6 col-md-3">
+            <label class="form-label small mb-1" for="nwPlan_${f.key}">${esc(f.label)}</label>
+            <input class="form-control form-control-sm" id="nwPlan_${f.key}" data-key="${f.key}" data-type="${f.type}"
+                type="${f.type === 'date' ? 'date' : 'number'}" ${f.type === 'float' ? 'step="any"' : ''}
+                value="${escapeForAttr(_rtPlan[f.key] != null ? String(_rtPlan[f.key]) : '')}">
+        </div>`).join('') + `
+        <div class="col-12 col-md-6">
+            <div class="form-check mt-md-4"><input class="form-check-input" type="checkbox" id="nwPlan_spending_includes_loan_payments" ${_rtPlan.spending_includes_loan_payments ? 'checked' : ''}>
+            <label class="form-check-label small" for="nwPlan_spending_includes_loan_payments">Imported spending already includes loan payments</label></div>
+        </div>
+        <div class="col-12 col-md-6">
+            <label class="form-label small mb-1" for="nwPlan_excluded_categories">Spending categories left out of the target</label>
+            <select multiple class="form-select form-select-sm" id="nwPlan_excluded_categories">
+                ${cats.map(c => `<option value="${escapeForAttr(c)}" ${excluded.has(c) ? 'selected' : ''}>${esc(c)}</option>`).join('')}
+            </select>
+        </div>
+        <div class="col-12"><button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-check-lg me-1"></i>Save plan</button></div>`;
+}
+
+// Only the fields that differ from the loaded plan.
+function _collectPlanChanges() {
+    const changes = {};
+    RT_PLAN_FIELDS.forEach(f => {
+        const el = document.getElementById('nwPlan_' + f.key);
+        if (!el) return;
+        const raw = el.value.trim();
+        let val;
+        if (raw === '') val = null;
+        else if (f.type === 'int') val = parseInt(raw, 10);
+        else if (f.type === 'float') val = parseFloat(raw);
+        else val = raw;
+        const old = _rtPlan[f.key] != null ? _rtPlan[f.key] : null;
+        if (val !== old) changes[f.key] = val;
+    });
+    const chk = document.getElementById('nwPlan_spending_includes_loan_payments');
+    if (chk && chk.checked !== !!_rtPlan.spending_includes_loan_payments) {
+        changes.spending_includes_loan_payments = chk.checked;
+    }
+    const sel = document.getElementById('nwPlan_excluded_categories');
+    if (sel) {
+        const now = Array.from(sel.selectedOptions).map(o => o.value).sort();
+        const before = (_rtPlan.excluded_categories || []).slice().sort();
+        if (now.join('\u0000') !== before.join('\u0000')) changes.excluded_categories = now;
+    }
+    return changes;
+}
+
+const RT_QUICK_INCOMES = [
+    { label: 'Spanish state pension (self), from 67', name: 'Spanish state pension', owner: 'self', from_age: 67, monthly: '' },
+    { label: 'Partner state pension, from 67', name: 'Partner state pension', owner: 'partner', from_age: 67, monthly: '' },
+    { label: 'Dutch AOW, 0/month from 67', name: 'Dutch AOW', owner: 'self', from_age: 67, monthly: 0 },
+];
+let _rtIncomes = [];
+
+function _fillIncomeForm(inc) {
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v == null ? '' : v; };
+    set('nwIncId', inc.id);
+    set('nwIncName', inc.name);
+    set('nwIncOwner', inc.owner || 'self');
+    set('nwIncMonthly', inc.monthly_eur != null ? inc.monthly_eur : inc.monthly);
+    set('nwIncFrom', inc.from_age);
+    set('nwIncTo', inc.to_age);
+    set('nwIncSource', inc.source);
+    set('nwIncAsOf', inc.as_of);
+    const idx = document.getElementById('nwIncIndexed');
+    if (idx) idx.checked = inc.indexed !== false;
+    const name = document.getElementById('nwIncName');
+    if (name) name.focus();
+}
+
+function _renderIncomes(incomes) {
+    _rtIncomes = incomes || [];
+    const body = document.getElementById('nwIncomesBody');
+    const quick = document.getElementById('nwIncomeQuick');
+    if (!body) return;
+    if (!_rtIncomes.length) {
+        body.innerHTML = '<tr><td colspan="5" class="text-center text-muted">No retirement incomes entered.</td></tr>';
+    } else {
+        body.innerHTML = _rtIncomes.map(i => `<tr>
+            <td>${esc(i.name)}${i.source ? `<div class="small text-muted">${esc(i.source)}</div>` : ''}</td>
+            <td>${i.owner === 'partner' ? 'Partner' : 'Me'}</td>
+            <td class="text-end">${Fmt.money(i.monthly_eur, 'EUR', 0)}</td>
+            <td class="small">${esc(i.from_age)}${i.to_age != null ? '&ndash;' + esc(i.to_age) : '+'}${i.indexed === false ? ' (not indexed)' : ''}</td>
+            <td class="text-end text-nowrap">
+                <button class="btn btn-sm btn-outline-secondary" type="button" data-inc-edit="${Number(i.id)}" title="Edit"><i class="bi bi-pencil"></i></button>
+                <button class="btn btn-sm btn-outline-danger" type="button" data-inc-del="${Number(i.id)}" title="Delete"><i class="bi bi-trash"></i></button>
+            </td></tr>`).join('');
+    }
+    if (quick) {
+        quick.innerHTML = _rtIncomes.length ? '' : RT_QUICK_INCOMES.map((q, k) =>
+            `<button class="btn btn-sm btn-outline-primary" type="button" data-inc-quick="${k}">${esc(q.label)}</button>`
+        ).join('') + (_rtIncomes.length ? '' :
+            ' <a class="small align-self-center" href="https://sede.seg-social.gob.es" target="_blank" rel="noopener">Seguridad Social simulator</a>');
+    }
+}
+
+let _rtWired = false;
+function _wireRetirement() {
+    if (_rtWired) return;
+    const toggle = document.getElementById('nwPlanToggle');
+    const planForm = document.getElementById('nwPlanForm');
+    const incForm = document.getElementById('nwIncomeForm');
+    if (!toggle || !planForm || !incForm) return;
+    _rtWired = true;
+    toggle.addEventListener('click', () => {
+        planForm.style.display = planForm.style.display === 'none' ? '' : 'none';
+    });
+    planForm.addEventListener('submit', async ev => {
+        ev.preventDefault();
+        const changes = _collectPlanChanges();
+        if (!Object.keys(changes).length) { notify('Nothing changed.', 'info'); return; }
+        try {
+            await window.apiClient.updateRetirementPlan(changes);
+            notify('Plan saved.', 'success');
+            planForm.style.display = 'none';
+            loadRetirementCard();
+        } catch (err) {
+            notify(err.message, 'danger');
+        }
+    });
+    incForm.addEventListener('submit', async ev => {
+        ev.preventDefault();
+        const num = id => { const v = document.getElementById(id).value; return v === '' ? null : Number(v); };
+        const txt = id => document.getElementById(id).value.trim();
+        const body = {
+            name: txt('nwIncName'), owner: document.getElementById('nwIncOwner').value,
+            monthly_eur: num('nwIncMonthly'), from_age: num('nwIncFrom'), to_age: num('nwIncTo'),
+            indexed: document.getElementById('nwIncIndexed').checked,
+            source: txt('nwIncSource') || null, as_of: txt('nwIncAsOf') || null,
+        };
+        const id = document.getElementById('nwIncId').value;
+        try {
+            if (id) await window.apiClient.updateRetirementIncome(id, body);
+            else await window.apiClient.createRetirementIncome(body);
+            incForm.reset();
+            document.getElementById('nwIncId').value = '';
+            loadRetirementCard();
+        } catch (err) {
+            notify(err.message, 'danger');
+        }
+    });
+    document.getElementById('nwRetirement').addEventListener('click', async ev => {
+        const t = ev.target.closest('[data-inc-edit],[data-inc-del],[data-inc-quick]');
+        if (!t) return;
+        if (t.dataset.incQuick != null) {
+            _fillIncomeForm(RT_QUICK_INCOMES[Number(t.dataset.incQuick)]);
+        } else if (t.dataset.incEdit != null) {
+            const inc = _rtIncomes.find(i => i.id === Number(t.dataset.incEdit));
+            if (inc) _fillIncomeForm(inc);
+        } else if (t.dataset.incDel != null) {
+            const inc = _rtIncomes.find(i => i.id === Number(t.dataset.incDel));
+            const ok = await confirmDialog({
+                title: 'Delete income', message: `Delete "${inc ? inc.name : 'this income'}"?`,
+                confirmLabel: 'Delete', danger: true,
+            });
+            if (!ok) return;
+            try {
+                await window.apiClient.deleteRetirementIncome(t.dataset.incDel);
+                loadRetirementCard();
+            } catch (err) {
+                notify(err.message, 'danger');
+            }
+        }
+    });
+}
+
+async function loadRetirementCard() {
+    const body = document.getElementById('nwRetirementBody');
+    if (!body) return;
+    _wireRetirement();
+    const api = window.apiClient;
+    const [readyRes, planRes, incRes, catRes] = await Promise.allSettled([
+        api.getRetirementReadiness(), api.getRetirementPlan(),
+        api.getRetirementIncomes(), api.getSpendingCategories(),
+    ]);
+    if (planRes.status === 'fulfilled') {
+        const cats = catRes.status === 'fulfilled' && Array.isArray(catRes.value)
+            ? catRes.value.map(c => (typeof c === 'string' ? c : c && c.name)).filter(Boolean) : [];
+        _renderPlanForm(planRes.value, cats);
+    }
+    if (incRes.status === 'fulfilled') {
+        const v = incRes.value;
+        _renderIncomes(Array.isArray(v) ? v : (v && v.items) || []);
+    }
+    const wrap = document.getElementById('nwRetirementChartWrap');
+    if (readyRes.status !== 'fulfilled') {
+        body.innerHTML = `<p class="text-danger mb-0">${esc(readyRes.reason && readyRes.reason.message)}</p>`;
+        if (wrap) wrap.style.display = 'none';
+        return;
+    }
+    const readiness = readyRes.value;
+    body.innerHTML = retirementVerdictHtml(readiness);
+    if (readiness.status === 'ok') {
+        renderRetirementChart(readiness);
+    } else if (wrap) {
+        wrap.style.display = 'none';
+    }
+    if (readiness.status === 'needs_setup') {
+        const f = document.getElementById('nwPlanForm');
+        if (f) f.style.display = '';
+    }
+    initTooltips();
+}
+window.loadRetirementCard = loadRetirementCard;
 
 let _nwLoans = [];
 
