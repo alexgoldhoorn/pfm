@@ -55,7 +55,7 @@ test("a surplus is shown as a surplus", () => {
 test("a gap shows short by and the saving needed", () => {
     const r = ready();
     r.scenarios[0] = scen(65, "base", {
-        verdict: "short", lasts_until_age: 85, pot_at_horizon_eur: -5000,
+        verdict: "short", lasts_until_age: 85, pot_at_horizon_eur: 0,
         gap_monthly_eur: 300, extra_saving_needed_monthly_eur: 150,
     });
     const html = win.retirementVerdictHtml(r);
@@ -66,10 +66,22 @@ test("a gap shows short by and the saving needed", () => {
     assert.match(html, /lasts until age 85/);
 });
 
+test("a depleted scenario says until age N, never past the horizon", () => {
+    const r = ready();
+    r.scenarios[0] = scen(65, "base", {
+        verdict: "at_risk", lasts_until_age: 71, pot_at_horizon_eur: 0,
+        gap_monthly_eur: 900, extra_saving_needed_monthly_eur: 400,
+    });
+    r.scenarios = r.scenarios.filter(s => s.retirement_age === 65);
+    const html = win.retirementVerdictHtml(r);
+    assert.match(html, /Money lasts until age 71/);
+    assert.doesNotMatch(html, /Money lasts past/);
+});
+
 test("null extra saving says it is not reachable", () => {
     const r = ready();
     r.scenarios[0] = scen(65, "base", {
-        verdict: "at_risk", lasts_until_age: 70, pot_at_horizon_eur: -5000,
+        verdict: "at_risk", lasts_until_age: 70, pot_at_horizon_eur: 0,
         gap_monthly_eur: 900, extra_saving_needed_monthly_eur: null,
     });
     const html = win.retirementVerdictHtml(r);

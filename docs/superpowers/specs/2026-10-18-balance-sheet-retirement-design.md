@@ -306,7 +306,7 @@ One JSON `app_settings` key `retirement_plan`, read and written through
 
 ```json
 {
-  "birth_date": "1983-07-20",
+  "birth_date": "1975-03-01",
   "partner_birth_date": null,
   "retirement_age": 65,
   "statutory_age": 67,
@@ -413,7 +413,7 @@ maturity.
   "as_of": "2026-10-18",
   "plan": {...},
   "inputs": {
-    "age": 43, "financial_assets_eur": 0, "investments_eur": 0, "cash_eur": 0,
+    "age": 51, "financial_assets_eur": 0, "investments_eur": 0, "cash_eur": 0,
     "spending_target_monthly_eur": 0, "spending_months_used": 12,
     "spending_includes_loan_payments": true,
     "savings_now_yearly_eur": 0, "loans": [...], "incomes": [...],
@@ -429,7 +429,7 @@ maturity.
       "sustainable_monthly_eur": 0,
       "gap_monthly_eur": 0,
       "extra_saving_needed_monthly_eur": 0,
-      "path": [{"age": 43, "year": 2026, "investments_eur": 0, "cash_eur": 0,
+      "path": [{"age": 51, "year": 2026, "investments_eur": 0, "cash_eur": 0,
                 "loans_eur": 0, "pensions_eur": 0, "withdrawal_eur": 0}, ...]
     }, ...
   ],
@@ -440,8 +440,7 @@ maturity.
 - `verdict`: `on_track` when the base case lasts to `horizon_age` with a
   pot at horizon ≥ 0; `short` when it lasts past retirement + 10 years but
   not to the horizon; `at_risk` otherwise.
-- `sustainable_monthly_eur`: the constant real monthly spend (on top of
-  pensions) the pot can fund from retirement to the horizon, found by
+- `sustainable_monthly_eur`: the constant real monthly spend, pensions included, the pot and pensions can fund from retirement to the horizon, found by
   bisection on the same simulation. `gap_monthly_eur` =
   `spending_target − sustainable` (negative = surplus).
 - `extra_saving_needed_monthly_eur`: the extra monthly contribution from
