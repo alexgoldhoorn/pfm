@@ -1,6 +1,6 @@
 """Tests for the loan amortisation service."""
 
-from datetime import date
+from datetime import date, datetime
 
 from portf_manager.services.loans import (
     balance_on,
@@ -115,3 +115,28 @@ def test_schedule_zero_rate_totals():
     }
     assert rows[1]["balance_end_eur"] == 0
     assert rows[1]["payments_eur"] == 1000
+
+
+def test_anchor_at_term_end_means_loan_ended():
+    loan = _loan(
+        principal=100000.0,
+        annual_rate_pct=3.5,
+        term_months=240,
+        rate_as_of="2046-01-01",
+        balance_as_of=50000.0,
+    )
+    assert balance_on(loan, date(2050, 1, 1)) == 0
+    assert end_date(loan) == date(2046, 1, 1)
+    assert payments_in_year(loan, 2046) == 0
+    assert schedule(loan) == [
+        {
+            "year": 2046,
+            "balance_end_eur": 0,
+            "interest_paid_eur": 0,
+            "payments_eur": 0,
+        }
+    ]
+
+
+def test_accepts_datetime():
+    assert balance_on(_loan(), datetime(2026, 7, 15, 10, 30)) == 6000
