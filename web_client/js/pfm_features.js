@@ -82,7 +82,14 @@ async function loadGoals() {
             return;
         }
         const nw = await window.apiClient.getNetworth().catch(() => null);
+        // One readiness fetch per load; a failure just hides the extra line.
+        const readiness = goals.some(g => /retire/i.test(g.name || ''))
+            ? await window.apiClient.getRetirementReadiness().catch(() => null)
+            : null;
         list.innerHTML = goals.map(g => {
+            const isRetire = /retire/i.test(g.name || '');
+            const readyLine = isRetire && window.retirementGoalLineHtml
+                ? window.retirementGoalLineHtml(readiness) : '';
             const progress = Math.max(0, Math.min(100, parseFloat(g.progress_pct || 0)));
             const onTrack = !!g.on_track;
             const trackBadge = onTrack
@@ -135,9 +142,9 @@ async function loadGoals() {
                                     </tbody>
                                 </table>
                             </div>` : ''}
-                            <div class="progress mb-3" style="height:12px;">
+                            ${isRetire ? `<div class="mb-3 small">${readyLine}</div>` : `<div class="progress mb-3" style="height:12px;">
                                 <div class="progress-bar ${barCls}" role="progressbar" style="width:${progress}%;"></div>
-                            </div>
+                            </div>`}
                             <div class="row g-2 small">
                                 <div class="col-6">
                                     <div class="text-muted">Target date</div>
@@ -326,6 +333,7 @@ const ACTIONITEMS_CATEGORY_LABELS = {
     import: 'Broker Imports', data_quality: 'Data Quality', errors: 'Errors',
     goals: 'Goals', watchlist: 'Price Alerts', networth: 'Net Worth',
     spending: 'Spending', budget: 'Budget', exposure: 'Fund Exposure',
+    retirement: 'Retirement',
 };
 const ACTIONITEMS_SEVERITY_BADGE = {
     high: 'text-bg-danger', medium: 'text-bg-warning', low: 'text-bg-secondary',

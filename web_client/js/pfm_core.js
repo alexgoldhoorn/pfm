@@ -2645,6 +2645,58 @@ function createAPIClient() {
             if (!resp.ok) throw new Error('Failed to delete');
             return resp.json().catch(() => ({}));
         },
+        async getRetirementReadiness() {
+            const resp = await fetch(this.baseURL + '/api/v1/retirement/readiness', {
+                method: 'GET', headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to load retirement readiness');
+            return resp.json().catch(() => ({}));
+        },
+        async getRetirementPlan() {
+            const resp = await fetch(this.baseURL + '/api/v1/retirement/plan', {
+                method: 'GET', headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to load retirement plan');
+            return resp.json().catch(() => ({}));
+        },
+        async updateRetirementPlan(body) {
+            const resp = await fetch(this.baseURL + '/api/v1/retirement/plan', {
+                method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(body)
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to save retirement plan');
+            return resp.json().catch(() => ({}));
+        },
+        async getRetirementIncomes() {
+            const resp = await fetch(this.baseURL + '/api/v1/retirement/incomes', {
+                method: 'GET', headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to load retirement incomes');
+            return resp.json().catch(() => ({}));
+        },
+        async createRetirementIncome(body) {
+            const resp = await fetch(this.baseURL + '/api/v1/retirement/incomes', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(body)
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to add income');
+            return resp.json().catch(() => ({}));
+        },
+        async updateRetirementIncome(id, body) {
+            const resp = await fetch(this.baseURL + '/api/v1/retirement/incomes/' + id, {
+                method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(body)
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to update income');
+            return resp.json().catch(() => ({}));
+        },
+        async deleteRetirementIncome(id) {
+            const resp = await fetch(this.baseURL + '/api/v1/retirement/incomes/' + id, {
+                method: 'DELETE', headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to delete income');
+            return resp.json().catch(() => ({}));
+        },
         async getBalanceSheet() {
             const resp = await fetch(this.baseURL + '/api/v1/networth/balance-sheet', { headers: { 'X-API-Key': this.apiKey } });
             if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to load balance sheet');
