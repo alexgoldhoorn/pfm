@@ -136,3 +136,28 @@ def test_valuation_unknown_or_bank_portfolio(tmp_path):
         ).status_code
         == 422
     )
+
+
+def test_valuation_repost_keeps_good_value_when_refresh_fails(tmp_path, monkeypatch):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Broker", base_currency="EUR")
+    monkeypatch.setattr(
+        "portf_server.routers.networth.get_settings",
+        lambda: type("S", (), {"indexa_token": "tok"})(),
+    )
+    monkeypatch.setattr(
+        indexa, "_get", lambda p, t: {"portfolio": {"total_amount": 7000}}
+    )
+    body = {"portfolio_id": pid, "provider": "indexa", "account_ref": "EXAMPLE1"}
+    client.post("/api/v1/networth/valuations", json=body, headers=HEADERS)
+
+    def boom(path, token):
+        raise RuntimeError("HTTP 500")
+
+    monkeypatch.setattr(indexa, "_get", boom)
+    body["account_ref"] = "EXAMPLE2"
+    r = client.post("/api/v1/networth/valuations", json=body, headers=HEADERS)
+    assert r.json()["refreshed"] is False
+    row = db.get_account_valuation(pid)
+    assert row["value"] == 7000.0 and row["account_ref"] == "EXAMPLE2"
+    assert row["as_of"] != "1970-01-01"

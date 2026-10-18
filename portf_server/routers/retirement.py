@@ -1,9 +1,10 @@
 """Retirement Router — plan settings and retirement income streams."""
 
-from typing import Literal, Optional
+from datetime import date
+from typing import Annotated, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from portf_manager.services.retirement import load_plan, save_plan
 
@@ -19,12 +20,51 @@ async def _auth(
     return await require_api_key(api_key_manager)(request)
 
 
+_Age = Annotated[int, Field(strict=True, ge=0, le=120)]
+_Pct = Annotated[float, Field(strict=True)]
+_DATE_KEYS = {"birth_date", "partner_birth_date"}
+
+
+class PlanUpdate(BaseModel):
+    """Partial plan update; unknown keys are ignored, null clears a date only."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    retirement_age: Optional[_Age] = None
+    statutory_age: Optional[_Age] = None
+    horizon_age: Optional[_Age] = None
+    real_return_pct: Optional[_Pct] = None
+    pessimistic_real_return_pct: Optional[_Pct] = None
+    cash_real_return_pct: Optional[_Pct] = None
+    withdrawal_tax_pct: Optional[_Pct] = None
+    spending_months: Optional[Annotated[int, Field(strict=True, ge=1)]] = None
+    spending_includes_loan_payments: Optional[bool] = None
+    excluded_categories: Optional[list[str]] = None
+    birth_date: Optional[date] = None
+    partner_birth_date: Optional[date] = None
+
+    @model_validator(mode="after")
+    def _no_null_except_dates(self):
+        for key in self.model_fields_set - _DATE_KEYS:
+            if getattr(self, key) is None:
+                raise ValueError(f"{key} cannot be null")
+        return self
+
+    def changes(self) -> dict:
+        """The explicitly sent fields, dates as ISO strings."""
+        out = {}
+        for key in self.model_fields_set:
+            value = getattr(self, key)
+            out[key] = value.isoformat() if isinstance(value, date) else value
+        return out
+
+
 class IncomeBody(BaseModel):
     name: str
     owner: Literal["self", "partner"]
-    monthly_eur: float
+    monthly_eur: float = Field(ge=0)
     from_age: int = Field(ge=0, le=120)
-    to_age: Optional[int] = None
+    to_age: Optional[int] = Field(default=None, le=120)
     indexed: bool = True
     source: Optional[str] = None
     as_of: Optional[str] = None
@@ -49,13 +89,13 @@ def get_plan(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
 
 @router.put("/plan")
 def put_plan(
-    body: dict,
+    body: PlanUpdate,
     db=Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Merge the given known keys over the stored plan and validate."""
     try:
-        return save_plan(db, {**load_plan(db), **body})
+        return save_plan(db, {**load_plan(db), **body.changes()})
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 

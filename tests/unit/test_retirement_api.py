@@ -94,3 +94,37 @@ def test_income_crud_and_validation(tmp_path):
             "/api/v1/retirement/incomes", json={**INCOME, **bad}, headers=HEADERS
         )
         assert r.status_code == 422, bad
+
+
+def test_plan_put_rejects_non_numeric_and_null(tmp_path):
+    client = _make_client(tmp_path)
+    for bad in (
+        {"retirement_age": "65"},
+        {"retirement_age": None},
+        {"retirement_age": True},
+        {"real_return_pct": "abc"},
+        {"excluded_categories": "Tax"},
+    ):
+        r = client.put("/api/v1/retirement/plan", json=bad, headers=HEADERS)
+        assert r.status_code == 422, bad
+    plan = client.get("/api/v1/retirement/plan", headers=HEADERS).json()
+    assert plan["retirement_age"] == 65 and plan["real_return_pct"] == 3.0
+
+
+def test_plan_put_ignores_unknown_and_null_clears_birth_date(tmp_path):
+    client = _make_client(tmp_path)
+    url = "/api/v1/retirement/plan"
+    client.put(url, json={"birth_date": "1980-05-01"}, headers=HEADERS)
+    r = client.put(url, json={"birth_date": None, "bogus": 1}, headers=HEADERS)
+    assert r.status_code == 200
+    plan = client.get(url, headers=HEADERS).json()
+    assert plan["birth_date"] is None and "bogus" not in plan
+
+
+def test_income_bounds(tmp_path):
+    client = _make_client(tmp_path)
+    for bad in ({"to_age": 130}, {"monthly_eur": -1}):
+        r = client.post(
+            "/api/v1/retirement/incomes", json={**INCOME, **bad}, headers=HEADERS
+        )
+        assert r.status_code == 422, bad

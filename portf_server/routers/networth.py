@@ -226,15 +226,22 @@ def create_valuation(
         raise HTTPException(
             status_code=422, detail="Valuations apply to brokerage portfolios only"
         )
+    existing = db.get_account_valuation(body.portfolio_id)
+    # An existing row keeps its good value until a refresh replaces it.
     db.upsert_account_valuation(
         body.portfolio_id,
         body.provider,
         body.account_ref,
-        0.0,
-        0.0,
-        "EUR",
-        "1970-01-01",
-        datetime.now().isoformat(timespec="seconds"),
+        existing["value"] if existing else 0.0,
+        existing["cash"] if existing else 0.0,
+        existing["currency"] if existing else "EUR",
+        existing["as_of"] if existing else "1970-01-01",
+        (
+            existing["fetched_at"]
+            if existing
+            else datetime.now().isoformat(timespec="seconds")
+        ),
+        existing["last_error"] if existing else None,
     )
     token = get_settings().indexa_token
     refreshed = False
