@@ -72,6 +72,33 @@ class TestPut:
         assert resp.json()["source"] == "manual"
 
     @pytest.mark.asyncio
+    async def test_saves_and_returns_ongoing_charges(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        asset_id = await _make_fund(async_test_client, auth_headers)
+        body = {
+            "benchmark_key": "msci_world",
+            "asset_class": {"equity": 1.0},
+            "regions": {"north_america": 1.0},
+            "sectors": {},
+            "currency_hedged": False,
+            "as_of": "2026-09-01",
+            "ongoing_charges_pct": 0.2,
+        }
+        url = f"/api/v1/fund-profiles/{asset_id}"
+        resp = await async_test_client.put(url, headers=auth_headers, json=body)
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.json()["ongoing_charges_pct"] == 0.2
+        got = await async_test_client.get(url, headers=auth_headers)
+        assert got.json()["ongoing_charges_pct"] == 0.2
+
+        bad = await async_test_client.put(
+            url, headers=auth_headers, json={**body, "ongoing_charges_pct": 20}
+        )
+        assert bad.status_code == status.HTTP_400_BAD_REQUEST
+        assert "ongoing_charges_pct" in bad.json()["detail"]
+
+    @pytest.mark.asyncio
     async def test_rejects_weights_that_do_not_sum_to_one(
         self, async_test_client: AsyncClient, auth_headers
     ):

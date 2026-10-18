@@ -113,6 +113,10 @@ class TestFeesRiskDiversification:
         assert resp.status_code == status.HTTP_200_OK
         d = resp.json()
         assert "total_fees_eur" in d and "by_broker" in d and "fee_drag_pct" in d
+        # Empty portfolio: the block is present, with nothing covered.
+        oc = d["ongoing_charges"]
+        assert oc["weighted_avg_pct"] is None and oc["projection"] == []
+        assert oc["uncovered"] == []
 
     @pytest.mark.asyncio
     async def test_risk_insufficient_data(

@@ -1115,10 +1115,13 @@ def get_fees(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
             else 0
         )
 
+    from portf_manager.services.ongoing_charges import compute_ongoing_charges
+
     return {
         "total_fees_eur": round(total_fees, 2),
         "total_tax_eur": round(total_tax, 2),
         "total_invested_eur": round(total_invested, 2),
+        "ongoing_charges": compute_ongoing_charges(db, fx=_fx),
         "fee_drag_pct": (
             round(total_fees / total_invested * 100, 3) if total_invested > 0 else 0
         ),

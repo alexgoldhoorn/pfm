@@ -16,7 +16,7 @@ from pathlib import Path
 from portf_manager.services.merchant import fold_for_search, normalize_merchant
 
 # Database version for migration tracking
-DATABASE_VERSION = 33
+DATABASE_VERSION = 34
 
 
 # black
@@ -727,7 +727,8 @@ class Database:
                 hedge_currency  TEXT,
                 as_of           TEXT,
                 notes           TEXT,
-                updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                ongoing_charges_pct REAL
             )
             """
         )
@@ -837,6 +838,8 @@ class Database:
             self._migrate_to_v32(conn)
         if current_version < 33:
             self._migrate_to_v33(conn)
+        if current_version < 34:
+            self._migrate_to_v34(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -1845,6 +1848,20 @@ class Database:
         """
         self._migrate_to_v32(conn)
 
+    def _migrate_to_v34(self, conn: sqlite3.Connection) -> None:
+        """Migrate from v33 to v34 — fund_profiles.ongoing_charges_pct.
+
+        The fund's annual ongoing charges (TER, UCITS KIID) in percent of NAV.
+        NULL means unknown; nothing is backfilled. The column add is guarded
+        so a rerun is harmless.
+        """
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(fund_profiles)")}
+        if "ongoing_charges_pct" not in cols:
+            conn.execute(
+                "ALTER TABLE fund_profiles ADD COLUMN ongoing_charges_pct REAL"
+            )
+        conn.commit()
+
     # ── Application log ──────────────────────────────────────────────────────
 
     def log_event(
@@ -1971,6 +1988,7 @@ class Database:
         hedge_currency: Optional[str],
         as_of: str,
         notes: Optional[str] = None,
+        ongoing_charges_pct: Optional[float] = None,
     ) -> Dict:
         """Insert or replace a fund profile. Weight maps arrive as JSON text."""
         with self.get_connection() as conn:
@@ -1979,8 +1997,8 @@ class Database:
                 INSERT INTO fund_profiles (
                     asset_id, benchmark_key, source, asset_class, regions,
                     sectors, currency_hedged, hedge_currency, as_of, notes,
-                    updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                    ongoing_charges_pct, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(asset_id) DO UPDATE SET
                     benchmark_key = excluded.benchmark_key,
                     source = excluded.source,
@@ -1991,6 +2009,7 @@ class Database:
                     hedge_currency = excluded.hedge_currency,
                     as_of = excluded.as_of,
                     notes = excluded.notes,
+                    ongoing_charges_pct = excluded.ongoing_charges_pct,
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 (
@@ -2004,6 +2023,7 @@ class Database:
                     hedge_currency,
                     as_of,
                     notes,
+                    ongoing_charges_pct,
                 ),
             )
             conn.commit()

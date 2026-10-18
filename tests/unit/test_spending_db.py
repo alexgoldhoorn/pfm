@@ -379,7 +379,7 @@ def test_migration_v33_heals_db_stamped_32_without_v32_columns(tmp_path):
         rule_cols
     )
     assert merchant == "EXAMPLE SHOP MADRID"
-    assert version == 33
+    assert version == 34
 
 
 def test_rule_conditions_round_trip(db):

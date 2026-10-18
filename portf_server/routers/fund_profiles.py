@@ -38,6 +38,8 @@ class ProfileBody(BaseModel):
     hedge_currency: Optional[str] = None
     as_of: str
     notes: Optional[str] = None
+    # Annual ongoing charges (TER) in % of NAV; None = unknown.
+    ongoing_charges_pct: Optional[float] = None
 
 
 class RefreshBody(BaseModel):
@@ -148,6 +150,9 @@ def refresh_profile(
         profile = fp_service.build_from_benchmark(db, asset, body.benchmark_key)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    # A benchmark refresh rebuilds the weight maps only; the TER is the user's.
+    if existing:
+        profile["ongoing_charges_pct"] = existing.get("ongoing_charges_pct")
     return _save(db, profile)
 
 
