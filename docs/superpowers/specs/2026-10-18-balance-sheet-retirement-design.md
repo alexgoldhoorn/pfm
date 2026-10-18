@@ -130,8 +130,16 @@ Each line:
 }
 ```
 
-- `financial_assets_eur` = assets minus the `property` group. This is the
-  pot the retirement projection draws on.
+- `financial_assets_eur` = the `cash`, `deposits` and `investments` groups.
+  This is the pot the retirement projection draws on. `property` and
+  `other_assets` are in net worth and never in the pot.
+- Manual-line categories map to groups as follows: `cash`,
+  `current_account`, `savings_account` → `cash`; `property` → `property`;
+  `other` and any unknown category → `other_assets`; every line with
+  `is_liability = 1` → `liabilities`, whatever its category. There is no
+  pension or vehicle category today; a pension plan, if one is ever added,
+  is a new category that goes in `investments` and is withdrawable only
+  from the plan's retirement age (not in this design).
 - `liquid_eur` = cash + deposits maturing within 12 months. Used by the
   emergency-fund metric (replacing `_cash_eur` in `analytics.py`, which
   currently reads only bank balances and cash-type manual lines).
@@ -225,8 +233,13 @@ last_error TEXT
 from a new setting `PORTF_INDEXA_TOKEN` (`.env.local`; never the DB). One
 public function `refresh_account_valuations(db) -> list[dict]` iterates the
 `account_valuations` rows whose provider is `indexa`, calls
-`/accounts/{ref}/portfolio`, stores `total_amount` as `value`, the cash
-amount as `cash` and the API's valuation date as `as_of`. A failure writes
+`/accounts/{ref}/portfolio` and reads the `portfolio` object: its
+`total_amount` becomes `value`, its `cash_amount` becomes `cash`, and the
+response's valuation date becomes `as_of` (today's date if the API gives
+none). **`value` includes `cash`**: the account's investments are
+`value − cash`, and that split is what the projection uses (investments at
+the investment return, cash at the cash return). The balance-sheet line
+shows `value`. A failure writes
 `last_error` and leaves the previous value and `as_of` untouched, so the
 line simply goes stale after 7 days. The daily price cron
 (`price_updater.update_all_prices`) calls it after the price pass when the
@@ -275,7 +288,9 @@ source TEXT, as_of TEXT, notes TEXT, created_at, updated_at
 
 Examples the UI suggests on an empty table: "Spanish state pension (self),
 from 67" with a link to the Seguridad Social simulator; "Partner state
-pension, from 67"; "Dutch AOW" prefilled at 0. The projection takes an
+pension, from 67"; "Dutch AOW" prefilled at 0. Amounts are entered
+**gross**, which is what the Seguridad Social simulator reports; the whole
+screen is before tax (§6.4). The projection takes an
 income's value in the years between `from_age` and `to_age` inclusive of
 the first, exclusive of the last. `indexed = 0` means the amount loses
 2 %/year in real terms (the same `ASSUMED_INFLATION_PCT` the simulator
@@ -300,13 +315,20 @@ One JSON `app_settings` key `retirement_plan`, read and written through
   "pessimistic_real_return_pct": 1.0,
   "cash_real_return_pct": -2.0,
   "withdrawal_tax_pct": 0.0,
-  "spending_months": 12
+  "spending_months": 12,
+  "spending_includes_loan_payments": true,
+  "excluded_categories": ["Income Tax", "Social Security", "Invest", "House purchase"]
 }
 ```
 
 Defaults are those values with `birth_date = null`. Without a birth date
 the readiness endpoint returns `status: "needs_setup"` and the UI shows the
-settings form first. `real_return_pct` is the simulator's convention: an
+settings form first. `horizon_age` is the owner's age; the household is
+projected as one unit to that age, with constant spending, whoever is
+alive (the owner and partner are the same age here, and a constant
+household spend is the conservative reading). `excluded_categories` names
+spending categories, by name, matched against each row's category and its
+ancestors in the category tree. `real_return_pct` is the simulator's convention: an
 expected nominal 5 % on investments minus 2 % inflation. Cash and deposits
 earn their stated rate minus inflation; a deposit's rate is known, a cash
 line uses `cash_real_return_pct`.
@@ -319,18 +341,35 @@ line uses `cash_real_return_pct`.
 - **Debt:** each loan's schedule (balance and monthly payment per year).
   Net worth on the chart is pot minus loan balance; the pot itself is never
   reduced by the loan balance, because the loan is paid from spending.
-- **Spending target:** `avg_monthly_spend_eur` over the last
-  `spending_months` complete months that have bank imports, from
-  `savings_and_buffer` (the same number Progress shows). Transfers are
-  excluded, so mortgage payments and investment contributions do **not**
-  count as spending only if they are classified as transfers; the builder
-  must verify how the owner's mortgage debit is categorised and, if it is a
-  spending row, subtract the loans' monthly payments from the target in
-  the years after each loan ends. The response states which it did
-  (`spending_includes_loan_payments`).
-- **Savings now:** `income − spent` over the same months, as a yearly
-  contribution in today's euros, continued until retirement age. Floor at
-  zero.
+- **Spending target:** the average monthly outflow over the last
+  `spending_months` complete months that have bank imports (the window
+  rule of `savings_and_buffer`: the month in progress and months with
+  nothing imported never count), over non-transfer spend rows **minus the
+  rows in `excluded_categories`**. The defaults drop what stops or is not
+  spending at retirement: income tax and the self-employed social-security
+  contribution (the screen is before tax), investment contributions that
+  were categorised as spending rather than transfers, and the one-off
+  house purchase. Municipal taxes, insurance and the mortgage stay in.
+  `savings_and_buffer` gains an `exclude` parameter so Progress and
+  readiness share one function; Progress keeps calling it without
+  exclusions. The response carries the target's category breakdown so the
+  user can see what is in it and adjust the list in the plan settings.
+- **Loan payments:** in the owner's data the mortgage debit is a spending
+  row (category `Mortgage`), so `spending_includes_loan_payments` defaults
+  to `true`: the target already contains the payment and the projection
+  subtracts each loan's scheduled monthly payment from the need in the
+  years after that loan ends. With `false` the projection adds the
+  scheduled payments instead while a loan runs. Either way payments run to
+  the schedule's end date, `extra_payment_eur` continues after retirement,
+  and there is no lump-sum payoff from the pot.
+- **Savings now:** `income − spent` over the same months, where `spent`
+  excludes only `Invest` and `House purchase` (taxes are real outflows
+  today, so they reduce what is saved), as a yearly contribution in today's
+  euros, continued until retirement age. Floor at zero. Income is what the
+  bank statements show as income rows; for a freelancer that is gross
+  receipts, and the taxes paid out of them are in `spent`, so the
+  difference is net saving. `Invest` rows count as saving: they are money
+  that reached the brokerage, which the pot already holds.
 - **Pensions:** `retirement_incomes` as in §5.4, partner ages computed from
   `partner_birth_date` (an income with `owner='partner'` and no partner
   birth date is ignored and flagged in `warnings`).
@@ -350,7 +389,10 @@ pot_cash        *= (1 + cash_real_return)      (deposits: own rate − inflation
 if age < retirement_age:   pot_investments += savings_now
 else:
     need = spending_target*12 − pensions_this_year
-    if spending excludes loan payments: need += loan payments this year
+    if spending_includes_loan_payments:
+        need −= scheduled payments this year of loans that have already ended
+    else:
+        need += scheduled payments this year of loans still running
     need = max(need, 0)
     withdrawal = need / (1 − withdrawal_tax_pct/100)
     draw from pot_cash first (down to 6 months of spending), then pot_investments
@@ -507,7 +549,15 @@ collapses the source and as-of columns into a second line under the label.
   cash at −2 %, horizon age 95, cash drawn first, withdrawal tax 0 and
   labelled "before tax".
 - Savings continue at the current measured rate until retirement.
-- Partner modelled only as optional income lines plus a birth date.
+- The spending target leaves out income tax, the self-employed
+  social-security contribution, investment contributions and the house
+  purchase; municipal taxes and the mortgage stay in. The mortgage payment
+  drops out of the need once the loan ends.
+- Pensions are entered gross; every figure on the screen is before tax.
+- Partner modelled only as optional income lines plus a birth date; the
+  household is one unit with constant spending to the owner's horizon age.
+- Manual-line categories map to groups as in §4.1; `other` lines are in
+  net worth but not in the retirement pot.
 - The page is the existing Net Worth page, not a new one; Goals links to it
   instead of duplicating the verdict.
 - Verdict thresholds: `short` = lasts past retirement + 10 years.
