@@ -6,7 +6,7 @@ from typing import Annotated, Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from portf_manager.services.retirement import load_plan, save_plan
+from portf_manager.services.retirement import load_plan, readiness, save_plan
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
@@ -137,3 +137,9 @@ def delete_income(
     if not db.delete_retirement_income(income_id):
         raise HTTPException(status_code=404, detail="Income not found")
     return {"ok": True}
+
+
+@router.get("/readiness")
+def get_readiness(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+    """Retirement readiness: four scenarios, inputs and warnings."""
+    return readiness(db)

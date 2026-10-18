@@ -257,6 +257,7 @@ def savings_and_buffer(
     cash_eur: Optional[float],
     today: Optional[date] = None,
     months: int = 12,
+    exclude: frozenset[str] = frozenset(),
 ) -> dict[str, Any]:
     """Savings rate and emergency-fund cover from bank-statement rows.
 
@@ -270,6 +271,8 @@ def savings_and_buffer(
             None when no account has a balance.
         today: reference date.
         months: how many complete months back to look.
+        exclude: category names whose rows are skipped (rows may carry a
+            ``category``).
 
     Returns:
         ``months_used``, ``income_eur``, ``spent_eur``, ``savings_rate_pct``,
@@ -288,6 +291,8 @@ def savings_and_buffer(
     for r in rows:
         key = _d10(r.get("date"))[:7]
         if key == this_month or key not in window:
+            continue
+        if exclude and r.get("category") in exclude:
             continue
         b = buckets.setdefault(key, {"spent": 0.0, "income": 0.0})
         amt = float(r.get("amount_eur") or 0)
