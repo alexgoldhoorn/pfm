@@ -200,7 +200,7 @@ class TestStaleResearch:
 class TestGoalsOffTrack:
     def test_flags_off_track_goal(self, test_database):
         test_database.create_goal(
-            name="Retire early",
+            name="House",
             target_amount_eur=10_000_000,
             target_date="2027-01-01",
             monthly_contribution_eur=100,
@@ -209,6 +209,16 @@ class TestGoalsOffTrack:
         items = check_goals_off_track(test_database)
         assert len(items) == 1
         assert items[0]["context"]["goal_id"]
+
+    def test_retirement_goal_is_skipped(self, test_database):
+        test_database.create_goal(
+            name="Retire at 65",
+            target_amount_eur=10_000_000,
+            target_date="2027-01-01",
+            monthly_contribution_eur=100,
+            expected_return_pct=1,
+        )
+        assert check_goals_off_track(test_database) == []
 
     def test_no_item_when_no_goals(self, test_database):
         assert check_goals_off_track(test_database) == []

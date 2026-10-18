@@ -21,7 +21,7 @@ async def _auth(
 
 
 _Age = Annotated[int, Field(strict=True, ge=0, le=120)]
-_Pct = Annotated[float, Field(strict=True)]
+_Pct = Annotated[float, Field(strict=True, ge=-50, le=50)]
 _DATE_KEYS = {"birth_date", "partner_birth_date"}
 
 

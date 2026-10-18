@@ -375,3 +375,56 @@ def test_manual_asset_post_accepts_as_of(tmp_path):
         f"/api/v1/networth/{mid}", json={"as_of": "not-a-date"}, headers=HEADERS
     )
     assert bad.status_code == 422
+
+
+def test_networth_components_add_up_to_net_worth(tmp_path):
+    client, inst = _client(tmp_path)
+    pid = inst.create_portfolio("Example Broker", "EUR")
+    add_position(inst, pid)
+    inst.create_booking("2026-01-01", "Deposit", 2500.0, "EUR", portfolio_id=pid)
+    bank = inst.create_portfolio("Example Bank", "EUR", account_type="bank")
+    _bank_balance(inst, bank, "2026-10-01", 3000.0)
+    inst.create_manual_asset("Example Flat", "property", 10000.0)
+    inst.create_manual_asset("Example Debt", "other", 200.0, is_liability=True)
+    inst.create_fixed_deposit(
+        "Example Deposit", 500.0, start_date="2026-01-01", maturity_date="2027-01-01"
+    )
+    inst.create_loan("Example Mortgage", 12000.0, 0.0, "2026-01-01", 120)
+    nw = client.get("/api/v1/networth/", headers=HEADERS).json()
+    assert nw["broker_cash_eur"] == 2400.0
+    assert nw["loans_eur"] > 0
+    parts = (
+        nw["brokerage_eur"]
+        + nw["bank_accounts_eur"]
+        + nw["broker_cash_eur"]
+        + nw["manual_assets_eur"]
+        + nw["deposits_eur"]
+        - nw["manual_liabilities_eur"]
+        - nw["loans_eur"]
+    )
+    assert parts == pytest.approx(nw["net_worth_eur"], abs=0.011)
+
+
+def test_stale_valuation_without_positions_is_kept_in_total(db):
+    pid = db.create_portfolio("Example Broker", "EUR")
+    _valuation(db, pid, "2026-10-08")
+    sheet = build(db)
+    line = lines_of(sheet)[f"valuation:{pid}"]
+    assert line["stale"] is True
+    assert line["in_total"] is True
+    assert line["amount_eur"] == 12000.0
+    assert line["note"] == "account valuation 10 days old"
+    assert sheet["totals"]["net_worth_eur"] == 12000.0
+
+
+def test_never_fetched_zero_valuation_without_positions_is_not_counted(db):
+    pid = db.create_portfolio("Example Broker", "EUR")
+    db.upsert_account_valuation(
+        pid, "indexa", "ref", 0.0, 0.0, "EUR", "1970-01-01", "2026-10-18T06:00:00"
+    )
+    sheet = build(db)
+    line = lines_of(sheet)[f"valuation:{pid}"]
+    assert line["note"] == "account valuation never fetched"
+    assert line["stale"] is True
+    assert line["in_total"] is False
+    assert sheet["totals"]["net_worth_eur"] == 0.0

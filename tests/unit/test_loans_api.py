@@ -169,3 +169,13 @@ def test_valuation_repost_keeps_good_value_when_refresh_fails(tmp_path, monkeypa
     row = db.get_account_valuation(pid)
     assert row["value"] == 7000.0 and row["account_ref"] == "EXAMPLE2"
     assert row["as_of"] != "1970-01-01"
+
+
+def test_loan_malformed_rate_as_of_is_422(tmp_path):
+    client, _ = _make_client(tmp_path)
+    r = client.post(
+        "/api/v1/networth/loans",
+        json={**LOAN, "rate_as_of": "soon"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 422

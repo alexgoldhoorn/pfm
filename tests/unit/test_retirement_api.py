@@ -157,7 +157,7 @@ def test_readiness_endpoint_four_scenarios_and_warnings(tmp_path):
         if month == 0:
             year, month = year - 1, 12
     r = client.put(
-        "/api/v1/retirement/plan", json={"birth_date": "1983-07-20"}, headers=HEADERS
+        "/api/v1/retirement/plan", json={"birth_date": "1975-03-01"}, headers=HEADERS
     )
     assert r.status_code == 200
     r = client.get("/api/v1/retirement/readiness", headers=HEADERS)
@@ -174,3 +174,11 @@ def test_readiness_endpoint_needs_setup(tmp_path):
     r = client.get("/api/v1/retirement/readiness", headers=HEADERS)
     assert r.status_code == 200
     assert r.json()["status"] == "needs_setup"
+
+
+def test_plan_percentages_are_bounded(tmp_path):
+    client = _make_client(tmp_path)
+    r = client.put(
+        "/api/v1/retirement/plan", json={"real_return_pct": 60}, headers=HEADERS
+    )
+    assert r.status_code == 422

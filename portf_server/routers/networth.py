@@ -132,13 +132,17 @@ class LoanBody(BaseModel):
     term_months: int = Field(gt=0)
     currency: str = "EUR"
     lender: Optional[str] = None
-    rate_as_of: Optional[str] = None
+    rate_as_of: Optional[date] = None
     balance_as_of: Optional[float] = None
     extra_payment_eur: float = 0.0
     notes: Optional[str] = None
 
     def fields(self) -> dict:
-        return {**self.model_dump(), "start_date": self.start_date.isoformat()}
+        data = self.model_dump()
+        data["start_date"] = self.start_date.isoformat()
+        if self.rate_as_of is not None:
+            data["rate_as_of"] = self.rate_as_of.isoformat()
+        return data
 
 
 class ValuationBody(BaseModel):
@@ -307,10 +311,25 @@ def get_networth(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
         2,
     )
     bank_eur, bank_accounts = _bank_accounts_eur(db)
+    # counted ledger cash and loans, so the components add up to net worth
+    broker_cash = sum(
+        ln["amount_eur"] or 0.0
+        for g in sheet["groups"]
+        for ln in g["lines"]
+        if ln["id"].startswith("cash:") and ln["in_total"]
+    )
+    loans_eur = sum(
+        ln["amount_eur"] or 0.0
+        for g in sheet["groups"]
+        for ln in g["lines"]
+        if ln["id"].startswith("loan:")
+    )
     return {
         "brokerage_eur": brokerage,
         "bank_accounts_eur": round(bank_eur, 2),
         "bank_accounts": bank_accounts,
+        "broker_cash_eur": round(broker_cash, 2),
+        "loans_eur": round(loans_eur, 2),
         "manual_assets_eur": round(assets_eur, 2),
         "manual_liabilities_eur": round(liabilities_eur, 2),
         "deposits_eur": round(deposits_eur, 2),
