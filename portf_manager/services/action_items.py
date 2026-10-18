@@ -162,6 +162,45 @@ def check_price_update_failures(db) -> list[dict]:
     ]
 
 
+def check_held_prices(db) -> list[dict]:
+    """One item per price the spike guard is holding back (price_guard.py)."""
+    from portf_manager.services import price_guard
+
+    items = []
+    for held in price_guard.list_held_prices(db):
+        asset = db.get_asset(held["asset_id"])
+        if not asset:
+            continue
+        label = _name_code(asset.get("name"), asset["symbol"])
+        prev_date = _parse_date(held.get("prev_date"))
+        held_date = _parse_date(held.get("date"))
+        days = max(1, (held_date - prev_date).days) if prev_date and held_date else 1
+        ratio = held.get("ratio") or 0
+        pct = (ratio - 1) * 100
+        items.append(
+            {
+                "id": f"errors:price-held:{held['asset_id']}:{held.get('date')}",
+                "category": "errors",
+                "severity": "medium",
+                "title": f"Price for {asset['name'] or asset['symbol']} held: "
+                f"{pct:+.0f} % in {days} day(s)",
+                "detail": (
+                    f"{label}: fetched {held.get('price')} against the stored "
+                    f"{held.get('prev_price')}. Not stored; it is confirmed by "
+                    "tomorrow's fetch if it repeats, or store a manual price."
+                ),
+                "link_page": "diagnostics",
+                "context": {
+                    "asset_id": held["asset_id"],
+                    "symbol": asset["symbol"],
+                    "price": held.get("price"),
+                    "prev_price": held.get("prev_price"),
+                },
+            }
+        )
+    return items
+
+
 STALE_RESEARCH_DAYS = 90
 
 
@@ -538,6 +577,7 @@ _CHECKS = (
     check_stale_imports,
     check_data_quality,
     check_price_update_failures,
+    check_held_prices,
     check_stale_research,
     check_goals_off_track,
     check_price_alerts,

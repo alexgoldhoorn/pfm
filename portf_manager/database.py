@@ -2072,6 +2072,31 @@ class Database:
                 )
                 conn.commit()
 
+    def delete_setting(self, key: str) -> None:
+        """Remove a persistent app setting (no-op when absent)."""
+        with self.get_connection() as conn:
+            try:
+                conn.execute("DELETE FROM app_settings WHERE key = ?", (key,))
+                conn.commit()
+            except Exception:
+                self._ensure_app_settings(conn)
+
+    def list_settings(self, prefix: str) -> Dict[str, str]:
+        """Return every setting whose key starts with *prefix* as {key: value}."""
+        # Escape LIKE wildcards so a prefix such as "a_b" matches literally.
+        escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        with self.get_connection() as conn:
+            try:
+                rows = conn.execute(
+                    "SELECT key, value FROM app_settings "
+                    "WHERE key LIKE ? ESCAPE '\\' ORDER BY key",
+                    (escaped + "%",),
+                ).fetchall()
+            except Exception:
+                self._ensure_app_settings(conn)
+                return {}
+            return {r["key"]: r["value"] for r in rows}
+
     # ── Web Push subscriptions ─────────────────────────────────────────────
 
     def add_push_subscription(self, endpoint: str, p256dh: str, auth: str) -> None:
