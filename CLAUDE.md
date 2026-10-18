@@ -56,7 +56,7 @@ of its tools. A change here affects that surface too — see `~/mcp/CLAUDE.md`,
 ### Database
 SQLite by default (`portfolio.db`), PostgreSQL via `DATABASE_URL` env var. Use `portf_manager/database.py` for SQLite, `database_factory.py` for auto-detection.
 
-**Current schema version: 33.** Migrations run automatically on startup.
+**Current schema version: 34.** Migrations run automatically on startup.
 
 Migration history (condensed — see `_migrate_to_vN` for full schema detail):
 - v5: `bookings` table (deposits/withdrawals); `tax` on `transactions`
@@ -77,6 +77,7 @@ Migration history (condensed — see `_migrate_to_vN` for full schema detail):
 - v31: `app_logs` (id, created_at [UTC ISO], level, source [logger name], event, message, details [JSON]) — the persistent application log. See `docs/features/llm.md`.
 - v32: `spending_transactions.merchant` (`normalize_merchant`, backfilled); `spending_rules.portfolio_id`/`amount_sign`/`min_amount`/`max_amount`/`priority` — rules evaluate by priority then id. See `docs/features/spending.md`.
 - v33: re-runs v32's guarded steps; heals a DB stamped 32 without the columns.
+- v34: `fund_profiles.ongoing_charges_pct` (REAL, nullable; the fund's TER in % of NAV a year) — feeds the `ongoing_charges` block of `GET /analytics/fees`. See `docs/features/analytics.md`.
 
 ⚠️ **New tables must appear in BOTH `_create_all_tables` (fresh DBs) AND `_migrate_to_vN` (existing DBs)** — migration-only adds break fresh installs/tests with "no such table".
 ⚠️ **CHECK constraint rebuilds** require `PRAGMA legacy_alter_table=ON` around the `RENAME` — see `_migrate_to_v13`.
@@ -151,7 +152,7 @@ it.** The column on the right lists only what's easy to break.
 | Spending (bank accounts) | `spending.md` | Bank accounts are `portfolios` rows with `account_type='bank'` and never touch `transactions`/`bookings`. `GET /spending/` returns `{items, total}`. A category's tree root must match the amount's sign. Un-transferring a row resets its reciprocal counterpart (`reset_transfer_counterpart`). Exclude already-linked bookings before transfer matching. Rules match description OR merchant; a rule whose category root conflicts with the sign is skipped, not a stop. "Missed" recurring needs an import past the due date. |
 | Budgeting | `budgeting.md` | `GET /summary` must stay before `/{budget_id}`. Positive variance always means favourable. Attribute unbudgeted actuals by SIGN, not tree root. Budget and `/spending/trend` must reconcile to the cent. An all-digits investment `ref_key` is a broker — use `line_uses_category()`. `net` is cash flow, not "better off". Never show a flattering variance for a month with nothing imported. |
 | Action Items | `action-items.md` | Each check is wrapped independently. Net Worth checklist gaps are merged client-side (`computeNetWorthChecklist`), never duplicated server-side. Item ids are deterministic per entity. Only `consolidation_candidate` fund overlaps raise an item. |
-| Price updates, market data | `prices-market.md` | yfinance returns UK prices in GBX — ÷100 when `fast_info.currency == "GBp"`. `_CRYPTO_YF_OVERRIDES` lives only in `price_updater.py`. Read `previous_close` by subscript, never `fast_info.get()` (silently None). Currency self-healing skips crypto. |
+| Price updates, market data | `prices-market.md` | A fetched price far outside the band around the last stored one is held, not stored (`services/price_guard.py`; held state is `app_settings` `price_guard:{asset_id}`) and shown as an Action Item until a later fetch confirms it; manual prices skip the guard. yfinance returns UK prices in GBX — ÷100 when `fast_info.currency == "GBp"`. `_CRYPTO_YF_OVERRIDES` lives only in `price_updater.py`. Read `previous_close` by subscript, never `fast_info.get()` (silently None). Currency self-healing skips crypto. |
 | Web client | `web-client.md` | See the Web Client section below. |
 | Metrics, error tracking, traces | `observability.md` | All off unless configured (`PORTF_METRICS_ENABLED`, `PORTF_SENTRY_DSN`, `PORTF_OTEL_ENDPOINT`). Telemetry must never stop the API: a feature that fails to start is logged and skipped. LLM metrics/spans hook `_call_with_retry`/`_log_llm_call`, so every `_instrument`-wrapped call is covered. Prompt text goes on spans only with `PORTF_OTEL_CAPTURE_LLM_CONTENT`. `/metrics` is `include_in_schema=False` and outside the API-key dependency, so protect it with `PORTF_METRICS_TOKEN`. |
 
@@ -214,7 +215,7 @@ Full reference (dashboard layout, chart helpers, page-by-page wiring):
 - Pre-push hook runs the full unit suite. F541 fixer:
   `uv run python scripts/fix_f541.py`. Reset the LLM singleton with
   `portf_manager.llm_client.reset_llm_client()`.
-- DB version bump: update every `== 33` assertion in `tests/test_database.py`.
+- DB version bump: update every `== 34` assertion in `tests/test_database.py`.
 
 ## Documentation (Default Behaviour)
 When adding or changing a feature, always update:
