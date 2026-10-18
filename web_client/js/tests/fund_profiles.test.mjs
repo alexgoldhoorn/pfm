@@ -77,3 +77,32 @@ test("fundProfileValidate tolerates rounding within half a point", () => {
     });
     assert.deepEqual([...problems], []);
 });
+
+test("fundProfileValidate checks the ongoing charges range", () => {
+    const base = { regions: { north_america: 1 }, asset_class: { equity: 1 }, sectors: {} };
+    assert.deepEqual([...win.fundProfileValidate({ ...base, ongoing_charges_pct: 0.2 })], []);
+    assert.deepEqual([...win.fundProfileValidate({ ...base, ongoing_charges_pct: null })], []);
+    assert.match(win.fundProfileValidate({ ...base, ongoing_charges_pct: 20 })[0], /TER/);
+    assert.match(win.fundProfileValidate({ ...base, ongoing_charges_pct: -1 })[0], /TER/);
+});
+
+test("ongoingChargesHtml renders the figures and the uncovered funds, escaped", () => {
+    const html = win.ongoingChargesHtml({
+        weighted_avg_pct: 0.2,
+        annual_cost_eur: 20,
+        covered_value_eur: 10000,
+        fund_value_eur: 12000,
+        assumed_gross_return_pct: 5,
+        projection: [{ years: 10, cost_eur: 300, riy_pct: 0.2 }],
+        uncovered: [{ asset_id: 7, symbol: "X1", name: "<b>Odd</b> Fund", value_eur: 2000 }],
+    });
+    assert.match(html, /0\.20%/);
+    assert.match(html, /10 years/);
+    assert.match(html, /openFundProfileModal\(7,/);
+    assert.ok(!html.includes("<b>Odd</b>"));
+});
+
+test("ongoingChargesHtml is empty without fund holdings", () => {
+    assert.equal(win.ongoingChargesHtml({ fund_value_eur: 0 }), "");
+    assert.equal(win.ongoingChargesHtml(null), "");
+});

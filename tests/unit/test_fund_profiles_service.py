@@ -175,3 +175,41 @@ class TestIsStale:
 
     def test_missing_as_of_counts_as_stale(self):
         assert fp.is_stale({"as_of": None}, date(2026, 9, 16)) is True
+
+
+def test_ongoing_charges_must_be_between_zero_and_ten():
+    from portf_manager.services import fund_profiles as fp
+
+    base = {
+        "regions": {"north_america": 1.0},
+        "asset_class": {"equity": 1.0},
+        "source": "manual",
+    }
+    assert fp.validate_profile({**base, "ongoing_charges_pct": 0.2}) == []
+    assert fp.validate_profile({**base, "ongoing_charges_pct": None}) == []
+    assert fp.validate_profile({**base, "ongoing_charges_pct": 0}) == []
+    for bad in (-0.1, 10.5):
+        problems = fp.validate_profile({**base, "ongoing_charges_pct": bad})
+        assert any("ongoing_charges_pct" in p for p in problems)
+
+
+def test_ongoing_charges_round_trip_through_serialize():
+    from portf_manager.services import fund_profiles as fp
+
+    out = fp.serialize_profile({"asset_id": 1, "ongoing_charges_pct": 0.2})
+    assert out["ongoing_charges_pct"] == 0.2
+    assert fp.serialize_profile({"asset_id": 1})["ongoing_charges_pct"] is None
+
+
+def test_migration_v34_adds_ongoing_charges_and_is_rerunnable(tmp_path):
+    from portf_manager.database import Database
+
+    db = Database(str(tmp_path / "v33.db"))
+    with db.get_connection() as conn:
+        # Drop the column to look like a v33 database (SQLite >= 3.35).
+        conn.execute("ALTER TABLE fund_profiles DROP COLUMN ongoing_charges_pct")
+        conn.commit()
+        db._migrate_to_v34(conn)
+        db._migrate_to_v34(conn)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(fund_profiles)")}
+    assert "ongoing_charges_pct" in cols

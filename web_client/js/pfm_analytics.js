@@ -1928,10 +1928,74 @@ function fundProfileValidate(profile) {
     if (Object.keys(sectors).length && Math.abs(sum(sectors) - 1) >= 0.005) {
         problems.push(`Sector weights must total 100% or be left empty (currently ${(sum(sectors) * 100).toFixed(1)}%).`);
     }
+    const ter = profile.ongoing_charges_pct;
+    if (ter != null && (!(ter >= 0) || ter > 10)) {
+        problems.push('Ongoing charges (TER) must be between 0% and 10% (or left empty).');
+    }
     return problems;
 }
 
+// "Ongoing charges" card of the Fees tab. `oc` is the ongoing_charges block
+// of GET /analytics/fees.
+function ongoingChargesHtml(oc) {
+    if (!oc || !oc.fund_value_eur) return '';
+    // help_text.js is not loaded by the DOM-free tests.
+    const help = typeof METRIC_HELP === 'undefined' ? {} : METRIC_HELP;
+    const hasTer = oc.weighted_avg_pct != null;
+    const proj = (oc.projection || []).map(p => `
+        <tr>
+            <td>${p.years} years</td>
+            <td class="text-end">${anFmtEur(p.cost_eur)}</td>
+            <td class="text-end">${parseFloat(p.riy_pct).toFixed(2)}%</td>
+        </tr>`).join('');
+    const uncovered = (oc.uncovered || []).map(f => `
+        <li>
+            <a href="#" onclick="event.preventDefault();openFundProfileModal(${Number(f.asset_id)}, '${esc(String(f.symbol)).replace(/'/g, '&#39;')}', '${esc(String(f.name || '')).replace(/'/g, '&#39;')}')">${esc(f.name || f.symbol)}</a>
+            <span class="text-muted">${anFmtEur(f.value_eur)}</span>
+        </li>`).join('');
+    return `
+        <h6 class="fw-semibold small text-muted text-uppercase mt-4 mb-2">Ongoing charges (TER)</h6>
+        <div class="row g-3 mb-3">
+            <div class="col-6 col-md-3">
+                <div class="border rounded p-3 h-100">
+                    <div class="small text-muted mb-1" data-bs-toggle="tooltip" title="${help.ongoingCharges || ''}">Weighted TER</div>
+                    <div class="fs-5 fw-bold">${hasTer ? parseFloat(oc.weighted_avg_pct).toFixed(2) + '%' : '—'}</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="border rounded p-3 h-100">
+                    <div class="small text-muted mb-1">Cost per year</div>
+                    <div class="fs-5 fw-bold text-warning">${hasTer ? anFmtEur2(oc.annual_cost_eur) : '—'}</div>
+                </div>
+            </div>
+            <div class="col-6 col-md-3">
+                <div class="border rounded p-3 h-100">
+                    <div class="small text-muted mb-1">Funds with a TER</div>
+                    <div class="fs-5 fw-bold">${anFmtEur(oc.covered_value_eur)} <span class="small text-muted fw-normal">of ${anFmtEur(oc.fund_value_eur)}</span></div>
+                </div>
+            </div>
+        </div>
+        ${proj ? `
+        <div class="table-responsive">
+            <table class="table table-sm mb-1">
+                <thead>
+                    <tr>
+                        <th>Horizon</th>
+                        <th class="text-end">Cost of charges</th>
+                        <th class="text-end" data-bs-toggle="tooltip" title="${help.reductionInYield || ''}">Reduction in yield / yr</th>
+                    </tr>
+                </thead>
+                <tbody>${proj}</tbody>
+            </table>
+        </div>
+        <div class="small text-muted mb-2">Assuming ${parseFloat(oc.assumed_gross_return_pct).toFixed(1)}% gross return a year, on today's value, with no new money.</div>` : ''}
+        ${uncovered ? `
+        <div class="small mb-1">No TER set for these funds (click to set it in the fund profile):</div>
+        <ul class="small mb-0">${uncovered}</ul>` : ''}`;
+}
+
 window.regionLabel = regionLabel;
+window.ongoingChargesHtml = ongoingChargesHtml;
 window.overlapGroupLabel = overlapGroupLabel;
 window.normalizeWeights = normalizeWeights;
 window.fundProfileValidate = fundProfileValidate;
@@ -2172,6 +2236,8 @@ window.openFundProfileModal = async function (assetId, symbol, name) {
     document.getElementById('fpBenchmark').value = (profile && profile.benchmark_key) || '';
     document.getElementById('fpAsOf').value = (profile && profile.as_of) || new Date().toISOString().slice(0, 10);
     document.getElementById('fpHedged').checked = !!(profile && profile.currency_hedged);
+    const ter = profile && profile.ongoing_charges_pct;
+    document.getElementById('fpTer').value = ter == null ? '' : ter;
     _fpWeightRows('fpRegions', FP_REGION_KEYS, (profile && profile.regions) || {}, regionLabel);
     _fpWeightRows('fpAssetClass', FP_CLASS_KEYS, (profile && profile.asset_class) || {}, k => k);
     sectors = (profile && profile.sectors) || {};
@@ -2232,7 +2298,9 @@ window.openFundProfileModal = async function (assetId, symbol, name) {
             sectors,
             currency_hedged: document.getElementById('fpHedged').checked,
             hedge_currency: document.getElementById('fpHedged').checked ? 'EUR' : null,
-            as_of: document.getElementById('fpAsOf').value
+            as_of: document.getElementById('fpAsOf').value,
+            ongoing_charges_pct: document.getElementById('fpTer').value === ''
+                ? null : parseFloat(document.getElementById('fpTer').value)
         };
         const problems = fundProfileValidate(payload);
         if (problems.length) { document.getElementById('fpProblems').textContent = problems.join(' '); return; }
@@ -2756,7 +2824,8 @@ async function loadAnalyticsFees() {
                     </thead>
                     <tbody>${rows}</tbody>
                 </table>
-            </div>`;
+            </div>
+            ${ongoingChargesHtml(d.ongoing_charges)}`;
     } catch (err) {
         body.innerHTML = `<div class="text-danger small">Error loading fees: ${esc(err.message)}</div>`;
     }

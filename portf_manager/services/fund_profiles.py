@@ -25,6 +25,10 @@ _SOURCES = ("benchmark", "llm", "manual")
 # a year, which is slow enough to be worth an annual review, not a refetch.
 STALE_AFTER_DAYS = 365
 
+# Ceiling for a fund's ongoing charges (% of NAV a year). Real funds run from
+# ~0.05 to ~3; above 10 is a typo (e.g. 0.2 entered as 20).
+MAX_ONGOING_CHARGES_PCT = 10.0
+
 _JSON_COLUMNS = ("asset_class", "regions", "sectors")
 
 
@@ -63,6 +67,7 @@ def serialize_profile(profile: dict) -> dict:
         "hedge_currency": profile.get("hedge_currency"),
         "as_of": profile.get("as_of"),
         "notes": profile.get("notes"),
+        "ongoing_charges_pct": profile.get("ongoing_charges_pct"),
     }
 
 
@@ -94,6 +99,13 @@ def validate_profile(profile: dict) -> list[str]:
     key = profile.get("benchmark_key")
     if key is not None and benchmarks.get_benchmark(key) is None:
         problems.append(f"unknown benchmark '{key}'")
+
+    charges = profile.get("ongoing_charges_pct")
+    if charges is not None and not 0 <= charges <= MAX_ONGOING_CHARGES_PCT:
+        problems.append(
+            f"ongoing_charges_pct must be between 0 and {MAX_ONGOING_CHARGES_PCT:g}, "
+            f"got {charges}"
+        )
 
     source = profile.get("source")
     if source not in _SOURCES:
