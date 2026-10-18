@@ -9,14 +9,14 @@ import json
 import sqlite3
 import logging
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import date, datetime
 from typing import Dict, List, Optional, Any, Set
 from pathlib import Path
 
 from portf_manager.services.merchant import fold_for_search, normalize_merchant
 
 # Database version for migration tracking
-DATABASE_VERSION = 34
+DATABASE_VERSION = 35
 
 
 # black
@@ -502,6 +502,64 @@ class Database:
                 currency TEXT NOT NULL DEFAULT 'EUR',
                 is_liability INTEGER NOT NULL DEFAULT 0,
                 notes TEXT,
+                as_of TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS loans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                lender TEXT,
+                principal REAL NOT NULL,
+                currency TEXT NOT NULL DEFAULT 'EUR',
+                annual_rate_pct REAL NOT NULL,
+                rate_as_of TEXT,
+                balance_as_of REAL,
+                start_date TEXT NOT NULL,
+                term_months INTEGER NOT NULL,
+                extra_payment_eur REAL NOT NULL DEFAULT 0,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS account_valuations (
+                portfolio_id INTEGER PRIMARY KEY
+                    REFERENCES portfolios(id) ON DELETE CASCADE,
+                provider TEXT NOT NULL,
+                account_ref TEXT NOT NULL,
+                value REAL NOT NULL,
+                cash REAL NOT NULL DEFAULT 0,
+                currency TEXT NOT NULL DEFAULT 'EUR',
+                as_of TEXT NOT NULL,
+                fetched_at TEXT NOT NULL,
+                last_error TEXT
+            )
+        """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS retirement_incomes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                owner TEXT NOT NULL CHECK (owner IN ('self', 'partner')),
+                monthly_eur REAL NOT NULL,
+                from_age INTEGER NOT NULL,
+                to_age INTEGER,
+                indexed INTEGER NOT NULL DEFAULT 1,
+                source TEXT,
+                as_of TEXT,
+                notes TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -840,6 +898,9 @@ class Database:
             self._migrate_to_v33(conn)
         if current_version < 34:
             self._migrate_to_v34(conn)
+
+        if current_version < 35:
+            self._migrate_to_v35(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -1862,6 +1923,79 @@ class Database:
             )
         conn.commit()
 
+    def _migrate_to_v35(self, conn: sqlite3.Connection) -> None:
+        """Migrate from v34 to v35 — balance-sheet sources and retirement.
+
+        Adds ``manual_assets.as_of`` (backfilled from the date part of
+        ``updated_at`` where NULL) and the ``loans``, ``account_valuations``
+        and ``retirement_incomes`` tables. Every step is guarded so a rerun is
+        harmless.
+        """
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(manual_assets)")}
+        # a hand-built partial test database may lack the table altogether
+        if cols:
+            if "as_of" not in cols:
+                conn.execute("ALTER TABLE manual_assets ADD COLUMN as_of TEXT")
+            conn.execute(
+                "UPDATE manual_assets SET as_of = substr(updated_at, 1, 10) "
+                "WHERE as_of IS NULL"
+            )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS loans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                lender TEXT,
+                principal REAL NOT NULL,
+                currency TEXT NOT NULL DEFAULT 'EUR',
+                annual_rate_pct REAL NOT NULL,
+                rate_as_of TEXT,
+                balance_as_of REAL,
+                start_date TEXT NOT NULL,
+                term_months INTEGER NOT NULL,
+                extra_payment_eur REAL NOT NULL DEFAULT 0,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS account_valuations (
+                portfolio_id INTEGER PRIMARY KEY
+                    REFERENCES portfolios(id) ON DELETE CASCADE,
+                provider TEXT NOT NULL,
+                account_ref TEXT NOT NULL,
+                value REAL NOT NULL,
+                cash REAL NOT NULL DEFAULT 0,
+                currency TEXT NOT NULL DEFAULT 'EUR',
+                as_of TEXT NOT NULL,
+                fetched_at TEXT NOT NULL,
+                last_error TEXT
+            )
+        """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS retirement_incomes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                owner TEXT NOT NULL CHECK (owner IN ('self', 'partner')),
+                monthly_eur REAL NOT NULL,
+                from_age INTEGER NOT NULL,
+                to_age INTEGER,
+                indexed INTEGER NOT NULL DEFAULT 1,
+                source TEXT,
+                as_of TEXT,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """
+        )
+        conn.commit()
+
     # ── Application log ──────────────────────────────────────────────────────
 
     def log_event(
@@ -2224,18 +2358,37 @@ class Database:
         currency: str = "EUR",
         is_liability: bool = False,
         notes: str = None,
+        as_of: Optional[str] = None,
     ) -> int:
+        # as_of is the date the amount was last confirmed; default is today
+        as_of = as_of or date.today().isoformat()
         with self.get_connection() as conn:
             cur = conn.execute(
                 "INSERT INTO manual_assets (name, category, amount, currency, "
-                "is_liability, notes) VALUES (?, ?, ?, ?, ?, ?)",
-                (name, category, amount, currency, 1 if is_liability else 0, notes),
+                "is_liability, notes, as_of) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    name,
+                    category,
+                    amount,
+                    currency,
+                    1 if is_liability else 0,
+                    notes,
+                    as_of,
+                ),
             )
             conn.commit()
             return cur.lastrowid
 
     def update_manual_asset(self, asset_id: int, **fields) -> bool:
-        allowed = {"name", "category", "amount", "currency", "is_liability", "notes"}
+        allowed = {
+            "name",
+            "category",
+            "amount",
+            "currency",
+            "is_liability",
+            "notes",
+            "as_of",
+        }
         sets = {k: v for k, v in fields.items() if k in allowed and v is not None}
         if not sets:
             return False
@@ -2254,6 +2407,239 @@ class Database:
     def delete_manual_asset(self, asset_id: int) -> bool:
         with self.get_connection() as conn:
             cur = conn.execute("DELETE FROM manual_assets WHERE id = ?", (asset_id,))
+            conn.commit()
+            return cur.rowcount > 0
+
+    # ── Loans ───────────────────────────────────────────────────────────────
+
+    _LOAN_FIELDS = {
+        "name",
+        "lender",
+        "principal",
+        "currency",
+        "annual_rate_pct",
+        "rate_as_of",
+        "balance_as_of",
+        "start_date",
+        "term_months",
+        "extra_payment_eur",
+        "notes",
+    }
+
+    def create_loan(
+        self,
+        name: str,
+        principal: float,
+        annual_rate_pct: float,
+        start_date: str,
+        term_months: int,
+        currency: str = "EUR",
+        lender: Optional[str] = None,
+        rate_as_of: Optional[str] = None,
+        balance_as_of: Optional[float] = None,
+        extra_payment_eur: float = 0.0,
+        notes: Optional[str] = None,
+    ) -> int:
+        """Create a loan and return its id."""
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                "INSERT INTO loans (name, lender, principal, currency, "
+                "annual_rate_pct, rate_as_of, balance_as_of, start_date, "
+                "term_months, extra_payment_eur, notes) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    name,
+                    lender,
+                    principal,
+                    currency,
+                    annual_rate_pct,
+                    rate_as_of,
+                    balance_as_of,
+                    start_date,
+                    term_months,
+                    extra_payment_eur,
+                    notes,
+                ),
+            )
+            conn.commit()
+            return cur.lastrowid
+
+    def get_loans(self) -> List[Dict]:
+        """All loans in creation order."""
+        with self.get_connection() as conn:
+            rows = conn.execute("SELECT * FROM loans ORDER BY id").fetchall()
+            return [dict(r) for r in rows]
+
+    def get_loan(self, loan_id: int) -> Optional[Dict]:
+        """One loan, or None."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM loans WHERE id = ?", (loan_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def update_loan(self, loan_id: int, **fields) -> bool:
+        """Update known loan columns; unknown or None fields are ignored."""
+        return self._update_row("loans", loan_id, self._LOAN_FIELDS, fields)
+
+    def delete_loan(self, loan_id: int) -> bool:
+        """Delete a loan; True when a row was removed."""
+        with self.get_connection() as conn:
+            cur = conn.execute("DELETE FROM loans WHERE id = ?", (loan_id,))
+            conn.commit()
+            return cur.rowcount > 0
+
+    def _update_row(self, table: str, row_id: int, allowed: set, fields: Dict) -> bool:
+        """Shared UPDATE for tables with an ``id`` and ``updated_at`` column."""
+        sets = {k: v for k, v in fields.items() if k in allowed and v is not None}
+        if not sets:
+            return False
+        cols = ", ".join(f"{k} = ?" for k in sets)
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                f"UPDATE {table} SET {cols}, updated_at = CURRENT_TIMESTAMP "
+                "WHERE id = ?",
+                (*sets.values(), row_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    # ── Account valuations (provider-reported account value) ────────────────
+
+    def upsert_account_valuation(
+        self,
+        portfolio_id: int,
+        provider: str,
+        account_ref: str,
+        value: float,
+        cash: float,
+        currency: str,
+        as_of: str,
+        fetched_at: str,
+        last_error: Optional[str] = None,
+    ) -> None:
+        """Insert or replace the single valuation row of a portfolio."""
+        with self.get_connection() as conn:
+            conn.execute(
+                "INSERT INTO account_valuations (portfolio_id, provider, "
+                "account_ref, value, cash, currency, as_of, fetched_at, "
+                "last_error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(portfolio_id) DO UPDATE SET "
+                "provider = excluded.provider, "
+                "account_ref = excluded.account_ref, value = excluded.value, "
+                "cash = excluded.cash, currency = excluded.currency, "
+                "as_of = excluded.as_of, fetched_at = excluded.fetched_at, "
+                "last_error = excluded.last_error",
+                (
+                    portfolio_id,
+                    provider,
+                    account_ref,
+                    value,
+                    cash,
+                    currency,
+                    as_of,
+                    fetched_at,
+                    last_error,
+                ),
+            )
+            conn.commit()
+
+    def get_account_valuations(self) -> List[Dict]:
+        """All account valuation rows."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM account_valuations ORDER BY portfolio_id"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_account_valuation(self, portfolio_id: int) -> Optional[Dict]:
+        """The valuation row of one portfolio, or None."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM account_valuations WHERE portfolio_id = ?",
+                (portfolio_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def delete_account_valuation(self, portfolio_id: int) -> bool:
+        """Remove a portfolio's valuation row; True when one existed."""
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                "DELETE FROM account_valuations WHERE portfolio_id = ?",
+                (portfolio_id,),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    # ── Retirement incomes ──────────────────────────────────────────────────
+
+    _RETIREMENT_INCOME_FIELDS = {
+        "name",
+        "owner",
+        "monthly_eur",
+        "from_age",
+        "to_age",
+        "indexed",
+        "source",
+        "as_of",
+        "notes",
+    }
+
+    def create_retirement_income(
+        self,
+        name: str,
+        owner: str,
+        monthly_eur: float,
+        from_age: int,
+        to_age: Optional[int] = None,
+        indexed: int = 1,
+        source: Optional[str] = None,
+        as_of: Optional[str] = None,
+        notes: Optional[str] = None,
+    ) -> int:
+        """Create a retirement income stream; ``owner`` is 'self' or 'partner'."""
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                "INSERT INTO retirement_incomes (name, owner, monthly_eur, "
+                "from_age, to_age, indexed, source, as_of, notes) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    name,
+                    owner,
+                    monthly_eur,
+                    from_age,
+                    to_age,
+                    1 if indexed else 0,
+                    source,
+                    as_of,
+                    notes,
+                ),
+            )
+            conn.commit()
+            return cur.lastrowid
+
+    def get_retirement_incomes(self) -> List[Dict]:
+        """All retirement income streams in creation order."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM retirement_incomes ORDER BY id"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def update_retirement_income(self, income_id: int, **fields) -> bool:
+        """Update known income columns; unknown or None fields are ignored."""
+        if "indexed" in fields and fields["indexed"] is not None:
+            fields["indexed"] = 1 if fields["indexed"] else 0
+        return self._update_row(
+            "retirement_incomes", income_id, self._RETIREMENT_INCOME_FIELDS, fields
+        )
+
+    def delete_retirement_income(self, income_id: int) -> bool:
+        """Delete an income stream; True when a row was removed."""
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                "DELETE FROM retirement_incomes WHERE id = ?", (income_id,)
+            )
             conn.commit()
             return cur.rowcount > 0
 
