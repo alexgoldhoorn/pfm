@@ -11,7 +11,9 @@ of its tools. A change here affects that surface too — see `~/mcp/CLAUDE.md`,
 "Exception: remote_gateway/server.py".
 
 - The tools are read-only wrappers over the HTTP API. Tests:
-  `cd ~/mcp/pfm && python3 -m pytest -q .`.
+  `cd ~/mcp/pfm && python3 -m pytest -q .`. `retirement_readiness` (read-only,
+  wraps `GET /retirement/readiness`) has its tests in
+  `mcp/test_server_retirement.py` until they move to `~/mcp/pfm`.
 - When an API response changes shape, update the matching tool. Tools read fields
   with `.get(..., 0)`, so a renamed field silently becomes zero, and a test that
   pins the old field names stays green.
@@ -56,7 +58,7 @@ of its tools. A change here affects that surface too — see `~/mcp/CLAUDE.md`,
 ### Database
 SQLite by default (`portfolio.db`), PostgreSQL via `DATABASE_URL` env var. Use `portf_manager/database.py` for SQLite, `database_factory.py` for auto-detection.
 
-**Current schema version: 34.** Migrations run automatically on startup.
+**Current schema version: 35.** Migrations run automatically on startup.
 
 Migration history (condensed — see `_migrate_to_vN` for full schema detail):
 - v5: `bookings` table (deposits/withdrawals); `tax` on `transactions`
@@ -78,6 +80,7 @@ Migration history (condensed — see `_migrate_to_vN` for full schema detail):
 - v32: `spending_transactions.merchant` (`normalize_merchant`, backfilled); `spending_rules.portfolio_id`/`amount_sign`/`min_amount`/`max_amount`/`priority` — rules evaluate by priority then id. See `docs/features/spending.md`.
 - v33: re-runs v32's guarded steps; heals a DB stamped 32 without the columns.
 - v34: `fund_profiles.ongoing_charges_pct` (REAL, nullable; the fund's TER in % of NAV a year) — feeds the `ongoing_charges` block of `GET /analytics/fees`. See `docs/features/analytics.md`.
+- v35: `manual_assets.as_of` (TEXT, backfilled from `updated_at`); `loans` (principal, annual_rate_pct, `rate_as_of` + `balance_as_of` anchor, start_date, term_months, extra_payment_eur), `account_valuations` (portfolio_id PK, provider, account_ref, value incl. cash, cash, as_of, fetched_at, last_error), `retirement_incomes` (owner `self`|`partner`, monthly_eur in today's euros, from_age, to_age, indexed) — feed the balance sheet and retirement readiness. See `docs/features/networth-portfolios.md`.
 
 ⚠️ **New tables must appear in BOTH `_create_all_tables` (fresh DBs) AND `_migrate_to_vN` (existing DBs)** — migration-only adds break fresh installs/tests with "no such table".
 ⚠️ **CHECK constraint rebuilds** require `PRAGMA legacy_alter_table=ON` around the `RENAME` — see `_migrate_to_v13`.
@@ -148,7 +151,7 @@ it.** The column on the right lists only what's easy to break.
 | Broker parsers, PDT, import/export, bookings | `imports-exports.md` | A parser must set `broker=` on every row, or preview duplicate detection silently matches nothing. Match Indexa `Tipo` values by prefix. PDT: crypto/commodity exchange empty, `mutual_fund` exchange the literal `"Funds"`, bond qty/price rescaled via `_pdt_bond_quantity_price`. In `find_duplicate_transaction` the whole price ratio goes inside `ABS()`. Every import path (web, PDT pull, CLI) dedups against rows stored *before* the import — never within it — and `duplicate_action` doesn't apply to bookings (only per-row `force`). A parser's `asset_type` overwrites the stored type on every re-import, so get it right in the parser (Indexa = `mutual_fund`). |
 | Research, Portfolio Health, rebalance planner | `research-rebalance.md` | Single-segment GET routes (`portfolio-analysis`, `compare`, `bulk-refresh-status`) must be registered before `/{symbol}`. `upsert_price_target` treats `None` as "leave unchanged"; only `clear=` nulls a field. `/rebalance/analysis` and `/plan` both use `compute_positions`. |
 | Analytics, fund look-through, PDF reports | `analytics.md` | `/tax-report` converts at transaction-date FX (`_fx_on`); `/fees` at current FX. `TaxTransaction` internal field names differ from the response keys. Fund region weights come from hand-maintained `benchmarks.json`, never yfinance. `by_currency` ≠ `by_currency_exposure`. `compute_exposure()` backs both `/diversification` and Portfolio Health — don't fork it. The Portfolio Health PDF section reads the cache only, never runs the LLM. Risk metrics come only from `risk_metrics.compute_risk_metrics` (flow-adjusted returns) — never from raw snapshot value changes; snapshots are calendar-daily, so don't annualise with 252. Lifetime return/IRR come only from `performance.compute_performance`. Cost, realised gains and flows convert at **transaction-date** FX (`to_eur_transactions`), value at the valuation day's — a snapshot cost at today's FX turns currency moves into fake flows. Benchmarks are compared in EUR (`to_eur_closes`); beta uses weekly returns; Sharpe/Sortino/alpha subtract €STR (`risk_free.py`, stubbed autouse in tests). Real returns use HICP (`inflation.py`, also stubbed) with no fallback; savings rate/emergency fund count only complete months that have bank imports. Good/bad bands live only in `METRIC_RATINGS` (`pfm_core.js`). |
-| Net worth, brokers/portfolios, goals, sync | `networth-portfolios.md` | `net_worth_eur(db)` is the one total (Goals uses it). Bank balances come from the latest `spending_transactions.balance`; an account with none is excluded, not zero. `account_type` is create-only. `cash_eur`/`cost_eur` use transaction-date FX, `value_eur` the live rate; a ~1–2% gap vs the broker's own EUR figure is expected FX noise. |
+| Net worth, balance sheet, loans, retirement, brokers/portfolios, goals, sync | `networth-portfolios.md` | `net_worth_eur(db)` is the one total (Goals uses it) and is `build_balance_sheet(db)["totals"]["net_worth_eur"]`. A fresh account valuation (≤ 7 days) replaces the portfolio's positions and cash lines. Ledger cash excludes `asset_type='cash'` assets; a negative ledger line is shown but not counted. Bank balances come from the latest `spending_transactions.balance`; an account with none is excluded, not zero. `account_type` is create-only. `cash_eur`/`cost_eur` use transaction-date FX, `value_eur` the live rate; a ~1–2% gap vs the broker's own EUR figure is expected FX noise. |
 | Spending (bank accounts) | `spending.md` | Bank accounts are `portfolios` rows with `account_type='bank'` and never touch `transactions`/`bookings`. `GET /spending/` returns `{items, total}`. A category's tree root must match the amount's sign. Un-transferring a row resets its reciprocal counterpart (`reset_transfer_counterpart`). Exclude already-linked bookings before transfer matching. Rules match description OR merchant; a rule whose category root conflicts with the sign is skipped, not a stop. "Missed" recurring needs an import past the due date. |
 | Budgeting | `budgeting.md` | `GET /summary` must stay before `/{budget_id}`. Positive variance always means favourable. Attribute unbudgeted actuals by SIGN, not tree root. Budget and `/spending/trend` must reconcile to the cent. An all-digits investment `ref_key` is a broker — use `line_uses_category()`. `net` is cash flow, not "better off". Never show a flattering variance for a month with nothing imported. |
 | Action Items | `action-items.md` | Each check is wrapped independently. Net Worth checklist gaps are merged client-side (`computeNetWorthChecklist`), never duplicated server-side. Item ids are deterministic per entity. Only `consolidation_candidate` fund overlaps raise an item. |
@@ -215,7 +218,7 @@ Full reference (dashboard layout, chart helpers, page-by-page wiring):
 - Pre-push hook runs the full unit suite. F541 fixer:
   `uv run python scripts/fix_f541.py`. Reset the LLM singleton with
   `portf_manager.llm_client.reset_llm_client()`.
-- DB version bump: update every `== 34` assertion in `tests/test_database.py`.
+- DB version bump: update every `== 35` assertion in `tests/test_database.py`.
 
 ## Documentation (Default Behaviour)
 When adding or changing a feature, always update:
