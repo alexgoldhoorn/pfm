@@ -30,21 +30,15 @@ const CF_CATEGORY_LABELS = {
 async function loadNetworthPage() {
     const $ = id => document.getElementById(id);
     _wireNetworthForm();
+    _wireLoanForm();
+    _wireValuationForm();
     _wireDepositForm();
     _wireCashflowForm();
     const body = $('nwItemsBody');
     if (body) body.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm me-2"></span>Loading…</td></tr>';
     try {
         const d = await window.apiClient.getNetworth();
-        const eur = v => Fmt.amt(Fmt.money(v, 'EUR', 0));
-        $('nwBrokerage').innerHTML = eur(d.brokerage_eur);
-        $('nwAssets').innerHTML = eur(d.manual_assets_eur);
-        if ($('nwDeposits')) $('nwDeposits').innerHTML = eur(d.deposits_eur || 0);
-        $('nwLiabilities').innerHTML = eur(d.manual_liabilities_eur);
-        $('nwTotal').innerHTML = eur(d.net_worth_eur);
         _renderBankAccounts(d.bank_accounts || []);
-        const card = $('nwTotalCard');
-        if (card) card.style.background = d.net_worth_eur >= 0 ? '#0d6efd' : '#dc3545';
         const items = (d.items || []).slice()
             .sort((a, b) => (a.is_liability ? 1 : 0) - (b.is_liability ? 1 : 0));
         if (!items.length) {
@@ -62,6 +56,9 @@ async function loadNetworthPage() {
                 </tr>`).join('');
         }
         _renderDeposits(d.deposits || []);
+        await _loadBalanceSheet();
+        _loadLoans();
+        _loadValuations();
         const cf = await _loadCashflow();
         _loadActualSpendingComparison();
         _renderChecklist(d, cf, d.bank_accounts || []);
@@ -491,6 +488,9 @@ function _daysSince(dateStr) {
 // "Last updated" hint for bank/cash rows (updated_at is bumped both on
 // create and on the click-to-edit save) — other categories don't need it.
 function _updatedLine(it) {
+    if (it.as_of) {
+        return `<br><small class="text-muted">as of ${esc(Fmt.date(it.as_of))}</small>`;
+    }
     if (!NW_BANK_CATS.has(it.category)) return '';
     const days = _daysSince(it.updated_at);
     if (days == null) return '';
@@ -499,11 +499,284 @@ function _updatedLine(it) {
     return `<br><small class="${stale ? 'text-warning' : 'text-muted'}">${stale ? '<i class="bi bi-exclamation-triangle me-1"></i>' : ''}Updated ${label}</small>`;
 }
 
+
+function _todayIso() {
+    return new Date().toISOString().slice(0, 10);
+}
+
+const NW_SOURCE_LABELS = {
+    positions: 'Positions', cash_ledger: 'Broker cash',
+    account_valuation: 'Account API', bank_statement: 'Bank statement',
+    fixed_deposit: 'Deposit', loan_schedule: 'Loan schedule', manual: 'Manual',
+};
+
+// Pure: the edit control for one balance-sheet line, by edit.kind.
+function _balanceSheetEditControl(edit) {
+    const kind = edit && edit.kind;
+    const id = Number(edit && edit.id);
+    if (kind === 'manual') {
+        return `<button class="btn btn-sm btn-outline-secondary" title="Update amount" onclick="window.editManualAssetAmount(${id})"><i class="bi bi-pencil-square"></i></button>`;
+    }
+    if (kind === 'loan') {
+        return `<button class="btn btn-sm btn-outline-secondary" title="Edit loan" onclick="window.editLoan(${id})"><i class="bi bi-pencil-square"></i></button>`;
+    }
+    if (kind === 'valuation') {
+        return `<button class="btn btn-sm btn-outline-secondary" title="Refresh from the account API" onclick="window.refreshValuations()"><i class="bi bi-arrow-clockwise"></i></button>`;
+    }
+    if (kind === 'bank') {
+        return `<a href="#" class="btn btn-sm btn-outline-secondary" title="Import a newer statement" onclick="window.navigationManager.showPage('importexport'); return false;"><i class="bi bi-box-arrow-in-down"></i></a>`;
+    }
+    if (kind === 'positions') {
+        return `<a href="#" class="btn btn-sm btn-outline-secondary" title="Open Brokers" onclick="window.navigationManager.showPage('portfolios'); return false;"><i class="bi bi-briefcase"></i></a>`;
+    }
+    return '';
+}
+
+// Pure: <tbody> HTML for the balance sheet (no DOM access). Unit-tested.
+function renderBalanceSheetRows(sheet) {
+    const groups = (sheet && sheet.groups) || [];
+    if (!groups.length) {
+        return '<tr><td colspan="5" class="text-center text-muted py-4">Nothing to show yet.</td></tr>';
+    }
+    const money = v => Fmt.money(v, 'EUR', 0);
+    return groups.map(g => {
+        const head = `<tr class="table-light"><th class="ps-3" colspan="3">${esc(g.label)}</th><th class="text-end">${money(g.total_eur)}</th><th></th></tr>`;
+        const body = (g.lines || []).map(l => {
+            const src = NW_SOURCE_LABELS[l.source] || l.source;
+            const asOf = l.as_of ? `as of ${esc(Fmt.date(l.as_of))}` : '';
+            const warn = l.stale ? '<i class="bi bi-exclamation-triangle text-warning me-1"></i>' : '';
+            const amount = l.amount_eur == null
+                ? '<span class="text-muted">n/a</span>'
+                : money(l.amount_eur);
+            const notIn = l.in_total === false ? ' <small class="text-muted">not in total</small>' : '';
+            const titleAttr = l.stale && l.note ? ` title="${escapeForAttr(l.note)}"` : '';
+            return `<tr class="${l.stale ? 'table-warning' : ''}"${titleAttr}>
+                <td class="ps-3">${esc(l.label)}${notIn}<div class="d-md-none small text-muted">${esc(src)}${asOf ? ' · ' + warn + asOf : ''}</div></td>
+                <td class="d-none d-md-table-cell"><span class="badge bg-secondary">${esc(src)}</span></td>
+                <td class="d-none d-md-table-cell small">${warn}${asOf}</td>
+                <td class="text-end">${amount}</td>
+                <td class="pe-3 text-end">${_balanceSheetEditControl(l.edit)}</td>
+            </tr>`;
+        }).join('');
+        return head + body;
+    }).join('');
+}
+window.renderBalanceSheetRows = renderBalanceSheetRows;
+
+// Pure: totals footer HTML (a <tfoot>'s rows).
+function renderBalanceSheetTotals(t) {
+    t = t || {};
+    const money = v => Fmt.money(v || 0, 'EUR', 0);
+    const row = (label, v, cls) => `<tr class="${cls || ''}"><td class="ps-3" colspan="3">${label}</td><td class="text-end">${money(v)}</td><td></td></tr>`;
+    const help = (k, text) => `${text} <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip" title="${escapeForAttr((window.METRIC_HELP || {})[k] || '')}"></i>`;
+    return row('Total assets', t.assets_eur)
+        + row('Total liabilities', -(t.liabilities_eur || 0))
+        + row('<strong>Net worth</strong>', t.net_worth_eur, 'table-primary fw-bold')
+        + row(help('nw_financial_assets', 'Financial assets (excl. property)'), t.financial_assets_eur)
+        + (t.stale_lines ? `<tr><td class="ps-3 small" colspan="5">${help('nw_stale', `<i class="bi bi-exclamation-triangle text-warning me-1"></i>${Number(t.stale_lines)} stale line(s)`)}</td></tr>` : '');
+}
+window.renderBalanceSheetTotals = renderBalanceSheetTotals;
+
+async function _loadBalanceSheet() {
+    const body = document.getElementById('nwBalanceSheetBody');
+    const foot = document.getElementById('nwBalanceSheetFoot');
+    if (!body) return;
+    try {
+        const sheet = await window.apiClient.getBalanceSheet();
+        body.innerHTML = renderBalanceSheetRows(sheet);
+        if (foot) foot.innerHTML = renderBalanceSheetTotals(sheet.totals);
+        const asOf = document.getElementById('nwSheetAsOf');
+        if (asOf && sheet.as_of) asOf.textContent = 'as of ' + Fmt.date(sheet.as_of);
+        initTooltips();
+    } catch (err) {
+        body.innerHTML = `<tr><td colspan="5" class="text-center text-danger py-3">${esc(err.message)}</td></tr>`;
+    }
+}
+
+let _nwLoans = [];
+
+function _renderLoans(loans) {
+    _nwLoans = loans || [];
+    const tbody = document.getElementById('nwLoansBody');
+    if (!tbody) return;
+    if (!_nwLoans.length) {
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">No loans yet.</td></tr>';
+        return;
+    }
+    tbody.innerHTML = _nwLoans.map(l => `<tr>
+        <td class="ps-3">${esc(l.name)}${l.lender ? `<br><small class="text-muted">${esc(l.lender)}</small>` : ''}</td>
+        <td class="text-end">${Fmt.money(l.balance_eur, 'EUR', 0)}</td>
+        <td class="text-end">${Fmt.money(l.monthly_payment_eur, 'EUR', 0)}</td>
+        <td class="text-end">${Fmt.num(l.annual_rate_pct, 2, 2)}%</td>
+        <td>${esc(Fmt.date(l.end_date))}</td>
+        <td class="pe-3 text-end text-nowrap"><button class="btn btn-sm btn-outline-secondary me-1" title="Edit" onclick="window.editLoan(${Number(l.id)})"><i class="bi bi-pencil-square"></i></button><button class="btn btn-sm btn-outline-danger" title="Delete" onclick="window.confirmDeleteLoan(${Number(l.id)})"><i class="bi bi-trash"></i></button></td>
+    </tr>`).join('');
+}
+
+async function _loadLoans() {
+    try { _renderLoans(await window.apiClient.getLoans()); }
+    catch (err) {
+        const tbody = document.getElementById('nwLoansBody');
+        if (tbody) tbody.innerHTML = `<tr><td colspan="6" class="text-center text-danger py-3">${esc(err.message)}</td></tr>`;
+    }
+}
+
+const NW_LOAN_FIELDS = {
+    nwLoanName: 'name', nwLoanPrincipal: 'principal', nwLoanRate: 'annual_rate_pct',
+    nwLoanStart: 'start_date', nwLoanTerm: 'term_months', nwLoanExtra: 'extra_payment_eur',
+    nwLoanLender: 'lender', nwLoanNotes: 'notes', nwLoanRateAsOf: 'rate_as_of',
+    nwLoanBalanceAsOf: 'balance_as_of',
+};
+
+function _resetLoanForm() {
+    const form = document.getElementById('nwLoanForm');
+    if (form) form.reset();
+    const id = document.getElementById('nwLoanId');
+    if (id) id.value = '';
+    const btn = document.getElementById('nwLoanSubmit');
+    if (btn) btn.textContent = 'Add loan';
+}
+
+window.editLoan = function (id) {
+    const loan = _nwLoans.find(l => Number(l.id) === Number(id));
+    if (!loan) return;
+    Object.entries(NW_LOAN_FIELDS).forEach(([elId, key]) => {
+        const el = document.getElementById(elId);
+        if (el) el.value = loan[key] == null ? '' : loan[key];
+    });
+    document.getElementById('nwLoanId').value = String(loan.id);
+    document.getElementById('nwLoanSubmit').textContent = 'Save loan';
+    const form = document.getElementById('nwLoanForm');
+    if (form) form.scrollIntoView({ behavior: 'smooth', block: 'center' });
+};
+
+window.confirmDeleteLoan = async function (id) {
+    if (!(await confirmDialog({ title: 'Delete loan', message: 'Remove this loan from your net worth? This cannot be undone.', danger: true }))) return;
+    try { await window.apiClient.deleteLoan(id); loadNetworthPage(); }
+    catch (err) { notify('Error: ' + err.message); }
+};
+
+function _wireLoanForm() {
+    const form = document.getElementById('nwLoanForm');
+    if (!form || form.dataset.wired) return;
+    form.dataset.wired = '1';
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const status = document.getElementById('nwLoanStatus');
+        const val = id => document.getElementById(id).value.trim();
+        const payload = {
+            name: val('nwLoanName'),
+            principal: parseFloat(val('nwLoanPrincipal')) || 0,
+            annual_rate_pct: parseFloat(val('nwLoanRate')) || 0,
+            start_date: val('nwLoanStart'),
+            term_months: parseInt(val('nwLoanTerm'), 10) || 0,
+            extra_payment_eur: parseFloat(val('nwLoanExtra')) || 0,
+            lender: val('nwLoanLender') || null,
+            notes: val('nwLoanNotes') || null,
+            rate_as_of: val('nwLoanRateAsOf') || null,
+            balance_as_of: val('nwLoanBalanceAsOf') || null,
+        };
+        if (!payload.name || !payload.start_date || !payload.term_months) return;
+        const editingId = val('nwLoanId');
+        status.className = 'small text-muted'; status.textContent = 'Saving…';
+        try {
+            if (editingId) await window.apiClient.updateLoan(editingId, payload);
+            else await window.apiClient.createLoan(payload);
+            _resetLoanForm();
+            status.textContent = '';
+            loadNetworthPage();
+        } catch (err) { status.className = 'small text-danger'; status.textContent = err.message; }
+    });
+    const cancel = document.getElementById('nwLoanCancel');
+    if (cancel) cancel.addEventListener('click', _resetLoanForm);
+}
+
+function _renderValuations(rows, portfolios) {
+    const tbody = document.getElementById('nwValuationsBody');
+    if (!tbody) return;
+    if (!rows.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">No account valuations yet.</td></tr>';
+        return;
+    }
+    const names = {};
+    (portfolios || []).forEach(p => { names[p.id] = p.name; });
+    tbody.innerHTML = rows.map(v => `<tr>
+        <td class="ps-3">${esc(names[v.portfolio_id] || ('Portfolio ' + v.portfolio_id))}</td>
+        <td>${esc(v.provider)}</td>
+        <td class="text-end">${Fmt.money(v.value, v.currency || 'EUR', 0)}</td>
+        <td class="text-end">${v.cash == null ? '—' : Fmt.money(v.cash, v.currency || 'EUR', 0)}</td>
+        <td>${v.as_of ? esc(Fmt.date(v.as_of)) : '—'}</td>
+        <td class="small text-danger">${esc(v.last_error || '')}</td>
+        <td class="pe-3 text-end"><button class="btn btn-sm btn-outline-danger" title="Delete" onclick="window.confirmDeleteValuation(${Number(v.portfolio_id)})"><i class="bi bi-trash"></i></button></td>
+    </tr>`).join('');
+}
+
+async function _loadValuations() {
+    try {
+        const [rows, portfolios] = await Promise.all([
+            window.apiClient.getValuations(), window.apiClient.getPortfolios(),
+        ]);
+        const brokerage = (portfolios || []).filter(p => p.account_type !== 'bank');
+        const sel = document.getElementById('nwValPortfolio');
+        if (sel) sel.innerHTML = brokerage.map(p => `<option value="${Number(p.id)}">${esc(p.name)}</option>`).join('');
+        _renderValuations(rows || [], portfolios);
+    } catch (err) {
+        const tbody = document.getElementById('nwValuationsBody');
+        if (tbody) tbody.innerHTML = `<tr><td colspan="7" class="text-center text-danger py-3">${esc(err.message)}</td></tr>`;
+    }
+}
+
+window.refreshValuations = async function () {
+    try {
+        const res = await window.apiClient.refreshValuations();
+        const failed = (res || []).filter(r => !r.ok);
+        if (failed.length) notify('Refreshed with errors: ' + failed.map(r => `portfolio ${r.portfolio_id}: ${r.error}`).join('; '));
+        else notify(`Refreshed ${(res || []).length} account(s).`, 'success');
+    } catch (err) { notify('Error: ' + err.message); }
+    loadNetworthPage();
+};
+
+window.confirmDeleteValuation = async function (pid) {
+    if (!(await confirmDialog({ title: 'Delete valuation', message: 'Stop reading this account\'s value from its API?', danger: true }))) return;
+    try { await window.apiClient.deleteValuation(pid); loadNetworthPage(); }
+    catch (err) { notify('Error: ' + err.message); }
+};
+
+function _wireValuationForm() {
+    const form = document.getElementById('nwValuationForm');
+    if (form && !form.dataset.wired) {
+        form.dataset.wired = '1';
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const status = document.getElementById('nwValStatus');
+            const payload = {
+                portfolio_id: parseInt(document.getElementById('nwValPortfolio').value, 10),
+                provider: 'indexa',
+                account_ref: document.getElementById('nwValAccountRef').value.trim(),
+            };
+            if (!payload.portfolio_id || !payload.account_ref) return;
+            status.className = 'small text-muted'; status.textContent = 'Adding…';
+            try {
+                await window.apiClient.createValuation(payload);
+                form.reset();
+                status.textContent = '';
+                loadNetworthPage();
+            } catch (err) { status.className = 'small text-danger'; status.textContent = err.message; }
+        });
+    }
+    const btn = document.getElementById('nwValuationsRefresh');
+    if (btn && !btn.dataset.wired) {
+        btn.dataset.wired = '1';
+        btn.addEventListener('click', () => window.refreshValuations());
+    }
+}
+
 function _wireNetworthForm() {
     const form = document.getElementById('nwAddForm');
     if (form && !form.dataset.wired) {
         form.dataset.wired = '1';
         const $ = id => document.getElementById(id);
+        if ($('nwAsOf') && !$('nwAsOf').value) $('nwAsOf').value = _todayIso();
         form.addEventListener('submit', async (e) => {
             e.preventDefault();
             const status = $('nwAddStatus');
@@ -516,12 +789,14 @@ function _wireNetworthForm() {
                 // The chosen type determines whether it's a debt (no checkbox).
                 is_liability: NW_LIABILITY_CATS.has(category),
                 notes: $('nwNotes').value.trim() || null,
+                as_of: $('nwAsOf') && $('nwAsOf').value ? $('nwAsOf').value : undefined,
             };
             if (!payload.name) return;
             status.className = 'small text-muted'; status.textContent = 'Adding…';
             try {
                 await window.apiClient.createManualAsset(payload);
                 form.reset(); $('nwCurrency').value = 'EUR';
+                if ($('nwAsOf')) $('nwAsOf').value = _todayIso();
                 status.textContent = '';
                 loadNetworthPage();
             } catch (err) { status.className = 'small text-danger'; status.textContent = err.message; }

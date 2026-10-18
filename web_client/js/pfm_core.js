@@ -2645,6 +2645,65 @@ function createAPIClient() {
             if (!resp.ok) throw new Error('Failed to delete');
             return resp.json().catch(() => ({}));
         },
+        async getBalanceSheet() {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/balance-sheet', { headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to load balance sheet');
+            return resp.json().catch(() => ({}));
+        },
+        async getLoans() {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/loans', { headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to load loans');
+            return resp.json().catch(() => ({}));
+        },
+        async createLoan(body) {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/loans', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(body)
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to add loan');
+            return resp.json().catch(() => ({}));
+        },
+        async updateLoan(id, body) {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/loans/' + id, {
+                method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(body)
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to update loan');
+            return resp.json().catch(() => ({}));
+        },
+        async deleteLoan(id) {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/loans/' + id, { method: 'DELETE', headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to delete loan');
+            return resp.json().catch(() => ({}));
+        },
+        async getLoanSchedule(id) {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/loans/' + id + '/schedule', { headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to load schedule');
+            return resp.json().catch(() => ({}));
+        },
+        async getValuations() {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/valuations', { headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to load valuations');
+            return resp.json().catch(() => ({}));
+        },
+        async createValuation(body) {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/valuations', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(body)
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to add valuation');
+            return resp.json().catch(() => ({}));
+        },
+        async deleteValuation(pid) {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/valuations/' + pid, { method: 'DELETE', headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to delete valuation');
+            return resp.json().catch(() => ({}));
+        },
+        async refreshValuations() {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/valuations/refresh', { method: 'POST', headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to refresh valuations');
+            return resp.json().catch(() => ({}));
+        },
 
         async getDeposits() {
             const resp = await fetch(this.baseURL + '/api/v1/deposits/', { headers: { 'X-API-Key': this.apiKey } });
