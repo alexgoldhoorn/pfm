@@ -1200,6 +1200,140 @@ def networth() -> str:
         "\nBank balances come from imported statements; manual items are only as"
         " current as their 'updated' date."
     )
+    lines.extend(_balance_sheet_lines())
+    return "\n".join(lines)
+
+
+def _balance_sheet_lines() -> list[str]:
+    """Summary lines from the balance sheet; never raises.
+
+    Returns:
+        The balance-sheet totals line plus one bullet per stale line, or a
+        single "unavailable" line when the call fails.
+    """
+    try:
+        sheet = _get("/api/v1/networth/balance-sheet")
+        totals = sheet.get("totals") or {}
+
+        def money(key: str) -> str:
+            value = totals.get(key)
+            return "n/a" if value is None else _fmt_currency(float(value))
+
+        stale = totals.get("stale_lines") or 0
+        out = [
+            f"\nBalance sheet: assets {money('assets_eur')}, "
+            f"liabilities {money('liabilities_eur')}, "
+            f"financial assets (excl. property) {money('financial_assets_eur')}, "
+            f"liquid {money('liquid_eur')}; {stale} stale line(s)"
+        ]
+        if stale:
+            for group in sheet.get("groups") or []:
+                for line in group.get("lines") or []:
+                    if not line.get("stale"):
+                        continue
+                    age = line.get("age_days")
+                    detail = line.get("note") or (
+                        f"{age} days old" if age is not None else "stale"
+                    )
+                    out.append(f"  - {line.get('label') or '?'} — {detail}")
+        return out
+    except Exception as e:
+        return [f"\nBalance sheet: unavailable ({e})"]
+
+
+def _na(value, fmt=None) -> str:
+    """Format a possibly missing value; a missing one is 'n/a', never 0."""
+    if value is None:
+        return "n/a"
+    return fmt(value) if fmt else str(value)
+
+
+_VERDICT_WORDS = {"on_track": "ON TRACK", "short": "SHORT", "at_risk": "AT RISK"}
+
+
+def _lasts(sc: dict, horizon) -> str:
+    """Describe how long the money lasts in one scenario."""
+    if sc.get("lasts_until_age") is None:
+        return f"past the horizon (age {_na(horizon)})"
+    return f"until age {sc['lasts_until_age']}"
+
+
+def _gap(sc: dict) -> str:
+    """Describe the monthly gap: negative is a surplus."""
+    gap = sc.get("gap_monthly_eur")
+    if gap is None:
+        return "n/a"
+    amount = _fmt_currency(abs(float(gap)))
+    return f"surplus {amount}/month" if gap <= 0 else f"short by {amount}/month"
+
+
+@mcp.tool()
+def retirement_readiness() -> str:
+    """
+    Retirement readiness in today's euros: whether the household's financial
+    assets, measured spending and entered pensions last from the retirement age
+    (65) and the statutory age (67) to the horizon; verdict, money-lasts-until
+    age, sustainable monthly spend, gap and extra saving needed, base and
+    pessimistic cases, plus the warnings. Needs the plan set up on the Net Worth
+    page. Read-only.
+    """
+    try:
+        data = _get("/api/v1/retirement/readiness")
+    except Exception as e:
+        return f"Error fetching retirement readiness: {e}"
+
+    status = data.get("status")
+    if status != "ok":
+        reason = data.get("reason") or "enter a birth date on the Net Worth page"
+        return f"Retirement readiness: {_na(status)} — {reason}"
+
+    inputs = data.get("inputs") or {}
+    horizon = (data.get("plan") or {}).get("horizon_age")
+    money = lambda v: _fmt_currency(float(v))  # noqa: E731
+    lines = [
+        f"RETIREMENT READINESS (today's euros, as of {_na(data.get('as_of'))})",
+        f"  Spending target: "
+        f"{_na(inputs.get('spending_target_monthly_eur'), money)}/month "
+        f"(from {_na(inputs.get('spending_months_used'))} months of spending)",
+        f"  Financial assets: {_na(inputs.get('financial_assets_eur'), money)}",
+    ]
+    scenarios = data.get("scenarios") or []
+    ages = []
+    for sc in scenarios:
+        if sc.get("retirement_age") not in ages:
+            ages.append(sc.get("retirement_age"))
+    for age in ages:
+        for sc in (s for s in scenarios if s.get("retirement_age") == age):
+            verdict = _VERDICT_WORDS.get(sc.get("verdict"), _na(sc.get("verdict")))
+            if sc.get("case") == "base":
+                extra = sc.get("extra_saving_needed_monthly_eur")
+                if "extra_saving_needed_monthly_eur" not in sc:
+                    saving = "n/a"
+                elif extra is None:
+                    saving = "not reachable by saving alone"
+                elif extra <= 0:
+                    saving = "none needed"
+                else:
+                    saving = f"save {money(extra)}/month more"
+                lines.append(f"\nRetire at age {_na(age)}: {verdict}")
+                lines.append(f"  Money lasts {_lasts(sc, horizon)}")
+                lines.append(
+                    "  Sustainable spend: "
+                    f"{_na(sc.get('sustainable_monthly_eur'), money)}/month"
+                )
+                lines.append(f"  Gap: {_gap(sc)}")
+                lines.append(f"  Extra saving: {saving}")
+            else:
+                lines.append(
+                    f"  Pessimistic: {verdict}, money lasts {_lasts(sc, horizon)}, "
+                    f"sustainable "
+                    f"{_na(sc.get('sustainable_monthly_eur'), money)}/month, "
+                    f"{_gap(sc)}"
+                )
+    warnings = data.get("warnings") or []
+    if warnings:
+        lines.append("\nWarnings:")
+        lines.extend(f"  - {w}" for w in warnings)
     return "\n".join(lines)
 
 
