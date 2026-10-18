@@ -639,7 +639,8 @@ function retirementVerdictHtml(readiness) {
         const b = _rtScenario(r, age, 'base');
         const p = _rtScenario(r, age, 'pessimistic');
         const v = RT_VERDICTS[b.verdict] || { label: String(b.verdict), cls: 'text-bg-secondary' };
-        const lasts = (Number(b.pot_at_horizon_eur) >= 0 && horizon != null)
+        // the pot is 0 once depleted, so only the verdict says it outlasts the horizon
+        const lasts = (b.verdict === 'on_track' && horizon != null)
             ? `Money lasts past ${esc(horizon)}`
             : `Money lasts until age ${esc(b.lasts_until_age)}`;
         const gap = Number(b.gap_monthly_eur);

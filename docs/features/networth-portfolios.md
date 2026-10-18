@@ -48,7 +48,7 @@ If a reconciliation like this comes up again: match every statement line to a tr
 
 Manual `POST|PUT /api/v1/networth/` accept an optional `as_of` date. With no valuation, a portfolio whose account valuation is stale or never fetched keeps its positions line and the note says "valued at fund NAVs, account valuation N days old" or "never fetched".
 
-**`GET /api/v1/networth/`** keeps its response shape for the existing page and the MCP `networth` tool, but its component fields no longer add up to `net_worth_eur`: loans, ledger cash and account valuations are only inside the total (and the sheet).
+**`GET /api/v1/networth/`** keeps its response shape for the existing page and the MCP `networth` tool, and its component fields add up to `net_worth_eur` to the cent: `brokerage_eur + bank_accounts_eur + broker_cash_eur + manual_assets_eur + deposits_eur − manual_liabilities_eur − loans_eur` (`broker_cash_eur` is the counted ledger-cash lines, `loans_eur` the loan balances). A stale or never-fetched account valuation on a portfolio with no positions stays on the sheet as a stale line (never-fetched with value 0 is shown but not counted).
 
 ### Loans (`portf_manager/services/loans.py`, table `loans`)
 Endpoints under `/api/v1/networth/loans`: `GET` (each row also carries today's `balance_eur`, `monthly_payment_eur` and `end_date`), `POST`, `PUT /{id}`, `DELETE /{id}`, `GET /{id}/schedule` (one row per calendar year: `year`, `balance_end_eur`, `interest_paid_eur`, `payments_eur`).
@@ -61,7 +61,7 @@ A standard annuity (French amortisation), simulated month by month with every fi
 One row per brokerage portfolio, shaped for more than one provider (`provider` is `indexa` today). `value` **includes** `cash`; the investments are `value − cash`, and the retirement projection uses that split.
 
 - Setting `PORTF_INDEXA_TOKEN` (`.env.local`, never the database; settings key `indexa_token`) enables the client. `refresh_account_valuations(db, token, only_portfolio=None)` calls `GET /accounts/{account_ref}/portfolio` on `https://api.indexacapital.com` with an `X-AUTH-TOKEN` header; without a token it does nothing. The portfolio's `total_amount`, `cash_amount` and date become `value`, `cash` and `as_of` (today when the API gives no date). A failure writes `last_error` and **keeps the old value and `as_of`**, so the line simply goes stale after 7 days.
-- `price_updater.update_all_prices` runs it after the price pass; the run result carries `valuations_refreshed` and `valuation_errors`.
+- `price_updater.run_price_update` runs it after the price pass; the run result carries `valuations_refreshed` and `valuation_errors`.
 - Endpoints (`/api/v1/networth/`): `GET /valuations`; `POST /valuations {portfolio_id, provider, account_ref}` links a brokerage portfolio (422 for a bank portfolio, 404 for an unknown one), keeps an existing row's good value, and refreshes once when the token is set and the provider is `indexa` (the response carries `refreshed`); `POST /valuations/refresh` refreshes all by hand; `DELETE /valuations/{portfolio_id}` unlinks. A new link starts with `value 0` and `as_of 1970-01-01`, which the sheet treats as "never fetched".
 - The MyInvestor and Coinbase portfolios keep their positions-based lines.
 
@@ -87,11 +87,11 @@ Answers one question: if the household keeps living at today's financial level, 
 
 **UI wiring** (`web_client/js/pfm_analytics.js`): `loadNetworthPage` renders the balance sheet (`renderBalanceSheetRows`, `renderBalanceSheetTotals`), the retirement card (`loadRetirementCard` → `retirementVerdictHtml`, chart series from `retirementChartSeries`, plan form behind the gear icon, incomes list with quick-add suggestions), and the manage section (manual lines with an "as of" date, loans, valuations). Goals: a goal whose name contains "retire" shows `retirementGoalLineHtml` ("Readiness: …", linking to Net Worth) instead of a progress bar (`pfm_features.js`). Help entries: `nw_*` and `rt_*` in `help_text.js`. Action Items: see that doc. The Wealth Simulator's "Load from Net Worth" takes the mortgage balance, rate and payment from the first loan when one exists (`forecastPrefillFromLoan`).
 
-**After deployment, the owner does by hand** (none of it is in the repository): add the mortgage as a loan and delete the typed liability line; set `PORTF_INDEXA_TOKEN` and link the Indexa portfolio to its account reference; decide per brokerage portfolio whether to keep ledger cash or a synthetic cash asset (never both); enter the birth date, the expected state pension and, if wanted, the partner's details in the plan; give the home line an "as of" date; and remove typed manual lines that now duplicate a portfolio.
+**After deployment, the owner does by hand** (none of it is in the repository): add the mortgage as a loan and delete the typed liability line; set `PORTF_INDEXA_TOKEN` (read at startup, so restart the backend afterwards) and link the Indexa portfolio to its account reference; decide per brokerage portfolio whether to keep ledger cash or a synthetic cash asset (never both); enter the birth date, the expected state pension and, if wanted, the partner's details in the plan; give the home line an "as of" date; and remove typed manual lines that now duplicate a portfolio.
 
 **Known limits**
 - A stale valuation on a portfolio with no positions disappears from the sheet (the positions fallback has nothing to show).
-- `GET /networth/` component fields no longer sum to `net_worth_eur` (see above).
+- `GET /networth/` components sum to `net_worth_eur` through `broker_cash_eur` and `loans_eur` (see above).
 - A loan that starts mid-year subtracts the pre-start months of its first payment year from the need.
 - The retirement chart does not redraw on window resize.
 - Returns are deterministic real rates, not a Monte Carlo; a bad sequence of early returns is not modelled.

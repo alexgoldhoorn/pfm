@@ -270,8 +270,10 @@ def _networth_section(story: list, networth: dict, holdings: list) -> None:
     rows = [
         ("Brokerage value", _eur(networth["brokerage_eur"])),
         ("Bank accounts", _eur(networth["bank_accounts_eur"])),
+        ("Broker cash", _eur(networth.get("broker_cash_eur", 0))),
         ("Manual assets", _eur(networth["manual_assets_eur"])),
         ("Manual liabilities", _eur(-networth["manual_liabilities_eur"])),
+        ("Loans", _eur(-networth.get("loans_eur", 0))),
         ("Active fixed deposits", _eur(networth["deposits_eur"])),
         ("Net worth", _eur(networth["net_worth_eur"])),
     ]

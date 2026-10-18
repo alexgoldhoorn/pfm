@@ -93,14 +93,15 @@ async function loadGoals() {
                 ? window.retirementGoalLineHtml(readiness) : '';
             const progress = Math.max(0, Math.min(100, parseFloat(g.progress_pct || 0)));
             const onTrack = !!g.on_track;
-            const trackBadge = onTrack
+            // retirement goals show the readiness line instead of progress
+            const trackBadge = isRetire ? '' : onTrack
                 ? '<span class="badge bg-success"><i class="bi bi-check-lg me-1"></i>On track</span>'
                 : '<span class="badge bg-danger"><i class="bi bi-x-lg me-1"></i>Off track</span>';
             const barCls = onTrack ? 'bg-success' : 'bg-warning';
             const monthsLeft = g.months_left != null ? g.months_left : '—';
             const shortfall = parseFloat(g.shortfall_eur || 0);
             const reqMonthly = parseFloat(g.required_monthly_eur || 0);
-            const offTrackNote = !onTrack
+            const offTrackNote = !onTrack && !isRetire
                 ? `<div class="alert alert-warning py-2 small mb-0 mt-2">
                        <i class="bi bi-exclamation-triangle me-1"></i>
                        Need <strong>${anFmtEur2(reqMonthly)}/month</strong> to reach this goal
@@ -129,16 +130,19 @@ async function loadGoals() {
                                 <span>${anFmtEur(g.current_networth_eur)} of ${anFmtEur(g.target_amount_eur)}
                                     ${nw ? `<button class="btn btn-sm btn-link p-0 ms-1 align-baseline" type="button" data-bs-toggle="collapse" data-bs-target="#nwBreak${g.id}" aria-expanded="false" title="Where does this number come from?"><i class="bi bi-info-circle"></i></button>` : ''}
                                 </span>
-                                <span>${progress.toFixed(1)}%</span>
+                                <span>${isRetire ? '' : progress.toFixed(1) + '%'}</span>
                             </div>
                             ${nw ? `
                             <div class="collapse mb-2" id="nwBreak${g.id}">
                                 <table class="table table-sm mb-0 small">
                                     <tbody>
                                         <tr><td>Brokerage (investments)</td><td class="text-end">${anFmtEur(nw.brokerage_eur)}</td></tr>
+                                        <tr><td>Bank accounts</td><td class="text-end">${anFmtEur(nw.bank_accounts_eur || 0)}</td></tr>
+                                        <tr><td>Broker cash</td><td class="text-end">${anFmtEur(nw.broker_cash_eur || 0)}</td></tr>
                                         <tr><td>Fixed deposits</td><td class="text-end">${anFmtEur(nw.deposits_eur || 0)}</td></tr>
                                         <tr><td>Manual assets</td><td class="text-end">${anFmtEur(nw.manual_assets_eur)}</td></tr>
-                                        <tr><td>Liabilities</td><td class="text-end text-danger">−${anFmtEur(nw.manual_liabilities_eur)}</td></tr>
+                                        <tr><td>Manual liabilities</td><td class="text-end text-danger">−${anFmtEur(nw.manual_liabilities_eur)}</td></tr>
+                                        <tr><td>Loans</td><td class="text-end text-danger">−${anFmtEur(nw.loans_eur || 0)}</td></tr>
                                         <tr class="border-top fw-semibold"><td>= Current net worth</td><td class="text-end">${anFmtEur(nw.net_worth_eur)}</td></tr>
                                     </tbody>
                                 </table>
@@ -2300,6 +2304,12 @@ function forecastPrefillFromLoan(loan) {
 }
 window.forecastPrefillFromLoan = forecastPrefillFromLoan;
 
+// Pure: the first loan that still has a balance (a repaid loan is skipped).
+function firstActiveLoan(loans) {
+    return (loans || []).find(l => Number(l && l.balance_eur) > 0) || null;
+}
+window.firstActiveLoan = firstActiveLoan;
+
 // Inflation assumed when turning a nominal return into the real return the
 // simulator's inputs expect: the ECB's 2% medium-term target.
 const ASSUMED_INFLATION_PCT = 2;
@@ -2906,7 +2916,8 @@ function setupForecastPage() {
                 ]);
                 const m = mapNetworthToForecast(d.items || []);
                 // A loan row, when there is one, is the mortgage source.
-                const loan = loans && loans.length ? forecastPrefillFromLoan(loans[0]) : null;
+                const active = firstActiveLoan(loans);
+                const loan = active ? forecastPrefillFromLoan(active) : null;
                 if (loan) m.mortgage = loan.principal;
                 cashAmountInput.value = Math.round(m.cash);
                 bondsAmountInput.value = Math.round(m.bonds);

@@ -226,6 +226,14 @@ test("forecastPrefillFromLoan: reads balance, rate and payment; missing -> 0", (
     assert.equal(forecastPrefillFromLoan().payment, 0);
 });
 
+test("firstActiveLoan: skips repaid loans", () => {
+    const { firstActiveLoan } = loadAppIntoContext();
+    const got = firstActiveLoan([{ id: 1, balance_eur: 0 }, { id: 2, balance_eur: 500 }]);
+    assert.equal(got.id, 2);
+    assert.equal(firstActiveLoan([{ id: 1, balance_eur: 0 }]), null);
+    assert.equal(firstActiveLoan(undefined), null);
+});
+
 test("historyToForecast: returns rate+vol from IRR/volatility with enough snapshots", () => {
     const { historyToForecast } = loadAppIntoContext();
     const h = historyToForecast({ money_weighted_irr_pct: 24.7 }, { volatility_pct: 49.8, snapshots_used: 553 });

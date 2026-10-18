@@ -1138,6 +1138,9 @@ def networth() -> str:
         f"  Bank accounts:              {_fmt_currency(float(data.get('bank_accounts_eur') or 0))}"
     )
     lines.append(
+        f"  Broker cash (ledger):       {_fmt_currency(float(data.get('broker_cash_eur') or 0))}"
+    )
+    lines.append(
         f"  Fixed deposits (active):    {_fmt_currency(float(data.get('deposits_eur') or 0))}"
     )
     lines.append(
@@ -1145,6 +1148,10 @@ def networth() -> str:
     )
     lines.append(
         f"  Liabilities (manual):       {_fmt_currency(-liabilities_total if liabilities_total else 0.0)}"
+    )
+    loans_total = float(data.get("loans_eur") or 0)
+    lines.append(
+        f"  Loans:                      {_fmt_currency(-loans_total if loans_total else 0.0)}"
     )
 
     accounts = data.get("bank_accounts") or []
