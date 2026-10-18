@@ -77,6 +77,14 @@ def test_income_crud_and_validation(tmp_path):
     assert r.status_code == 200
     row = client.get("/api/v1/retirement/incomes", headers=HEADERS).json()[0]
     assert row["indexed"] is False and row["to_age"] == 80
+    r = client.put(
+        f"/api/v1/retirement/incomes/{iid}",
+        json={**INCOME, "to_age": None},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+    row = client.get("/api/v1/retirement/incomes", headers=HEADERS).json()[0]
+    assert row["to_age"] is None
     assert (
         client.put(
             "/api/v1/retirement/incomes/999", json=INCOME, headers=HEADERS
