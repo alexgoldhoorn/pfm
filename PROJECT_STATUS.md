@@ -5,7 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-10-18
+Last updated: 2026-10-19
+
+**Recent (v2.5.81):** **Balance sheet and retirement readiness.** Schema v35 adds `manual_assets.as_of`, `loans`, `account_valuations` and `retirement_incomes`. `GET /networth/balance-sheet` (`services/balance_sheet.py`) lists every asset and liability as a sourced, dated line with a per-source freshness limit, broker cash from a shared ledger (`services/cash_ledger.py`), loans from an amortisation schedule (`services/loans.py`) and a fresh Indexa account valuation (`services/indexa.py`, `PORTF_INDEXA_TOKEN`) that replaces the portfolio's positions and cash lines; `net_worth_eur` is now derived from it. `/api/v1/retirement` (plan, incomes, readiness; `services/retirement.py`) projects the pot against the measured spending target in today's euros and gives an on_track / short / at_risk verdict for ages 65 and 67 with sustainable spend and extra saving needed. Net Worth page reorganised (sheet, retirement card, manage section), Goals shows a readiness line on retirement goals, two new Action Item checks (`balance_sheet_stale:*`, `retirement_readiness`), MCP `retirement_readiness`, and the Wealth Simulator takes the mortgage from the first loan. See `docs/features/networth-portfolios.md`.
 
 **Recent (v2.5.80):** **Price-spike guard and ongoing charges (TER).** A fetched price outside a √time band around the last stored price (`services/price_guard.py`, `MAX_DAILY_MOVE = 0.5`) is held in `app_settings` (`price_guard:{asset_id}`) instead of stored, and confirmed or cleared by a later fetch; held prices appear in the run result (`held_symbols`), `app_logs` (`price.guard.*`) and as an Action Item (`check_held_prices`). Schema v34 adds `fund_profiles.ongoing_charges_pct`; `GET /analytics/fees` gains an `ongoing_charges` block (value-weighted TER, yearly cost, uncovered funds, 10/20/30-year cost and reduction in yield at an assumed 5 % gross return); the Fees tab shows it and the fund profile editor takes the TER.
 
