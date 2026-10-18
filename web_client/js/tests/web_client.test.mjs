@@ -213,6 +213,19 @@ test("mapNetworthToForecast: empty/undefined → zeros, prefers amount_eur", () 
     assert.equal(m.cash, 10); // amount_eur wins over amount
 });
 
+test("forecastPrefillFromLoan: reads balance, rate and payment; missing -> 0", () => {
+    const { forecastPrefillFromLoan } = loadAppIntoContext();
+    const p = forecastPrefillFromLoan({ balance_eur: 150000, annual_rate_pct: 2.5, monthly_payment_eur: 800 });
+    assert.equal(p.principal, 150000);
+    assert.equal(p.rate, 2.5);
+    assert.equal(p.payment, 800);
+    const e = forecastPrefillFromLoan({ balance_eur: "abc" });
+    assert.equal(e.principal, 0);
+    assert.equal(e.rate, 0);
+    assert.equal(e.payment, 0);
+    assert.equal(forecastPrefillFromLoan().payment, 0);
+});
+
 test("historyToForecast: returns rate+vol from IRR/volatility with enough snapshots", () => {
     const { historyToForecast } = loadAppIntoContext();
     const h = historyToForecast({ money_weighted_irr_pct: 24.7 }, { volatility_pct: 49.8, snapshots_used: 553 });

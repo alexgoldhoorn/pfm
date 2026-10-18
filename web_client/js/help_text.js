@@ -151,7 +151,7 @@ window.PAGE_HELP = {
       <h6 class="fw-semibold mt-2 mb-1">Inputs</h6>
       <ul class="small mb-2">
         <li><strong>Stocks / ETFs</strong> value is auto-populated from your live holdings when the page loads. Hit the refresh icon <i class="bi bi-arrow-clockwise"></i> to reload it.</li>
-        <li><strong>Load from Net Worth</strong> pre-fills Cash, Bonds and Mortgage amounts from your Net Worth page, plus <strong>Monthly contribution</strong> and the mortgage <strong>Monthly Payment</strong> from your Monthly Cash Flow entries (all still manually editable afterwards).</li>
+        <li><strong>Load from Net Worth</strong> pre-fills Cash, Bonds and Mortgage amounts from your Net Worth page, plus <strong>Monthly contribution</strong> and the mortgage <strong>Monthly Payment</strong> from your Monthly Cash Flow entries. When you have added a loan on the Net Worth page, the mortgage balance, rate and payment come from the first loan instead (all still manually editable afterwards).</li>
         <li><strong>Use my history</strong> sets the Stocks annual return from your money-weighted IRR since inception, minus 2% assumed inflation (the ECB's target) to make it a real return like the other inputs, and the volatility from the last 12 months of daily snapshots.</li>
         <li><strong>Annual return %</strong> per asset class is your assumed long-run real return, e.g. 8% for stocks, 4% for bonds, 1.5% for cash.</li>
         <li><strong>Volatility %</strong> (stocks only) controls how wide the confidence band is. Default 16%; your historical figure may differ.</li>
