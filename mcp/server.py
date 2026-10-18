@@ -1219,23 +1219,22 @@ def _balance_sheet_lines() -> list[str]:
             value = totals.get(key)
             return "n/a" if value is None else _fmt_currency(float(value))
 
-        stale = totals.get("stale_lines") or 0
+        stale = totals.get("stale_lines", "n/a")
         out = [
             f"\nBalance sheet: assets {money('assets_eur')}, "
             f"liabilities {money('liabilities_eur')}, "
             f"financial assets (excl. property) {money('financial_assets_eur')}, "
             f"liquid {money('liquid_eur')}; {stale} stale line(s)"
         ]
-        if stale:
-            for group in sheet.get("groups") or []:
-                for line in group.get("lines") or []:
-                    if not line.get("stale"):
-                        continue
-                    age = line.get("age_days")
-                    detail = line.get("note") or (
-                        f"{age} days old" if age is not None else "stale"
-                    )
-                    out.append(f"  - {line.get('label') or '?'} — {detail}")
+        for group in sheet.get("groups") or []:
+            for line in group.get("lines") or []:
+                if not line.get("stale"):
+                    continue
+                age = line.get("age_days")
+                detail = line.get("note") or (
+                    f"{age} days old" if age is not None else "stale"
+                )
+                out.append(f"  - {line.get('label') or '?'} — {detail}")
         return out
     except Exception as e:
         return [f"\nBalance sheet: unavailable ({e})"]
@@ -1253,7 +1252,9 @@ _VERDICT_WORDS = {"on_track": "ON TRACK", "short": "SHORT", "at_risk": "AT RISK"
 
 def _lasts(sc: dict, horizon) -> str:
     """Describe how long the money lasts in one scenario."""
-    if sc.get("lasts_until_age") is None:
+    if "lasts_until_age" not in sc:
+        return "n/a"
+    if sc["lasts_until_age"] is None:
         return f"past the horizon (age {_na(horizon)})"
     return f"until age {sc['lasts_until_age']}"
 
@@ -1284,7 +1285,12 @@ def retirement_readiness() -> str:
 
     status = data.get("status")
     if status != "ok":
-        reason = data.get("reason") or "enter a birth date on the Net Worth page"
+        default = (
+            "enter a birth date on the Net Worth page"
+            if status == "needs_setup"
+            else "see the Net Worth page"
+        )
+        reason = data.get("reason") or default
         return f"Retirement readiness: {_na(status)} — {reason}"
 
     inputs = data.get("inputs") or {}
