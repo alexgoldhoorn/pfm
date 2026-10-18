@@ -14,6 +14,7 @@ import logging
 from portf_manager import market
 from portf_manager.database import Database
 from portf_manager.positions import compute_positions
+from portf_manager.services.cash_ledger import cash_by_portfolio
 from ..dependencies import get_database
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager
@@ -290,25 +291,14 @@ def get_portfolio_values(
     # broker's own EUR-denominated statement shows and doesn't drift between
     # requests as the live rate ticks. A first-class cash position so the page
     # reconciles against the broker and shows idle cash.
-    cash_by_pid: dict = {}
-    for tx in transactions:
-        pid = tx.get("portfolio_id")
-        amt = float(tx["total_amount"] or 0) * _get_fx_rate_on(
-            database, asset_currency(tx["asset_id"]), tx.get("transaction_date")
-        )
-        t = tx["transaction_type"].lower()
-        if t == "buy":
-            cash_by_pid[pid] = cash_by_pid.get(pid, 0.0) - amt
-        elif t in ("sell", "dividend", "interest"):
-            cash_by_pid[pid] = cash_by_pid.get(pid, 0.0) + amt
-    for bk in database.get_all_bookings():
-        pid = bk.get("portfolio_id")
-        amt = float(bk["amount"] or 0) * _get_fx_rate_on(
-            database, bk.get("currency", "EUR") or "EUR", bk.get("date")
-        )
-        cash_by_pid[pid] = cash_by_pid.get(pid, 0.0) + (
-            amt if bk.get("action") == "Deposit" else -amt
-        )
+    cash_by_pid = {
+        pid: v["cash_eur"]
+        for pid, v in cash_by_portfolio(
+            database,
+            lambda c, d: _get_fx_rate_on(database, c, d),
+            transactions,
+        ).items()
+    }
 
     # Cost basis (EUR): re-run the same chronological buy/sell/split math on a
     # copy of the transactions pre-converted to EUR at each one's own date, so
