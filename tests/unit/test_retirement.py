@@ -378,7 +378,9 @@ def test_loan_starting_after_retirement_is_not_treated_as_ended():
     by_age = {p["age"]: p["withdrawal_eur"] for p in s["path"]}
     assert by_age[65] == 12000
     assert by_age[69] == 12000
-    assert by_age[75] == 12000
+    # running 2031-2035, ended from age 75
+    assert by_age[74] == 12000
+    assert by_age[75] == 6000
 
 
 def test_save_plan_bounds_withdrawal_tax():
