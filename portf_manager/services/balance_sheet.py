@@ -120,6 +120,7 @@ def build_balance_sheet(
         edit: dict,
         note: Optional[str] = None,
         force_stale: bool = False,
+        in_total: bool = True,
     ) -> None:
         """Append one line, computing age and staleness."""
         day = _to_date(as_of)
@@ -143,6 +144,7 @@ def build_balance_sheet(
                 "stale": stale or force_stale,
                 "note": note,
                 "edit": edit,
+                "in_total": in_total,
             }
         )
 
@@ -177,7 +179,7 @@ def build_balance_sheet(
             continue
         price = db.get_latest_price(asset_id)
         entry = per_portfolio.setdefault(
-            pid, {"eur": 0.0, "oldest": None, "unpriced": 0}
+            pid, {"eur": 0.0, "oldest": None, "unpriced": 0, "auto": 0, "undated": 0}
         )
         if price:
             entry["eur"] += (
@@ -188,10 +190,13 @@ def build_balance_sheet(
         auto = bool(asset.get("auto_price", 1))
         if not auto:
             continue
+        entry["auto"] += 1
         if not price:
             entry["unpriced"] += 1
             continue
         day = _to_date(price.get("price_date"))
+        if day is None:
+            entry["undated"] += 1
         if day and (entry["oldest"] is None or day < entry["oldest"]):
             entry["oldest"] = day
     for pid, entry in per_portfolio.items():
@@ -209,7 +214,6 @@ def build_balance_sheet(
                     else valuation_notes[pid]
                 )
             )
-        has_auto = entry["oldest"] is not None or entry["unpriced"]
         add(
             f"positions:{pid or 0}",
             names.get(pid, "Unassigned positions"),
@@ -219,10 +223,10 @@ def build_balance_sheet(
             entry["eur"],
             "positions",
             entry["oldest"],
-            MAX_AGE_POSITIONS if has_auto else None,
+            MAX_AGE_POSITIONS if entry["auto"] else None,
             {"kind": "positions", "id": pid or 0},
             note="; ".join(notes) or None,
-            force_stale=bool(entry["unpriced"]),
+            force_stale=bool(entry["unpriced"] or entry["undated"]),
         )
 
     # Broker cash.
@@ -231,6 +235,8 @@ def build_balance_sheet(
             continue
         if abs(entry["cash_eur"]) < 0.005:
             continue
+        # a broker cannot hold negative cash: the ledger is incomplete
+        negative = entry["cash_eur"] < 0
         add(
             f"cash:{pid}",
             f"{names[pid]} cash",
@@ -242,6 +248,9 @@ def build_balance_sheet(
             entry["as_of"],
             MAX_AGE_BROKER_CASH,
             {"kind": "positions", "id": pid},
+            note="ledger cash is negative: deposits missing?" if negative else None,
+            force_stale=negative,
+            in_total=not negative,
         )
 
     # Fresh account valuations.
@@ -286,6 +295,7 @@ def build_balance_sheet(
                 MAX_AGE_BANK,
                 edit,
                 note="no statement with a balance",
+                in_total=False,
             )
             continue
         currency = latest.get("currency") or "EUR"
@@ -379,7 +389,9 @@ def build_balance_sheet(
     totals_by_group = {}
     for key, label in GROUPS:
         members = [ln for ln in lines if ln["group"] == key]
-        total = round(sum(ln["amount_eur"] or 0.0 for ln in members), 2)
+        total = round(
+            sum((ln["amount_eur"] or 0.0) for ln in members if ln["in_total"]), 2
+        )
         totals_by_group[key] = total
         groups.append(
             {"key": key, "label": label, "total_eur": total, "lines": members}
