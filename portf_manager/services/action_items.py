@@ -282,6 +282,99 @@ def check_goals_off_track(db) -> list[dict]:
     return items
 
 
+_BALANCE_SHEET_DUPLICATE_NOTE = (
+    "a portfolio with this name exists; is this line still needed?"
+)
+
+
+def check_balance_sheet_freshness(db, today: date | None = None) -> list[dict]:
+    """Balance-sheet lines whose data is too old, and manual duplicates."""
+    from portf_manager.services import balance_sheet
+
+    items = []
+    for group in balance_sheet.build_balance_sheet(db, today)["groups"]:
+        for line in group["lines"]:
+            note = line.get("note") or ""
+            if line["stale"]:
+                age = line.get("age_days")
+                if line["source"] == "bank_statement" and line["amount_eur"] is None:
+                    title = f"{line['label']} has no balance"
+                elif isinstance(age, (int, float)):
+                    title = f"{line['label']} is {int(age)} days old"
+                else:
+                    title = f"{line['label']} has no usable date"
+                items.append(
+                    {
+                        "id": f"balance_sheet_stale:{line['id']}",
+                        "category": "networth",
+                        "severity": "low" if line["source"] == "manual" else "medium",
+                        "title": title,
+                        "detail": note
+                        or (
+                            f"{line['source']} data; allowed age "
+                            f"{line['max_age_days']} days"
+                        ),
+                        "link_page": "networth",
+                        "context": {"line_id": line["id"]},
+                    }
+                )
+            if line["source"] == "manual" and _BALANCE_SHEET_DUPLICATE_NOTE in note:
+                items.append(
+                    {
+                        "id": f"balance_sheet_duplicate:{line['id']}",
+                        "category": "networth",
+                        "severity": "low",
+                        "title": f"{line['label']} may duplicate a portfolio",
+                        "detail": _BALANCE_SHEET_DUPLICATE_NOTE,
+                        "link_page": "networth",
+                        "context": {"line_id": line["id"]},
+                    }
+                )
+    return items
+
+
+def check_retirement_readiness(db) -> list[dict]:
+    """The base-case retirement verdict, when it is not on track."""
+    from portf_manager.services import retirement
+
+    result = retirement.readiness(db)
+    if result["status"] == "needs_setup":
+        return [
+            {
+                "id": "retirement_readiness",
+                "category": "retirement",
+                "severity": "low",
+                "title": "Retirement plan needs setup",
+                "detail": (
+                    "Enter your birth date on the Net Worth page to get a "
+                    "readiness verdict"
+                ),
+                "link_page": "networth",
+                "context": {},
+            }
+        ]
+    if result["status"] != "ok":
+        return []
+    base = result["scenarios"][0]
+    labels = {"short": ("Short", "medium"), "at_risk": ("At risk", "high")}
+    if base["verdict"] not in labels:
+        return []
+    label, severity = labels[base["verdict"]]
+    return [
+        {
+            "id": "retirement_readiness",
+            "category": "retirement",
+            "severity": severity,
+            "title": f"Retirement at {base['retirement_age']}: {label}",
+            "detail": (
+                f"Money lasts until age {base['lasts_until_age']} on the base case"
+            ),
+            "link_page": "networth",
+            "context": {"verdict": base["verdict"]},
+        }
+    ]
+
+
 def check_price_alerts(db) -> list[dict]:
     """Watchlist buy-zone hits and price-target crossings."""
     from portf_server.routers.research import compute_price_target_alerts
@@ -580,6 +673,8 @@ _CHECKS = (
     check_held_prices,
     check_stale_research,
     check_goals_off_track,
+    check_balance_sheet_freshness,
+    check_retirement_readiness,
     check_price_alerts,
     check_budget_overruns,
     check_fund_exposure,
