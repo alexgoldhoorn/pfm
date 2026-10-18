@@ -120,3 +120,35 @@ def test_networth_mentions_stale_lines():
         out = server.networth()
     assert "NET WORTH" in out
     assert "Balance sheet: unavailable (boom)" in out
+
+
+def test_retirement_readiness_missing_lasts_until_is_na():
+    payload = _ok_payload()
+    del payload["scenarios"][0]["lasts_until_age"]
+    with patch.object(server, "_get", return_value=payload):
+        out = server.retirement_readiness()
+    assert "Money lasts n/a" in out
+
+
+def test_retirement_readiness_other_status_default_reason():
+    with patch.object(server, "_get", return_value={"status": "insufficient_data"}):
+        out = server.retirement_readiness()
+    assert out == "Retirement readiness: insufficient_data — see the Net Worth page"
+
+
+def test_networth_missing_stale_lines_is_na_and_still_lists_stale():
+    bs = {
+        "totals": {"assets_eur": 1000},
+        "groups": [{"lines": [{"label": "Old", "stale": True, "age_days": 12}]}],
+    }
+    with patch.object(
+        server,
+        "_get",
+        side_effect=lambda p, params=None: (
+            bs if "balance-sheet" in p else {"net_worth_eur": 1}
+        ),
+    ):
+        out = server.networth()
+    assert "n/a stale line(s)" in out
+    assert "0 stale" not in out
+    assert "Old — 12 days old" in out
