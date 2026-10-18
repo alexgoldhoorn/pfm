@@ -346,3 +346,50 @@ def test_readiness_splits_a_fresh_valuation_into_investments_and_cash(tmp_path):
     r = readiness(db, today=date(2026, 10, 19), fx=lambda c: 1.0)
     assert r["inputs"]["investments_eur"] == 40000
     assert r["inputs"]["cash_eur"] >= 10000
+
+
+def test_extra_saving_zero_in_calendar_year_of_retirement():
+    # turns 65 on 2026-12-31: project() already treats 2026 as retired
+    plan = _plan(birth_date="1961-12-31")
+    got = extra_saving_needed_monthly(
+        plan, 65, 0.0, _pot(), [], [], _spending(1000), date(2026, 6, 1)
+    )
+    assert got == 0
+
+
+def test_extra_saving_none_when_cap_is_not_enough():
+    plan = _plan(birth_date="1971-01-01")
+    got = extra_saving_needed_monthly(
+        plan, 65, 0.0, _pot(), [], [], _spending(1_000_000), TODAY
+    )
+    assert got is None
+
+
+def test_loan_starting_after_retirement_is_not_treated_as_ended():
+    # 500 a month from 2031 (age 70); before that there is no loan to drop out
+    loan = {
+        "principal": 30000,
+        "annual_rate_pct": 0,
+        "start_date": "2030-12-01",
+        "term_months": 60,
+        "extra_payment_eur": 0,
+    }
+    s = _run(pot=_pot(cash=1000000), loans=[loan])
+    by_age = {p["age"]: p["withdrawal_eur"] for p in s["path"]}
+    assert by_age[65] == 12000
+    assert by_age[69] == 12000
+    assert by_age[75] == 12000
+
+
+def test_save_plan_bounds_withdrawal_tax():
+    from portf_manager.services.retirement import save_plan
+
+    db = Database(":memory:") if False else None
+    assert db is None
+    with pytest.raises(ValueError):
+        save_plan(_NoDb(), {"withdrawal_tax_pct": 100.0})
+
+
+class _NoDb:
+    def set_setting(self, *a):
+        raise AssertionError("must validate before storing")
