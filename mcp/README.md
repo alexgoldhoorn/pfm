@@ -8,6 +8,8 @@ HTTP client: the only dependency is the `mcp` package, and it never writes.
 
 ## Install and configure
 
+**Requirements:** a pfm API from 2026-10-19 onward (PROJECT_STATUS v2.5.83: `/analytics/wash-sale`, `/allocate/*`, `/retirement/*`). Older servers answer those tools with a 404, shown as "Error fetching …".
+
 You need a running pfm API and one of its API keys. Point the server at them
 with two environment variables:
 
@@ -89,7 +91,7 @@ Never print to stdout from a tool: stdout is the protocol channel.
 | `research_compare` | Saved research compared across tickers |
 | `tax_report` | Spanish IRPF summary with realised lots |
 | `tax_estimate` | Quick IRPF estimate for a year |
-| `wash_sale_check` | Antiaplicacion (wash-sale) windows and blocked losses |
+| `wash_sale_check` | Antiaplicación (wash-sale) windows and blocked losses |
 | `budget_summary` | Active budget, planned vs actual |
 | `spending_summary` | Bank spending, income and trend |
 | `spending_transactions` | Individual bank transactions |
