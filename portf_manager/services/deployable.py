@@ -305,3 +305,184 @@ def tax_reserve(
         "merchants_counted": merchants,
         "warnings": warnings,
     }
+
+
+# ── Buffer and deployable cash ───────────────────────────────────────────────
+
+MIN_SPEND_MONTHS = 6
+COMING_IN_DAYS = 30
+
+
+def buffer(
+    liquid_eur: float, reserve_eur: float, monthly_spend_eur: float, settings: dict
+) -> dict:
+    """Judge the cash buffer left after the tax reserve.
+
+    Args:
+        liquid_eur: Counted liquid cash.
+        reserve_eur: Tax reserve.
+        monthly_spend_eur: Monthly spending including Social Security.
+        settings: Allocator settings.
+
+    Returns:
+        ``{target_eur, months, status, idle_eur}``; status is ``rebuild``
+        (below the minimum), ``topping_up``, ``ok`` or ``idle`` (above the
+        maximum); ``unknown`` without a spending figure.
+    """
+    free = liquid_eur - reserve_eur
+    target = settings["buffer_months_target"] * monthly_spend_eur
+    if monthly_spend_eur <= 0:
+        return {"target_eur": 0.0, "months": None, "status": "unknown", "idle_eur": 0.0}
+    months = free / monthly_spend_eur
+    if months < settings["buffer_months_min"]:
+        status = "rebuild"
+    elif months < settings["buffer_months_target"]:
+        status = "topping_up"
+    elif months <= settings["buffer_months_max"]:
+        status = "ok"
+    else:
+        status = "idle"
+    idle = free - settings["buffer_months_max"] * monthly_spend_eur
+    return {
+        "target_eur": _cents(target),
+        "months": round(months, 2),
+        "status": status,
+        "idle_eur": _cents(idle) if status == "idle" else 0.0,
+    }
+
+
+def _buffer_rule(settings: dict) -> str:
+    """The buffer rule in words."""
+    return (
+        f"buffer: {settings['buffer_months_target']} months target, nothing "
+        f"deployable under {settings['buffer_months_min']}, idle above "
+        f"{settings['buffer_months_max']}"
+    )
+
+
+def deployable(
+    db,
+    today: date | None = None,
+    fx=None,
+    fx_on=None,
+    settings: dict | None = None,
+) -> dict:
+    """Cash that can go into investments now (spec 4.3).
+
+    ``deployable = max(0, liquid - tax_reserve - target_months * spend)``.
+
+    Args:
+        db: Database.
+        today: Reference date; defaults to today.
+        fx: ``fx(currency)`` live EUR rate.
+        fx_on: ``fx_on(currency, day)`` EUR rate on a date.
+        settings: Allocator settings; loaded from *db* when omitted.
+
+    Returns:
+        The response of spec 4.3.
+    """
+    from . import retirement
+    from .balance_sheet import build_balance_sheet
+
+    today = today or date.today()
+    if fx is None or fx_on is None:
+        from portf_server.routers.portfolios import _get_fx_rate, _get_fx_rate_on
+
+        fx = fx or _get_fx_rate
+        fx_on = fx_on or (lambda cur, day: _get_fx_rate_on(db, cur, day))
+    settings = settings or load_settings(db)
+    warnings: list[str] = []
+
+    sheet = build_balance_sheet(db, today=today, fx=fx, fx_on=fx_on)
+    cash = next((g for g in sheet["groups"] if g["key"] == "cash"), {"lines": []})
+    liquid_lines = []
+    stale = 0
+    for ln in cash["lines"]:
+        if ln.get("in_total"):
+            liquid_lines.append(
+                {
+                    "id": ln["id"],
+                    "label": ln["label"],
+                    "amount_eur": ln["amount_eur"],
+                    "stale": bool(ln.get("stale")),
+                }
+            )
+        else:
+            warnings.append(f"left out: {ln['label']}")
+        if ln.get("stale"):
+            stale += 1
+    liquid = sum(ln["amount_eur"] for ln in liquid_lines)
+
+    year, q = quarter_of(today)
+    py, pq = _previous(year, q)
+    start = quarter_bounds(py, pq)[0].isoformat()
+    rows = [
+        {
+            "date": r["date"],
+            "amount_eur": float(r["amount"]) * fx(r.get("currency") or "EUR"),
+            "category": r.get("category"),
+            "merchant": r.get("merchant"),
+            "is_transfer": bool(r.get("is_transfer")),
+        }
+        for r in db.list_spending_transactions(start_date=start, is_transfer=False)
+    ]
+    paid = set(settings["tax_paid_categories"])
+    tax_rows = [r for r in rows if r["category"] in paid]
+    reserve = tax_reserve(rows, tax_rows, settings, today)
+    warnings.extend(reserve["warnings"])
+
+    plan = retirement.load_plan(db)
+    retirement_spend = retirement.spending_inputs(db, plan, today, fx)
+    full_plan = {
+        **plan,
+        "excluded_categories": [
+            c for c in plan["excluded_categories"] if c != "Social Security"
+        ],
+    }
+    spend = retirement.spending_inputs(db, full_plan, today, fx)
+    months_used = spend["months_used"]
+    monthly = spend["target_monthly_eur"]
+
+    horizon = (today + timedelta(days=COMING_IN_DAYS)).isoformat()
+    coming_in = [
+        {
+            "label": d["name"],
+            "amount_eur": _cents(
+                float(d["principal"]) * fx(d.get("currency") or "EUR")
+            ),
+            "date": d["maturity_date"],
+        }
+        for d in db.get_fixed_deposits(status="active")
+        if d.get("maturity_date") and today.isoformat() <= d["maturity_date"] <= horizon
+    ]
+
+    out = {
+        "status": "ok",
+        "liquid_eur": _cents(liquid),
+        "liquid_lines": liquid_lines,
+        "tax_reserve": reserve,
+        "coming_in": coming_in,
+        "stale_lines": stale,
+        "warnings": warnings,
+    }
+    base_buffer = buffer(liquid, reserve["reserve_eur"], monthly, settings)
+    out["buffer"] = {
+        **base_buffer,
+        "monthly_spend_eur": _cents(monthly),
+        "months_used": months_used,
+        "retirement_monthly_spend_eur": _cents(retirement_spend["target_monthly_eur"]),
+    }
+    if len(months_used) < MIN_SPEND_MONTHS:
+        out["status"] = "insufficient_data"
+        out["reason"] = (
+            f"only {len(months_used)} complete months of bank statements; "
+            f"{MIN_SPEND_MONTHS} needed to size the buffer"
+        )
+        out["deployable_eur"] = None
+        warnings.append(_buffer_rule(settings))
+        return out
+    out["deployable_eur"] = _cents(
+        max(0.0, liquid - reserve["reserve_eur"] - base_buffer["target_eur"])
+    )
+    warnings.append(_buffer_rule(settings))
+    return out

@@ -180,3 +180,110 @@ def test_settings_type_checks(db):
     ):
         with pytest.raises(ValueError):
             save_settings(db, patch)
+
+
+# ── buffer and deployable ────────────────────────────────────────────────────
+
+from portf_manager.services.deployable import buffer, deployable  # noqa: E402
+
+TODAY = date(2026, 10, 19)
+FX = {"fx": lambda c: 1.0, "fx_on": lambda c, d: 1.0}
+
+
+def test_buffer_statuses():
+    def b(liquid):
+        return buffer(liquid, 0.0, 1000.0, S)
+
+    assert b(3500)["status"] == "rebuild"
+    assert b(5000)["status"] == "topping_up"
+    assert b(7000)["status"] == "ok"
+    idle = b(9000)
+    assert idle["status"] == "idle" and idle["idle_eur"] == 1000
+    assert b(7000)["target_eur"] == 6000
+
+
+def _spend_db(tmp_path, months=12, social=300.0):
+    db = Database(str(tmp_path / "dep.db"))
+    pid = db.get_or_create_portfolio("Example Bank", account_type="bank")
+    year, month = 2026, 9
+    for _ in range(months):
+        db.create_spending_transaction(
+            pid, f"{year}-{month:02d}-05", "Rent", -1000.0, category="Rent"
+        )
+        if social:
+            db.create_spending_transaction(
+                pid,
+                f"{year}-{month:02d}-07",
+                "Social",
+                -social,
+                category="Social Security",
+            )
+        month -= 1
+        if month == 0:
+            year, month = year - 1, 12
+    return db
+
+
+def test_deployable_formula_and_zero_floor(tmp_path):
+    db = _spend_db(tmp_path, social=0.0)
+    db.create_manual_asset("Example Jar", "cash", 10000.0, as_of="2026-10-01")
+    r = deployable(db, today=TODAY, **FX)
+    assert r["status"] == "ok"
+    assert r["liquid_eur"] == 10000
+    assert r["tax_reserve"]["reserve_eur"] == 0
+    assert r["deployable_eur"] == 4000  # 10000 - 6 * 1000
+    assert any("buffer: 6 months target" in w for w in r["warnings"])
+
+
+def test_deployable_zero_floor(tmp_path):
+    db = _spend_db(tmp_path, social=0.0)
+    db.create_manual_asset("Example Jar", "cash", 6000.0, as_of="2026-10-01")
+    r = deployable(db, today=TODAY, **FX)
+    assert r["deployable_eur"] == 0 and r["buffer"]["status"] == "ok"
+
+
+def test_monthly_spend_adds_social_security_back(tmp_path):
+    db = _spend_db(tmp_path)
+    db.create_manual_asset("Example Jar", "cash", 20000.0, as_of="2026-10-01")
+    r = deployable(db, today=TODAY, **FX)
+    b = r["buffer"]
+    assert b["retirement_monthly_spend_eur"] == 1000
+    assert b["monthly_spend_eur"] == 1300
+    assert len(b["months_used"]) >= 6
+    assert r["deployable_eur"] == 20000 - 6 * 1300
+
+
+def test_insufficient_data_under_six_months(tmp_path):
+    db = _spend_db(tmp_path, months=5)
+    db.create_manual_asset("Example Jar", "cash", 5000.0, as_of="2026-10-01")
+    r = deployable(db, today=TODAY, **FX)
+    assert r["status"] == "insufficient_data" and r["reason"]
+    assert r["liquid_eur"] == 5000 and "tax_reserve" in r
+    assert r["deployable_eur"] is None
+
+
+def test_negative_ledger_line_not_liquid(tmp_path):
+    db = _spend_db(tmp_path)
+    pid = db.create_portfolio("Example Broker", "EUR")
+    aid = db.create_asset("EXC", "Example Corp", "stock", currency="EUR")
+    db.create_price(aid, 10.0, "2026-10-17")
+    db.create_transaction(aid, "buy", 10, 10.0, 100.0, "2026-01-05", portfolio_id=pid)
+    db.create_manual_asset("Example Jar", "cash", 1000.0, as_of="2026-10-01")
+    r = deployable(db, today=TODAY, **FX)
+    assert r["liquid_eur"] == 1000
+    assert [ln["label"] for ln in r["liquid_lines"]] == ["Example Jar"]
+    assert any(w.startswith("left out:") for w in r["warnings"])
+
+
+def test_coming_in_lists_deposit_maturing_within_30_days(tmp_path):
+    db = _spend_db(tmp_path)
+    db.create_fixed_deposit(
+        "Example Deposit", 2000.0, start_date="2026-01-01", maturity_date="2026-11-10"
+    )
+    db.create_fixed_deposit(
+        "Far Deposit", 3000.0, start_date="2026-01-01", maturity_date="2027-03-01"
+    )
+    r = deployable(db, today=TODAY, **FX)
+    assert r["coming_in"] == [
+        {"label": "Example Deposit", "amount_eur": 2000.0, "date": "2026-11-10"}
+    ]
