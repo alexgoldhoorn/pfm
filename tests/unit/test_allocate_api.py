@@ -72,3 +72,15 @@ def test_deployable_endpoint_shape(tmp_path, monkeypatch):
         assert key in body
     assert body["status"] == "insufficient_data"
     assert client.get(f"{URL}/deployable").status_code in (401, 403)
+
+
+def test_next_euro_endpoint(tmp_path):
+    client = _make_client(tmp_path)
+    r = client.get(f"{URL}/next-euro", headers=HEADERS)
+    assert r.status_code == 200
+    assert r.json()["status"] == "insufficient_data"
+    assert "chat_summary" in r.json()
+    r = client.get(f"{URL}/next-euro?amount=-5", headers=HEADERS)
+    assert r.status_code == 422
+    r = client.get(f"{URL}/next-euro?amount=500", headers=HEADERS)
+    assert r.status_code == 200 and r.json()["status"] == "targets_incomplete"

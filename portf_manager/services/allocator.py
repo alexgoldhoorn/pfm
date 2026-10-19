@@ -9,10 +9,13 @@ take plain dicts, so the arithmetic is testable without a database.
 from datetime import date
 from typing import Callable, Dict, List, Optional, Tuple
 
+from portf_manager.services import deployable as deployable_service
 from portf_manager.services.exposure import compute_exposure, find_fund_overlaps
 from portf_manager.services.rebalance_planner import (
     build_sell_candidates,
+    compute_before_state,
     fifo_gain_eur,
+    merge_targets,
 )
 from portf_manager.services.wash_sale import (
     WashSaleUnavailable,
@@ -583,3 +586,503 @@ def plan_traspasos(
             after[src_bucket] = after.get(src_bucket, 0.0) - amount
             after[dst_bucket] = after.get(dst_bucket, 0.0) + amount
     return traspasos, after
+
+
+# ---- ranking and the proposal (spec 5.3, 5.6) ------------------------------
+
+FUND_BUCKETS = ("etf", "mutual_fund", "index")
+_CONVICTION_WORDS = {"low": 1.0, "medium": 2.0, "high": 3.0}
+
+
+def _conviction(candidate: dict) -> float:
+    """Numeric conviction of the research note; 0 when absent or unparsable."""
+    value = candidate.get("conviction")
+    if value is None:
+        return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return _CONVICTION_WORDS.get(str(value).strip().lower(), 0.0)
+
+
+def fund_exclusions(cands: List[dict]) -> List[Tuple[dict, str]]:
+    """Funds left out because a bigger fund in the same overlap group exists."""
+    by_id = {c["asset_id"]: c for c in cands}
+    out = []
+    for c in cands:
+        if _is_smaller_overlap_member(c):
+            big = by_id.get(c["overlap_group"]["largest_member_id"])
+            name = big["symbol"] if big else "a larger fund"
+            out.append((c, f"overlaps with {name}, which is the bigger holding"))
+    return out
+
+
+def rank_fund_candidates(
+    cands: List[dict], by_region: Optional[Dict[str, float]] = None
+) -> List[Tuple[dict, List[str]]]:
+    """Funds and ETFs by lowest TER, then larger existing position (5.3).
+
+    Non-largest members of an overlap group are excluded (see
+    :func:`fund_exclusions`). A fund without TER ranks after those with one.
+    ``by_region`` is accepted for the informational region tie-break but the
+    candidates carry no per-fund regions, so ties keep the larger position.
+    """
+    kept = [c for c in cands if not _is_smaller_overlap_member(c)]
+    kept.sort(key=lambda c: (_ter_key(c), -c["value_eur"], c["symbol"]))
+    ranked = []
+    for c in kept:
+        if c.get("ter_pct") is None:
+            reasons = ["TER unknown, enter it on the Fees tab"]
+        else:
+            reasons = [f"TER {c['ter_pct']:.2f} %"]
+            if c is kept[0]:
+                reasons = [f"lowest TER in the bucket ({c['ter_pct']:.2f} %)"]
+        if c.get("overlap_group"):
+            reasons.append("the bigger holding of an overlapping group")
+        if c["value_eur"] > 0:
+            reasons.append("adds to an existing position")
+        ranked.append((c, reasons))
+    return ranked
+
+
+def rank_stock_candidates(
+    cands: List[dict],
+    total_after: float,
+    max_single_stock_pct: float,
+    buy_eur: float = 0.0,
+) -> Tuple[List[Tuple[dict, List[str]]], List[dict], List[Tuple[dict, str]]]:
+    """Stocks: blocked and over-cap out, unresearched aside, the rest ranked.
+
+    Returns:
+        ``(ranked, needs_research, excluded)``; ``excluded`` holds
+        ``(candidate, reason)`` for blocked and over-cap stocks.
+    """
+    ranked_in: List[dict] = []
+    needs: List[dict] = []
+    excluded: List[Tuple[dict, str]] = []
+    cap = f"{max_single_stock_pct:g}"
+    for c in cands:
+        if c.get("blocked"):
+            excluded.append((c, c["blocked"]["reason"]))
+            continue
+        after = (c["value_eur"] + buy_eur) / total_after * 100 if total_after else 0.0
+        if after > max_single_stock_pct:
+            excluded.append((c, f"would exceed the {cap} % single-stock cap"))
+            continue
+        if (
+            c.get("buy_below") is None
+            and not c.get("recommendation")
+            and c.get("conviction") is None
+        ):
+            needs.append(c)
+            continue
+        ranked_in.append(c)
+
+    def under(c: dict) -> bool:
+        return (
+            c.get("buy_below") is not None
+            and c.get("price_eur") is not None
+            and c["price_eur"] <= c["buy_below"]
+        )
+
+    def is_buy(c: dict) -> bool:
+        return str(c.get("recommendation") or "").upper() == "BUY"
+
+    ranked_in.sort(
+        key=lambda c: (
+            not under(c),
+            not is_buy(c),
+            -_conviction(c),
+            c["weight_pct"],
+            c["symbol"],
+        )
+    )
+    ranked = []
+    for c in ranked_in:
+        reasons = []
+        if under(c):
+            reasons.append(f"price at or below your buy-below of {c['buy_below']:,.2f}")
+        if is_buy(c):
+            reasons.append("latest research says BUY")
+        if _conviction(c) > 0:
+            reasons.append(f"research conviction {c['conviction']}")
+        reasons.append(f"weight {c['weight_pct']:.1f} % of the portfolio")
+        ranked.append((c, reasons))
+    return ranked, needs, excluded
+
+
+def rank_crypto(cands: List[dict]) -> List[Tuple[dict, List[str]]]:
+    """Held coins by current value; the split follows these weights."""
+    held = [c for c in cands if c["value_eur"] > 0]
+    held.sort(key=lambda c: (-c["value_eur"], c["symbol"]))
+    return [(c, ["split in proportion to your current crypto weights"]) for c in held]
+
+
+def rank_bonds(cands: List[dict]) -> List[Tuple[dict, List[str]]]:
+    """Bonds; candidates carry no maturity, so the lightest holding first."""
+    ordered = sorted(cands, key=lambda c: (c["weight_pct"], c["symbol"]))
+    return [(c, ["no maturity data, so the lightest bond holding"]) for c in ordered]
+
+
+def _rank_other(cands: List[dict]) -> List[Tuple[dict, List[str]]]:
+    ordered = sorted(cands, key=lambda c: (c["weight_pct"], c["symbol"]))
+    return [(c, ["lowest weight in the bucket"]) for c in ordered]
+
+
+def _split_cents(amount: float, shares: List[float]) -> List[float]:
+    """Split by shares to cents, the rounding residue on the first part."""
+    total = sum(shares)
+    parts = [round(amount * s / total, 2) for s in shares]
+    parts[0] = round(parts[0] + amount - sum(parts), 2)
+    return parts
+
+
+def _why_not(kind: str, win: dict, lose: dict) -> str:
+    """Why *lose* ranked below *win*."""
+    if kind == "fund":
+        wt, lt = win.get("ter_pct"), lose.get("ter_pct")
+        if lt is None:
+            return "TER unknown, enter it on the Fees tab"
+        if wt is not None and lt > wt:
+            return f"higher TER ({lt:.2f} % vs {wt:.2f} %)"
+        return "smaller existing position"
+    if kind == "stock":
+        if win.get("buy_below") is not None and win["price_eur"] <= win["buy_below"]:
+            if not (
+                lose.get("buy_below") is not None
+                and lose["price_eur"] <= lose["buy_below"]
+            ):
+                return "price above your buy-below"
+        if _conviction(win) > _conviction(lose) or (
+            str(win.get("recommendation") or "").upper() == "BUY"
+            and str(lose.get("recommendation") or "").upper() != "BUY"
+        ):
+            return "weaker research"
+        return "higher current weight"
+    return "smaller holding"
+
+
+def pick_lines(
+    bucket: str,
+    cands: List[dict],
+    amount_eur: float,
+    settings: dict,
+    ctx: dict,
+) -> Tuple[List[dict], float, List[dict]]:
+    """Turn a bucket's amount into at most ``max_lines_per_bucket`` lines.
+
+    Args:
+        bucket: Asset type.
+        cands: The bucket's candidates.
+        amount_eur: Money for the bucket.
+        settings: Allocator settings.
+        ctx: ``total_after`` (portfolio value after all new money) and
+            ``by_region``.
+
+    Returns:
+        ``(lines, unallocated_eur, needs_research)``.
+    """
+    n = max(1, int(settings["max_lines_per_bucket"]))
+    min_line = float(settings["min_line_eur"])
+    needs: List[dict] = []
+    extra: List[Tuple[dict, str]] = []
+    kind = "fund"
+    if bucket in FUND_BUCKETS:
+        ranked = rank_fund_candidates(cands, ctx.get("by_region"))
+        extra = fund_exclusions(cands)
+    elif bucket == "stock":
+        kind = "stock"
+        ranked, needs, extra = rank_stock_candidates(
+            cands, ctx["total_after"], settings["max_single_stock_pct"], amount_eur / n
+        )
+    elif bucket == "crypto":
+        kind = "crypto"
+        ranked = rank_crypto(cands)
+    elif bucket == "bond":
+        kind = "bond"
+        ranked = rank_bonds(cands)
+    else:
+        kind = "other"
+        ranked = _rank_other(cands)
+    needs_out = [
+        {"symbol": c["symbol"], "weight_pct": round(c["weight_pct"], 2)} for c in needs
+    ]
+    if not ranked or amount_eur <= 0:
+        return [], round(amount_eur, 2) if amount_eur > 0 else 0.0, needs_out
+
+    picked = ranked[:n]
+    runner = ranked[n] if len(ranked) > n else None
+
+    def shares_of(items: List[Tuple[dict, List[str]]]) -> List[float]:
+        if kind == "crypto":
+            return [c["value_eur"] for c, _ in items]
+        return [1.0] * len(items)
+
+    chosen = list(picked)
+    while True:
+        parts = _split_cents(amount_eur, shares_of(chosen))
+        if len(chosen) == 1 or min(parts) >= min_line:
+            break
+        # drop the smallest line, its money goes to the others
+        small = min(range(len(chosen)), key=lambda i: parts[i])
+        chosen.pop(small)
+    dropped_runner = None
+    if len(chosen) < len(picked):
+        dropped_runner = next(p for p in picked if p not in chosen)
+
+    lines = []
+    for (c, reasons), part in zip(chosen, parts):
+        if runner is not None or dropped_runner is not None:
+            other = dropped_runner or runner
+            ru = {"symbol": other[0]["symbol"], "why_not": _why_not(kind, c, other[0])}
+        elif extra:
+            ru = {"symbol": extra[0][0]["symbol"], "why_not": extra[0][1]}
+        else:
+            ru = None
+        if dropped_runner is not None and ru is not None:
+            ru["why_not"] = f"its share would be under {min_line:,.0f} €"
+        lines.append(
+            {
+                "asset_type": bucket,
+                "asset_id": c["asset_id"],
+                "symbol": c["symbol"],
+                "name": c["name"],
+                "portfolio_id": c["portfolio_id"],
+                "portfolio_name": c["portfolio_name"],
+                "amount_eur": part,
+                "reasons": list(reasons),
+                "runner_up": ru,
+            }
+        )
+    return lines, 0.0, needs_out
+
+
+def _eur(value: float) -> str:
+    return f"{value:,.2f} EUR"
+
+
+def chat_summary(result: dict) -> str:
+    """Plain-text rendering of a ``next_euro`` result, empty sections omitted."""
+    out: List[str] = []
+    dep = result.get("deployable") or {}
+    if result.get("status") == "targets_incomplete":
+        out.append("Allocation targets are incomplete:")
+        out.extend(f"- {r}" for r in result.get("reasons", []))
+    if dep.get("liquid_eur") is not None:
+        out.append("Deployable")
+        out.append(f"Liquid: {_eur(dep['liquid_eur'])}")
+        out.append(
+            f"Tax reserve: {_eur((dep.get('tax_reserve') or {}).get('reserve_eur', 0))}"
+        )
+        buf = dep.get("buffer") or {}
+        if buf.get("target_eur") is not None:
+            out.append(f"Buffer target: {_eur(buf['target_eur'])}")
+        if dep.get("deployable_eur") is not None:
+            out.append(f"Deployable: {_eur(dep['deployable_eur'])}")
+    if result.get("status") == "nothing_to_deploy":
+        out.append("Nothing to deploy right now.")
+    if result.get("amount_eur"):
+        out.append(f"Amount to place: {_eur(result['amount_eur'])}")
+    if result.get("buckets"):
+        out.append("")
+        out.append("Split")
+        for b in result["buckets"]:
+            out.append(
+                f"- {b['asset_type']}: {b['before_pct']:.1f}% -> "
+                f"{b['after_pct']:.1f}% (target {b['target_pct']:.1f}%), "
+                f"{_eur(b['allocated_eur'])}"
+            )
+    if result.get("lines"):
+        out.append("")
+        out.append("Proposed lines")
+        for ln in result["lines"]:
+            out.append(
+                f"- {ln['symbol']} ({ln['name']}) in {ln['portfolio_name']}: "
+                f"{_eur(ln['amount_eur'])}"
+            )
+            out.extend(f"    {r}" for r in ln["reasons"])
+            if ln.get("runner_up"):
+                ru = ln["runner_up"]
+                out.append(f"    runner-up {ru['symbol']}: {ru['why_not']}")
+    if result.get("unallocated_eur"):
+        out.append(f"Unallocated: {_eur(result['unallocated_eur'])}")
+    if result.get("traspasos"):
+        out.append("")
+        out.append("Traspasos")
+        for t in result["traspasos"]:
+            out.append(
+                f"- {t['from_symbol']} -> {t['to_symbol']}: {_eur(t['amount_eur'])}"
+                f" ({t['reason']})"
+            )
+    if result.get("blocked"):
+        out.append("")
+        out.append("Blocked")
+        for b in result["blocked"]:
+            out.append(f"- {b['symbol']}: {b['reason']}")
+    if result.get("needs_research"):
+        out.append("")
+        out.append("Needs research")
+        for n in result["needs_research"]:
+            out.append(f"- {n['symbol']} ({n['weight_pct']:.1f}% of the portfolio)")
+    if result.get("warnings"):
+        out.append("")
+        out.append("Warnings")
+        out.extend(f"- {w}" for w in result["warnings"])
+    return "\n".join(out)
+
+
+def next_euro(
+    db,
+    amount_eur: Optional[float] = None,
+    today: Optional[date] = None,
+    fx: Optional[Callable[[str], float]] = None,
+    fx_on: Optional[Callable] = None,
+) -> dict:
+    """The full proposal for the next euro (spec 5.6).
+
+    Args:
+        db: Database.
+        amount_eur: Explicit amount; defaults to the deployable cash.
+        today: Reference date.
+        fx: ``fx(currency)`` rate to EUR.
+        fx_on: ``fx_on(currency, day)`` historical rate.
+
+    Returns:
+        The response dict; ``status`` is ``ok``, ``nothing_to_deploy``,
+        ``targets_incomplete`` or ``insufficient_data``.
+    """
+    today = today or date.today()
+    if fx is None or fx_on is None:
+        from portf_server.routers.portfolios import _get_fx_rate, _get_fx_rate_on
+
+        fx = fx or _get_fx_rate
+        fx_on = fx_on or (lambda cur, day: _get_fx_rate_on(db, cur, day))
+    settings = deployable_service.load_settings(db)
+    dep = deployable_service.deployable(db, today, fx, fx_on, settings)
+    warnings: List[str] = list(dep.get("warnings", []))
+    result: dict = {
+        "status": "ok",
+        "deployable": dep,
+        "amount_eur": 0.0,
+        "buckets": [],
+        "lines": [],
+        "traspasos": [],
+        "blocked": [],
+        "needs_research": [],
+        "unallocated_eur": 0.0,
+        "warnings": warnings,
+    }
+
+    def done(status: str) -> dict:
+        result["status"] = status
+        result["chat_summary"] = chat_summary(result)
+        return result
+
+    if dep.get("status") == "insufficient_data" and amount_eur is None:
+        warnings.append(dep.get("reason", "not enough data to size the buffer"))
+        return done("insufficient_data")
+
+    targets = merge_targets(db, None)
+    # compute_before_state raises on targets that do not sum to 100
+    early = check_targets(targets, {"allocations": []})
+    if early:
+        result["reasons"] = early
+        return done("targets_incomplete")
+    before, before_warnings, holdings, transactions = compute_before_state(
+        db, None, None
+    )
+    warnings.extend(before_warnings)
+    reasons = check_targets(targets, before)
+    if reasons:
+        result["reasons"] = reasons
+        return done("targets_incomplete")
+
+    deployable_eur = dep.get("deployable_eur") or 0.0
+    amount = float(amount_eur) if amount_eur is not None else float(deployable_eur)
+    if amount <= 0:
+        return done("nothing_to_deploy")
+    result["amount_eur"] = round(amount, 2)
+    if amount_eur is not None and amount > deployable_eur + 0.005:
+        warnings.append(
+            f"amount exceeds deployable cash by {_eur(amount - deployable_eur)}"
+        )
+
+    candidates, cand_warnings = build_candidates(
+        db, holdings, transactions, settings, today, fx, fx_on
+    )
+    warnings.extend(cand_warnings)
+    result["blocked"] = [
+        {
+            "symbol": c["symbol"],
+            "safe_from": c["blocked"].get("safe_from"),
+            "loss_eur": c["blocked"].get("loss_eur"),
+            "reason": c["blocked"]["reason"],
+        }
+        for c in candidates
+        if c.get("blocked")
+    ]
+
+    before_values = {
+        a["asset_type"]: a["current_value_eur"] for a in before["allocations"]
+    }
+    fund_ids = {
+        c["asset_id"]
+        for c in candidates
+        if c["is_fund"] and not c["managed"] and c["asset_id"] is not None
+    }
+    lots, prices, lot_warnings = open_lots(db, holdings, transactions, fund_ids)
+    warnings.extend(lot_warnings)
+    traspasos, after_values = plan_traspasos(
+        candidates,
+        targets,
+        before_values,
+        settings["traspaso_threshold_pp"],
+        lots,
+        prices,
+    )
+    result["traspasos"] = [
+        {
+            **t,
+            "from_symbol": t["from"]["symbol"],
+            "to_symbol": t["to"]["symbol"],
+            "reasons": [t["reason"]],
+        }
+        for t in traspasos
+    ]
+
+    invest = investable_targets(targets, candidates)
+    if not invest:
+        result["unallocated_eur"] = round(amount, 2)
+        warnings.append("no bucket with a target has anything to buy")
+        return done("ok")
+    invest_values = {b: after_values.get(b, 0.0) for b in invest}
+    buckets = split_buckets(amount, invest, invest_values, settings["min_line_eur"])
+    result["buckets"] = buckets
+    total_after = sum(after_values.values()) + amount
+    ctx = {"total_after": total_after, "by_region": {}}
+    try:
+        ctx["by_region"] = compute_exposure(db, fx=fx, today=today).get("by_region", {})
+    except Exception as exc:  # informational only; ranking works without it
+        warnings.append(f"region look-through unavailable: {exc}")
+
+    unallocated = 0.0
+    for b in buckets:
+        if b["allocated_eur"] <= 0:
+            continue
+        in_bucket = [c for c in candidates if c["bucket"] == b["asset_type"]]
+        lines, left, needs = pick_lines(
+            b["asset_type"], in_bucket, b["allocated_eur"], settings, ctx
+        )
+        result["lines"].extend(lines)
+        result["needs_research"].extend(needs)
+        if left:
+            unallocated += left
+            if b["asset_type"] == "stock":
+                warnings.append(
+                    f"stock: {_eur(left)} unallocated, no researched candidate "
+                    "under the price target"
+                )
+            else:
+                warnings.append(f"{b['asset_type']}: {_eur(left)} found no line")
+    result["unallocated_eur"] = round(unallocated, 2)
+    return done("ok")

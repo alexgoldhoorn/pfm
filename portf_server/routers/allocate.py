@@ -3,9 +3,10 @@
 from datetime import date, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict
 
+from portf_manager.services import allocator
 from portf_manager.services import deployable as dep
 
 from ..auth_middleware import APIKeyManager, require_api_key
@@ -78,3 +79,13 @@ def put_settings(
         return dep.save_settings(db, body.model_dump(exclude_unset=True))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+
+
+@router.get("/next-euro")
+def get_next_euro(
+    amount: float | None = Query(None, ge=0),
+    db=Depends(get_database),
+    _: dict = Depends(_auth),
+):
+    """Where the next euro should go, with reasons."""
+    return allocator.next_euro(db, amount_eur=amount)
