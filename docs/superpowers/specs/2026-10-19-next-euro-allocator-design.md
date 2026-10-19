@@ -76,8 +76,9 @@ the final call.
 
 ## 3. Constraints
 
-- SQLite schema version becomes **36** (one `app_settings` JSON key would do
-  for settings; a table is needed only for what is listed in §4.5).
+- No schema change: settings live in one `app_settings` JSON key
+  (`allocator_settings`, §5.7); nothing else is persisted. The schema stays
+  at 35.
 - Blocking endpoints stay plain `def`. Tests cannot reach the network.
 - The allocator reads existing services only: `balance_sheet.build_balance_sheet`,
   `retirement.spending_inputs` (the household spending target and its
@@ -106,10 +107,14 @@ deployable_eur    = max(0, liquid_eur − tax_reserve_eur − buffer_target_eur)
 buffer_months     = (liquid_eur − tax_reserve_eur) / spending_target_monthly_eur
 ```
 
-`spending_target_monthly_eur` is B's measured household spend (same months,
-same excluded categories as the retirement plan), so the two screens never
-disagree about what a month costs. Fewer than 6 complete imported months →
-`status: "insufficient_data"`.
+`spending_target_monthly_eur` is B's measured household spend over the same
+months, with one difference: the retirement plan leaves the autónomo
+social-security contribution out (it stops at retirement), the buffer puts
+it back in because it is a fixed monthly outflow today. So C calls
+`retirement.spending_inputs` with the plan's exclusions minus
+"Social Security", and the response names the figure "household spending
+incl. autónomo quota" next to the retirement figure so the difference is
+visible. Fewer than 6 complete imported months → `status: "insufficient_data"`.
 
 Buffer status from `buffer_months`: `rebuild` below `buffer_months_min` (4),
 `topping_up` from 4 to the target (6), `ok` from the target to
@@ -123,26 +128,47 @@ maturing within 30 days is listed under `coming_in` so the owner sees it.
 
 ### 4.2 Tax reserve (autónomo)
 
-Settings: `iva_pct` (21), `irpf_pct` (20), `income_category` ("Income"),
-`tax_paid_categories` (["Income Tax"]).
+Settings: `iva_pct` (21), `irpf_pct` (20), `irpf_retention_pct` (0: the
+share of each invoice the client already withholds; a professional whose
+clients withhold 15 % sets 15 and the Modelo 130 part shrinks accordingly),
+`income_category` ("Income"), `work_income_merchants` (list of merchant
+strings; empty = every merchant), `tax_paid_categories` (["Income Tax"]).
+
+**Which rows are work income.** The "Income" category in the owner's bank
+imports also holds the partner's transfers, a tax refund and bank interest,
+so the reserve must not read the whole category. Work income = non-transfer,
+positive rows in `income_category` whose `merchant` is in
+`work_income_merchants`. The settings form lists every merchant seen in that
+category over the last 12 months with a checkbox, and the deployable
+response lists the merchants it counted, so a wrong tick is visible at once.
+With the list empty the response carries the warning "all income counted as
+work income: tick the work merchants in the settings".
 
 For the current quarter (Jan–Mar, Apr–Jun, Jul–Sep, Oct–Dec):
 
 ```
-gross    = Σ non-transfer rows in income_category with date in the quarter
-iva      = gross × iva_pct / (100 + iva_pct)        # Modelo 303
-irpf     = (gross − iva) × irpf_pct / 100           # Modelo 130
-accrued  = iva + irpf − Σ rows in tax_paid_categories dated in the quarter
+gross    = Σ work-income rows dated in the quarter
+iva      = gross × iva_pct / (100 + iva_pct)                      # Modelo 303
+net      = gross − iva
+irpf     = net × irpf_pct / 100 − net × irpf_retention_pct / 100  # Modelo 130
+accrued  = max(0, iva + irpf)
 ```
 
-The previous quarter's `accrued` is added while its due date (the 20th of
-the month after the quarter; 30 January for Q4's Modelo 130) has not passed
-and no `tax_paid_categories` row is dated after the quarter end. The reserve
-is `max(0, current + previous_if_due)`. Social-security contributions are
-ordinary monthly spending and are not reserved.
+**Which payments settle a quarter.** A quarter's 303/130 are paid in the
+next quarter, so a row in `tax_paid_categories` dated within 30 days after a
+quarter end counts as that previous quarter's payment; any other tax row
+(the annual IRPF settlement in June, a complementary payment) is ignored by
+the reserve. The previous quarter stays reserved (`accrued` minus such a
+payment, floored at 0) until a payment is seen or its due date (the 20th of
+the month after the quarter; 30 January for Q4) is 30 days past. The reserve
+is `current_accrued + previous_remaining`. Modelo 130 is cumulative over the
+year in law; the flat per-quarter estimate is the conservative side when
+income is steady and is accepted as an estimate. Social-security
+contributions are ordinary monthly spending and are not reserved.
 
-The response shows `gross`, `iva`, `irpf`, `paid`, and which quarters are in
-the reserve, so the figure can be checked against Xolo in a minute.
+The response shows `gross`, `iva`, `irpf`, `paid`, the merchants counted and
+which quarters are in the reserve, so the figure can be checked against
+Xolo in a minute.
 
 ### 4.3 Endpoint
 
@@ -174,13 +200,31 @@ rows, not from knowledge); the buffer rule in words.
 
 - `amount_eur`: the deployable figure by default; the owner can pass another
   amount (query `amount`) to see what pfm would do with it.
-- Targets: the existing `allocation_targets` by `asset_type`
+- Targets: the existing `allocation_targets` by raw `asset_type`
   (`merge_targets`). The allocator refuses with `status: "targets_incomplete"`
-  when a held asset type with more than 1 % of the portfolio has no target
-  row, and raises a `low` Action Item saying which. `cash` and `bond` may be
-  set to 0 explicitly (the owner's cash is his fixed-income sleeve).
+  and a reason when a held asset type with more than 1 % of the portfolio has
+  no target row or the targets do not sum to 100 (the planner's
+  `validate_target_sum` error becomes that status, never a 500), and raises a
+  `low` Action Item saying which. `cash` and `bond` may be set to 0
+  explicitly (the owner's cash is his fixed-income sleeve). Buckets are the
+  raw `asset_type` because that is what the targets are keyed by; the fund
+  heuristic of §5.4 (type `mutual_fund`, exchange "Funds", or a fund word in
+  the name of a non-ETF) is used only for the traspaso rule and for choosing
+  fund-style versus stock-style ranking inside a bucket.
+- The `cash` bucket, and any bucket with no investable candidate, is left
+  out of the split and its target weight is renormalised over the investable
+  buckets; `total_value_eur` is the positions value from
+  `compute_before_state` (live FX), never B's net worth (bank cash and the
+  home are not part of the mix).
 - Current values per asset type: `compute_before_state` (the rebalance
   planner's own numbers, live FX).
+- Managed accounts: a settings list `managed_portfolio_ids` (default: the
+  portfolio named like "Indexa"). The holdings of a managed portfolio are
+  one candidate, "contribution to <portfolio>", in the bucket of its funds,
+  with the account's value-weighted TER, because its mix cannot be bought
+  line by line. Every line carries `portfolio_id`/`portfolio_name`, the
+  account where the order is placed (a held asset's portfolio; a watchlist
+  name defaults to the broker that holds most of that bucket).
 - Candidates: every held asset with a price, plus watchlist entries that
   resolve to an asset; each tagged with its bucket (`asset_type`), current
   weight, TER (`fund_profiles.ongoing_charges_pct`), overlap group (A's
@@ -204,6 +248,17 @@ drop lines under min_line_eur (100); their amount goes back into the pool
 A bucket that is overweight gets nothing. If every bucket is at or above
 target the whole amount goes in proportion to `target_pct` (keeps the mix).
 The response shows the before/after weight per bucket.
+
+Order of operations: the traspasos of §5.5 are computed first on the
+current state (they move value between fund buckets without new money),
+and the water-filling of new money runs on the post-traspaso state, so the
+two cannot fill the same gap twice. `before_pct` is the current state,
+`after_pct` includes both.
+
+`amount` above `deployable_eur` is allowed (the owner may know about money
+pfm does not see) and produces the warning "amount exceeds deployable cash
+by X"; `status: "nothing_to_deploy"` applies only when no amount was given
+and deployable is 0.
 
 ### 5.3 Picking the lines in a bucket
 
@@ -249,8 +304,11 @@ When a `mutual_fund` bucket is overweight by more than `traspaso_threshold_pp`
 adds a `traspasos` entry: move `min(overweight_eur, underweight_eur)` from the
 fund with the highest TER (or the smaller member of an overlap group) to the
 best-ranked fund of the underweight bucket, with the reason "traspaso keeps
-the gain untaxed; a sale would realise N € of gain" (from FIFO lots). ETFs
-are not traspasable in Spain and never appear here.
+the gain untaxed; selling this amount would realise N € of gain" (FIFO lots
+for the moved amount only, via `rebalance_planner.fifo_gain_eur`). A fund is
+traspasable when it passes the fund heuristic of §5.4 and is not an ETF;
+ETFs are not traspasable in Spain and never appear here. A managed
+portfolio (§5.1) is never the source of a traspaso.
 
 ### 5.6 Endpoint
 
@@ -284,13 +342,19 @@ the MCP tool prints), so the page has a "Copy for chat" button.
 
 ```json
 {"buffer_months_target": 6, "buffer_months_min": 4, "buffer_months_max": 8,
- "iva_pct": 21.0, "irpf_pct": 20.0, "income_category": "Income",
+ "iva_pct": 21.0, "irpf_pct": 20.0, "irpf_retention_pct": 0.0,
+ "income_category": "Income", "work_income_merchants": [],
  "tax_paid_categories": ["Income Tax"],
+ "managed_portfolio_ids": [],
  "min_line_eur": 100, "max_lines_per_bucket": 2, "max_single_stock_pct": 5.0,
  "traspaso_threshold_pp": 5.0}
 ```
 
-Validation: `0 < min ≤ target ≤ max ≤ 24`, percentages 0–100, amounts ≥ 0.
+Validation: `0 < min ≤ target ≤ max ≤ 24`, percentages 0–100, amounts ≥ 0,
+portfolio ids must exist. On first read with an empty
+`managed_portfolio_ids`, the loader fills it with the id of a portfolio
+whose name contains "indexa" (case-insensitive) if there is one, and
+reports that default in the response.
 
 ## 6. Surfaces
 
@@ -338,6 +402,24 @@ Validation: `0 < min ≤ target ≤ max ≤ 24`, percentages 0–100, amounts �
 - Traspaso only between mutual funds, threshold 5 pp.
 - The chat summary text is produced server-side so the page and the MCP
   tool print the same words.
+- The buffer counts the autónomo social-security contribution as household
+  spending (the retirement plan does not).
+- Work income is the subset of the Income category the owner ticks by
+  merchant; the partner's transfers, refunds and interest are not reserved
+  against. Client IRPF retention defaults to 0 and is a setting.
+- A tax row within 30 days after a quarter end settles that quarter; other
+  tax rows are ignored by the reserve; Modelo 130 is a flat per-quarter
+  estimate.
+- Buckets are raw asset types; the fund heuristic decides traspaso
+  eligibility and ranking style only. Cash and candidate-less buckets are
+  renormalised away; the denominator is the positions value.
+- Indexa (any managed portfolio) is one contribution line, never split by
+  fund, never a traspaso source; every line names the account to place the
+  order in.
+- Traspasos are computed before the new-money split so they cannot
+  double-fill a gap.
+- No schema change; targets that do not sum to 100 and amounts above
+  deployable are handled as described, not as errors.
 
 ## 9. Left to the builder
 
