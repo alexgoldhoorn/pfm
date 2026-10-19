@@ -460,11 +460,12 @@ def test_unresearched_stock_goes_to_needs_research_and_unallocated():
         "min_line_eur": 100,
         "max_single_stock_pct": 5.0,
     }
-    lines, left, needs = allocator.pick_lines(
-        "stock", [raw], 500.0, settings, {"total_after": 10000, "by_region": {}}
+    lines, left, needs, why = allocator.pick_lines(
+        "stock", [raw], 500.0, settings, {"total_after": 10000}
     )
     assert lines == [] and left == 500.0
     assert needs == [{"symbol": "S1", "weight_pct": 1.5}]
+    assert why == ["no researched candidate under the price target"]
 
 
 def test_pick_lines_splits_drops_small_and_names_runner_up():
@@ -478,14 +479,14 @@ def test_pick_lines_splits_drops_small_and_names_runner_up():
         _cand(2, "etf", ter_pct=0.22, value_eur=10),
         _cand(3, "etf", ter_pct=0.40, value_eur=10),
     ]
-    ctx = {"total_after": 10000, "by_region": {}}
-    lines, left, _ = allocator.pick_lines("etf", funds, 301.0, settings, ctx)
+    ctx = {"total_after": 10000}
+    lines, left, _, _ = allocator.pick_lines("etf", funds, 301.0, settings, ctx)
     assert [ln["amount_eur"] for ln in lines] == [150.5, 150.5] and left == 0
     assert lines[0]["runner_up"] == {
         "symbol": "S3",
         "why_not": "higher TER (0.40 % vs 0.07 %)",
     }
-    lines, _, _ = allocator.pick_lines("etf", funds, 150.0, settings, ctx)
+    lines, _, _, _ = allocator.pick_lines("etf", funds, 150.0, settings, ctx)
     assert len(lines) == 1 and lines[0]["amount_eur"] == 150.0
 
 
@@ -500,8 +501,8 @@ def test_crypto_split_by_weights():
         _cand(2, "crypto", value_eur=250),
         _cand(3, "crypto", value_eur=0),
     ]
-    lines, left, _ = allocator.pick_lines(
-        "crypto", coins, 400.0, settings, {"total_after": 10000, "by_region": {}}
+    lines, left, _, _ = allocator.pick_lines(
+        "crypto", coins, 400.0, settings, {"total_after": 10000}
     )
     assert [ln["amount_eur"] for ln in lines] == [300.0, 100.0] and left == 0
 
@@ -591,3 +592,71 @@ def test_chat_summary_mentions_every_line():
     for sym in ("AAA", "BBB", "CCC", "DDD"):
         assert sym in text
     assert "1,234.56 EUR" in text and "Traspasos" not in text
+
+
+_STOCK_SETTINGS = {
+    "max_lines_per_bucket": 2,
+    "min_line_eur": 100,
+    "max_single_stock_pct": 5.0,
+}
+
+
+def test_single_stock_cap_clamps_line_and_leaves_rest_unallocated():
+    one = _cand(1, "stock", buy_below=20.0)
+    lines, left, _, why = allocator.pick_lines(
+        "stock", [one], 1000.0, _STOCK_SETTINGS, {"total_after": 10000}
+    )
+    assert [ln["amount_eur"] for ln in lines] == [500.0] and left == 500.0
+    assert why == ["would exceed the 5 % single-stock cap"]
+
+
+def test_single_stock_cap_spills_to_next_candidate():
+    a = _cand(1, "stock", buy_below=20.0, value_eur=400)
+    b = _cand(2, "stock", buy_below=5.0, value_eur=0, weight_pct=1)
+    lines, left, _, _ = allocator.pick_lines(
+        "stock", [a, b], 400.0, _STOCK_SETTINGS, {"total_after": 10000}
+    )
+    assert left == 0
+    assert {ln["symbol"]: ln["amount_eur"] for ln in lines} == {
+        "S1": 100.0,
+        "S2": 300.0,
+    }
+
+
+def test_unallocated_reason_names_blocked_stocks():
+    blocked = _cand(
+        1,
+        "stock",
+        buy_below=20.0,
+        blocked={"reason": "sold at a loss", "safe_from": "x"},
+    )
+    lines, left, _, why = allocator.pick_lines(
+        "stock", [blocked], 300.0, _STOCK_SETTINGS, {"total_after": 10000}
+    )
+    assert lines == [] and left == 300.0 and why == ["sold at a loss"]
+
+
+def test_next_euro_conserves_money_across_buckets(db, stub_deployable):
+    stub_deployable()
+    db.set_allocation_target("etf", 60)
+    db.set_allocation_target("stock", 40)
+    broker = db.get_or_create_portfolio("Example Broker")
+    _buy(db, broker, "WLD1", "World Fund A", "etf", 10, 100, ter=0.2)
+    _buy(db, broker, "STK1", "Stock One", "stock", 10, 100)
+    res = allocator.next_euro(db, 1001.0, TODAY, _fx, _fx_on)
+    placed = sum(ln["amount_eur"] for ln in res["lines"])
+    assert round(placed + res["unallocated_eur"], 2) == 1001.0
+    assert res["unallocated_eur"] > 0
+    assert any("stock" in w and "unallocated" in w for w in res["warnings"])
+
+
+def test_next_euro_explicit_amount_with_insufficient_data_warns(db, stub_deployable):
+    stub_deployable(
+        status="insufficient_data", deployable_eur=None, reason="few months"
+    )
+    db.set_allocation_target("etf", 100)
+    broker = db.get_or_create_portfolio("Example Broker")
+    _buy(db, broker, "WLD1", "World Fund A", "etf", 10, 100, ter=0.2)
+    res = allocator.next_euro(db, 500.0, TODAY, _fx, _fx_on)
+    assert "deployable unknown: few months" in res["warnings"]
+    assert not any("exceeds" in w for w in res["warnings"])
