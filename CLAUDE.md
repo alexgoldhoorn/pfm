@@ -4,19 +4,26 @@
 Portfolio Manager: a Python CLI + FastAPI server + web client for tracking stocks, ETFs, funds, bonds, crypto and commodities across multiple brokers, with LLM-powered import, file import/export, web chat, Spanish IRPF tax reporting, and Google Sheets PDT sync.
 
 ## Exposed via the internet-facing MCP gateway
-`mcp/server.py` is symlinked from `~/mcp/pfm/server.py` and imported live by
-`~/mcp/remote_gateway/server.py`, the always-on, internet-facing
-`mcp-remote-gateway.service` (`https://mcp.goldhoorn.net`), which re-exports most
-of its tools. A change here affects that surface too — see `~/mcp/CLAUDE.md`,
-"Exception: remote_gateway/server.py".
+The MCP server is a small Python package, `mcp/pfm_mcp/` (one module per area in
+`pfm_mcp/tools/`, shared HTTP helpers in `client.py`, settings in `config.py`).
+`mcp/server.py` is only a compatibility shim: it is symlinked from
+`~/mcp/pfm/server.py` and imported live by `~/mcp/remote_gateway/server.py`, the
+always-on, internet-facing `mcp-remote-gateway.service`
+(`https://mcp.goldhoorn.net`), which re-exports most of its tools. A change here
+affects that surface too — see `~/mcp/CLAUDE.md`, "Exception:
+remote_gateway/server.py".
 
-- The tools are read-only wrappers over the HTTP API. Tests:
-  `cd ~/mcp/pfm && python3 -m pytest -q .`. `retirement_readiness` (read-only,
-  wraps `GET /retirement/readiness`) has its tests in
-  `mcp/test_server_local.py` until they move to `~/mcp/pfm`; `next_euro`
-  (read-only, wraps `GET /allocate/next-euro`), `deployable_cash`,
-  `allocation_targets`, `allocation_candidates` and `allocator_settings` (all
-  read-only) have their tests there too.
+- The tools are read-only wrappers over the HTTP API. Every test lives in
+  `mcp/tests/` and runs without pfm's own dependencies:
+  `cd mcp && python3 -m pytest -q` (patch `pfm_mcp.client._get`; a conftest
+  blocks the real network). A new tool uses `@tool` from `pfm_mcp`, goes in the
+  matching `tools/` module and in the README's tool table
+  (`tests/test_readme.py` fails if the table and the registered tools differ;
+  `tests/test_package.py` pins the tool count).
+- Configuration, first hit wins: `PFM_URL` / `PFM_API_KEY`, then the dotenv file
+  named by `PFM_ENV_FILE`, then the legacy `~/repos/pfm/.env.local`, then
+  `http://127.0.0.1:8000` with an empty key (warning on stderr, never stdout).
+  The package must not import `portf_manager`/`portf_server`.
 - When an API response changes shape, update the matching tool. Tools read fields
   with `.get(..., 0)`, so a renamed field silently becomes zero, and a test that
   pins the old field names stays green.
@@ -27,7 +34,7 @@ of its tools. A change here affects that surface too — see `~/mcp/CLAUDE.md`,
   this year and last. "Bought recently" lists only positions still held.
   ⚠️ **Don't trust `asset_type` to spot a fund** — no live asset is typed
   `mutual_fund` (heuristic imports store index funds as `stock`; Indexa's funds
-  are `etf` on exchange `"Funds"`). `_wash_window_months` counts an asset as a
+  are `etf` on exchange `"Funds"`). the server-side rule (`services/wash_sale.py`) counts an asset as a
   fund if it is typed `mutual_fund`, OR its exchange is `"Funds"`, OR it isn't
   `etf` and its name contains fund/idx/fondo/fonds — erring towards the year.
   Crypto, cash and the synthetic `MINTOS` asset are excluded.
