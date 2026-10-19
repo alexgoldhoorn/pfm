@@ -458,6 +458,7 @@ def deployable(
 
     out = {
         "status": "ok",
+        "as_of": today.isoformat(),
         "liquid_eur": _cents(liquid),
         "liquid_lines": liquid_lines,
         "tax_reserve": reserve,
@@ -468,12 +469,17 @@ def deployable(
     base_buffer = buffer(liquid, reserve["reserve_eur"], monthly, settings)
     out["buffer"] = {
         **base_buffer,
+        "target_months": settings["buffer_months_target"],
+        "min_months": settings["buffer_months_min"],
+        "max_months": settings["buffer_months_max"],
         "monthly_spend_eur": _cents(monthly),
         "months_used": months_used,
+        "months_used_count": len(months_used),
         "retirement_monthly_spend_eur": _cents(retirement_spend["target_monthly_eur"]),
     }
     if len(months_used) < MIN_SPEND_MONTHS:
         out["status"] = "insufficient_data"
+        out["buffer"]["status"] = "unknown"
         out["reason"] = (
             f"only {len(months_used)} complete months of bank statements; "
             f"{MIN_SPEND_MONTHS} needed to size the buffer"
