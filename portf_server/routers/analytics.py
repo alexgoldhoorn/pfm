@@ -1238,6 +1238,42 @@ def get_tax_report(
     return _build_tax_report_data(db, yr)
 
 
+def _today() -> date:
+    """Today's date; a seam so tests can pin the antiaplicación reference day."""
+    return date.today()
+
+
+@router.get("/wash-sale")
+def get_wash_sale(
+    symbol: Optional[str] = Query(None, description="Check a single ticker/ISIN"),
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Spanish antiaplicación check (art. 33.5 LIRPF) as of today.
+
+    Runs the tax-report FIFO for last year and this year (strict: a failed
+    calculation is a 503, never "nothing blocked") and classifies the realised
+    loss lots, the repurchases and the current holdings with
+    ``wash_sale.analyse``. Returns ``blocked``, ``no_rebuy`` and ``recent_buys``
+    with ISO date strings.
+    """
+    from portf_manager.services.wash_sale import analyse
+    from .portfolios import get_holdings
+
+    today = _today()
+    lots: list = []
+    for yr in (today.year - 1, today.year):
+        try:
+            lots.extend(_build_tax_report_data(db, yr, strict=True)["realised_lots"])
+        except Exception as e:
+            raise HTTPException(
+                status_code=503, detail=f"tax report {yr} failed: {e}"
+            ) from e
+    assets = {a["symbol"]: a for a in db.get_all_assets() if a.get("symbol")}
+    holdings = get_holdings(portfolio_id=None, database=db)["holdings"]
+    return analyse(lots, db.get_all_transactions(), assets, today, symbol, holdings)
+
+
 @router.get("/tax-report/pdf")
 def get_tax_report_pdf(
     year: Optional[int] = Query(None, description="Tax year (default current)"),
