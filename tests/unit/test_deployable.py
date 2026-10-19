@@ -14,6 +14,7 @@ from portf_manager.services.deployable import (
     quarter_reserve,
     save_settings,
     tax_reserve,
+    deployable_cached,
 )
 
 S = DEFAULT_SETTINGS
@@ -320,3 +321,65 @@ def test_deployable_with_non_zero_reserve(tmp_path):
     b = r["buffer"]
     assert (b["target_months"], b["min_months"], b["max_months"]) == (6, 4, 8)
     assert b["months_used_count"] == len(b["months_used"])
+
+
+def test_q4_payment_in_early_february_settles_the_quarter():
+    rows = [_row("2026-11-05", 12100)]
+    today = date(2027, 2, 3)
+    res = tax_reserve(rows, [_tax("2027-02-02", 4100)], S, today)
+    prev = res["quarters"][0]
+    assert prev["quarter"] == "2026-Q4"
+    assert prev["paid_eur"] == 4100 and prev["settled"]
+    # beyond the weekend shift it is not that quarter's payment
+    res = tax_reserve(rows, [_tax("2027-02-05", 4100)], S, today)
+    assert res["quarters"][0]["paid_eur"] == 0
+
+
+def test_retention_above_irpf_rate_does_not_cancel_iva():
+    rows = [_row("2026-11-05", 12100)]
+    s = S | {"irpf_retention_pct": 30.0}
+    q = quarter_reserve(rows, [], 2026, 4, s, date(2026, 11, 15))
+    assert q["irpf_eur"] == 0
+    assert q["accrued_eur"] == 2100
+
+
+def test_refund_row_is_not_a_payment():
+    rows = [_row("2026-08-05", 12100)]
+    refund = _row("2026-10-10", 900, merchant="Tax Office", category="Income Tax")
+    res = tax_reserve(rows, [refund, _tax("2026-10-20", 1000)], S, date(2026, 10, 25))
+    assert res["quarters"][0]["paid_eur"] == 1000
+
+
+def test_explicitly_empty_managed_list_turns_the_default_off(db):
+    db.create_portfolio("Indexa Capital", "EUR")
+    # an unrelated save keeps the key absent: the default still applies
+    save_settings(db, {"min_line_eur": 150})
+    assert load_settings(db)["defaulted_managed"] is True
+    save_settings(db, {"managed_portfolio_ids": []})
+    loaded = load_settings(db)
+    assert loaded["managed_portfolio_ids"] == []
+    assert "defaulted_managed" not in loaded
+
+
+def test_stale_counted_cash_line_warns(tmp_path):
+    db = _spend_db(tmp_path, social=0.0)
+    db.create_manual_asset("Old Jar", "cash", 6000.0, as_of="2026-04-01")
+    r = deployable(db, today=TODAY, **FX)
+    stale = [ln["label"] for ln in r["liquid_lines"] if ln["stale"]]
+    assert "Old Jar" in stale
+    assert (
+        f"{len(stale)} stale cash line(s) counted at their stale value" in r["warnings"]
+    )
+
+
+def test_deployable_cached_for_a_minute_and_cleared_by_a_settings_save(tmp_path):
+    db = _spend_db(tmp_path, social=0.0)
+    db.create_manual_asset("Example Jar", "cash", 10000.0, as_of="2026-10-01")
+    first = deployable_cached(db, today=TODAY, **FX)
+    db.create_manual_asset("Second Jar", "cash", 1000.0, as_of="2026-10-01")
+    assert deployable_cached(db, today=TODAY, **FX)["liquid_eur"] == 10000
+    # explicit settings or fx go straight to the calculation
+    assert deployable(db, today=TODAY, **FX)["liquid_eur"] == 11000
+    save_settings(db, {"min_line_eur": 120})
+    assert deployable_cached(db, today=TODAY, **FX)["liquid_eur"] == 11000
+    assert first["liquid_eur"] == 10000
