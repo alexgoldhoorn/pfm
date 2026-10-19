@@ -160,16 +160,19 @@ def _year_withholding_eur(
     return dividends_gross, dividend_wh, interest_wh
 
 
-def _lot_eur_amounts(db, currency: str, t) -> tuple[float, float]:
+def _lot_eur_amounts(db, currency: str, t, fx_on=None) -> tuple[float, float]:
     """(proceeds_eur, cost_basis_eur) for one TaxTransaction lot.
+
+    ``fx_on(currency, date)`` overrides the transaction-date rate lookup.
 
     IRPF rule: proceeds convert at sell-date FX, cost basis at purchase-date
     FX — the FX gain/loss is itself part of the taxable result.
     """
     proceeds = float(getattr(t, "sell_amount", 0) or 0)
     cost = float(getattr(t, "purchase_amount", 0) or 0)
-    fx_sell = _fx_on(db, currency, getattr(t, "sell_date", None))
-    fx_buy = _fx_on(db, currency, getattr(t, "purchase_date", None))
+    rate = fx_on or (lambda cur, d: _fx_on(db, cur, d))
+    fx_sell = rate(currency, getattr(t, "sell_date", None))
+    fx_buy = rate(currency, getattr(t, "purchase_date", None))
     return proceeds * fx_sell, cost * fx_buy
 
 
@@ -1137,7 +1140,7 @@ def get_fees(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
 # ── Tax report: per-lot realised gains + withholding ──────────────────────────
 
 
-def _build_tax_report_data(db, yr: int) -> dict:
+def _build_tax_report_data(db, yr: int, fx_on=None, strict: bool = False) -> dict:
     """Per-lot realised gains (FIFO) + dividend withholding summary for a year.
 
     Pure data builder shared by the JSON endpoint and the PDF export below —
@@ -1145,6 +1148,8 @@ def _build_tax_report_data(db, yr: int) -> dict:
     module (e.g. ``compute_exposure``) so the two representations can't drift.
     Reuses the FIFO engine in TaxCalculator. Amounts are in each transaction's
     own currency as stored; withholding sums the per-transaction ``tax`` field.
+    ``fx_on`` overrides the transaction-date FX lookup; ``strict`` re-raises a
+    failed FIFO calculation instead of returning no lots.
     """
     start = date(yr, 1, 1)
     end = date(yr, 12, 31)
@@ -1174,7 +1179,7 @@ def _build_tax_report_data(db, yr: int) -> dict:
                 gain = float(getattr(t, "gain_loss", 0) or 0)
                 # IRPF: proceeds at sell-date FX, cost at purchase-date FX; the
                 # FX gain/loss is part of the taxable result.
-                proceeds_eur, cost_basis_eur = _lot_eur_amounts(db, currency, t)
+                proceeds_eur, cost_basis_eur = _lot_eur_amounts(db, currency, t, fx_on)
                 gain_eur = proceeds_eur - cost_basis_eur
                 total_gain_eur += gain_eur
                 lots.append(
@@ -1195,6 +1200,8 @@ def _build_tax_report_data(db, yr: int) -> dict:
                     }
                 )
     except Exception as e:
+        if strict:
+            raise
         logger.warning(f"Tax report failed: {e}")
 
     lots.sort(key=lambda x: x["sell_date"])
