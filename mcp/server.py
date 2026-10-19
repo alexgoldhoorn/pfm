@@ -1789,8 +1789,9 @@ def data_freshness(stale_days: int = 4) -> str:
 # The rule lives in portf_manager.services.wash_sale so the allocator can use it
 # in-process; this module only re-exports it under its historical private names.
 _PFM_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+# Appended, not inserted first: importing below pulls in portf_manager.
 if _PFM_ROOT not in sys.path:
-    sys.path.insert(0, _PFM_ROOT)
+    sys.path.append(_PFM_ROOT)
 
 from portf_manager.services.wash_sale import (  # noqa: E402,F401
     FUND_NAME_WORDS as _FUND_NAME_WORDS,

@@ -2,8 +2,11 @@
 
 from datetime import date
 
+import pytest
+
 from portf_manager.database import Database
 from portf_manager.services.wash_sale import (
+    WashSaleUnavailable,
     analyse,
     blocked_assets,
     is_fund,
@@ -118,7 +121,7 @@ def test_blocked_59_days_ago_not_61(tmp_path):
     db, aid = _db_with_loss_sale(tmp_path)
     # Sale 2026-08-20 + 2 calendar months = 2026-10-20: blocked while that date
     # is still ahead, free on the date itself.
-    blocked = blocked_assets(db, date(2026, 10, 18), fx=lambda c: 1.0)
+    blocked = blocked_assets(db, date(2026, 10, 18), fx_on=lambda c, d: 1.0)
     assert blocked == {
         aid: {
             "symbol": "EXC",
@@ -127,7 +130,7 @@ def test_blocked_59_days_ago_not_61(tmp_path):
             "safe_from": "2026-10-20",
         }
     }
-    assert blocked_assets(db, date(2026, 10, 20), fx=lambda c: 1.0) == {}
+    assert blocked_assets(db, date(2026, 10, 20), fx_on=lambda c, d: 1.0) == {}
 
 
 def test_blocked_assets_fund_window_and_crypto(tmp_path):
@@ -136,3 +139,30 @@ def test_blocked_assets_fund_window_and_crypto(tmp_path):
     assert out[aid]["safe_from"] == "2027-08-20"
     db2, _ = _db_with_loss_sale(tmp_path, "crypto", "BTC-EUR")
     assert blocked_assets(db2, date(2026, 10, 18)) == {}
+
+
+def test_blocked_assets_uses_injected_fx_for_foreign_currency(tmp_path):
+    db = Database(str(tmp_path / "usd.db"))
+    pid = db.get_or_create_portfolio("Broker")
+    aid = db.create_asset("USD1", "Example Corp", "etf", currency="USD")
+    db.create_transaction(
+        aid, "buy", 10, 100, 1000, "2026-01-01", portfolio_id=pid, currency="USD"
+    )
+    db.create_transaction(
+        aid, "sell", 10, 80, 800, "2026-08-20", portfolio_id=pid, currency="USD"
+    )
+    out = blocked_assets(db, date(2026, 10, 18), fx_on=lambda c, d: 0.5)
+    assert out[aid]["loss_eur"] == -100.0
+
+
+def test_blocked_assets_raises_when_tax_calculation_fails(tmp_path, monkeypatch):
+    db, _ = _db_with_loss_sale(tmp_path)
+
+    def boom(self, *a, **k):
+        raise RuntimeError("fifo broke")
+
+    monkeypatch.setattr(
+        "portf_manager.tax_calculator.TaxCalculator.calculate_tax_report", boom
+    )
+    with pytest.raises(WashSaleUnavailable):
+        blocked_assets(db, date(2026, 10, 18), fx_on=lambda c, d: 1.0)

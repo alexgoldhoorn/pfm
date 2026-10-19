@@ -19,6 +19,10 @@ _EXCLUDED_SYMBOLS = {"MINTOS"}
 FUND_NAME_WORDS = {"fund", "idx", "fondo", "fonds"}
 
 
+class WashSaleUnavailable(Exception):
+    """The antiaplicación check could not be computed."""
+
+
 def _add_months(d: date, months: int) -> date:
     """Shift a date by calendar months, clamping to the target month's end."""
     index = d.year * 12 + (d.month - 1) + months
@@ -196,7 +200,7 @@ def analyse(
     return {"blocked": blocked, "no_rebuy": no_rebuy, "recent_buys": recent_buys}
 
 
-def blocked_assets(db, today: date, fx=None) -> dict[int, dict]:
+def blocked_assets(db, today: date, fx_on=None) -> dict[int, dict]:
     """Assets whose recent loss sale still blocks a repurchase.
 
     Runs the tax-report FIFO for this year and last, feeds the realised lots to
@@ -208,19 +212,27 @@ def blocked_assets(db, today: date, fx=None) -> dict[int, dict]:
     Args:
         db: Database.
         today: Reference date.
-        fx: Unused; the tax report converts at its own transaction-date FX.
-            Kept so callers can inject a rate in tests.
+        fx_on: Optional ``fx_on(currency, on_date) -> float`` for the lot
+            conversion; defaults to the tax report's transaction-date lookup.
 
     Returns:
         ``{asset_id: {"symbol", "sold_on", "loss_eur", "safe_from"}}`` (ISO
         dates); the latest blocking sale wins per asset.
+
+    Raises:
+        WashSaleUnavailable: The realised lots could not be computed. Never
+            read this as "nothing is blocked".
     """
     # Imported here: the router imports from portf_manager at module level.
     from portf_server.routers.analytics import _build_tax_report_data
 
     lots: list = []
     for yr in (today.year - 1, today.year):
-        lots.extend(_build_tax_report_data(db, yr)["realised_lots"])
+        try:
+            data = _build_tax_report_data(db, yr, fx_on=fx_on, strict=True)
+        except Exception as e:
+            raise WashSaleUnavailable(f"tax report {yr} failed: {e}") from e
+        lots.extend(data["realised_lots"])
     assets = db.get_all_assets()
     by_symbol = {str(a["symbol"]).upper(): a for a in assets if a.get("symbol")}
     out = analyse(lots, db.get_all_transactions(), by_symbol, today)
