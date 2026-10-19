@@ -64,3 +64,31 @@ test("targets_incomplete renders the reason and no lines", () => {
     assert.match(html, /Targets sum to 90%/);
     assert.ok(!html.includes("EXA"));
 });
+
+test("missing liquid_eur renders n/a, not zero", () => {
+    const html = win.renderDeployableSummary(dep({ liquid_eur: undefined }));
+    assert.match(html, /n\/a/);
+    assert.ok(!/€0/.test(html));
+});
+
+test("null deployable_eur renders not available", () => {
+    const html = win.renderDeployableSummary(dep({ deployable_eur: null }));
+    assert.match(html, /not available/);
+});
+
+test("insufficient_data summary shows the reason", () => {
+    const html = win.renderDeployableSummary({ status: "insufficient_data", deployable_eur: null, reason: "No bank data" });
+    assert.match(html, /No bank data/);
+});
+
+test("insufficient_data proposal renders reason and no lines", () => {
+    const html = win.renderNextEuroLines({ status: "insufficient_data", reasons: ["No bank data"], lines: result().lines });
+    assert.match(html, /No bank data/);
+    assert.ok(!html.includes("EXA"));
+});
+
+test("a merchant name in a warning or symbol is escaped", () => {
+    const html = win.renderNextEuroLines(result({ warnings: ["<img src=x>"] }));
+    assert.ok(!html.includes("<img src=x>"));
+    assert.match(html, /&lt;img/);
+});
