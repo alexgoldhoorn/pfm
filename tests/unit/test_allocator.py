@@ -368,3 +368,226 @@ def test_build_candidates_wash_unavailable_blocks_stocks_only(db, monkeypatch):
     assert by["STK"]["blocked"] == {"reason": "antiaplicación check unavailable"}
     assert by["ETFX"]["blocked"] is None
     assert len(warnings) == 1
+
+
+# ---- ranking and next_euro --------------------------------------------------
+
+
+def _cand(asset_id, bucket, **extra):
+    base = {
+        "asset_id": asset_id,
+        "symbol": f"S{asset_id}",
+        "name": f"Name {asset_id}",
+        "asset_type": bucket,
+        "bucket": bucket,
+        "portfolio_id": 1,
+        "portfolio_name": "Example Broker",
+        "value_eur": 0.0,
+        "weight_pct": 0.0,
+        "is_fund": bucket in ("etf", "mutual_fund"),
+        "ter_pct": None,
+        "overlap_group": None,
+        "buy_below": None,
+        "fair_value": None,
+        "recommendation": None,
+        "conviction": None,
+        "blocked": None,
+        "managed": False,
+        "is_watchlist": False,
+        "price_eur": 10.0,
+    }
+    base.update(extra)
+    return base
+
+
+def test_fund_rank_prefers_lowest_ter_outside_overlap():
+    big = _cand(
+        1, "etf", ter_pct=0.3, value_eur=900, overlap_group={"largest_member_id": 1}
+    )
+    small = _cand(
+        2, "etf", ter_pct=0.05, value_eur=100, overlap_group={"largest_member_id": 1}
+    )
+    other = _cand(3, "etf", ter_pct=0.2, value_eur=500)
+    ranked = allocator.rank_fund_candidates([big, small, other])
+    assert [c["asset_id"] for c, _ in ranked] == [3, 1]
+    excl = allocator.fund_exclusions([big, small, other])
+    assert excl[0][1] == "overlaps with S1, which is the bigger holding"
+
+
+def test_fund_without_ter_ranks_last_with_hint():
+    a = _cand(1, "etf", ter_pct=None, value_eur=900)
+    b = _cand(2, "etf", ter_pct=0.5, value_eur=1)
+    ranked = allocator.rank_fund_candidates([a, b])
+    assert [c["asset_id"] for c, _ in ranked] == [2, 1]
+    assert "TER unknown, enter it on the Fees tab" in ranked[1][1]
+
+
+def test_stock_rank_price_under_target_first_then_recommendation():
+    cheap = _cand(1, "stock", buy_below=12.0, weight_pct=2)
+    buy = _cand(2, "stock", buy_below=5.0, recommendation="BUY", weight_pct=1)
+    plain = _cand(3, "stock", conviction=3, weight_pct=0.5)
+    ranked, needs, excl = allocator.rank_stock_candidates(
+        [plain, buy, cheap], 10000, 5.0
+    )
+    assert [c["asset_id"] for c, _ in ranked] == [1, 2, 3]
+    assert "price at or below your buy-below of 12.00" in ranked[0][1][0]
+    assert needs == [] and excl == []
+
+
+def test_stock_over_cap_excluded_with_reason():
+    big = _cand(1, "stock", value_eur=480, buy_below=20.0)
+    ok = _cand(2, "stock", value_eur=0, buy_below=20.0)
+    ranked, _, excl = allocator.rank_stock_candidates([big, ok], 10000, 5.0, 100.0)
+    assert [c["asset_id"] for c, _ in ranked] == [2]
+    assert excl[0][1] == "would exceed the 5 % single-stock cap"
+
+
+def test_blocked_stock_never_proposed():
+    blocked = _cand(
+        1,
+        "stock",
+        buy_below=20.0,
+        blocked={"reason": "sold at a loss", "safe_from": "x"},
+    )
+    ranked, _, excl = allocator.rank_stock_candidates([blocked], 10000, 5.0)
+    assert ranked == [] and excl[0][0] is blocked
+
+
+def test_unresearched_stock_goes_to_needs_research_and_unallocated():
+    raw = _cand(1, "stock", weight_pct=1.5)
+    settings = {
+        "max_lines_per_bucket": 2,
+        "min_line_eur": 100,
+        "max_single_stock_pct": 5.0,
+    }
+    lines, left, needs = allocator.pick_lines(
+        "stock", [raw], 500.0, settings, {"total_after": 10000, "by_region": {}}
+    )
+    assert lines == [] and left == 500.0
+    assert needs == [{"symbol": "S1", "weight_pct": 1.5}]
+
+
+def test_pick_lines_splits_drops_small_and_names_runner_up():
+    settings = {
+        "max_lines_per_bucket": 2,
+        "min_line_eur": 100,
+        "max_single_stock_pct": 5.0,
+    }
+    funds = [
+        _cand(1, "etf", ter_pct=0.07, value_eur=10),
+        _cand(2, "etf", ter_pct=0.22, value_eur=10),
+        _cand(3, "etf", ter_pct=0.40, value_eur=10),
+    ]
+    ctx = {"total_after": 10000, "by_region": {}}
+    lines, left, _ = allocator.pick_lines("etf", funds, 301.0, settings, ctx)
+    assert [ln["amount_eur"] for ln in lines] == [150.5, 150.5] and left == 0
+    assert lines[0]["runner_up"] == {
+        "symbol": "S3",
+        "why_not": "higher TER (0.40 % vs 0.07 %)",
+    }
+    lines, _, _ = allocator.pick_lines("etf", funds, 150.0, settings, ctx)
+    assert len(lines) == 1 and lines[0]["amount_eur"] == 150.0
+
+
+def test_crypto_split_by_weights():
+    settings = {
+        "max_lines_per_bucket": 2,
+        "min_line_eur": 100,
+        "max_single_stock_pct": 5.0,
+    }
+    coins = [
+        _cand(1, "crypto", value_eur=750),
+        _cand(2, "crypto", value_eur=250),
+        _cand(3, "crypto", value_eur=0),
+    ]
+    lines, left, _ = allocator.pick_lines(
+        "crypto", coins, 400.0, settings, {"total_after": 10000, "by_region": {}}
+    )
+    assert [ln["amount_eur"] for ln in lines] == [300.0, 100.0] and left == 0
+
+
+@pytest.fixture
+def stub_deployable(monkeypatch):
+    def make(**over):
+        dep = {
+            "status": "ok",
+            "liquid_eur": 5000.0,
+            "tax_reserve": {"reserve_eur": 500.0},
+            "buffer": {"target_eur": 3000.0},
+            "deployable_eur": 1500.0,
+            "warnings": [],
+        }
+        dep.update(over)
+        monkeypatch.setattr(
+            allocator.deployable_service, "deployable", lambda *a, **k: dep
+        )
+
+    return make
+
+
+def _fx_on(currency, day):
+    return 1.0
+
+
+def test_next_euro_amount_above_deployable_warns(db, stub_deployable):
+    stub_deployable()
+    db.set_allocation_target("etf", 100)
+    broker = db.get_or_create_portfolio("Example Broker")
+    _buy(db, broker, "WLD1", "World Fund A", "etf", 10, 100, ter=0.2)
+    res = allocator.next_euro(db, 2000.0, TODAY, _fx, _fx_on)
+    assert res["status"] == "ok"
+    assert "amount exceeds deployable cash by 500.00 EUR" in res["warnings"]
+    assert sum(ln["amount_eur"] for ln in res["lines"]) == 2000.0
+    assert res["lines"][0]["symbol"] == "WLD1" and "WLD1" in res["chat_summary"]
+
+
+def test_next_euro_statuses(db, stub_deployable):
+    stub_deployable(
+        status="insufficient_data", deployable_eur=None, reason="few months"
+    )
+    res = allocator.next_euro(db, None, TODAY, _fx, _fx_on)
+    assert res["status"] == "insufficient_data" and res["lines"] == []
+    stub_deployable()
+    res = allocator.next_euro(db, None, TODAY, _fx, _fx_on)
+    assert res["status"] == "targets_incomplete" and res["reasons"]
+    db.set_allocation_target("etf", 100)
+    stub_deployable(deployable_eur=0.0)
+    res = allocator.next_euro(db, None, TODAY, _fx, _fx_on)
+    assert res["status"] == "nothing_to_deploy"
+
+
+def test_chat_summary_mentions_every_line():
+    result = {
+        "status": "ok",
+        "amount_eur": 1234.56,
+        "deployable": {"liquid_eur": 5000, "deployable_eur": 1234.56},
+        "buckets": [
+            {
+                "asset_type": "etf",
+                "target_pct": 100,
+                "before_pct": 10,
+                "after_pct": 20,
+                "gap_eur": 0,
+                "allocated_eur": 1234.56,
+            }
+        ],
+        "lines": [
+            {
+                "symbol": sym,
+                "name": "N",
+                "portfolio_name": "P",
+                "amount_eur": 617.28,
+                "reasons": ["r"],
+                "runner_up": None,
+            }
+            for sym in ("AAA", "BBB")
+        ],
+        "traspasos": [],
+        "blocked": [{"symbol": "CCC", "reason": "sold at a loss"}],
+        "needs_research": [{"symbol": "DDD", "weight_pct": 1.0}],
+        "warnings": ["w"],
+    }
+    text = allocator.chat_summary(result)
+    for sym in ("AAA", "BBB", "CCC", "DDD"):
+        assert sym in text
+    assert "1,234.56 EUR" in text and "Traspasos" not in text
