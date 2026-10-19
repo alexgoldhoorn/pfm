@@ -151,3 +151,32 @@ def test_january_looks_back_to_previous_year_q4():
     res = tax_reserve(rows, [], S, date(2027, 1, 15))
     assert res["quarters"][0]["quarter"] == "2026-Q4"
     assert res["reserve_eur"] == 4100
+
+
+def test_partial_payment_dropped_after_due_plus_30():
+    rows = [_row("2026-08-05", 12100)]
+    tax = [_tax("2026-10-20", 4000)]
+    res = tax_reserve(rows, tax, S, date(2026, 11, 10))
+    assert res["quarters"][0]["remaining_eur"] == 100
+    assert res["reserve_eur"] == 100
+    res = tax_reserve(rows, tax, S, date(2026, 11, 25))
+    prev = res["quarters"][0]
+    assert prev["remaining_eur"] == 0 and prev["dropped_reason"] == "past due"
+    assert res["reserve_eur"] == 0
+
+
+def test_merchants_only_from_quarters_in_play(db):
+    rows = [_row("2025-03-05", 100, merchant="Old Client"), _row("2026-11-05", 100)]
+    res = tax_reserve(rows, [], S, date(2026, 11, 15))
+    assert res["merchants_counted"] == ["Example Client"]
+
+
+def test_settings_type_checks(db):
+    for patch in (
+        {"managed_portfolio_ids": [True]},
+        {"managed_portfolio_ids": ["1"]},
+        {"max_lines_per_bucket": 2.5},
+        {"max_lines_per_bucket": True},
+    ):
+        with pytest.raises(ValueError):
+            save_settings(db, patch)

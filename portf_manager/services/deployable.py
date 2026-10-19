@@ -117,6 +117,10 @@ def _validate(settings: dict, db) -> None:
     for key in _AMOUNT_KEYS:
         if settings[key] < 0:
             raise ValueError(f"{key} must be 0 or more")
+    if not isinstance(settings["max_lines_per_bucket"], int) or isinstance(
+        settings["max_lines_per_bucket"], bool
+    ):
+        raise ValueError("max_lines_per_bucket must be a whole number")
     if settings["max_lines_per_bucket"] < 1:
         raise ValueError("max_lines_per_bucket must be at least 1")
     if not isinstance(settings["income_category"], str):
@@ -127,6 +131,9 @@ def _validate(settings: dict, db) -> None:
     for key in ("work_income_merchants", "tax_paid_categories"):
         if not all(isinstance(v, str) for v in settings[key]):
             raise ValueError(f"{key} must hold text only")
+    ids = settings["managed_portfolio_ids"]
+    if not all(isinstance(i, int) and not isinstance(i, bool) for i in ids):
+        raise ValueError("managed_portfolio_ids must hold whole numbers only")
     known = {p["id"] for p in db.get_all_portfolios(active_only=False)}
     unknown = [i for i in settings["managed_portfolio_ids"] if i not in known]
     if unknown:
@@ -257,7 +264,7 @@ def quarter_reserve(
         "due": due.isoformat(),
         "settled": remaining <= 0.005,
     }
-    if remaining > 0.005 and paid == 0 and today > due + timedelta(days=GRACE_DAYS):
+    if remaining > 0.005 and today > due + timedelta(days=GRACE_DAYS):
         out["remaining_eur"] = 0.0
         out["settled"] = True
         out["dropped_reason"] = "past due"
@@ -283,7 +290,8 @@ def tax_reserve(
     reserve = current["accrued_eur"] + previous["remaining_eur"]
 
     work = work_income_rows(rows, settings)
-    merchants = sorted({r["merchant"] for r in work if r.get("merchant")})
+    in_play = _in_quarter(work, py, pq) + _in_quarter(work, year, q)
+    merchants = sorted({r["merchant"] for r in in_play if r.get("merchant")})
     warnings: list[str] = []
     if not settings.get("work_income_merchants"):
         warnings.append(
