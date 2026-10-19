@@ -7,6 +7,7 @@ take plain dicts, so the arithmetic is testable without a database.
 """
 
 from datetime import date
+from itertools import zip_longest
 from typing import Callable, Dict, List, Optional, Tuple
 
 from portf_manager.services import deployable as deployable_service
@@ -96,7 +97,8 @@ def build_candidates(
         ``portfolio_name``, ``value_eur``, ``weight_pct``, ``is_fund``,
         ``ter_pct``, ``overlap_group``, ``buy_below``, ``fair_value``,
         ``recommendation``, ``conviction``, ``blocked``, ``managed``,
-        ``is_watchlist``, ``price_eur``.
+        ``is_watchlist``, ``price_eur``, ``price_native`` (the price in the
+        asset's own ``currency``, the one a buy-below is written in).
     """
     warnings: List[str] = []
     portfolio_names = {p["id"]: p["name"] for p in db.get_all_portfolios()}
@@ -126,7 +128,8 @@ def build_candidates(
     except WashSaleUnavailable as exc:
         wash_unavailable = True
         warnings.append(
-            f"Antiaplicación check unavailable ({exc}); stocks are not proposed."
+            f"Antiaplicación check unavailable ({exc}); stocks are not proposed, "
+            "and funds and ETFs are proposed without checking their window."
         )
 
     research = {
@@ -185,6 +188,8 @@ def build_candidates(
                 "managed": False,
                 "is_watchlist": False,
                 "price_eur": h["price_eur"],
+                "price_native": h.get("price"),
+                "currency": h.get("currency") or "EUR",
                 **research_fields(h["asset_id"], h["symbol"]),
             }
         )
@@ -225,6 +230,8 @@ def build_candidates(
                 "managed": True,
                 "is_watchlist": False,
                 "price_eur": None,
+                "price_native": None,
+                "currency": None,
             }
         )
 
@@ -275,6 +282,8 @@ def build_candidates(
                 "managed": False,
                 "is_watchlist": True,
                 "price_eur": price * fx(asset.get("currency") or "EUR"),
+                "price_native": price,
+                "currency": asset.get("currency") or "EUR",
                 **fields,
             }
         )
@@ -474,6 +483,7 @@ def plan_traspasos(
     threshold_pp: float,
     lots_by_asset: Dict[int, List[dict]],
     price_eur_by_asset: Dict[int, float],
+    min_amount: float = 0.0,
 ) -> Tuple[List[dict], Dict[str, float]]:
     """Fund-to-fund switches that rebalance without realising a gain (5.5).
 
@@ -490,9 +500,12 @@ def plan_traspasos(
         threshold_pp: Overweight (percentage points) that triggers a switch.
         lots_by_asset: Open FIFO lots per asset id (``unit_cost_eur``).
         price_eur_by_asset: EUR price per asset id.
+        min_amount: Switches under this many EUR are not proposed.
 
     Returns:
-        ``(traspasos, after_values)``.
+        ``(traspasos, after_values)``. A fund blocked by the antiaplicación
+        rule is never a destination (it may still be a source: a traspaso
+        sells nothing).
     """
     after = dict(before_values)
     total = sum(before_values.values())
@@ -541,14 +554,16 @@ def plan_traspasos(
             if dst_bucket == src_bucket or room[dst_bucket] <= 0 or excess <= 0:
                 continue
             targets_in = [
-                c for c in funds[dst_bucket] if not _is_smaller_overlap_member(c)
+                c
+                for c in funds[dst_bucket]
+                if not _is_smaller_overlap_member(c) and not c.get("blocked")
             ]
             if not targets_in:
                 continue
             dest = min(targets_in, key=lambda c: (_ter_key(c), -c["value_eur"]))
             left = source["value_eur"] - given.get(source["asset_id"], 0.0)
             amount = round(min(excess, room[dst_bucket], left), 2)
-            if amount <= 0:
+            if amount <= 0 or amount < min_amount:
                 continue
             price = price_eur_by_asset.get(source["asset_id"])
             lots = lots_by_asset.get(source["asset_id"])
@@ -644,6 +659,15 @@ def rank_fund_candidates(
     return ranked
 
 
+def _under_buy_below(c: dict) -> bool:
+    """Whether the native price is at or below the buy-below (same currency)."""
+    return (
+        c.get("buy_below") is not None
+        and c.get("price_native") is not None
+        and c["price_native"] <= c["buy_below"]
+    )
+
+
 def rank_stock_candidates(
     cands: List[dict],
     total_after: float,
@@ -664,6 +688,14 @@ def rank_stock_candidates(
         if c.get("blocked"):
             excluded.append((c, c["blocked"]["reason"]))
             continue
+        rating = str(c.get("recommendation") or "").upper()
+        if rating == "SELL":
+            excluded.append((c, "your research says SELL"))
+            continue
+        if rating == "HOLD" and c.get("buy_below") is not None:
+            if not _under_buy_below(c):
+                excluded.append((c, "HOLD and above your buy-below"))
+                continue
         after = (c["value_eur"] + buy_eur) / total_after * 100 if total_after else 0.0
         if after > max_single_stock_pct:
             excluded.append((c, f"would exceed the {cap} % single-stock cap"))
@@ -677,12 +709,7 @@ def rank_stock_candidates(
             continue
         ranked_in.append(c)
 
-    def under(c: dict) -> bool:
-        return (
-            c.get("buy_below") is not None
-            and c.get("price_eur") is not None
-            and c["price_eur"] <= c["buy_below"]
-        )
+    under = _under_buy_below
 
     def is_buy(c: dict) -> bool:
         return str(c.get("recommendation") or "").upper() == "BUY"
@@ -700,7 +727,11 @@ def rank_stock_candidates(
     for c in ranked_in:
         reasons = []
         if under(c):
-            reasons.append(f"price at or below your buy-below of {c['buy_below']:,.2f}")
+            cur = c.get("currency") or "EUR"
+            reasons.append(
+                f"price {c['price_native']:,.2f} {cur} at or below your "
+                f"buy-below of {c['buy_below']:,.2f} {cur}"
+            )
         if is_buy(c):
             reasons.append("latest research says BUY")
         if _conviction(c) > 0:
@@ -738,6 +769,10 @@ def _split_cents(amount: float, shares: List[float]) -> List[float]:
 
 def _why_not(kind: str, win: dict, lose: dict) -> str:
     """Why *lose* ranked below *win*."""
+    if kind == "stock" and bool(win.get("is_fund")) != bool(lose.get("is_fund")):
+        return "funds and stocks take turns in this bucket"
+    if kind == "stock" and win.get("is_fund"):
+        kind = "fund"
     if kind == "fund":
         wt, lt = win.get("ter_pct"), lose.get("ter_pct")
         if lt is None:
@@ -746,12 +781,8 @@ def _why_not(kind: str, win: dict, lose: dict) -> str:
             return f"higher TER ({lt:.2f} % vs {wt:.2f} %)"
         return "smaller existing position"
     if kind == "stock":
-        if win.get("buy_below") is not None and win["price_eur"] <= win["buy_below"]:
-            if not (
-                lose.get("buy_below") is not None
-                and lose["price_eur"] <= lose["buy_below"]
-            ):
-                return "price above your buy-below"
+        if _under_buy_below(win) and not _under_buy_below(lose):
+            return "price above your buy-below"
         if _conviction(win) > _conviction(lose) or (
             str(win.get("recommendation") or "").upper() == "BUY"
             and str(lose.get("recommendation") or "").upper() != "BUY"
@@ -786,14 +817,31 @@ def pick_lines(
     needs: List[dict] = []
     extra: List[Tuple[dict, str]] = []
     kind = "fund"
+    # a candidate blocked by the antiaplicación rule is never ranked
+    blocked_out = [
+        (c, f"{c['symbol']}: {c['blocked']['reason']}")
+        for c in cands
+        if c.get("blocked")
+    ]
+    cands = [c for c in cands if not c.get("blocked")]
+    stock_ranked: List[Tuple[dict, List[str]]] = []
     if bucket in FUND_BUCKETS:
         ranked = rank_fund_candidates(cands)
         extra = fund_exclusions(cands)
     elif bucket == "stock":
         kind = "stock"
-        ranked, needs, extra = rank_stock_candidates(
-            cands, ctx["total_after"], settings["max_single_stock_pct"]
+        # a fund typed "stock" is ranked fund-style, outside the stock rules
+        fund_like = [c for c in cands if c["is_fund"]]
+        stocks = [c for c in cands if not c["is_fund"]]
+        stock_ranked, needs, extra = rank_stock_candidates(
+            stocks, ctx["total_after"], settings["max_single_stock_pct"]
         )
+        fund_ranked = rank_fund_candidates(fund_like)
+        extra = extra + fund_exclusions(fund_like)
+        # best of each list in turn, fund-style first
+        ranked = []
+        for pair in zip_longest(fund_ranked, stock_ranked):
+            ranked.extend(item for item in pair if item is not None)
     elif bucket == "crypto":
         kind = "crypto"
         ranked = rank_crypto(cands)
@@ -803,6 +851,7 @@ def pick_lines(
     else:
         kind = "other"
         ranked = _rank_other(cands)
+    extra = extra + blocked_out
     needs_out = [
         {"symbol": c["symbol"], "weight_pct": round(c["weight_pct"], 2)} for c in needs
     ]
@@ -865,8 +914,10 @@ def pick_lines(
         )
     unallocated = 0.0
     why = []
-    if kind == "stock":
-        unallocated = _clamp_stock_lines(lines, ranked, settings, ctx, n, min_line)
+    if stock_ranked:
+        unallocated = _clamp_stock_lines(
+            lines, stock_ranked, settings, ctx, n, min_line
+        )
         if unallocated:
             why = list(dict.fromkeys(r for _, r in extra))
             cap = (
@@ -898,6 +949,9 @@ def _clamp_stock_lines(
     room = {c["asset_id"]: max(0.0, cap_eur - c["value_eur"]) for c, _ in ranked}
     excess = 0.0
     for ln in lines:
+        # fund-style lines carry no single-stock cap
+        if ln["asset_id"] not in room:
+            continue
         if ln["amount_eur"] > room[ln["asset_id"]]:
             clipped = round(room[ln["asset_id"]], 2)
             excess += ln["amount_eur"] - clipped
@@ -1029,13 +1083,18 @@ def next_euro(
         ``targets_incomplete`` or ``insufficient_data``.
     """
     today = today or date.today()
+    # an explicit fx (tests) bypasses the 60 s deployable cache
+    use_cache = fx is None and fx_on is None
     if fx is None or fx_on is None:
         from portf_server.routers.portfolios import _get_fx_rate, _get_fx_rate_on
 
         fx = fx or _get_fx_rate
         fx_on = fx_on or (lambda cur, day: _get_fx_rate_on(db, cur, day))
     settings = deployable_service.load_settings(db)
-    dep = deployable_service.deployable(db, today, fx, fx_on, settings)
+    if use_cache:
+        dep = deployable_service.deployable_cached(db, today, fx, fx_on)
+    else:
+        dep = deployable_service.deployable(db, today, fx, fx_on, settings)
     warnings: List[str] = list(dep.get("warnings", []))
     result: dict = {
         "status": "ok",
@@ -1118,6 +1177,7 @@ def next_euro(
         settings["traspaso_threshold_pp"],
         lots,
         prices,
+        min_amount=float(settings["min_line_eur"]),
     )
     result["traspasos"] = [
         {
@@ -1136,6 +1196,14 @@ def next_euro(
         return done("ok")
     invest_values = {b: after_values.get(b, 0.0) for b in invest}
     buckets = split_buckets(amount, invest, invest_values, settings["min_line_eur"])
+    # before_pct is the mix as it stands now, before any traspaso
+    now_total = sum(before_values.get(b, 0.0) for b in invest)
+    for row in buckets:
+        row["before_pct"] = (
+            before_values.get(row["asset_type"], 0.0) / now_total * 100
+            if now_total
+            else 0.0
+        )
     result["buckets"] = buckets
     total_after = sum(after_values.values()) + amount
     ctx = {"total_after": total_after}

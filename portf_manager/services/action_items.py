@@ -408,7 +408,7 @@ def check_allocation(db, today=None) -> list[dict]:
                 "context": {},
             }
         )
-    result = deployable_mod.deployable(db, today=today)
+    result = deployable_mod.deployable_cached(db, today=today)
     if result.get("status") in ("insufficient_data", "unknown"):
         return items
     buf = result.get("buffer") or {}

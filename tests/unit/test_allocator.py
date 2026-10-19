@@ -395,6 +395,8 @@ def _cand(asset_id, bucket, **extra):
         "managed": False,
         "is_watchlist": False,
         "price_eur": 10.0,
+        "price_native": 10.0,
+        "currency": "EUR",
     }
     base.update(extra)
     return base
@@ -430,7 +432,7 @@ def test_stock_rank_price_under_target_first_then_recommendation():
         [plain, buy, cheap], 10000, 5.0
     )
     assert [c["asset_id"] for c, _ in ranked] == [1, 2, 3]
-    assert "price at or below your buy-below of 12.00" in ranked[0][1][0]
+    assert "at or below your buy-below of 12.00 EUR" in ranked[0][1][0]
     assert needs == [] and excl == []
 
 
@@ -633,7 +635,7 @@ def test_unallocated_reason_names_blocked_stocks():
     lines, left, _, why = allocator.pick_lines(
         "stock", [blocked], 300.0, _STOCK_SETTINGS, {"total_after": 10000}
     )
-    assert lines == [] and left == 300.0 and why == ["sold at a loss"]
+    assert lines == [] and left == 300.0 and why == ["S1: sold at a loss"]
 
 
 def test_next_euro_conserves_money_across_buckets(db, stub_deployable):
@@ -660,3 +662,163 @@ def test_next_euro_explicit_amount_with_insufficient_data_warns(db, stub_deploya
     res = allocator.next_euro(db, 500.0, TODAY, _fx, _fx_on)
     assert "deployable unknown: few months" in res["warnings"]
     assert not any("exceeds" in w for w in res["warnings"])
+
+
+# ---- final review fixes -----------------------------------------------------
+
+_BLOCK = {"reason": "sold at a loss", "safe_from": "2026-12-01", "loss_eur": 50}
+_PICK_SETTINGS = {
+    "max_lines_per_bucket": 2,
+    "min_line_eur": 100,
+    "max_single_stock_pct": 5.0,
+}
+
+
+@pytest.mark.parametrize("bucket", ["etf", "mutual_fund", "bond"])
+def test_blocked_candidate_is_never_proposed(bucket):
+    bad = _cand(1, bucket, ter_pct=0.01, blocked=_BLOCK, weight_pct=0.1)
+    good = _cand(2, bucket, ter_pct=0.5, weight_pct=5)
+    ctx = {"total_after": 10000}
+    lines, left, _, why = allocator.pick_lines(
+        bucket, [bad, good], 400.0, _PICK_SETTINGS, ctx
+    )
+    assert [ln["symbol"] for ln in lines] == ["S2"] and left == 0
+    lines, left, _, why = allocator.pick_lines(
+        bucket, [bad], 400.0, _PICK_SETTINGS, ctx
+    )
+    assert lines == [] and left == 400.0
+    assert any("S1" in w and "sold at a loss" in w for w in why)
+
+
+def test_blocked_other_bucket_is_never_proposed():
+    bad = _cand(1, "other", blocked=_BLOCK)
+    lines, left, _, _ = allocator.pick_lines(
+        "other", [bad], 300.0, _PICK_SETTINGS, {"total_after": 10000}
+    )
+    assert lines == [] and left == 300.0
+
+
+def test_traspaso_never_to_a_blocked_fund():
+    cands = [
+        _fund(1, "mutual_fund", 800, 0.5),
+        _fund(2, "index", 100, 0.1, blocked=_BLOCK),
+    ]
+    traspasos, after = plan_traspasos(
+        cands,
+        {"mutual_fund": 20, "index": 80},
+        {"mutual_fund": 800, "index": 100},
+        5,
+        {},
+        {},
+    )
+    assert traspasos == [] and after == {"mutual_fund": 800, "index": 100}
+    # a blocked fund may still be the source: nothing is sold
+    cands = [
+        _fund(1, "mutual_fund", 800, 0.5, blocked=_BLOCK),
+        _fund(2, "index", 100, 0.1),
+    ]
+    traspasos, _ = plan_traspasos(
+        cands,
+        {"mutual_fund": 20, "index": 80},
+        {"mutual_fund": 800, "index": 100},
+        5,
+        {},
+        {},
+    )
+    assert [t["to"]["symbol"] for t in traspasos] == ["F2"]
+
+
+def test_traspaso_under_min_line_is_not_proposed():
+    cands = [_fund(1, "mutual_fund", 520, 0.5), _fund(2, "index", 480, 0.1)]
+    args = (cands, {"mutual_fund": 47, "index": 53}, {"mutual_fund": 520, "index": 480})
+    # 5 EUR move would be proposed without a minimum, but threshold is 0
+    traspasos, _ = plan_traspasos(*args, 0.0, {}, {})
+    assert [t["amount_eur"] for t in traspasos] == [50.0]
+    traspasos, after = plan_traspasos(*args, 0.0, {}, {}, min_amount=100.0)
+    assert traspasos == [] and after == {"mutual_fund": 520, "index": 480}
+
+
+def test_buy_below_compares_in_the_stocks_own_currency():
+    # 90 USD is 81 EUR: under 85 in EUR terms, above 85 USD
+    usd = _cand(
+        1,
+        "stock",
+        buy_below=85.0,
+        price_native=90.0,
+        price_eur=81.0,
+        currency="USD",
+        weight_pct=1,
+    )
+    eur = _cand(2, "stock", buy_below=12.0, weight_pct=2)
+    ranked, _, _ = allocator.rank_stock_candidates([usd, eur], 10000, 5.0)
+    assert [c["asset_id"] for c, _ in ranked] == [2, 1]
+    assert not any("buy-below" in r for r in ranked[1][1])
+    cheap = {**usd, "price_native": 80.0, "price_eur": 72.0}
+    ranked, _, _ = allocator.rank_stock_candidates([cheap], 10000, 5.0)
+    assert "price 80.00 USD at or below your buy-below of 85.00 USD" in ranked[0][1][0]
+    assert allocator._why_not("stock", eur, usd) == "price above your buy-below"
+
+
+def test_sell_rated_and_expensive_hold_stocks_are_excluded():
+    sell = _cand(1, "stock", recommendation="sell", buy_below=20.0)
+    hold_high = _cand(2, "stock", recommendation="HOLD", buy_below=5.0)
+    hold_low = _cand(3, "stock", recommendation="HOLD", buy_below=20.0)
+    ranked, _, excl = allocator.rank_stock_candidates(
+        [sell, hold_high, hold_low], 10000, 5.0
+    )
+    assert [c["asset_id"] for c, _ in ranked] == [3]
+    assert {c["asset_id"]: r for c, r in excl} == {
+        1: "your research says SELL",
+        2: "HOLD and above your buy-below",
+    }
+
+
+def test_fund_typed_stock_is_ranked_fund_style_and_exempt_from_caps():
+    # a fund typed "stock": 6 % of the portfolio, no research, would break
+    # both the single-stock cap and needs_research if treated as a stock
+    fund = _cand(1, "stock", is_fund=True, ter_pct=0.2, value_eur=600)
+    stock = _cand(2, "stock", buy_below=20.0, weight_pct=1)
+    plain = _cand(3, "stock")
+    lines, left, needs, _ = allocator.pick_lines(
+        "stock", [fund, stock, plain], 400.0, _PICK_SETTINGS, {"total_after": 10000}
+    )
+    assert {ln["symbol"] for ln in lines} == {"S1", "S2"}
+    assert left == 0
+    assert [n["symbol"] for n in needs] == ["S3"]
+    # the fund-style line is not clipped by the 5 % cap
+    only_fund, left, needs, _ = allocator.pick_lines(
+        "stock", [fund], 1000.0, _PICK_SETTINGS, {"total_after": 10000}
+    )
+    assert [ln["amount_eur"] for ln in only_fund] == [1000.0] and left == 0
+    assert needs == []
+
+
+def test_bucket_table_before_pct_is_measured_before_the_traspasos(db, stub_deployable):
+    stub_deployable()
+    db.set_allocation_target("mutual_fund", 20)
+    db.set_allocation_target("index", 80)
+    broker = db.get_or_create_portfolio("Example Broker")
+    _buy(db, broker, "MFA", "Fund A", "mutual_fund", 8, 100, ter=0.5)
+    _buy(db, broker, "IDXA", "Index Fund A", "index", 1, 100, ter=0.1)
+    res = allocator.next_euro(db, 100.0, TODAY, _fx, _fx_on)
+    assert [t["amount_eur"] for t in res["traspasos"]] == [620.0]
+    rows = {b["asset_type"]: b for b in res["buckets"]}
+    # now: 800 of 900 is mutual_fund; after the switch and 100 new: 180 of 1000
+    assert rows["mutual_fund"]["before_pct"] == pytest.approx(800 / 900 * 100)
+    assert rows["mutual_fund"]["after_pct"] == pytest.approx(18.0)
+    assert rows["index"]["before_pct"] == pytest.approx(100 / 900 * 100)
+
+
+def test_wash_unavailable_warns_funds_are_not_checked(db, monkeypatch):
+    db.set_allocation_target("etf", 100)
+    broker = db.get_or_create_portfolio("Example Broker")
+    _buy(db, broker, "ETFX", "Example Fund ETF", "etf", 1, 100, ter=0.1)
+
+    def boom(*a, **k):
+        raise WashSaleUnavailable("tax report failed")
+
+    monkeypatch.setattr(allocator, "blocked_assets", boom)
+    holdings, txns = _state(db)
+    _, warnings = build_candidates(db, holdings, txns, load_settings(db), TODAY, _fx)
+    assert "stocks are not proposed" in warnings[0]
+    assert "funds and ETFs are proposed without checking" in warnings[0]

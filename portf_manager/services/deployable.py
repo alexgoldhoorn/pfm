@@ -28,6 +28,11 @@ DEFAULT_SETTINGS: dict[str, Any] = {
 # and the quarter stays reserved this long past its legal due date.
 PAYMENT_WINDOW_DAYS = 30
 GRACE_DAYS = 30
+# A payment due on a weekend or holiday shifts to the next working day.
+DUE_SHIFT_DAYS = 5
+# Seconds a ``deployable`` result stays cached.
+DEPLOYABLE_CACHE_TTL = 60
+DEPLOYABLE_CACHE_PREFIX = "allocator:deployable:"
 
 _PCT_KEYS = (
     "iva_pct",
@@ -51,13 +56,19 @@ def _copy_defaults() -> dict:
     }
 
 
-def _stored(db) -> dict:
-    """The stored settings merged over the defaults; unknown keys dropped."""
+def _raw_stored(db) -> dict:
+    """The stored settings as saved, without the defaults."""
     raw = db.get_setting(SETTINGS_KEY)
     try:
         stored = json.loads(raw) if raw else {}
     except ValueError:
         stored = {}
+    return stored if isinstance(stored, dict) else {}
+
+
+def _stored(db) -> dict:
+    """The stored settings merged over the defaults; unknown keys dropped."""
+    stored = _raw_stored(db)
     merged = _copy_defaults()
     if isinstance(stored, dict):
         merged.update({k: v for k, v in stored.items() if k in DEFAULT_SETTINGS})
@@ -77,7 +88,9 @@ def load_settings(db) -> dict:
         The settings dict.
     """
     settings = _stored(db)
-    if not settings["managed_portfolio_ids"]:
+    # filled in only while the key was never stored: a saved empty list is
+    # the owner turning the managed default off
+    if "managed_portfolio_ids" not in _raw_stored(db):
         for p in db.get_all_portfolios(active_only=False):
             if "indexa" in (p.get("name") or "").lower():
                 settings["managed_portfolio_ids"] = [p["id"]]
@@ -151,7 +164,19 @@ def save_settings(db, patch: dict) -> dict:
     merged = _stored(db)
     merged.update({k: v for k, v in patch.items() if k in DEFAULT_SETTINGS})
     _validate(merged, db)
-    db.set_setting(SETTINGS_KEY, json.dumps(merged))
+    to_store = dict(merged)
+    # keep the managed list absent until the owner sets it, so the Indexa
+    # default still applies after an unrelated save
+    if (
+        "managed_portfolio_ids" not in patch
+        and "managed_portfolio_ids" not in _raw_stored(db)
+    ):
+        to_store.pop("managed_portfolio_ids")
+    db.set_setting(SETTINGS_KEY, json.dumps(to_store))
+    try:
+        db.cache_clear(DEPLOYABLE_CACHE_PREFIX)
+    except Exception:
+        pass
     return merged
 
 
@@ -245,13 +270,25 @@ def quarter_reserve(
     iva_pct = settings["iva_pct"]
     iva = gross * iva_pct / (100 + iva_pct)
     net = gross - iva
-    irpf = net * settings["irpf_pct"] / 100 - net * settings["irpf_retention_pct"] / 100
+    # a retention above the IRPF rate must not cancel the IVA
+    irpf = max(
+        0.0,
+        net * settings["irpf_pct"] / 100 - net * settings["irpf_retention_pct"] / 100,
+    )
     accrued = max(0.0, iva + irpf)
     _, end = quarter_bounds(year, q)
-    lo = end.isoformat()
-    hi = (end + timedelta(days=PAYMENT_WINDOW_DAYS)).isoformat()
-    paid = sum(abs(r["amount_eur"]) for r in tax_rows if lo < r["date"] <= hi)
     due = due_date(year, q)
+    lo = end.isoformat()
+    hi = max(
+        end + timedelta(days=PAYMENT_WINDOW_DAYS),
+        due + timedelta(days=DUE_SHIFT_DAYS),
+    ).isoformat()
+    # only outgoing rows are payments; a refund row is ignored
+    paid = sum(
+        abs(r["amount_eur"])
+        for r in tax_rows
+        if r["amount_eur"] < 0 and lo < r["date"] <= hi
+    )
     remaining = max(0.0, accrued - paid)
     out = {
         "quarter": f"{year}-Q{q}",
@@ -397,6 +434,7 @@ def deployable(
     cash = next((g for g in sheet["groups"] if g["key"] == "cash"), {"lines": []})
     liquid_lines = []
     stale = 0
+    stale_counted = 0
     for ln in cash["lines"]:
         if ln.get("in_total"):
             liquid_lines.append(
@@ -411,6 +449,12 @@ def deployable(
             warnings.append(f"left out: {ln['label']}")
         if ln.get("stale"):
             stale += 1
+            if ln.get("in_total"):
+                stale_counted += 1
+    if stale_counted:
+        warnings.append(
+            f"{stale_counted} stale cash line(s) counted at their stale value"
+        )
     liquid = sum(ln["amount_eur"] for ln in liquid_lines)
 
     year, q = quarter_of(today)
@@ -492,3 +536,26 @@ def deployable(
     )
     warnings.append(_buffer_rule(settings))
     return out
+
+
+def deployable_cached(db, today: date | None = None, fx=None, fx_on=None) -> dict:
+    """:func:`deployable` cached for 60 seconds, keyed on today's date.
+
+    Only for callers using the live FX and the stored settings; a settings
+    PUT clears the cache. Pass an explicit ``fx`` or ``settings`` to
+    :func:`deployable` itself to bypass it.
+    """
+    from portf_manager.cache import cached
+
+    day = today or date.today()
+    kwargs = {"today": today}
+    if fx is not None:
+        kwargs["fx"] = fx
+    if fx_on is not None:
+        kwargs["fx_on"] = fx_on
+    return cached(
+        db,
+        f"{DEPLOYABLE_CACHE_PREFIX}{day.isoformat()}",
+        DEPLOYABLE_CACHE_TTL,
+        lambda: deployable(db, **kwargs),
+    )
