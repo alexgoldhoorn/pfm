@@ -34,7 +34,7 @@ remote_gateway/server.py".
   this year and last. "Bought recently" lists only positions still held.
   ⚠️ **Don't trust `asset_type` to spot a fund** — no live asset is typed
   `mutual_fund` (heuristic imports store index funds as `stock`; Indexa's funds
-  are `etf` on exchange `"Funds"`). the server-side rule (`services/wash_sale.py`) counts an asset as a
+  are `etf` on exchange `"Funds"`). The server-side rule (`services/wash_sale.py`) counts an asset as a
   fund if it is typed `mutual_fund`, OR its exchange is `"Funds"`, OR it isn't
   `etf` and its name contains fund/idx/fondo/fonds — erring towards the year.
   Crypto, cash and the synthetic `MINTOS` asset are excluded.

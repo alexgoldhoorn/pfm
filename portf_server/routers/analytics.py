@@ -1269,9 +1269,14 @@ def get_wash_sale(
             raise HTTPException(
                 status_code=503, detail=f"tax report {yr} failed: {e}"
             ) from e
-    assets = {a["symbol"]: a for a in db.get_all_assets() if a.get("symbol")}
-    holdings = get_holdings(portfolio_id=None, database=db)["holdings"]
-    return analyse(lots, db.get_all_transactions(), assets, today, symbol, holdings)
+    try:
+        assets = {a["symbol"]: a for a in db.get_all_assets() if a.get("symbol")}
+        holdings = get_holdings(portfolio_id=None, database=db)["holdings"]
+        return analyse(lots, db.get_all_transactions(), assets, today, symbol, holdings)
+    except Exception as e:
+        raise HTTPException(
+            status_code=503, detail=f"wash-sale analysis failed: {e}"
+        ) from e
 
 
 @router.get("/tax-report/pdf")

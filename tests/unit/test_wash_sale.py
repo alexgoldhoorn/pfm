@@ -255,3 +255,20 @@ async def test_wash_sale_endpoint_503_when_tax_report_fails(
     assert resp.status_code == 503
     assert "tax report" in resp.json()["detail"]
     assert "fifo broke" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_wash_sale_endpoint_503_when_analysis_fails(
+    async_test_client, auth_headers, test_database, wash_today, monkeypatch
+):
+    _seed_endpoint_db(test_database)
+
+    def boom(*a, **k):
+        raise RuntimeError("analyse broke")
+
+    monkeypatch.setattr("portf_manager.services.wash_sale.analyse", boom)
+    resp = await async_test_client.get(
+        "/api/v1/analytics/wash-sale", headers=auth_headers
+    )
+    assert resp.status_code == 503
+    assert "analyse broke" in resp.json()["detail"]
