@@ -61,6 +61,8 @@ the current static app shell.
 
 `window.PREFS` → `localStorage['pfmPrefs']`. Format numbers via `Fmt.num()`, dates via `Fmt.date()`. Theme = `data-bs-theme` on `<html>` (Bootstrap 5.3).
 
+**Next euro** (`pfm_features.js`, `_ne*` helpers; help keys `ne_*`): a collapsed card `#nextEuroCard` on the Assets page (deployable breakdown and buffer gauge, amount input, bucket table, lines with reasons, traspasos, blocked, needs-research, "Copy for chat", settings form with the work-merchant checkboxes) and a `#dashNextEuro` entry in the Dashboard attention strip (hidden when `insufficient_data`). Data from `/api/v1/allocate/*`; see `allocator.md`.
+
 **Deploy after editing web files** (`portf_web` bakes files at build time — NOT live-mounted):
 ```bash
 docker compose build web && docker stop portf_web && WEB_PORT=8080 docker compose up -d web
