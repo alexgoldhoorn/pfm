@@ -92,3 +92,13 @@ test("a merchant name in a warning or symbol is escaped", () => {
     assert.ok(!html.includes("<img src=x>"));
     assert.match(html, /&lt;img/);
 });
+
+test("traspaso and blocked amounts are privacy-wrapped and the blocked heading is plain", () => {
+    const html = win.renderNextEuroLines(result({
+        traspasos: [{ from_symbol: "FA", to_symbol: "FB", amount_eur: 620, reasons: [] }],
+        blocked: [{ symbol: "EXC", loss_eur: 50, safe_from: "2026-12-01", reason: "sold at a loss" }],
+    }));
+    assert.match(html, /FB: <span class="pfm-amt">/);
+    assert.match(html, /loss <span class="pfm-amt">/);
+    assert.match(html, /Blocked \(buying back now would lose the tax loss\)/);
+});

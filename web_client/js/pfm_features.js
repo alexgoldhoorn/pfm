@@ -3330,9 +3330,9 @@ function renderNextEuroLines(result) {
     const unalloc = Number(r.unallocated_eur) > 0.005
         ? `<div class="small text-muted">Unallocated: ${Fmt.amt(_neMoney(r.unallocated_eur))}</div>` : '';
     const traspasos = _neList('Traspasos (switch between funds, no tax)', (r.traspasos || []).map(t =>
-        `<li>${esc(t.from_symbol)} → ${esc(t.to_symbol)}: ${_neMoney(t.amount_eur)}${(t.reasons || []).length ? ' — ' + t.reasons.map(esc).join('; ') : ''}</li>`));
-    const blocked = _neList('Blocked (a sale would be a wash sale)', (r.blocked || []).map(b =>
-        `<li>${esc(b.symbol)}: loss ${_neMoney(b.loss_eur)}, safe from ${esc(b.safe_from)} — ${esc(b.reason)}</li>`));
+        `<li>${esc(t.from_symbol)} → ${esc(t.to_symbol)}: ${Fmt.amt(_neMoney(t.amount_eur))}${(t.reasons || []).length ? ' — ' + t.reasons.map(esc).join('; ') : ''}</li>`));
+    const blocked = _neList('Blocked (buying back now would lose the tax loss)', (r.blocked || []).map(b =>
+        `<li>${esc(b.symbol)}: loss ${Fmt.amt(_neMoney(b.loss_eur))}, safe from ${esc(b.safe_from)} — ${esc(b.reason)}</li>`));
     const research = _neList('Needs research', (r.needs_research || []).map(n =>
         `<li>${esc(n.symbol)} (${Number(n.weight_pct || 0).toFixed(1)}% of the portfolio)</li>`));
     return `${buckets}<div class="small fw-semibold mb-1">${_neHelp('ne_reasons', 'Proposed lines')}</div>${lines || '<p class="text-muted small">No lines.</p>'}${unalloc}${traspasos}${blocked}${research}${warnings}`;
@@ -3372,7 +3372,7 @@ async function _neShowProposal() {
         const r = await window.apiClient.getNextEuro(raw === '' ? undefined : raw);
         sections.forEach(id => { const e = document.getElementById(id); if (e) e.innerHTML = ''; });
         if (linesEl) linesEl.innerHTML = renderNextEuroLines(r);
-        _neLastSummary = r.status === 'ok' ? (r.chat_summary || '') : '';
+        _neLastSummary = r.chat_summary || '';
         if (copyBtn) copyBtn.disabled = !_neLastSummary;
         if (typeof initTooltips === 'function') initTooltips();
     } catch (e) {
@@ -3474,11 +3474,16 @@ async function loadDashboardNextEuro() {
         const months = b.months == null ? 'n/a' : Number(b.months).toFixed(1);
         const status = NE_STATUS_LABEL[b.status] || b.status || 'unknown';
         const top = (r.status === 'ok' ? (r.lines || []) : []).slice(0, 3)
-            .map(l => `<li>${esc(l.symbol || l.name)} ${_neMoney(l.amount_eur)}</li>`).join('');
+            .map(l => `<li>${esc(l.symbol || l.name)} ${Fmt.amt(_neMoney(l.amount_eur))}</li>`).join('');
+        const noTargets = r.status === 'targets_incomplete';
+        const why = ((r.reasons && r.reasons.length) ? r.reasons : []).map(x => esc(x)).join('; ');
+        const empty = noTargets
+            ? `Set allocation targets first${why ? ': ' + why : ''}.`
+            : 'Nothing to place right now.';
         dashAttentionSet('dashNextEuro', {
-            summaryHtml: `<span>Next euro: ${_neMoney(d.deployable_eur)} deployable · buffer ${esc(months)} months (${esc(status)})</span>`,
+            summaryHtml: `<span>Next euro: ${Fmt.amt(_neMoney(d.deployable_eur))} deployable · buffer ${esc(months)} months (${esc(status)})</span>`,
             detailHtml: `<div class="fw-semibold mb-1">Next euro</div>
-                ${top ? `<ul class="list-unstyled mb-1 small">${top}</ul>` : '<div class="small text-muted mb-1">Nothing to place right now.</div>'}
+                ${top ? `<ul class="list-unstyled mb-1 small">${top}</ul>` : '<div class="small text-muted mb-1">${empty}</div>'}
                 <a href="#" class="small" data-page="assets">Open Assets <i class="bi bi-arrow-right"></i></a>`,
             onDismiss: () => {},
         });
