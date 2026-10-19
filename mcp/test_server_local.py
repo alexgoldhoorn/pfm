@@ -1,4 +1,4 @@
-"""Tests for the retirement_readiness tool and the networth balance-sheet lines.
+"""Tests for the retirement_readiness and next_euro tools and the networth lines.
 
 After the branch merges these move into ~/mcp/pfm/test_server.py.
 """
@@ -152,3 +152,29 @@ def test_networth_missing_stale_lines_is_na_and_still_lists_stale():
     assert "n/a stale line(s)" in out
     assert "0 stale" not in out
     assert "Old — 12 days old" in out
+
+
+def test_next_euro_prints_summary():
+    payload = {"status": "ok", "chat_summary": "NEXT EURO\n  Deployable: 1,000"}
+    with patch.object(server, "_get", return_value=payload) as get:
+        out = server.next_euro(500.0)
+    assert out == "NEXT EURO\n  Deployable: 1,000"
+    assert get.call_args.args[0] == "/api/v1/allocate/next-euro"
+    assert get.call_args.args[1] == {"amount": 500.0}
+
+
+def test_next_euro_non_ok_is_one_line():
+    payload = {"status": "targets_incomplete", "reasons": ["no target for etf", "x"]}
+    with patch.object(server, "_get", return_value=payload):
+        out = server.next_euro()
+    assert out == "Next euro: targets_incomplete — no target for etf; x"
+    with patch.object(server, "_get", return_value={"status": "nothing_to_deploy"}):
+        assert server.next_euro().endswith("see the Assets page")
+    with patch.object(server, "_get", side_effect=RuntimeError("boom")):
+        assert server.next_euro() == "Error fetching next euro: boom"
+
+
+def test_next_euro_missing_summary_is_na():
+    with patch.object(server, "_get", return_value={"status": "ok"}) as get:
+        assert server.next_euro() == "n/a"
+    assert get.call_args.args[1] is None
