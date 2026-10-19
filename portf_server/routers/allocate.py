@@ -89,3 +89,18 @@ def get_next_euro(
 ):
     """Where the next euro should go, with reasons."""
     return allocator.next_euro(db, amount_eur=amount)
+
+
+@router.get("/candidates")
+def get_candidates(
+    bucket: Optional[str] = Query(None),
+    db=Depends(get_database),
+    _: dict = Depends(_auth),
+):
+    """Everything the next euro could buy, with cap room and rank reasons."""
+    try:
+        return allocator.candidates_view(db, bucket)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"unknown bucket: {bucket}")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))

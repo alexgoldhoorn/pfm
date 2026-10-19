@@ -163,10 +163,28 @@ the ceiling), `allocate:buffer_low` (medium, below the floor),
 
 ## MCP
 
-`next_euro(amount=None)` (read-only) prints `chat_summary` whatever the status; only
-when there is none does it fall back to one line `Next euro: <status> - <reason>`. Tests are in `mcp/test_server_local.py`
-until they move to `~/mcp/pfm`. The gateway, finance adapter and persona register
-it after the merge.
+Five read-only tools in `mcp/server.py`; a missing field prints `n/a`, never 0, and
+an API error returns `Error fetching <what>: <e>`:
+
+- `next_euro(amount=None)` prints `chat_summary` whatever the status; only when
+  there is none does it fall back to one line `Next euro: <status> - <reason>`.
+- `deployable_cash()`: liquid lines, tax reserve per quarter, buffer, deployable,
+  coming in, warnings (`GET /allocate/deployable`).
+- `allocation_targets()`: target vs current per asset type plus the held types
+  without a target (`GET /rebalance/analysis`).
+- `allocation_candidates(bucket=None)`: one entry per candidate with its rank
+  reason, blocked ones with the safe-from date, the single-stock cap room
+  (`GET /allocate/candidates?bucket=`).
+- `allocator_settings()`: the settings and which income merchants are ticked
+  (`GET /allocate/settings`).
+
+`GET /api/v1/allocate/candidates` returns `bucket`, `total_value_eur`,
+`target_pct`, `current_pct` (null without a bucket) and `candidates`, each with
+`cap_room_eur` (only for single stocks: `max_single_stock_pct` of the portfolio
+minus the position, floor 0) and `rank_reason` from `allocator.rank_reasons`,
+which reuses the ranking helpers. An unknown bucket is a 404. Tests are in
+`mcp/test_server_local.py` until they move to `~/mcp/pfm`. The gateway, finance
+adapter and persona register the tools after the merge.
 
 ## Known limits
 

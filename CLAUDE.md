@@ -14,7 +14,9 @@ of its tools. A change here affects that surface too — see `~/mcp/CLAUDE.md`,
   `cd ~/mcp/pfm && python3 -m pytest -q .`. `retirement_readiness` (read-only,
   wraps `GET /retirement/readiness`) has its tests in
   `mcp/test_server_local.py` until they move to `~/mcp/pfm`; `next_euro`
-  (read-only, wraps `GET /allocate/next-euro`) has its tests there too.
+  (read-only, wraps `GET /allocate/next-euro`), `deployable_cash`,
+  `allocation_targets`, `allocation_candidates` and `allocator_settings` (all
+  read-only) have their tests there too.
 - When an API response changes shape, update the matching tool. Tools read fields
   with `.get(..., 0)`, so a renamed field silently becomes zero, and a test that
   pins the old field names stays green.

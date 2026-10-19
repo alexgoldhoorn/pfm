@@ -1224,3 +1224,152 @@ def next_euro(
     placed = sum(ln["amount_eur"] for ln in result["lines"])
     result["unallocated_eur"] = round(amount - placed, 2)
     return done("ok")
+
+
+def rank_reasons(bucket: str, cands: List[dict], total: float, settings: dict) -> dict:
+    """Why each candidate of a bucket ranks where it does, by symbol.
+
+    Reuses the ranking helpers, so the text is the one ``pick_lines`` would
+    give; an excluded or blocked candidate gets the reason it is out.
+
+    Args:
+        bucket: Asset type.
+        cands: The bucket's candidates.
+        total: Portfolio value in EUR (the cap's denominator).
+        settings: Allocator settings.
+
+    Returns:
+        ``{symbol: reason text}``.
+    """
+    out: Dict[str, str] = {}
+    live = []
+    for c in cands:
+        if c.get("blocked"):
+            out[c["symbol"]] = c["blocked"]["reason"]
+        else:
+            live.append(c)
+
+    def put(ranked: List[Tuple[dict, List[str]]]) -> None:
+        for n, (c, reasons) in enumerate(ranked, 1):
+            out[c["symbol"]] = f"#{n}: " + "; ".join(reasons)
+
+    if bucket in FUND_BUCKETS:
+        put(rank_fund_candidates(live))
+        for c, why in fund_exclusions(live):
+            out[c["symbol"]] = why
+    elif bucket == "stock":
+        funds = [c for c in live if c["is_fund"]]
+        stocks = [c for c in live if not c["is_fund"]]
+        ranked, needs, excluded = rank_stock_candidates(
+            stocks, total, settings["max_single_stock_pct"]
+        )
+        put(ranked)
+        put(rank_fund_candidates(funds))
+        for c, why in excluded + fund_exclusions(funds):
+            out[c["symbol"]] = why
+        for c in needs:
+            out[c["symbol"]] = "needs research before it can be proposed"
+    elif bucket == "crypto":
+        put(rank_crypto(live))
+    elif bucket == "bond":
+        put(rank_bonds(live))
+    else:
+        put(_rank_other(live))
+    for c in live:
+        out.setdefault(c["symbol"], "not ranked (nothing held to split by)")
+    return out
+
+
+def candidates_view(
+    db,
+    bucket: Optional[str] = None,
+    today: Optional[date] = None,
+    fx: Optional[Callable[[str], float]] = None,
+    fx_on: Optional[Callable] = None,
+) -> dict:
+    """Candidates of one bucket (or all) with cap room and a rank reason.
+
+    Args:
+        db: Database.
+        bucket: Asset type to filter on; ``None`` for every bucket.
+        today: Reference date.
+        fx: ``fx(currency)`` rate to EUR.
+        fx_on: ``fx_on(currency, day)`` historical rate.
+
+    Returns:
+        ``{bucket, total_value_eur, target_pct, current_pct, candidates}``.
+
+    Raises:
+        KeyError: The bucket is neither held, targeted nor a candidate type.
+        ValueError: The saved targets do not sum to 100.
+    """
+    today = today or date.today()
+    if fx is None or fx_on is None:
+        from portf_server.routers.portfolios import _get_fx_rate, _get_fx_rate_on
+
+        fx = fx or _get_fx_rate
+        fx_on = fx_on or (lambda cur, day: _get_fx_rate_on(db, cur, day))
+    settings = deployable_service.load_settings(db)
+    before, _, holdings, transactions = compute_before_state(db, None, None)
+    candidates, warnings = build_candidates(
+        db, holdings, transactions, settings, today, fx, fx_on
+    )
+    rows = {a["asset_type"]: a for a in before["allocations"]}
+    known = set(rows) | {c["bucket"] for c in candidates}
+    if bucket is not None and bucket not in known:
+        raise KeyError(bucket)
+    total = float(before["total_value_eur"])
+    cap_pct = float(settings["max_single_stock_pct"])
+    reasons: Dict[str, str] = {}
+    for b in sorted({c["bucket"] for c in candidates}):
+        if bucket is None or b == bucket:
+            in_bucket = [c for c in candidates if c["bucket"] == b]
+            reasons.update(rank_reasons(b, in_bucket, total, settings))
+    out = []
+    for c in candidates:
+        if bucket is not None and c["bucket"] != bucket:
+            continue
+        # the cap applies to single stocks, not funds or ETFs
+        stock = c["bucket"] == "stock" and not c["is_fund"]
+        out.append(
+            {
+                **{
+                    k: c.get(k)
+                    for k in (
+                        "symbol",
+                        "name",
+                        "portfolio_name",
+                        "value_eur",
+                        "weight_pct",
+                        "is_fund",
+                        "ter_pct",
+                        "overlap_group",
+                        "buy_below",
+                        "price_native",
+                        "currency",
+                        "fair_value",
+                        "recommendation",
+                        "conviction",
+                        "blocked",
+                        "managed",
+                        "is_watchlist",
+                    )
+                },
+                "bucket": c["bucket"],
+                "cap_room_eur": (
+                    round(max(0.0, cap_pct / 100 * total - c["value_eur"]), 2)
+                    if stock
+                    else None
+                ),
+                "rank_reason": reasons.get(c["symbol"]),
+            }
+        )
+    row = rows.get(bucket) if bucket else None
+    return {
+        "bucket": bucket,
+        "total_value_eur": total,
+        "target_pct": row["target_pct"] if row else None,
+        "current_pct": row["current_pct"] if row else None,
+        "candidates": out,
+        "warnings": warnings,
+    }
