@@ -1292,6 +1292,9 @@ def next_euro(amount: Optional[float] = None) -> str:
     except Exception as e:
         return f"Error fetching next euro: {e}"
 
+    # the breakdown is printed whenever there is one, whatever the status
+    if data.get("chat_summary"):
+        return data["chat_summary"]
     status = data.get("status")
     if status != "ok":
         reasons = data.get("reasons")
@@ -1300,7 +1303,7 @@ def next_euro(amount: Optional[float] = None) -> str:
         else:
             reason = data.get("reason") or "see the Assets page"
         return f"Next euro: {_na(status)} — {reason}"
-    return data.get("chat_summary") or "n/a"
+    return "n/a"
 
 
 @mcp.tool()

@@ -163,7 +163,18 @@ def test_next_euro_prints_summary():
     assert get.call_args.args[1] == {"amount": 500.0}
 
 
-def test_next_euro_non_ok_is_one_line():
+def test_next_euro_non_ok_prints_the_breakdown_when_there_is_one():
+    payload = {
+        "status": "targets_incomplete",
+        "reasons": ["no target for etf"],
+        "chat_summary": "Allocation targets are incomplete:\n- no target for etf",
+    }
+    with patch.object(server, "_get", return_value=payload):
+        out = server.next_euro()
+    assert out == payload["chat_summary"]
+
+
+def test_next_euro_non_ok_without_summary_is_one_line():
     payload = {"status": "targets_incomplete", "reasons": ["no target for etf", "x"]}
     with patch.object(server, "_get", return_value=payload):
         out = server.next_euro()
