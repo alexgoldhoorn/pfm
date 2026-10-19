@@ -618,14 +618,13 @@ def fund_exclusions(cands: List[dict]) -> List[Tuple[dict, str]]:
 
 
 def rank_fund_candidates(
-    cands: List[dict], by_region: Optional[Dict[str, float]] = None
+    cands: List[dict],
 ) -> List[Tuple[dict, List[str]]]:
     """Funds and ETFs by lowest TER, then larger existing position (5.3).
 
     Non-largest members of an overlap group are excluded (see
     :func:`fund_exclusions`). A fund without TER ranks after those with one.
-    ``by_region`` is accepted for the informational region tie-break but the
-    candidates carry no per-fund regions, so ties keep the larger position.
+    Candidates carry no per-fund regions, so ties keep the larger position.
     """
     kept = [c for c in cands if not _is_smaller_overlap_member(c)]
     kept.sort(key=lambda c: (_ter_key(c), -c["value_eur"], c["symbol"]))
@@ -768,7 +767,7 @@ def pick_lines(
     amount_eur: float,
     settings: dict,
     ctx: dict,
-) -> Tuple[List[dict], float, List[dict]]:
+) -> Tuple[List[dict], float, List[dict], List[str]]:
     """Turn a bucket's amount into at most ``max_lines_per_bucket`` lines.
 
     Args:
@@ -776,11 +775,11 @@ def pick_lines(
         cands: The bucket's candidates.
         amount_eur: Money for the bucket.
         settings: Allocator settings.
-        ctx: ``total_after`` (portfolio value after all new money) and
-            ``by_region``.
+        ctx: ``total_after`` (portfolio value after all new money).
 
     Returns:
-        ``(lines, unallocated_eur, needs_research)``.
+        ``(lines, unallocated_eur, needs_research, reasons)``; ``reasons``
+        says why money stayed unallocated (empty when none did).
     """
     n = max(1, int(settings["max_lines_per_bucket"]))
     min_line = float(settings["min_line_eur"])
@@ -788,12 +787,12 @@ def pick_lines(
     extra: List[Tuple[dict, str]] = []
     kind = "fund"
     if bucket in FUND_BUCKETS:
-        ranked = rank_fund_candidates(cands, ctx.get("by_region"))
+        ranked = rank_fund_candidates(cands)
         extra = fund_exclusions(cands)
     elif bucket == "stock":
         kind = "stock"
         ranked, needs, extra = rank_stock_candidates(
-            cands, ctx["total_after"], settings["max_single_stock_pct"], amount_eur / n
+            cands, ctx["total_after"], settings["max_single_stock_pct"]
         )
     elif bucket == "crypto":
         kind = "crypto"
@@ -808,7 +807,13 @@ def pick_lines(
         {"symbol": c["symbol"], "weight_pct": round(c["weight_pct"], 2)} for c in needs
     ]
     if not ranked or amount_eur <= 0:
-        return [], round(amount_eur, 2) if amount_eur > 0 else 0.0, needs_out
+        left = round(amount_eur, 2) if amount_eur > 0 else 0.0
+        why: List[str] = []
+        if left:
+            why = list(dict.fromkeys(r for _, r in extra))
+            if not why:
+                why = ["no researched candidate under the price target"]
+        return [], left, needs_out, why
 
     picked = ranked[:n]
     runner = ranked[n] if len(ranked) > n else None
@@ -826,21 +831,25 @@ def pick_lines(
         # drop the smallest line, its money goes to the others
         small = min(range(len(chosen)), key=lambda i: parts[i])
         chosen.pop(small)
-    dropped_runner = None
-    if len(chosen) < len(picked):
-        dropped_runner = next(p for p in picked if p not in chosen)
+    dropped = [p for p in picked if p not in chosen]
+    others = list(dropped) + ([runner] if runner is not None and not dropped else [])
 
     lines = []
     for (c, reasons), part in zip(chosen, parts):
-        if runner is not None or dropped_runner is not None:
-            other = dropped_runner or runner
-            ru = {"symbol": other[0]["symbol"], "why_not": _why_not(kind, c, other[0])}
+        if dropped:
+            ru = {
+                "symbol": ", ".join(d[0]["symbol"] for d in dropped),
+                "why_not": f"its share would be under {min_line:,.0f} €",
+            }
+        elif others:
+            ru = {
+                "symbol": others[0][0]["symbol"],
+                "why_not": _why_not(kind, c, others[0][0]),
+            }
         elif extra:
             ru = {"symbol": extra[0][0]["symbol"], "why_not": extra[0][1]}
         else:
             ru = None
-        if dropped_runner is not None and ru is not None:
-            ru["why_not"] = f"its share would be under {min_line:,.0f} €"
         lines.append(
             {
                 "asset_type": bucket,
@@ -854,7 +863,75 @@ def pick_lines(
                 "runner_up": ru,
             }
         )
-    return lines, 0.0, needs_out
+    unallocated = 0.0
+    why = []
+    if kind == "stock":
+        unallocated = _clamp_stock_lines(lines, ranked, settings, ctx, n, min_line)
+        if unallocated:
+            why = list(dict.fromkeys(r for _, r in extra))
+            cap = (
+                f"would exceed the {settings['max_single_stock_pct']:g} % "
+                "single-stock cap"
+            )
+            if cap not in why:
+                why.append(cap)
+    return lines, unallocated, needs_out, why
+
+
+def _clamp_stock_lines(
+    lines: List[dict],
+    ranked: List[Tuple[dict, List[str]]],
+    settings: dict,
+    ctx: dict,
+    max_lines: int,
+    min_line: float,
+) -> float:
+    """Keep every stock line within the single-stock cap, spilling the excess.
+
+    Excess goes to the next ranked stock with room (a new line only while
+    under ``max_lines`` and worth ``min_line``). Mutates *lines*.
+
+    Returns:
+        Money that found no room.
+    """
+    cap_eur = settings["max_single_stock_pct"] / 100 * ctx["total_after"]
+    room = {c["asset_id"]: max(0.0, cap_eur - c["value_eur"]) for c, _ in ranked}
+    excess = 0.0
+    for ln in lines:
+        if ln["amount_eur"] > room[ln["asset_id"]]:
+            clipped = round(room[ln["asset_id"]], 2)
+            excess += ln["amount_eur"] - clipped
+            ln["amount_eur"] = clipped
+    excess = round(excess, 2)
+    for c, reasons in ranked:
+        if excess <= 0:
+            break
+        have = next((ln for ln in lines if ln["asset_id"] == c["asset_id"]), None)
+        free = round(room[c["asset_id"]] - (have["amount_eur"] if have else 0), 2)
+        give = round(min(excess, free), 2)
+        if give <= 0:
+            continue
+        if have is not None:
+            have["amount_eur"] = round(have["amount_eur"] + give, 2)
+        elif len(lines) < max_lines and give >= min_line:
+            lines.append(
+                {
+                    "asset_type": "stock",
+                    "asset_id": c["asset_id"],
+                    "symbol": c["symbol"],
+                    "name": c["name"],
+                    "portfolio_id": c["portfolio_id"],
+                    "portfolio_name": c["portfolio_name"],
+                    "amount_eur": give,
+                    "reasons": list(reasons),
+                    "runner_up": None,
+                }
+            )
+        else:
+            continue
+        excess = round(excess - give, 2)
+    lines[:] = [ln for ln in lines if ln["amount_eur"] > 0]
+    return excess
 
 
 def _eur(value: float) -> str:
@@ -1002,7 +1079,9 @@ def next_euro(
     if amount <= 0:
         return done("nothing_to_deploy")
     result["amount_eur"] = round(amount, 2)
-    if amount_eur is not None and amount > deployable_eur + 0.005:
+    if amount_eur is not None and dep.get("status") == "insufficient_data":
+        warnings.append(f"deployable unknown: {dep.get('reason', 'not enough data')}")
+    elif amount_eur is not None and amount > deployable_eur + 0.005:
         warnings.append(
             f"amount exceeds deployable cash by {_eur(amount - deployable_eur)}"
         )
@@ -1059,30 +1138,21 @@ def next_euro(
     buckets = split_buckets(amount, invest, invest_values, settings["min_line_eur"])
     result["buckets"] = buckets
     total_after = sum(after_values.values()) + amount
-    ctx = {"total_after": total_after, "by_region": {}}
-    try:
-        ctx["by_region"] = compute_exposure(db, fx=fx, today=today).get("by_region", {})
-    except Exception as exc:  # informational only; ranking works without it
-        warnings.append(f"region look-through unavailable: {exc}")
+    ctx = {"total_after": total_after}
 
-    unallocated = 0.0
     for b in buckets:
         if b["allocated_eur"] <= 0:
             continue
         in_bucket = [c for c in candidates if c["bucket"] == b["asset_type"]]
-        lines, left, needs = pick_lines(
+        lines, left, needs, why = pick_lines(
             b["asset_type"], in_bucket, b["allocated_eur"], settings, ctx
         )
         result["lines"].extend(lines)
         result["needs_research"].extend(needs)
         if left:
-            unallocated += left
-            if b["asset_type"] == "stock":
-                warnings.append(
-                    f"stock: {_eur(left)} unallocated, no researched candidate "
-                    "under the price target"
-                )
-            else:
-                warnings.append(f"{b['asset_type']}: {_eur(left)} found no line")
-    result["unallocated_eur"] = round(unallocated, 2)
+            detail = "; ".join(why) if why else "found no line"
+            warnings.append(f"{b['asset_type']}: {_eur(left)} unallocated, {detail}")
+    # whatever no line took, residue of the bucket split included
+    placed = sum(ln["amount_eur"] for ln in result["lines"])
+    result["unallocated_eur"] = round(amount - placed, 2)
     return done("ok")
