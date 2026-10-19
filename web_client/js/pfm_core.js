@@ -2674,7 +2674,7 @@ function createAPIClient() {
             });
             if (!resp.ok) {
                 const d = (await resp.json().catch(() => ({}))).detail;
-                throw new Error(typeof d === 'string' ? d : (d ? JSON.stringify(d) : 'Failed to save allocator settings'));
+                throw new Error(typeof d === 'string' ? d : (Array.isArray(d) ? d.map(x => (x && x.msg) || JSON.stringify(x)).join('; ') : (d && d.msg) || 'Failed to save allocator settings'));
             }
             return resp.json().catch(() => ({}));
         },

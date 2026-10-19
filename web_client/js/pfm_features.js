@@ -3236,7 +3236,10 @@ function _neHelp(key, text) {
     const tip = (window.METRIC_HELP || {})[key] || '';
     return `${esc(text)} <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip" title="${escapeForAttr(tip)}"></i>`;
 }
-function _neMoney(v) { return Fmt.money(Number(v) || 0, 'EUR'); }
+function _neMoney(v) {
+    if (v === null || v === undefined || v === '' || !Number.isFinite(Number(v))) return 'n/a';
+    return Fmt.money(Number(v), 'EUR');
+}
 
 // Pure: horizontal bar with markers at min/target/max and the current months.
 function bufferGaugeHtml(buffer) {
@@ -3273,8 +3276,8 @@ function renderDeployableSummary(dep) {
     if (d.status === 'insufficient_data' || d.deployable_eur == null) {
         return `<div class="text-muted small">${_neHelp('ne_deployable', 'Deployable')}: not available${d.reason ? ' — ' + esc(d.reason) : ''}</div>`;
     }
-    const reserve = d.tax_reserve ? Number(d.tax_reserve.reserve_eur) || 0 : 0;
-    const bufTarget = d.buffer ? Number(d.buffer.target_eur) || 0 : 0;
+    const reserve = d.tax_reserve ? d.tax_reserve.reserve_eur : null;
+    const bufTarget = d.buffer ? d.buffer.target_eur : null;
     const coming = (d.coming_in || []).length
         ? `<div class="small text-muted mt-1">Coming in: ${(d.coming_in || []).map(c => `${esc(c.label)} ${_neMoney(c.amount_eur)}${c.date ? ' (' + esc(c.date) + ')' : ''}`).join(' · ')}</div>` : '';
     const warns = (d.warnings || []).length
@@ -3362,6 +3365,8 @@ async function _neShowProposal() {
     const sections = ['neBuckets', 'neExtras'];
     const linesEl = document.getElementById('neLines');
     const copyBtn = document.getElementById('neCopy');
+    _neLastSummary = '';
+    if (copyBtn) copyBtn.disabled = true;
     if (linesEl) linesEl.innerHTML = '<div class="spinner-border spinner-border-sm"></div>';
     try {
         const r = await window.apiClient.getNextEuro(raw === '' ? undefined : raw);
@@ -3371,15 +3376,20 @@ async function _neShowProposal() {
         if (copyBtn) copyBtn.disabled = !_neLastSummary;
         if (typeof initTooltips === 'function') initTooltips();
     } catch (e) {
+        _neLastSummary = '';
+        if (copyBtn) copyBtn.disabled = true;
         if (linesEl) linesEl.innerHTML = `<div class="text-danger small">${esc(e.message)}</div>`;
     }
 }
+
+let _neLoadedSettings = {};
 
 async function _neLoadSettings() {
     const form = document.getElementById('neSettingsForm');
     if (!form) return;
     try {
         const st = await window.apiClient.getAllocatorSettings();
+        _neLoadedSettings = st;
         form.querySelectorAll('input[data-key]').forEach(inp => {
             const v = st[inp.dataset.key];
             inp.value = v == null ? '' : v;
@@ -3399,7 +3409,7 @@ async function _neLoadSettings() {
     }
 }
 
-async function loadNextEuroCard() {
+async function loadNextEuroCard(opts) {
     const sum = document.getElementById('neSummary');
     if (!sum) return;
     try {
@@ -3411,7 +3421,7 @@ async function loadNextEuroCard() {
     } catch (e) {
         sum.innerHTML = `<div class="text-danger small">${esc(e.message)}</div>`;
     }
-    await _neLoadSettings();
+    if (!(opts && opts.skipSettings)) await _neLoadSettings();
     if (!window._neWired) {
         window._neWired = true;
         const btn = document.getElementById('neProposeBtn');
@@ -3429,15 +3439,23 @@ async function loadNextEuroCard() {
             if (err) err.textContent = '';
             const body = {};
             form.querySelectorAll('input[data-key]').forEach(inp => {
-                if (inp.value !== '') body[inp.dataset.key] = Number(inp.value);
+                if (inp.value === '') return;
+                const v = Number(inp.value);
+                if (v !== _neLoadedSettings[inp.dataset.key]) body[inp.dataset.key] = v;
             });
-            body.work_income_merchants = Array.from(form.querySelectorAll('.ne-merchant:checked')).map(c => c.value);
+            const chosen = Array.from(form.querySelectorAll('.ne-merchant:checked')).map(c => c.value).sort();
+            const before = (_neLoadedSettings.work_income_merchants || []).slice().sort();
+            if (JSON.stringify(chosen) !== JSON.stringify(before)) body.work_income_merchants = chosen;
+            if (!Object.keys(body).length) { notify('Nothing changed', 'info'); return; }
             try {
-                await window.apiClient.updateAllocatorSettings(body);
+                const saved = await window.apiClient.updateAllocatorSettings(body);
+                _neLoadedSettings = { ..._neLoadedSettings, ...saved };
                 notify('Allocator settings saved', 'success');
-                loadNextEuroCard();
+                await loadNextEuroCard({ skipSettings: true });
+                _neShowProposal();
             } catch (e) {
                 if (err) err.textContent = e.message;
+                notify(e.message, 'danger');
             }
         });
     }
