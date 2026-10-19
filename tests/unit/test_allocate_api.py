@@ -84,3 +84,72 @@ def test_next_euro_endpoint(tmp_path):
     assert r.status_code == 422
     r = client.get(f"{URL}/next-euro?amount=500", headers=HEADERS)
     assert r.status_code == 200 and r.json()["status"] == "targets_incomplete"
+
+
+def _candidates_client(tmp_path, monkeypatch):
+    from datetime import datetime
+
+    import portf_server.routers.portfolios as pf
+    from portf_manager.services import allocator
+    from portf_server.app import app
+    from portf_server.dependencies import get_database
+
+    monkeypatch.setattr(pf, "_get_fx_rate", lambda c: 1.0)
+    monkeypatch.setattr(pf, "_get_fx_rate_on", lambda db, c, d: 1.0)
+    monkeypatch.setattr(allocator, "blocked_assets", lambda *a, **k: {})
+    monkeypatch.setattr(
+        "portf_manager.services.exposure._resolve_sector_country",
+        lambda db, asset: ("Unknown", "Unknown"),
+    )
+    client = _make_client(tmp_path)
+    db = app.dependency_overrides[get_database]()
+    pid = db.get_or_create_portfolio("Example Broker")
+    for symbol, name, atype, qty, price in [
+        ("FUNDA", "Fund A", "etf", 10, 100.0),
+        ("FUNDB", "Fund B", "etf", 5, 100.0),
+        ("STKA", "Example Corp", "stock", 10, 10.0),
+    ]:
+        aid = db.create_asset(symbol, name, atype, currency="EUR")
+        db.create_transaction(
+            asset_id=aid,
+            transaction_type="buy",
+            quantity=qty,
+            price=price,
+            total_amount=qty * price,
+            transaction_date="2026-01-02",
+            portfolio_id=pid,
+            currency="EUR",
+        )
+        db.insert_price_record(symbol, price, datetime(2026, 10, 15, 9, 0))
+    db.set_allocation_target("etf", 60)
+    db.set_allocation_target("stock", 40)
+    return client
+
+
+def test_candidates_endpoint_bucket_filter_and_fields(tmp_path, monkeypatch):
+    client = _candidates_client(tmp_path, monkeypatch)
+    r = client.get(f"{URL}/candidates?bucket=stock", headers=HEADERS)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["bucket"] == "stock" and body["target_pct"] == 40
+    assert body["total_value_eur"] == 1600.0
+    [row] = body["candidates"]
+    assert row["symbol"] == "STKA" and row["portfolio_name"] == "Example Broker"
+    # 5 % of 1600 is 80, 100 already held: no room
+    assert row["cap_room_eur"] == 0.0
+    assert "single-stock cap" in row["rank_reason"]
+    assert "overlap_group" in row and row["blocked"] is None
+
+    etf = client.get(f"{URL}/candidates?bucket=etf", headers=HEADERS).json()
+    assert [c["symbol"] for c in etf["candidates"]] == ["FUNDA", "FUNDB"]
+    assert all(c["cap_room_eur"] is None for c in etf["candidates"])
+    assert "TER unknown" in etf["candidates"][0]["rank_reason"]
+
+
+def test_candidates_endpoint_all_buckets_and_404(tmp_path, monkeypatch):
+    client = _candidates_client(tmp_path, monkeypatch)
+    body = client.get(f"{URL}/candidates", headers=HEADERS).json()
+    assert body["bucket"] is None and len(body["candidates"]) == 3
+    r = client.get(f"{URL}/candidates?bucket=nope", headers=HEADERS)
+    assert r.status_code == 404
+    assert client.get(f"{URL}/candidates").status_code in (401, 403)
