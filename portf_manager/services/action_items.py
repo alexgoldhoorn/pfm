@@ -386,8 +386,9 @@ def check_allocation(db, today=None) -> list[dict]:
     # targets first and always: they do not depend on the deployable status
     targets = rebalance_planner.merge_targets(db, None)
     detail = None
-    reasons = allocator.check_targets(targets, {"allocations": []})
-    if not reasons:
+    # no targets at all means the feature is not set up: nothing to complete
+    reasons = allocator.check_targets(targets, {"allocations": []}) if targets else []
+    if targets and not reasons:
         try:
             before = rebalance_planner.compute_before_state(db, None, None)[0]
             reasons = allocator.check_targets(targets, before)
