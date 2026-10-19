@@ -260,6 +260,7 @@ def test_insufficient_data_under_six_months(tmp_path):
     assert r["status"] == "insufficient_data" and r["reason"]
     assert r["liquid_eur"] == 5000 and "tax_reserve" in r
     assert r["deployable_eur"] is None
+    assert r["buffer"]["status"] == "unknown" and r["buffer"]["months"] is not None
 
 
 def test_negative_ledger_line_not_liquid(tmp_path):
@@ -287,3 +288,35 @@ def test_coming_in_lists_deposit_maturing_within_30_days(tmp_path):
     assert r["coming_in"] == [
         {"label": "Example Deposit", "amount_eur": 2000.0, "date": "2026-11-10"}
     ]
+
+
+@pytest.mark.parametrize(
+    "liquid,status",
+    [
+        (3990, "rebuild"),
+        (4000, "topping_up"),
+        (6000, "ok"),
+        (8000, "ok"),
+        (8010, "idle"),
+    ],
+)
+def test_buffer_boundaries(liquid, status):
+    assert buffer(liquid, 0.0, 1000.0, S)["status"] == status
+
+
+def test_deployable_with_non_zero_reserve(tmp_path):
+    db = _spend_db(tmp_path, social=0.0)
+    db.create_manual_asset("Example Jar", "cash", 10000.0, as_of="2026-10-01")
+    pid = db.get_or_create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_transaction(
+        pid, "2026-10-10", "Pay", 1000.0, category="Income", merchant="Client"
+    )
+    # iva 0 and irpf 100 make the reserve equal the gross income
+    settings = {**S, "iva_pct": 0.0, "irpf_pct": 100.0}
+    r = deployable(db, today=TODAY, settings=settings, **FX)
+    assert r["tax_reserve"]["reserve_eur"] == 1000
+    assert r["deployable_eur"] == 3000
+    assert r["as_of"] == "2026-10-19"
+    b = r["buffer"]
+    assert (b["target_months"], b["min_months"], b["max_months"]) == (6, 4, 8)
+    assert b["months_used_count"] == len(b["months_used"])
