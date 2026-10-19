@@ -14,7 +14,6 @@ Credentials are read from ~/repos/pfm/.env.local at startup.
 import calendar
 import json
 import os
-import sys
 import urllib.parse
 import urllib.request
 from datetime import date
@@ -2033,22 +2032,24 @@ def data_freshness(stale_days: int = 4) -> str:
 
 
 # ── Antiaplicación (Spanish wash-sale rule, art. 33.5.f/g LIRPF) ─────────────
-# The rule lives in portf_manager.services.wash_sale so the allocator can use it
-# in-process; this module only re-exports it under its historical private names.
-_PFM_ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-# Appended, not inserted first: importing below pulls in portf_manager.
-if _PFM_ROOT not in sys.path:
-    sys.path.append(_PFM_ROOT)
+# The rule lives server-side (portf_manager.services.wash_sale) and is served by
+# GET /api/v1/analytics/wash-sale; this module only formats the answer.
 
-from portf_manager.services.wash_sale import (  # noqa: E402,F401
-    FUND_NAME_WORDS as _FUND_NAME_WORDS,
-    LISTED_MONTHS as _WASH_LISTED_MONTHS,
-    UNLISTED_MONTHS as _WASH_UNLISTED_MONTHS,
-    _add_months,
-    _parse_date,
-    analyse as _wash_sale_analysis,
-    window_months as _wash_window_months,
-)
+
+def _parse_date(value: object) -> Optional[date]:
+    """Parse the first ten characters of an ISO date, or None."""
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except (TypeError, ValueError):
+        return None
+
+
+def _add_months(d: date, months: int) -> date:
+    """Shift a date by calendar months, clamping to the target month's end."""
+    index = d.year * 12 + (d.month - 1) + months
+    year, month0 = divmod(index, 12)
+    month = month0 + 1
+    return date(year, month, min(d.day, calendar.monthrange(year, month)[1]))
 
 
 @mcp.tool()
@@ -2066,18 +2067,10 @@ def wash_sale_check(symbol: Optional[str] = None) -> str:
     """
     today = _today()
     try:
-        lots: list = []
-        for year in (today.year - 1, today.year):
-            report = _get("/api/v1/analytics/tax-report", {"year": year})
-            lots += report.get("realised_lots") or []
-        transactions = _get("/api/v1/transactions/")
-        assets = _get("/api/v1/assets/")
-        holdings = _get("/api/v1/portfolios/holdings").get("holdings") or []
+        params = {"symbol": urllib.parse.quote(symbol)} if symbol else None
+        out = _get("/api/v1/analytics/wash-sale", params)
     except Exception as e:
         return f"Error fetching data for wash-sale check: {e}"
-
-    asset_map = {a["symbol"]: a for a in assets if a.get("symbol")}
-    out = _wash_sale_analysis(lots, transactions, asset_map, today, symbol, holdings)
 
     def label(item: dict) -> str:
         name = item.get("name")

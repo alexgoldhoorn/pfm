@@ -166,3 +166,92 @@ def test_blocked_assets_raises_when_tax_calculation_fails(tmp_path, monkeypatch)
     )
     with pytest.raises(WashSaleUnavailable):
         blocked_assets(db, date(2026, 10, 18), fx_on=lambda c, d: 1.0)
+
+
+# ── GET /analytics/wash-sale ─────────────────────────────────────────────────
+
+
+def _seed_endpoint_db(db):
+    pid = db.get_or_create_portfolio("Broker")
+    # Sold at a loss 2026-08-20 and rebought 2026-09-05: blocked.
+    a = db.create_asset("BLK", "Example Blocked", "etf", currency="EUR")
+    db.create_transaction(a, "buy", 10, 100, 1000, "2026-01-01", portfolio_id=pid)
+    db.create_transaction(a, "sell", 10, 80, 800, "2026-08-20", portfolio_id=pid)
+    db.create_transaction(a, "buy", 5, 80, 400, "2026-09-05", portfolio_id=pid)
+    # Sold at a loss 2026-08-01 and not rebought: still inside its window.
+    b = db.create_asset("NRB", "Example NoRebuy", "etf", currency="EUR")
+    db.create_transaction(b, "buy", 4, 50, 200, "2026-01-01", portfolio_id=pid)
+    db.create_transaction(b, "sell", 4, 40, 160, "2026-08-01", portfolio_id=pid)
+
+
+@pytest.fixture
+def wash_today(monkeypatch):
+    from portf_server.routers import analytics
+
+    monkeypatch.setattr(analytics, "_today", lambda: date(2026, 9, 15))
+
+
+@pytest.mark.asyncio
+async def test_wash_sale_endpoint_blocked_and_no_rebuy(
+    async_test_client, auth_headers, test_database, wash_today
+):
+    _seed_endpoint_db(test_database)
+    resp = await async_test_client.get(
+        "/api/v1/analytics/wash-sale", headers=auth_headers
+    )
+    assert resp.status_code == 200
+    d = resp.json()
+    assert set(d) == {"blocked", "no_rebuy", "recent_buys"}
+    assert [b["symbol"] for b in d["blocked"]] == ["BLK"]
+    assert d["blocked"][0]["sell_date"] == "2026-08-20"
+    assert d["blocked"][0]["loss_eur"] == -200.0
+    assert d["blocked"][0]["blocking"] == [{"date": "2026-09-05", "quantity": 5.0}]
+    assert [(n["symbol"], n["until"]) for n in d["no_rebuy"]] == [("NRB", "2026-10-01")]
+    # BLK is still held (the repurchase), NRB is not.
+    assert {r["symbol"] for r in d["recent_buys"]} == {"BLK"}
+    assert "at_loss" in d["recent_buys"][0]
+
+
+@pytest.mark.asyncio
+async def test_wash_sale_endpoint_symbol_filter(
+    async_test_client, auth_headers, test_database, wash_today
+):
+    _seed_endpoint_db(test_database)
+    resp = await async_test_client.get(
+        "/api/v1/analytics/wash-sale?symbol=nrb", headers=auth_headers
+    )
+    d = resp.json()
+    assert d["blocked"] == []
+    assert [n["symbol"] for n in d["no_rebuy"]] == ["NRB"]
+    assert d["recent_buys"] == []
+
+
+@pytest.mark.asyncio
+async def test_wash_sale_endpoint_empty_database(
+    async_test_client, auth_headers, wash_today
+):
+    resp = await async_test_client.get(
+        "/api/v1/analytics/wash-sale", headers=auth_headers
+    )
+    assert resp.status_code == 200
+    assert resp.json() == {"blocked": [], "no_rebuy": [], "recent_buys": []}
+
+
+@pytest.mark.asyncio
+async def test_wash_sale_endpoint_503_when_tax_report_fails(
+    async_test_client, auth_headers, test_database, wash_today, monkeypatch
+):
+    _seed_endpoint_db(test_database)
+
+    def boom(self, *a, **k):
+        raise RuntimeError("fifo broke")
+
+    monkeypatch.setattr(
+        "portf_manager.tax_calculator.TaxCalculator.calculate_tax_report", boom
+    )
+    resp = await async_test_client.get(
+        "/api/v1/analytics/wash-sale", headers=auth_headers
+    )
+    assert resp.status_code == 503
+    assert "tax report" in resp.json()["detail"]
+    assert "fifo broke" in resp.json()["detail"]
