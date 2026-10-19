@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pfm-mcp"
+version = "0.1.0"
+description = "Read-only MCP server for a pfm (Portfolio Manager) API"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["mcp>=1.2,<2"]
+
+[project.scripts]
+pfm-mcp = "pfm_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pfm_mcp"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
