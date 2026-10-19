@@ -338,7 +338,7 @@ const ACTIONITEMS_CATEGORY_LABELS = {
     import: 'Broker Imports', data_quality: 'Data Quality', errors: 'Errors',
     goals: 'Goals', watchlist: 'Price Alerts', networth: 'Net Worth',
     spending: 'Spending', budget: 'Budget', exposure: 'Fund Exposure',
-    retirement: 'Retirement',
+    retirement: 'Retirement', allocate: 'Allocation',
 };
 const ACTIONITEMS_SEVERITY_BADGE = {
     high: 'text-bg-danger', medium: 'text-bg-warning', low: 'text-bg-secondary',
@@ -3207,6 +3207,7 @@ async function setupRebalanceTargets(holdings) {
     if ((saved || []).length > 0) {
         loadRebalanceAnalysis();
     }
+    loadNextEuroCard();
 }
 
 // Update the running total and warn (red) if not 100%
@@ -3221,6 +3222,253 @@ function updateRebalanceTotal() {
     const off = Math.abs(total - 100) > 0.05;
     totalEl.className = off ? 'text-danger' : 'text-success';
 }
+
+// ── Next euro (allocator) ────────────────────────────────────────────────
+const NE_STATUS_BADGE = {
+    rebuild: 'text-bg-danger', topping_up: 'text-bg-warning', ok: 'text-bg-success',
+    idle: 'text-bg-info', unknown: 'text-bg-secondary',
+};
+const NE_STATUS_LABEL = {
+    rebuild: 'rebuild', topping_up: 'topping up', ok: 'ok', idle: 'idle cash', unknown: 'unknown',
+};
+
+function _neHelp(key, text) {
+    const tip = (window.METRIC_HELP || {})[key] || '';
+    return `${esc(text)} <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip" title="${escapeForAttr(tip)}"></i>`;
+}
+function _neMoney(v) { return Fmt.money(Number(v) || 0, 'EUR'); }
+
+// Pure: horizontal bar with markers at min/target/max and the current months.
+function bufferGaugeHtml(buffer) {
+    const b = buffer || {};
+    const status = b.status || 'unknown';
+    const badge = `<span class="badge ${NE_STATUS_BADGE[status] || 'text-bg-secondary'}">${esc(NE_STATUS_LABEL[status] || status)}</span>`;
+    const min = Number(b.min_months), target = Number(b.target_months), max = Number(b.max_months);
+    const cur = b.months == null ? null : Number(b.months);
+    if (![min, target, max].every(Number.isFinite) || max <= 0) {
+        return `<div class="small text-muted">Buffer: ${_neHelp('ne_buffer', 'not available')} ${badge}</div>`;
+    }
+    const top = Math.max(max * 1.25, cur || 0, 1);
+    const pct = (m) => Math.min(100, Math.max(0, (m / top) * 100)).toFixed(1);
+    const marker = (m, label) =>
+        `<span class="position-absolute top-0 bottom-0 border-start border-dark" style="left:${pct(m)}%;" data-marker="${esc(label)}" title="${esc(label)} ${esc(m)} months"></span>`;
+    const fillCls = (NE_STATUS_BADGE[status] || 'text-bg-secondary').replace('text-bg-', 'bg-');
+    const fill = cur == null ? '' : `<div class="progress-bar ${fillCls}" style="width:${pct(cur)}%;" data-current="${esc(cur)}"></div>`;
+    const curTxt = cur == null ? 'n/a' : `${cur.toFixed(1)} months`;
+    return `
+        <div class="d-flex justify-content-between small mb-1">
+            <span>${_neHelp('ne_buffer', 'Buffer')}: ${esc(curTxt)} ${badge}</span>
+            <span class="text-muted">min ${esc(min)} · target ${esc(target)} · max ${esc(max)}</span>
+        </div>
+        <div class="progress position-relative" style="height:14px;overflow:visible;">
+            ${fill}${marker(min, 'min')}${marker(target, 'target')}${marker(max, 'max')}
+        </div>`;
+}
+
+// Pure: deployable amount with its liquid / tax reserve / buffer parts.
+function renderDeployableSummary(dep) {
+    const d = dep || {};
+    const badge = d.buffer && d.buffer.status
+        ? `<span class="badge ${NE_STATUS_BADGE[d.buffer.status] || 'text-bg-secondary'} ms-2">${esc(NE_STATUS_LABEL[d.buffer.status] || d.buffer.status)}</span>` : '';
+    if (d.status === 'insufficient_data' || d.deployable_eur == null) {
+        return `<div class="text-muted small">${_neHelp('ne_deployable', 'Deployable')}: not available${d.reason ? ' — ' + esc(d.reason) : ''}</div>`;
+    }
+    const reserve = d.tax_reserve ? Number(d.tax_reserve.reserve_eur) || 0 : 0;
+    const bufTarget = d.buffer ? Number(d.buffer.target_eur) || 0 : 0;
+    const coming = (d.coming_in || []).length
+        ? `<div class="small text-muted mt-1">Coming in: ${(d.coming_in || []).map(c => `${esc(c.label)} ${_neMoney(c.amount_eur)}${c.date ? ' (' + esc(c.date) + ')' : ''}`).join(' · ')}</div>` : '';
+    const warns = (d.warnings || []).length
+        ? `<ul class="small text-warning mb-0 mt-1">${d.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : '';
+    return `
+        <div class="d-flex flex-wrap align-items-baseline gap-3">
+            <div><span class="fs-4 fw-semibold">${Fmt.amt(_neMoney(d.deployable_eur))}</span>
+                <span class="small text-muted">${_neHelp('ne_deployable', 'deployable')}</span>${badge}</div>
+            <div class="small text-muted">
+                ${Fmt.amt(_neMoney(d.liquid_eur))} liquid
+                − ${Fmt.amt(_neMoney(reserve))} ${_neHelp('ne_tax_reserve', 'tax reserve')}
+                − ${Fmt.amt(_neMoney(bufTarget))} ${_neHelp('ne_buffer', 'buffer target')}
+            </div>
+        </div>${coming}${warns}`;
+}
+
+function _neList(title, items) {
+    if (!items || !items.length) return '';
+    return `<div class="mt-3"><div class="small fw-semibold">${esc(title)}</div><ul class="small mb-0">${items.join('')}</ul></div>`;
+}
+
+// Pure: the proposal. A non-ok status shows its reasons and no lines.
+function renderNextEuroLines(result) {
+    const r = result || {};
+    const warnings = _neList('Warnings', (r.warnings || []).map(w => `<li class="text-warning">${esc(w)}</li>`));
+    if (r.status && r.status !== 'ok') {
+        const reasons = (r.reasons && r.reasons.length) ? r.reasons : [r.reason || r.status];
+        return `<div class="alert alert-secondary small mb-0"><ul class="mb-0">${reasons.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>${warnings}`;
+    }
+    const buckets = (r.buckets || []).length ? `
+        <div class="table-responsive"><table class="table table-sm align-middle mb-3">
+            <thead><tr><th>Bucket</th><th class="text-end">Target</th><th class="text-end">Before</th><th class="text-end">After</th><th class="text-end">Gap</th><th class="text-end">Allocated</th></tr></thead>
+            <tbody>${r.buckets.map(b => `<tr>
+                <td>${esc(b.asset_type)}</td>
+                <td class="text-end">${Number(b.target_pct || 0).toFixed(1)}%</td>
+                <td class="text-end">${Number(b.before_pct || 0).toFixed(1)}%</td>
+                <td class="text-end">${Number(b.after_pct || 0).toFixed(1)}%</td>
+                <td class="text-end">${Fmt.amt(_neMoney(b.gap_eur))}</td>
+                <td class="text-end">${Fmt.amt(_neMoney(b.allocated_eur))}</td></tr>`).join('')}</tbody>
+        </table></div>` : '';
+    const lines = (r.lines || []).map(l => `
+        <div class="border rounded p-2 mb-2">
+            <div class="d-flex justify-content-between">
+                <span><strong>${esc(l.symbol || l.name)}</strong> <span class="text-muted small">${esc(l.name && l.symbol ? l.name : '')}${l.portfolio_name ? ' · ' + esc(l.portfolio_name) : ''}</span></span>
+                <span class="fw-semibold">${Fmt.amt(_neMoney(l.amount_eur))}</span>
+            </div>
+            <ul class="small mb-1 mt-1" data-help="reasons">${(l.reasons || []).map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+            ${l.runner_up ? `<div class="small text-muted">Runner-up ${esc(l.runner_up.symbol)}: ${esc(l.runner_up.why_not)}</div>` : ''}
+        </div>`).join('');
+    const unalloc = Number(r.unallocated_eur) > 0.005
+        ? `<div class="small text-muted">Unallocated: ${Fmt.amt(_neMoney(r.unallocated_eur))}</div>` : '';
+    const traspasos = _neList('Traspasos (switch between funds, no tax)', (r.traspasos || []).map(t =>
+        `<li>${esc(t.from_symbol)} → ${esc(t.to_symbol)}: ${_neMoney(t.amount_eur)}${(t.reasons || []).length ? ' — ' + t.reasons.map(esc).join('; ') : ''}</li>`));
+    const blocked = _neList('Blocked (a sale would be a wash sale)', (r.blocked || []).map(b =>
+        `<li>${esc(b.symbol)}: loss ${_neMoney(b.loss_eur)}, safe from ${esc(b.safe_from)} — ${esc(b.reason)}</li>`));
+    const research = _neList('Needs research', (r.needs_research || []).map(n =>
+        `<li>${esc(n.symbol)} (${Number(n.weight_pct || 0).toFixed(1)}% of the portfolio)</li>`));
+    return `${buckets}<div class="small fw-semibold mb-1">${_neHelp('ne_reasons', 'Proposed lines')}</div>${lines || '<p class="text-muted small">No lines.</p>'}${unalloc}${traspasos}${blocked}${research}${warnings}`;
+}
+
+window.bufferGaugeHtml = bufferGaugeHtml;
+window.renderDeployableSummary = renderDeployableSummary;
+window.renderNextEuroLines = renderNextEuroLines;
+
+let _neLastSummary = '';
+
+function _neCopyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text);
+    }
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } finally { document.body.removeChild(ta); }
+    return Promise.resolve();
+}
+
+async function _neShowProposal() {
+    const amtEl = document.getElementById('neAmount');
+    const raw = amtEl ? amtEl.value.trim() : '';
+    const sections = ['neBuckets', 'neExtras'];
+    const linesEl = document.getElementById('neLines');
+    const copyBtn = document.getElementById('neCopy');
+    if (linesEl) linesEl.innerHTML = '<div class="spinner-border spinner-border-sm"></div>';
+    try {
+        const r = await window.apiClient.getNextEuro(raw === '' ? undefined : raw);
+        sections.forEach(id => { const e = document.getElementById(id); if (e) e.innerHTML = ''; });
+        if (linesEl) linesEl.innerHTML = renderNextEuroLines(r);
+        _neLastSummary = r.status === 'ok' ? (r.chat_summary || '') : '';
+        if (copyBtn) copyBtn.disabled = !_neLastSummary;
+        if (typeof initTooltips === 'function') initTooltips();
+    } catch (e) {
+        if (linesEl) linesEl.innerHTML = `<div class="text-danger small">${esc(e.message)}</div>`;
+    }
+}
+
+async function _neLoadSettings() {
+    const form = document.getElementById('neSettingsForm');
+    if (!form) return;
+    try {
+        const st = await window.apiClient.getAllocatorSettings();
+        form.querySelectorAll('input[data-key]').forEach(inp => {
+            const v = st[inp.dataset.key];
+            inp.value = v == null ? '' : v;
+        });
+        const chosen = new Set(st.work_income_merchants || []);
+        const all = Array.from(new Set([...(st.income_merchants || []), ...chosen])).sort();
+        const box = document.getElementById('neMerchants');
+        if (box) {
+            box.innerHTML = all.length ? all.map((m, i) => `
+                <div class="form-check"><input class="form-check-input ne-merchant" type="checkbox" id="neMerch${i}" value="${escapeForAttr(m)}" ${chosen.has(m) ? 'checked' : ''}>
+                <label class="form-check-label" for="neMerch${i}">${esc(m)}</label></div>`).join('')
+                : '<span class="text-muted">No income merchants found in the last 12 months.</span>';
+        }
+    } catch (e) {
+        const err = document.getElementById('neSettingsError');
+        if (err) err.textContent = e.message;
+    }
+}
+
+async function loadNextEuroCard() {
+    const sum = document.getElementById('neSummary');
+    if (!sum) return;
+    try {
+        const dep = await window.apiClient.getDeployable();
+        sum.innerHTML = renderDeployableSummary(dep);
+        const g = document.getElementById('neGauge');
+        if (g) g.innerHTML = dep.buffer ? bufferGaugeHtml(dep.buffer) : '';
+        if (typeof initTooltips === 'function') initTooltips();
+    } catch (e) {
+        sum.innerHTML = `<div class="text-danger small">${esc(e.message)}</div>`;
+    }
+    await _neLoadSettings();
+    if (!window._neWired) {
+        window._neWired = true;
+        const btn = document.getElementById('neProposeBtn');
+        if (btn) btn.addEventListener('click', _neShowProposal);
+        const copy = document.getElementById('neCopy');
+        if (copy) copy.addEventListener('click', async () => {
+            if (!_neLastSummary) return;
+            try { await _neCopyText(_neLastSummary); notify('Copied for chat', 'success'); }
+            catch (e) { notify('Could not copy: ' + e.message, 'error'); }
+        });
+        const form = document.getElementById('neSettingsForm');
+        if (form) form.addEventListener('submit', async (ev) => {
+            ev.preventDefault();
+            const err = document.getElementById('neSettingsError');
+            if (err) err.textContent = '';
+            const body = {};
+            form.querySelectorAll('input[data-key]').forEach(inp => {
+                if (inp.value !== '') body[inp.dataset.key] = Number(inp.value);
+            });
+            body.work_income_merchants = Array.from(form.querySelectorAll('.ne-merchant:checked')).map(c => c.value);
+            try {
+                await window.apiClient.updateAllocatorSettings(body);
+                notify('Allocator settings saved', 'success');
+                loadNextEuroCard();
+            } catch (e) {
+                if (err) err.textContent = e.message;
+            }
+        });
+    }
+}
+window.loadNextEuroCard = loadNextEuroCard;
+
+// Dashboard: one attention group with the headline and the top three lines.
+async function loadDashboardNextEuro() {
+    if (!document.getElementById('dashNextEuro')) return;
+    try {
+        const r = await window.apiClient.getNextEuro();
+        if (!r || r.status === 'insufficient_data' || !r.deployable || r.deployable.deployable_eur == null) {
+            dashAttentionSet('dashNextEuro', null); return;
+        }
+        const d = r.deployable, b = d.buffer || {};
+        const months = b.months == null ? 'n/a' : Number(b.months).toFixed(1);
+        const status = NE_STATUS_LABEL[b.status] || b.status || 'unknown';
+        const top = (r.status === 'ok' ? (r.lines || []) : []).slice(0, 3)
+            .map(l => `<li>${esc(l.symbol || l.name)} ${_neMoney(l.amount_eur)}</li>`).join('');
+        dashAttentionSet('dashNextEuro', {
+            summaryHtml: `<span>Next euro: ${_neMoney(d.deployable_eur)} deployable · buffer ${esc(months)} months (${esc(status)})</span>`,
+            detailHtml: `<div class="fw-semibold mb-1">Next euro</div>
+                ${top ? `<ul class="list-unstyled mb-1 small">${top}</ul>` : '<div class="small text-muted mb-1">Nothing to place right now.</div>'}
+                <a href="#" class="small" data-page="assets">Open Assets <i class="bi bi-arrow-right"></i></a>`,
+            onDismiss: () => {},
+        });
+    } catch (e) {
+        dashAttentionSet('dashNextEuro', null);
+    }
+}
+window.loadDashboardNextEuro = loadDashboardNextEuro;
 
 // Fetch and render the rebalance analysis table + action list
 async function loadRebalanceAnalysis() {

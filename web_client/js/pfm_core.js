@@ -839,7 +839,7 @@ function _dashAttentionRender() {
     const bar = document.getElementById('dashAttentionBar');
     const detail = document.getElementById('dashAttentionDetail');
     if (!wrap || !detail) return;
-    const anyVisible = ['dashAlerts', 'dashActionItems'].some(id => {
+    const anyVisible = ['dashAlerts', 'dashActionItems', 'dashNextEuro'].some(id => {
         const el = document.getElementById(id);
         return el && el.style.display !== 'none' && el.innerHTML.trim();
     });
@@ -2643,6 +2643,39 @@ function createAPIClient() {
         async deleteManualAsset(id) {
             const resp = await fetch(this.baseURL + '/api/v1/networth/' + id, { method: 'DELETE', headers: { 'X-API-Key': this.apiKey } });
             if (!resp.ok) throw new Error('Failed to delete');
+            return resp.json().catch(() => ({}));
+        },
+        async getDeployable() {
+            const resp = await fetch(this.baseURL + '/api/v1/allocate/deployable', {
+                method: 'GET', headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to load deployable cash');
+            return resp.json().catch(() => ({}));
+        },
+        async getNextEuro(amount) {
+            const q = (amount === undefined || amount === null || amount === '') ? '' : '?amount=' + encodeURIComponent(amount);
+            const resp = await fetch(this.baseURL + '/api/v1/allocate/next-euro' + q, {
+                method: 'GET', headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to load next-euro proposal');
+            return resp.json().catch(() => ({}));
+        },
+        async getAllocatorSettings() {
+            const resp = await fetch(this.baseURL + '/api/v1/allocate/settings', {
+                method: 'GET', headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to load allocator settings');
+            return resp.json().catch(() => ({}));
+        },
+        async updateAllocatorSettings(body) {
+            const resp = await fetch(this.baseURL + '/api/v1/allocate/settings', {
+                method: 'PUT', headers: { 'X-API-Key': this.apiKey, 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            if (!resp.ok) {
+                const d = (await resp.json().catch(() => ({}))).detail;
+                throw new Error(typeof d === 'string' ? d : (d ? JSON.stringify(d) : 'Failed to save allocator settings'));
+            }
             return resp.json().catch(() => ({}));
         },
         async getRetirementReadiness() {

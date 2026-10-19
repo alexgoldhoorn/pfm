@@ -385,6 +385,7 @@ function createPageManager() {
             loadDashboardAlerts();
             loadDataFreshness();
             if (window.loadDashboardActionItems) window.loadDashboardActionItems();
+            if (window.loadDashboardNextEuro) window.loadDashboardNextEuro();
 
             // KPI tiles show whole euros (cents are noise at this scale and made
             // the figure wrap); the exact amount is in each tile's title.
