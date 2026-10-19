@@ -383,6 +383,30 @@ def check_allocation(db, today=None) -> list[dict]:
     from portf_manager.services import deployable as deployable_mod
 
     items: list[dict] = []
+    # targets first and always: they do not depend on the deployable status
+    targets = rebalance_planner.merge_targets(db, None)
+    detail = None
+    reasons = allocator.check_targets(targets, {"allocations": []})
+    if not reasons:
+        try:
+            before = rebalance_planner.compute_before_state(db, None, None)[0]
+            reasons = allocator.check_targets(targets, before)
+        except Exception as exc:
+            detail = f"could not read current holdings: {exc}"
+    if reasons:
+        detail = "; ".join(reasons)
+    if detail:
+        items.append(
+            {
+                "id": "allocate:targets_incomplete",
+                "category": "allocate",
+                "severity": "low",
+                "title": "Allocation targets are incomplete",
+                "detail": detail,
+                "link_page": "assets",
+                "context": {},
+            }
+        )
     result = deployable_mod.deployable(db, today=today)
     if result.get("status") in ("insufficient_data", "unknown"):
         return items
@@ -418,26 +442,6 @@ def check_allocation(db, today=None) -> list[dict]:
                 ),
                 "link_page": "assets",
                 "context": {"months": buf["months"]},
-            }
-        )
-    targets = rebalance_planner.merge_targets(db, None)
-    reasons = allocator.check_targets(targets, {"allocations": []})
-    if not reasons:
-        try:
-            before = rebalance_planner.compute_before_state(db, None, None)[0]
-            reasons = allocator.check_targets(targets, before)
-        except Exception:
-            reasons = []
-    if reasons:
-        items.append(
-            {
-                "id": "allocate:targets_incomplete",
-                "category": "allocate",
-                "severity": "low",
-                "title": "Allocation targets are incomplete",
-                "detail": "; ".join(reasons),
-                "link_page": "assets",
-                "context": {},
             }
         )
     return items

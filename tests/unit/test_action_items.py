@@ -867,6 +867,7 @@ def test_allocation_quiet_when_ok_or_insufficient(tmp_path, monkeypatch):
 
     assert check_allocation(db) == []
     db2 = Database(str(tmp_path / "b.db"))
+    db2.set_allocation_target("stock", 100)
     _buffer(monkeypatch, "unknown", result_status="insufficient_data")
     assert check_allocation(db2) == []
 
@@ -875,3 +876,29 @@ def test_allocation_check_registered():
     from portf_manager.services.action_items import check_allocation
 
     assert check_allocation in checks_for_tests()
+
+
+def test_allocation_targets_item_despite_insufficient_data(tmp_path, monkeypatch):
+    db = Database(str(tmp_path / "c.db"))
+    db.set_allocation_target("stock", 60)
+    _buffer(monkeypatch, "idle", result_status="insufficient_data")
+    from portf_manager.services.action_items import check_allocation
+
+    items = check_allocation(db)
+    assert [i["id"] for i in items] == ["allocate:targets_incomplete"]
+
+
+def test_allocation_holdings_read_error_is_reported(tmp_path, monkeypatch):
+    from portf_manager.services import rebalance_planner
+    from portf_manager.services.action_items import check_allocation
+
+    db = Database(str(tmp_path / "d.db"))
+    _full_targets(db)
+    _buffer(monkeypatch, "ok")
+
+    def boom(*a, **k):
+        raise RuntimeError("db locked")
+
+    monkeypatch.setattr(rebalance_planner, "compute_before_state", boom)
+    items = check_allocation(db)
+    assert items[0]["detail"] == "could not read current holdings: db locked"
