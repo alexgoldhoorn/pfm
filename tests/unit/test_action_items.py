@@ -791,3 +791,87 @@ def test_new_checks_are_registered():
     registered = checks_for_tests()
     assert check_balance_sheet_freshness in registered
     assert check_retirement_readiness in registered
+
+
+def _buffer(monkeypatch, status, result_status="ok", **buf):
+    from portf_manager.services import deployable as dep
+
+    base = {
+        "status": status,
+        "months": 3.0,
+        "min_months": 3,
+        "target_months": 6,
+        "max_months": 9,
+        "idle_eur": 0,
+    }
+    base.update(buf)
+    monkeypatch.setattr(
+        dep,
+        "deployable",
+        lambda db, **kw: {"status": result_status, "buffer": base},
+    )
+
+
+def _full_targets(db):
+    db.set_allocation_target("stock", 60)
+    db.set_allocation_target("bond", 40)
+
+
+def test_allocation_idle_cash_is_low(tmp_path, monkeypatch):
+    db = Database(str(tmp_path / "a.db"))
+    _full_targets(db)
+    _buffer(monkeypatch, "idle", months=11.5, idle_eur=12345)
+    from portf_manager.services.action_items import check_allocation
+
+    items = check_allocation(db)
+    assert [i["id"] for i in items] == ["allocate:idle_cash"]
+    assert items[0]["severity"] == "low"
+    assert items[0]["title"] == (
+        "Idle cash: 2.5 months of spending above the buffer ceiling"
+    )
+    assert "12,345 EUR" in items[0]["detail"]
+
+
+def test_allocation_rebuild_is_medium(tmp_path, monkeypatch):
+    db = Database(str(tmp_path / "a.db"))
+    _full_targets(db)
+    _buffer(monkeypatch, "rebuild", months=1.5)
+    from portf_manager.services.action_items import check_allocation
+
+    items = check_allocation(db)
+    assert [(i["id"], i["severity"]) for i in items] == [
+        ("allocate:buffer_low", "medium")
+    ]
+    assert items[0]["title"] == "Cash buffer below 3 months"
+    assert "1.5 months" in items[0]["detail"]
+
+
+def test_allocation_targets_incomplete_is_low(tmp_path, monkeypatch):
+    db = Database(str(tmp_path / "a.db"))
+    db.set_allocation_target("stock", 60)
+    _buffer(monkeypatch, "ok")
+    from portf_manager.services.action_items import check_allocation
+
+    items = check_allocation(db)
+    assert [(i["id"], i["severity"]) for i in items] == [
+        ("allocate:targets_incomplete", "low")
+    ]
+    assert "sum to 60.0%" in items[0]["detail"]
+
+
+def test_allocation_quiet_when_ok_or_insufficient(tmp_path, monkeypatch):
+    db = Database(str(tmp_path / "a.db"))
+    _full_targets(db)
+    _buffer(monkeypatch, "ok")
+    from portf_manager.services.action_items import check_allocation
+
+    assert check_allocation(db) == []
+    db2 = Database(str(tmp_path / "b.db"))
+    _buffer(monkeypatch, "unknown", result_status="insufficient_data")
+    assert check_allocation(db2) == []
+
+
+def test_allocation_check_registered():
+    from portf_manager.services.action_items import check_allocation
+
+    assert check_allocation in checks_for_tests()

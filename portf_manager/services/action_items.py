@@ -377,6 +377,72 @@ def check_retirement_readiness(db) -> list[dict]:
     ]
 
 
+def check_allocation(db, today=None) -> list[dict]:
+    """Idle cash, a low cash buffer, or allocation targets that cannot be used."""
+    from portf_manager.services import allocator, rebalance_planner
+    from portf_manager.services import deployable as deployable_mod
+
+    items: list[dict] = []
+    result = deployable_mod.deployable(db, today=today)
+    if result.get("status") in ("insufficient_data", "unknown"):
+        return items
+    buf = result.get("buffer") or {}
+    status = buf.get("status")
+    if status == "idle":
+        excess = buf["months"] - buf["max_months"]
+        items.append(
+            {
+                "id": "allocate:idle_cash",
+                "category": "allocate",
+                "severity": "low",
+                "title": (
+                    f"Idle cash: {excess:.1f} months of spending above the "
+                    "buffer ceiling"
+                ),
+                "detail": f"About {buf['idle_eur']:,.0f} EUR could be invested",
+                "link_page": "assets",
+                "context": {"idle_eur": buf["idle_eur"]},
+            }
+        )
+    elif status == "rebuild":
+        items.append(
+            {
+                "id": "allocate:buffer_low",
+                "category": "allocate",
+                "severity": "medium",
+                "title": f"Cash buffer below {buf['min_months']:g} months",
+                "detail": (
+                    f"{buf['months']:.1f} months of household spending in cash "
+                    "after the tax reserve; nothing is deployable until it is "
+                    f"back at {buf['target_months']:g}"
+                ),
+                "link_page": "assets",
+                "context": {"months": buf["months"]},
+            }
+        )
+    targets = rebalance_planner.merge_targets(db, None)
+    reasons = allocator.check_targets(targets, {"allocations": []})
+    if not reasons:
+        try:
+            before = rebalance_planner.compute_before_state(db, None, None)[0]
+            reasons = allocator.check_targets(targets, before)
+        except Exception:
+            reasons = []
+    if reasons:
+        items.append(
+            {
+                "id": "allocate:targets_incomplete",
+                "category": "allocate",
+                "severity": "low",
+                "title": "Allocation targets are incomplete",
+                "detail": "; ".join(reasons),
+                "link_page": "assets",
+                "context": {},
+            }
+        )
+    return items
+
+
 def check_price_alerts(db) -> list[dict]:
     """Watchlist buy-zone hits and price-target crossings."""
     from portf_server.routers.research import compute_price_target_alerts
@@ -677,6 +743,7 @@ _CHECKS = (
     check_goals_off_track,
     check_balance_sheet_freshness,
     check_retirement_readiness,
+    check_allocation,
     check_price_alerts,
     check_budget_overruns,
     check_fund_exposure,
