@@ -1277,6 +1277,33 @@ def _gap(sc: dict) -> str:
 
 
 @mcp.tool()
+def next_euro(amount: Optional[float] = None) -> str:
+    """
+    What to do with new money: deployable cash this month (liquid cash minus the
+    autónomo tax reserve minus a 6-month household buffer, with the 4–8 month
+    band), and a proposal of concrete buys with a reason for each line,
+    traspasos between funds, antiaplicación blocks and stocks that need
+    research. Read this before advising on investing new money; then discuss the
+    proposal. Read-only.
+    """
+    params = {"amount": amount} if amount is not None else None
+    try:
+        data = _get("/api/v1/allocate/next-euro", params)
+    except Exception as e:
+        return f"Error fetching next euro: {e}"
+
+    status = data.get("status")
+    if status != "ok":
+        reasons = data.get("reasons")
+        if isinstance(reasons, list) and reasons:
+            reason = "; ".join(str(r) for r in reasons)
+        else:
+            reason = data.get("reason") or "see the Assets page"
+        return f"Next euro: {_na(status)} — {reason}"
+    return data.get("chat_summary") or "n/a"
+
+
+@mcp.tool()
 def retirement_readiness() -> str:
     """
     Retirement readiness in today's euros: whether the household's financial
