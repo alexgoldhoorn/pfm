@@ -5,7 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-10-19
+Last updated: 2026-10-22
+
+**Recent (v2.5.84):** **Price update runs server-side in server mode.** The CLI's `update-prices` in server mode no longer runs `run_price_update` against `PortfolioHTTPClient` (which has no `get_setting`/`set_setting`/`log_event`, so the v2.5.80 price guard made all 62 assets fail on every cron run from 2026-10-18 to 2026-10-21 while the wrapper script still exited 0); it triggers `POST /analytics/trigger-price-update` (new `symbols` and `source` query params), polls `price-update-status`, and reports the run record from `update-runs`, exiting 1 on a 409, a timeout, errors, or a missing record. `~/scripts/portf-update-prices.sh` now propagates the CLI's exit status instead of the snapshot curl's. Tests: `tests/unit/test_price_update_trigger.py`, `TestUpdatePricesServerMode`. See `docs/features/prices-market.md`.
 
 **Recent (v2.5.83):** **MCP server as a package.** `mcp/` is now its own project, `pfm-mcp` (`mcp/pyproject.toml`, `pfm_mcp/` with one module per area under `tools/`, `client.py`, `config.py`), installable with `uvx --from "git+https://github.com/alexgoldhoorn/pfm#subdirectory=mcp" pfm-mcp`; configuration by `PFM_URL` / `PFM_API_KEY` (or `PFM_ENV_FILE`, then the legacy `.env.local`). `mcp/server.py` stays as a shim for the `~/mcp` symlink. All MCP tests moved to `mcp/tests/` (README tool table checked by a test); no tool changed in name, signature or output text, except that `wash_sale_check` now reads the server-side analysis from the new `GET /analytics/wash-sale` and so sees all transactions, not the newest 100. No schema change. See `docs/superpowers/specs/2026-10-19-mcp-package-design.md`.
 

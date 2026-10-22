@@ -8,7 +8,7 @@ import statistics
 import threading
 from collections import defaultdict
 from datetime import date, datetime, timedelta
-from typing import Optional
+from typing import Literal, Optional
 
 import pandas as pd
 import yfinance as yf
@@ -1474,10 +1474,20 @@ _price_update_state: dict = {"running": False, "started_at": None}
 
 @router.post("/trigger-price-update")
 def trigger_price_update(
+    symbols: Optional[list[str]] = Query(
+        None, description="Only these symbols; default every auto-priced asset."
+    ),
+    source: Literal["api", "cron", "manual"] = Query(
+        "api", description="Label stored on the run record."
+    ),
     db=Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
-    """Start a background price update for all auto-priced assets.
+    """Start a background price update for all (or the given) auto-priced assets.
+
+    The CLI in server mode delegates its whole run here: the updater needs the
+    real Database (the price guard reads and writes app_settings and app_logs),
+    which the CLI's HTTP client is not.
 
     Returns 409 if an update is already in progress.
     """
@@ -1494,7 +1504,7 @@ def trigger_price_update(
 
     def _run() -> None:
         try:
-            run_price_update(db)
+            run_price_update(db, symbols=symbols, source=source)
         finally:
             with _price_update_lock:
                 _price_update_state["running"] = False

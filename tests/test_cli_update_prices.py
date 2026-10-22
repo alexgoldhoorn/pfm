@@ -333,3 +333,130 @@ class TestUpdatePricesCLI:
 
         unchanged = self.cli.db_manager.get_asset_by_symbol("AAPL")
         assert unchanged["currency"] == "USD"
+
+
+class TestUpdatePricesServerMode:
+    """In server mode the CLI never runs the updater itself.
+
+    The updater needs the real Database (the price guard reads and writes
+    app_settings and app_logs); PortfolioHTTPClient is not one, and feeding it
+    in made every asset fail with ``'PortfolioHTTPClient' object has no
+    attribute 'get_setting'`` from 2026-10-18 on. The CLI must delegate to the
+    server's trigger endpoint, wait for it, and report that run.
+    """
+
+    TRIGGER = "/api/v1/analytics/trigger-price-update"
+    STATUS = "/api/v1/analytics/price-update-status"
+    RUNS = "/api/v1/analytics/update-runs"
+
+    def _run(self, runs):
+        return {
+            "started_at": "2026-10-22T20:00:01",
+            "source": "cron",
+            "updated_count": 62,
+            "skipped_count": 1,
+            "error_count": 0,
+            "skipped_symbols": ["EXAMPLE BANK"],
+            "error_symbols": [],
+            "api_errors": [],
+            **runs,
+        }
+
+    def _cli(self, monkeypatch, run=None, trigger=None, running=(True, False)):
+        config = PortfolioConfig(
+            server_url="http://127.0.0.1:1", api_key="test-key", db_path=None
+        )
+        cli = PortfolioManagerCLI(config)
+        calls = []
+        pending = list(running)
+
+        def fake_request(method, endpoint, **kwargs):
+            calls.append((method, endpoint, kwargs))
+            if endpoint == self.TRIGGER:
+                if isinstance(trigger, Exception):
+                    raise trigger
+                return {"status": "started", "started_at": "2026-10-22T20:00:00"}
+            if endpoint == self.STATUS:
+                return {"running": pending.pop(0) if pending else False}
+            if endpoint == self.RUNS:
+                return {"runs": [run] if run else []}
+            raise AssertionError(f"unexpected request {method} {endpoint}")
+
+        monkeypatch.setattr(cli.http_client, "_make_request", fake_request)
+
+        def never(*args, **kwargs):
+            raise AssertionError("run_price_update must not run in server mode")
+
+        monkeypatch.setattr(
+            "portf_manager.services.price_updater.run_price_update", never
+        )
+        monkeypatch.setattr("time.sleep", lambda seconds: None)
+        return cli, calls
+
+    def test_delegates_to_the_server_and_reports_that_run(self, monkeypatch):
+        cli, calls = self._cli(monkeypatch, run=self._run({}))
+
+        with patch("sys.stdout", new_callable=StringIO) as out:
+            cli.update_prices()
+
+        assert ("POST", self.TRIGGER) == calls[0][:2]
+        assert calls[0][2].get("params", {}).get("source") == "cron"
+        assert [c[1] for c in calls].count(self.STATUS) == 2
+        text = out.getvalue()
+        assert "Successfully updated: 62 assets" in text
+        assert "EXAMPLE BANK" in text
+
+    def test_symbols_are_forwarded_as_a_manual_run(self, monkeypatch):
+        cli, calls = self._cli(
+            monkeypatch, run=self._run({"updated_count": 2, "skipped_count": 0})
+        )
+        cli.http_client.get_asset_by_symbol = lambda s: {"id": 1, "symbol": s}
+
+        with patch("sys.stdout", new_callable=StringIO):
+            cli.update_prices(symbols=["exa", "oth"])
+
+        params = calls[0][2]["params"]
+        assert params["symbols"] == ["EXA", "OTH"] and params["source"] == "manual"
+
+    def test_a_run_with_errors_exits_non_zero(self, monkeypatch):
+        failed = self._run(
+            {
+                "updated_count": 0,
+                "error_count": 62,
+                "error_symbols": ["ADA", "BTC"],
+                "api_errors": ["DB error for ADA: boom"],
+            }
+        )
+        cli, _ = self._cli(monkeypatch, run=failed)
+
+        with patch("sys.stdout", new_callable=StringIO) as out:
+            with pytest.raises(SystemExit) as exc:
+                cli.update_prices()
+
+        assert exc.value.code == 1
+        assert "Failed (database errors): 2 assets" in out.getvalue()
+
+    def test_an_update_already_running_exits_non_zero(self, monkeypatch):
+        busy = RuntimeError("Server error (409): Price update already in progress")
+        cli, calls = self._cli(monkeypatch, trigger=busy)
+
+        with patch("sys.stdout", new_callable=StringIO) as out:
+            with pytest.raises(SystemExit) as exc:
+                cli.update_prices()
+
+        assert exc.value.code == 1
+        assert "already in progress" in out.getvalue()
+        assert [c[1] for c in calls] == [self.TRIGGER]
+
+    def test_no_run_recorded_after_the_wait_is_an_error(self, monkeypatch):
+        # The server thread died before writing its run record: the CLI must
+        # not report the previous night's run as tonight's.
+        stale = self._run({"started_at": "2026-10-21T20:00:01"})
+        cli, _ = self._cli(monkeypatch, run=stale)
+
+        with patch("sys.stdout", new_callable=StringIO) as out:
+            with pytest.raises(SystemExit) as exc:
+                cli.update_prices()
+
+        assert exc.value.code == 1
+        assert "no run record" in out.getvalue().lower()
