@@ -434,6 +434,32 @@ class PortfolioHTTPClient:
         )
         return result.get("id", 0)
 
+    # Server-side price update (the updater needs the real Database, so the
+    # CLI never runs it against this client; it triggers the server's run).
+    def trigger_price_update(
+        self, symbols: Optional[List[str]] = None, source: str = "api"
+    ) -> Dict[str, Any]:
+        """Start a background price update on the server.
+
+        Raises RuntimeError on a 409 (an update is already running)."""
+        params: Dict[str, Any] = {"source": source}
+        if symbols:
+            params["symbols"] = list(symbols)
+        return self._make_request(
+            "POST", "/api/v1/analytics/trigger-price-update", params=params
+        )
+
+    def price_update_status(self) -> Dict[str, Any]:
+        """Whether a server-side price update is running, and since when."""
+        return self._make_request("GET", "/api/v1/analytics/price-update-status")
+
+    def get_price_update_runs(self, limit: int = 20) -> List[Dict[str, Any]]:
+        """Most-recent price-update runs first, symbol lists decoded."""
+        result = self._make_request(
+            "GET", "/api/v1/analytics/update-runs", params={"limit": limit}
+        )
+        return result.get("runs", [])
+
     # LLM chat operations
     def chat(
         self,

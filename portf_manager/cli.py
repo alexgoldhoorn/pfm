@@ -2758,14 +2758,54 @@ class PortfolioManagerCLI:
         except Exception as e:
             print(f"❌ Error exporting transactions: {e}")
 
+    def _run_price_update_on_server(self, symbols: Optional[list], source: str) -> dict:
+        """Trigger the server-side price update and wait for its run record.
+
+        The updater needs the real Database (the price guard reads and writes
+        app_settings and app_logs); the HTTP client is not one, so in server
+        mode the run happens in the server process and this reports its
+        record. Exits non-zero when the server refuses (409), the wait times
+        out, or no run record newer than the trigger appears.
+        """
+        import time
+
+        try:
+            started = self.http_client.trigger_price_update(
+                symbols=[s.upper() for s in symbols] if symbols else None,
+                source=source,
+            )
+        except RuntimeError as e:
+            print(f"❌ Could not start the price update: {e}")
+            sys.exit(1)
+        started_at = started.get("started_at") or ""
+
+        deadline = time.monotonic() + 30 * 60
+        while self.http_client.price_update_status().get("running"):
+            if time.monotonic() > deadline:
+                print("❌ Price update still running after 30 minutes; giving up.")
+                sys.exit(1)
+            time.sleep(2)
+
+        runs = self.http_client.get_price_update_runs(limit=5)
+        ours = [r for r in runs if (r.get("started_at") or "") >= started_at]
+        if not ours:
+            print(
+                "❌ The server left no run record for this update "
+                "(its background thread may have died); see the server log."
+            )
+            sys.exit(1)
+        return ours[0]
+
     def update_prices(self, symbols: list = None, show_values: bool = False) -> None:
-        """Update prices for portfolio assets using external API."""
+        """Update prices for portfolio assets using external API.
+
+        In server mode the run is delegated to the server (see
+        ``_run_price_update_on_server``); in local mode it runs here.
+        """
         try:
             if self.config.is_local_mode and not self.auth_manager.is_authenticated():
                 print("❌ Please login first.")
                 return
-
-            from portf_manager.services.price_updater import run_price_update
 
             if symbols:
                 not_found = [
@@ -2780,11 +2820,15 @@ class PortfolioManagerCLI:
                     return
 
             print("📡 Fetching latest prices from API...")
-            result = run_price_update(
-                self.db_manager,
-                symbols=symbols,
-                source="manual" if symbols else "cron",
-            )
+            source = "manual" if symbols else "cron"
+            if self.config.is_server_mode:
+                result = self._run_price_update_on_server(symbols, source)
+            else:
+                from portf_manager.services.price_updater import run_price_update
+
+                result = run_price_update(
+                    self.db_manager, symbols=symbols, source=source
+                )
 
             successful_updates = result["updated_count"]
             skipped_symbols = result["skipped_symbols"]
