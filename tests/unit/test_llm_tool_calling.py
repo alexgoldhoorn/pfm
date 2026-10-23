@@ -579,3 +579,86 @@ class TestOllamaToolCalling:
             )
 
         assert result == "You hold 10 AAPL."
+
+
+class TestAnthropicRunToolLoop:
+    """2026-10-23: Opus 5.5 answered "performance and dividends?" with an empty
+    end_turn when the second pass forbade the second tool it needed."""
+
+    @staticmethod
+    def _use(call_id, name):
+        from unittest.mock import MagicMock
+
+        use = MagicMock(type="tool_use", id=call_id, input={})
+        use.name = name
+        use.model_dump.return_value = {
+            "type": "tool_use",
+            "id": call_id,
+            "name": name,
+            "input": {},
+        }
+        return use
+
+    def _run(self, replies, max_rounds=6):
+        from unittest.mock import MagicMock, patch
+        from portf_manager.llm_client import AnthropicLLMClient, ToolDefinition
+
+        client = AnthropicLLMClient(api_key="k", tier="heavy")
+        tools = [ToolDefinition(name="get_kpis", description=".", parameters=[])]
+        executed = []
+
+        def execute(name, args):
+            executed.append(name)
+            return "{}"
+
+        with patch("anthropic.Anthropic") as sdk:
+            create = sdk.return_value.messages.create
+            create.side_effect = [
+                MagicMock(content=blocks, stop_reason=stop) for blocks, stop in replies
+            ]
+            answer = client.run_tool_loop(
+                [
+                    {"role": "system", "content": "sys"},
+                    {"role": "user", "content": "q"},
+                ],
+                tools,
+                execute,
+                max_rounds=max_rounds,
+            )
+        return answer, executed, [c.kwargs for c in create.call_args_list]
+
+    def test_several_tool_rounds_then_answer(self):
+        from unittest.mock import MagicMock
+
+        text = MagicMock(type="text", text="Up 8%, €1,200 in dividends.")
+        answer, executed, calls = self._run(
+            [
+                ([self._use("t1", "get_performance")], "tool_use"),
+                (
+                    [self._use("t2", "get_kpis"), self._use("t3", "get_holdings")],
+                    "tool_use",
+                ),
+                ([text], "end_turn"),
+            ]
+        )
+        assert answer == "Up 8%, €1,200 in dividends."
+        assert executed == ["get_performance", "get_kpis", "get_holdings"]
+        last_user = calls[2]["messages"][-1]["content"]
+        assert [b["tool_use_id"] for b in last_user] == ["t2", "t3"]
+        assert all(c["tool_choice"] == {"type": "auto"} for c in calls)
+        assert all("temperature" not in c for c in calls)
+
+    def test_last_round_forbids_tools_and_says_so(self):
+        from unittest.mock import MagicMock
+
+        text = MagicMock(type="text", text="Answer.")
+        answer, executed, calls = self._run(
+            [
+                ([self._use("t1", "get_kpis")], "tool_use"),
+                ([text], "end_turn"),
+            ],
+            max_rounds=1,
+        )
+        assert answer == "Answer."
+        assert calls[1]["tool_choice"] == {"type": "none"}
+        assert calls[1]["messages"][-1]["content"][-1]["type"] == "text"

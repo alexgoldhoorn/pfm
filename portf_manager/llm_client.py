@@ -223,6 +223,7 @@ _INSTRUMENTED_METHODS = (
     "generate_with_search",
     "generate_with_tools",
     "complete_with_tool_result",
+    "run_tool_loop",  # a retry re-runs the read-only tools too
 )
 _call_depth = threading.local()
 
@@ -1191,6 +1192,58 @@ class AnthropicLLMClient:
             # but this pass has to end in prose, not another tool request.
             kwargs["tool_choice"] = {"type": "none"}
         return _anthropic_text(self._create(**kwargs))
+
+    def run_tool_loop(
+        self,
+        messages: list[dict],
+        tools: list["ToolDefinition"],
+        execute: Callable[[str, dict], str],
+        max_rounds: int = 6,
+    ) -> str:
+        """Let the model call tools until it answers, then return the answer.
+
+        The two-pass shape (one tool, then forced prose) broke on Opus 5.5: a
+        question needing a second tool ("performance and dividends") got an
+        empty end_turn under tool_choice=none (2026-10-23). Here each round runs
+        every tool_use block of the turn; the last round forbids tools and says
+        so in the user turn, so the model writes prose with what it has.
+        """
+        system = next((m["content"] for m in messages if m["role"] == "system"), None)
+        history = [m for m in messages if m["role"] != "system"]
+        api_tools = _anthropic_tools(tools)
+        for round_no in range(max_rounds + 1):
+            final = round_no == max_rounds
+            kwargs: dict = {"messages": history, "tools": api_tools}
+            if system:
+                kwargs["system"] = system
+            kwargs["tool_choice"] = {"type": "none"} if final else {"type": "auto"}
+            msg = self._create(**kwargs)
+            calls = [b for b in msg.content if getattr(b, "type", None) == "tool_use"]
+            if not calls:
+                return _anthropic_text(msg)
+            results = [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": b.id,
+                    "content": execute(b.name, b.input or {}),
+                }
+                for b in calls
+            ]
+            if round_no + 1 == max_rounds:
+                results.append(
+                    {
+                        "type": "text",
+                        "text": "Tool budget used up: answer now with the data above.",
+                    }
+                )
+            history = history + [
+                {
+                    "role": "assistant",
+                    "content": [b.model_dump(exclude_none=True) for b in msg.content],
+                },
+                {"role": "user", "content": results},
+            ]
+        raise LLMResponseError("Anthropic tool loop ended without an answer")
 
 
 for _provider_cls in (

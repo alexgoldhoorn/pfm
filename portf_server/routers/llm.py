@@ -630,6 +630,15 @@ class EnhancedChatEngine:
 
         # A failure raises LLMError (after retries): the chat endpoint turns it
         # into a 502 naming the cause, and nothing is written to the history.
+        # Anthropic: several tools per answer. Checked on the class, not the
+        # instance, so a MagicMock stand-in keeps the two-pass path.
+        if getattr(type(self.llm), "run_tool_loop", None):
+            return await asyncio.to_thread(
+                self.llm.run_tool_loop,
+                messages,
+                TOOLS,
+                lambda name, args: execute_tool(name, args, db),
+            )
         response = await asyncio.to_thread(
             self.llm.generate_with_tools, messages, TOOLS
         )
