@@ -5,7 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-10-22
+Last updated: 2026-10-23
+
+**Recent (v2.5.85):** **Modern AI Chat.** The chat page is one full-height panel with avatars, bubbles, a typing indicator, suggestion chips, an auto-growing composer and **Shift+Enter to send** (Enter = newline). A **model picker** (`GET /api/v1/llm/chat/models`: the fast/main/heavy tiers with the model each resolves to; hidden when no provider is configured) sends `tier` on `POST /chat`, whose response now carries `model`, `tier`, `tools_used` (name, arguments, ms, ok — also stored on the assistant turn and returned by `GET sessions/{id}/messages`) and `session_name`. Each answer shows its model and a **"Used N tools"** chip that opens to the calls made. A new thread is **titled automatically** after its first answer (fast tier; only `New Chat[ n]` placeholders, a failed title keeps the placeholder). **Export** a thread as Markdown, a web page or print/PDF. Tests: `tests/unit/test_chat_ui_features.py`, `web_client/js/tests/chat.test.mjs`. See `docs/features/llm.md` and `docs/features/web-client.md`.
 
 **Recent (v2.5.84):** **Price update runs server-side in server mode.** The CLI's `update-prices` in server mode no longer runs `run_price_update` against `PortfolioHTTPClient` (which has no `get_setting`/`set_setting`/`log_event`, so the v2.5.80 price guard made all 62 assets fail on every cron run from 2026-10-18 to 2026-10-21 while the wrapper script still exited 0); it triggers `POST /analytics/trigger-price-update` (new `symbols` and `source` query params), polls `price-update-status`, and reports the run record from `update-runs`, exiting 1 on a 409, a timeout, errors, or a missing record. `~/scripts/portf-update-prices.sh` now propagates the CLI's exit status instead of the snapshot curl's. Tests: `tests/unit/test_price_update_trigger.py`, `TestUpdatePricesServerMode`. See `docs/features/prices-market.md`.
 
