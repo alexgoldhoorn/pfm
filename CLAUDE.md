@@ -121,7 +121,7 @@ the provider there, not only in `.env.local`.
   `available: false` when no provider is set — never a 5xx (e2e fails on any).
 - Search grounding (`generate_with_search`) exists only on Gemini and Anthropic;
   callers detect it with `hasattr`. All four providers implement
-  `ToolCapableLLMClient`; the 15 chat tools in `portf_server/chat_tools.py` call
+  `ToolCapableLLMClient`; the 18 chat tools in `portf_server/chat_tools.py` call
   DB/service functions directly, never HTTP.
 - Every provider method is wrapped by `_instrument`: transient errors are retried
   (`PORTF_LLM_MAX_ATTEMPTS`, `PORTF_LLM_RETRY_DELAY`), config/request errors fail
