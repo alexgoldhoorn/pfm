@@ -11,18 +11,30 @@ The database abstraction layer consists of several components that work together
 - **Database Factory** (`portf_manager/database_factory.py`): Automatic database selection based on environment variables
 - **Unified Interface**: Compatible with existing business logic through the `DatabaseAdapter` protocol
 
+> **Status (2026-10).** The PostgreSQL adapter covers the core tables only and
+> has not followed the SQLite schema past its own version 3 (`database_pg.py`
+> `DATABASE_VERSION = 3`; `database.py` is at 35). Spending, budgets, fund
+> profiles, loans, snapshots, research and the other later tables exist only in
+> SQLite, and there are no PostgreSQL tests in `tests/`. The production
+> deployment runs on SQLite. Treat the parity claims below as the original
+> design goal, not the current state.
+
 ## Features
 
-### ✅ Complete Feature Parity
-- All existing SQLite functionality is preserved
-- Identical API for both SQLite and PostgreSQL
-- No changes required to existing business logic
-- Seamless migration path
+### Feature parity (core tables)
+- The SQLite API is mirrored for users, entities, portfolios, assets,
+  transactions, prices, portfolio_config and api_keys
+- Identical method names for both adapters within that scope
+- Business logic that only needs those tables runs unchanged
 
 ### ✅ Automatic Database Selection
-- Uses `DATABASE_URL` environment variable to detect PostgreSQL
-- Falls back to SQLite when `DATABASE_URL` is not set
-- Supports both `postgresql://` and `postgres://` URL formats
+- `get_database_adapter(url)` maps `sqlite:///...` to SQLite and
+  `postgresql://` / `postgres://` to PostgreSQL; **any other scheme raises
+  `ValueError`** (no silent fallback)
+- When no URL is passed it reads `PORTF_DATABASE_URL`, then `DATABASE_URL`,
+  then falls back to SQLite at `SQLITE_DB_PATH` (default `portfolio.db`)
+- The server passes `settings.database_url` (`PORTF_DATABASE_URL`, default
+  `sqlite:///portfolio.db`) explicitly
 
 ### ✅ Production-Ready PostgreSQL Support
 - Connection pooling for better performance
@@ -41,10 +53,10 @@ The database abstraction layer consists of several components that work together
 ### 1. Install Dependencies
 
 ```bash
-pip install -r requirements.txt
+uv sync
 ```
 
-The new dependencies include:
+`pyproject.toml` already lists the PostgreSQL dependencies:
 - `sqlalchemy>=2.0.0`: Modern ORM for PostgreSQL support
 - `psycopg2-binary`: PostgreSQL driver for Python
 
@@ -93,44 +105,30 @@ Examples:
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `DATABASE_URL` | PostgreSQL connection URL | None (uses SQLite) |
-| `SQLITE_DB_PATH` | SQLite database file path | `portfolio.db` |
+| `PORTF_DATABASE_URL` | Connection URL (`sqlite:///...` or `postgresql://...`); read by the server settings and first by the factory | `sqlite:///portfolio.db` (server) |
+| `DATABASE_URL` | Legacy fallback of the factory when `PORTF_DATABASE_URL` is unset | None (uses SQLite) |
+| `SQLITE_DB_PATH` | SQLite database file path when no URL is set | `portfolio.db` |
 
 ## Docker Setup
 
-A Docker Compose configuration is provided for easy PostgreSQL setup:
-
-```yaml
-# docker-compose.yml
-version: '3.8'
-
-services:
-  postgres:
-    image: postgres:16
-    container_name: portf_postgres
-    environment:
-      POSTGRES_USER: portf_user
-      POSTGRES_PASSWORD: portf_password
-      POSTGRES_DB: portf_db
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    restart: unless-stopped
-
-volumes:
-  postgres_data:
-```
+The repo's `docker-compose.yml` has a `postgres` service (`postgres:16`,
+container `portf_postgres`, user/db from `POSTGRES_USER` / `POSTGRES_PASSWORD`
+/ `POSTGRES_DB` with `portf_user` / `portf_password` / `portf_db` defaults,
+port published on `127.0.0.1:${POSTGRES_PORT:-5432}`). It sits behind the
+`dev` and `prod` profiles and uses the external network `portf_net`.
 
 Start PostgreSQL:
 ```bash
-docker-compose up -d postgres
+docker network create portf_net 2>/dev/null || true
+docker compose --profile dev up -d postgres
 ```
 
 Set environment variable:
 ```bash
-export DATABASE_URL="postgresql://portf_user:portf_password@localhost:5432/portf_db"
+export PORTF_DATABASE_URL="postgresql://portf_user:portf_password@localhost:5432/portf_db"
 ```
+
+See `docs/POSTGRESQL_SETUP.md` for the day-to-day commands.
 
 ## Migration from SQLite to PostgreSQL
 
@@ -218,16 +216,9 @@ position_size = asset.calculate_position_size()
 
 ## Testing
 
-Run the test suite to verify both implementations:
-
-```bash
-# Test SQLite (default)
-python test_postgresql.py
-
-# Test PostgreSQL (set TEST_DATABASE_URL)
-export TEST_DATABASE_URL="postgresql://user:pass@localhost:5432/test_db"
-python test_postgresql.py
-```
+The SQLite adapter is covered by `tests/test_database.py` and the unit suite
+(`uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e`). There
+is no automated PostgreSQL test; `test_postgresql.py` no longer exists.
 
 ## Performance Considerations
 
@@ -245,7 +236,8 @@ python test_postgresql.py
 
 ## Schema Compatibility
 
-The PostgreSQL schema is designed to be fully compatible with the existing SQLite schema:
+The PostgreSQL schema (`models_sqlalchemy.py`) mirrors the SQLite schema for
+these tables (plus `database_version` and `api_keys`); SQLite has many more:
 
 | Table | SQLite | PostgreSQL | Notes |
 |-------|--------|------------|-------|
@@ -277,7 +269,7 @@ The PostgreSQL schema is designed to be fully compatible with the existing SQLit
    ```
 
 4. **Module not found errors**
-   - Install dependencies: `pip install -r requirements.txt`
+   - Install dependencies: `uv sync`
    - Check Python path
 
 ### Debug Mode
@@ -330,7 +322,7 @@ When adding new database features:
 
 1. **Update both implementations**: Add the method to both `database.py` and `database_pg.py`
 2. **Update the factory**: Add compatibility functions to `database_factory.py`
-3. **Update tests**: Add test cases to `test_postgresql.py`
+3. **Update tests**: Add test cases under `tests/`
 4. **Update documentation**: Update this README
 
 ## Future Enhancements

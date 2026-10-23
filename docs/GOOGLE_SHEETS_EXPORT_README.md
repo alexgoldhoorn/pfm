@@ -12,8 +12,8 @@ The Google Sheets export creates a comprehensive export with three sheets:
 ## Prerequisites
 
 ### 1. Python Requirements
-- Python 3.12+ (or 3.9+ depending on your setup)
-- Google API libraries (automatically installed from requirements.txt)
+- Python 3.13 (the project's target)
+- Google API libraries (`google-api-python-client`, `google-auth`, `google-auth-httplib2`, `google-auth-oauthlib`; installed by `uv sync`)
 
 ### 2. Google Cloud Setup
 
@@ -103,8 +103,10 @@ Contains complete transaction history with columns:
 Contains capital gains/losses calculations with columns:
 - Symbol, Asset Name, Sell Date, Sell Quantity, Sell Price
 - Sell Amount, Purchase Date, Purchase Price, Purchase Amount
-- Gain/Loss, Gain/Loss %, Holding Period, Term Type
+- Gain/Loss, Gain/Loss %, Holding Period (Days), Term Type
 - Portfolio, Description
+
+The sheet holds all-time realised lots (it is not filtered by year).
 
 ### Sheet 3: Portfolio Summary
 Contains overview statistics:
@@ -175,9 +177,9 @@ portf export-to-sheets --spreadsheet-id 1ABC...XYZ
 ```
 Google API libraries not installed
 ```
-**Solution**: Install dependencies:
+**Solution**: Install dependencies (they are regular project dependencies):
 ```bash
-pip install google-api-python-client google-auth google-auth-httplib2 google-auth-oauthlib
+uv sync
 ```
 
 ### Debug Mode

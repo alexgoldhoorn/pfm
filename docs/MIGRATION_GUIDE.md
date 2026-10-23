@@ -1,5 +1,15 @@
 # Migration Guide: Updating Code to Use Database Factory
 
+> **Historical note (2026-10-23).** This guide was written when the factory was
+> introduced. Today the factory is used by the API server
+> (`portf_server/app.py` calls `get_database_adapter(settings.database_url)`),
+> while the CLI deliberately keeps `Database(db_path)` for local mode (SQLite
+> via `--db-path` / `PORTF_DB_PATH`) and talks HTTP in server mode. The
+> PostgreSQL adapter stopped at its schema version 3 and lacks the later
+> SQLite tables — see `docs/DATABASE_ABSTRACTION_README.md` and the Database
+> section of `CLAUDE.md`. The code patterns below are still valid; the
+> "files that need updates" list is not a to-do.
+
 This guide helps you update existing code to use the new database factory for seamless SQLite/PostgreSQL compatibility.
 
 ## Summary of Changes
@@ -138,12 +148,14 @@ export SQLITE_DB_PATH="/path/to/custom/portfolio.db"
 
 ### Production (PostgreSQL)
 ```bash
-export DATABASE_URL="postgresql://username:password@hostname:5432/database_name"
+# PORTF_DATABASE_URL is what the server reads; DATABASE_URL is the factory's legacy fallback
+export PORTF_DATABASE_URL="postgresql://username:password@hostname:5432/database_name"
 ```
 
 ### Docker Environment
 ```bash
-# In docker-compose.yml or .env file
+# In .env / .env.development (docker-compose.yml passes both through)
+PORTF_DATABASE_URL=postgresql://portf_user:portf_password@postgres:5432/portf_db
 DATABASE_URL=postgresql://portf_user:portf_password@postgres:5432/portf_db
 ```
 
@@ -151,13 +163,12 @@ DATABASE_URL=postgresql://portf_user:portf_password@postgres:5432/portf_db
 
 ### 1. Local Testing
 ```bash
-# Test SQLite (default)
-python -m pytest tests/
-
-# Test PostgreSQL
-export DATABASE_URL="postgresql://user:pass@localhost:5432/test_db"
-python -m pytest tests/
+# The test suite runs on temporary SQLite databases regardless of DATABASE_URL
+uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e
 ```
+
+There is no PostgreSQL-backed test run; switching the adapter is covered only
+by the manual script below.
 
 ### 2. Test Database Switching
 ```python

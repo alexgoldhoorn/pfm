@@ -1,5 +1,14 @@
 # LLM Import Command Integration Design
 
+> **Historical note (2026-10-23).** Early design sketch. The `import-llm`
+> command proposed here was never added; LLM import shipped as the
+> `paste-transaction` CLI command (`--format myinvestor|coinbase|indexacapital`)
+> and, for the web client, `POST /api/v1/llm/extract-transactions` plus the
+> `/api/v1/import/upload` → `/save` preview flow. The provider-agnostic client
+> lives in `portf_manager/llm_client.py`. Line numbers below refer to a much
+> older `cli.py` / `database.py`. Current reference:
+> `docs/features/imports-exports.md` and `docs/features/llm.md`.
+
 ## Overview
 
 This document outlines the integration points for adding a new LLM-based import command to the Portfolio Manager CLI. The command will leverage AI to parse transaction data from various formats and create portfolio transactions.
@@ -77,12 +86,12 @@ transaction_id = self.db_manager.create_transaction(
 ```python
 create_transaction(
     asset_id: int,
-    transaction_type: str,  # 'buy', 'sell', 'dividend', 'split', 'transfer_in', 'transfer_out'
+    transaction_type: str,  # 'buy', 'sell', 'dividend', 'interest', 'split', 'transfer_in', 'transfer_out'
     quantity: float,
     price: float,
     total_amount: float,
     transaction_date: str,  # YYYY-MM-DD format
-    portfolio_id: int = None,
+    portfolio_id: int = None,  # callers must pass one (see CLAUDE.md); also pass currency=, tax=
     fees: float = 0,
     description: str = None,
 )

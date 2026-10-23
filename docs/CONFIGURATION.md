@@ -4,26 +4,35 @@ This document describes the configuration and environment management system for 
 
 ## Overview
 
-The application uses a layered configuration system that supports:
-- TOML configuration files (`settings.toml`)
-- Environment-specific `.env` files
-- Environment variables with prefixes
-- Command-line argument overrides
+The server settings are a `pydantic-settings` model (`portf_server/settings.py`,
+class `ServerSettings`, env prefix `PORTF_`). They support:
+- Environment variables with the `PORTF_` prefix
+- `.env.local` and `.env` dotenv files (read by `ServerSettings` itself and by
+  `start_server.py`)
+- Command-line argument overrides (`start_server.py --host/--port/...`)
 
 ## Configuration Sources (Priority Order)
 
-1. **Command-line arguments** (highest priority)
+1. **Command-line arguments** of `start_server.py` (highest priority)
 2. **Environment variables** with `PORTF_` prefix
-3. **Environment-specific .env files** (`.env.development`, `.env.staging`, `.env.production`)
-4. **Default .env file** (`.env`)
-5. **TOML configuration file** (`settings.toml`)
-6. **Built-in defaults** (lowest priority)
+3. **`.env.local`**, then **`.env`** (`ServerSettings.model_config.env_file`)
+4. **Built-in defaults** (lowest priority)
+
+Other `.env.*` files are not read by the settings class. `make dev` exports
+`.env.development` into the environment before starting, and Docker Compose
+loads them through `env_file:` (`.env`, `.env.development`, `.env.local` for
+the dev backend; `.env`, `.env.production` for `backend-prod`).
+`start_server.py --env=NAME` only sets `PORTF_ENVIRONMENT=NAME`; it does not
+load `.env.NAME`.
 
 ## Configuration Files
 
 ### settings.toml
 
-The main configuration file in TOML format:
+`settings.toml` in the repo root documents the defaults in TOML form and is
+copied into the production image, but **it is not read**: `ServerSettings`
+has no `toml_file` configured (the `pydantic-settings[toml]` extra is not
+installed). Change settings through environment variables or `.env` files.
 
 ```toml
 [server]
@@ -57,8 +66,11 @@ origins = [
 
 ### Environment Files
 
+Only `.env.development` and `.env.example` are in the repo; `.env.staging`
+and `.env.production` below are examples of what you would create.
+
 #### .env.development
-Development environment settings:
+Development environment settings (excerpt):
 ```bash
 PORTF_ENVIRONMENT=development
 PORTF_DEBUG=true
@@ -101,8 +113,24 @@ All configuration options can be set via environment variables with the `PORTF_`
 | `PORTF_LOG_LEVEL` | Log level | `info` |
 | `PORTF_DATABASE_URL` | Database connection URL | `sqlite:///portfolio.db` |
 | `PORTF_ENVIRONMENT` | Application environment | `development` |
-| `PORTF_SECRET_KEY` | Secret key for cryptographic operations | *required in production* |
+| `PORTF_SECRET_KEY` | Secret key for cryptographic operations | placeholder; in production the server refuses to start unless it is changed and at least 32 characters long |
+| `PORTF_API_KEY_HEADER` | Header carrying the API key | `X-API-Key` |
+| `PORTF_CORS_ORIGINS` | Allowed CORS origins (JSON list) | `localhost:3000`, `localhost:8080`, `127.0.0.1:8080` |
+| `PORTF_ALLOW_REGISTRATION` | Allow self-service `POST /api/v1/auth/register` | `false` |
+| `PORTF_LLM_PROVIDER` / `PORTF_LLM_MODEL` | LLM provider and model (see `docs/features/llm.md`) | auto-detect |
 | `PORTF_GEMINI_API_KEY` | Google Gemini API key | *optional* |
+| `PORTF_OPENROUTER_API_KEY` | OpenRouter API key | *optional* |
+| `PORTF_INDEXA_TOKEN` | Indexa Capital API token for account valuations | *optional* |
+| `PORTF_METRICS_ENABLED`, `PORTF_METRICS_TOKEN`, `PORTF_SENTRY_DSN`, `PORTF_SENTRY_TRACES_SAMPLE_RATE`, `PORTF_OTEL_ENDPOINT`, `PORTF_OTEL_SERVICE_NAME` | Observability, all off unless set (see `docs/features/observability.md`) | off |
+
+A few variables are read directly with `os.getenv()` rather than through
+`ServerSettings`, so they have no `PORTF_` prefix: `SERVER_API_KEY` (auto-seeded
+into `api_keys` at startup and handed out by `/api/v1/auth/login-key`),
+`DATABASE_URL` (legacy fallback of `database_factory.get_database_adapter`),
+`GOOGLE_SERVICE_ACCOUNT_FILE` / `GOOGLE_SPREADSHEET_ID`, the LLM provider keys
+(`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `OLLAMA_HOST` /
+`OLLAMA_PORT`) and `PFM_BACKUP_DIR`. `PORTF_PUBLIC_VIEW`, `PORTF_LOG_FILE` and
+`PORTF_LOG_RETENTION_DAYS` are prefixed but also read directly.
 
 ## Starting the Server
 
@@ -147,17 +175,26 @@ make server
 - `make test-unit` - Run unit tests only
 - `make test-integration` - Run integration tests only
 
+- `make test-js` - Run the web client JS tests (Node built-in runner)
+
 ### Database Operations
-- `make migrate` - Run database migrations
-- `make migrate-fresh` - Run fresh database migration (reset)
-- `make migrate-test` - Test database migrations
+- `make migrate`, `make migrate-fresh`, `make migrate-test` - these targets
+  still exist but call `migration_script.py` / `script_migrate_fresh.py` /
+  `test_migration.py`, none of which is in the repo, so they exit with "not
+  found". Migrations run automatically when the server starts (see
+  `portf_manager/database.py`).
 
 ### Docker Operations
+All compose targets run `WEB_PORT=8080 docker compose --profile dev`; the
+compose file expects the external network `portf_net` to exist
+(`docker network create portf_net`).
 - `make up` - Start all services with docker-compose
 - `make up-build` - Start services and rebuild containers
+- `make up-backend` / `make up-web` - Rebuild and restart one service
 - `make down` - Stop all services
-- `make logs` - Show service logs
+- `make logs` / `make logs-backend` - Show service logs
 - `make restart` - Restart all services
+- `make status` - Show the `portf_*` containers
 
 ### Code Quality
 - `make install` - Install dependencies
@@ -174,6 +211,10 @@ make server
 ### Cleanup
 - `make clean` - Clean up temporary files and caches
 - `make clean-docker` - Clean up Docker containers and volumes
+
+### Other
+- `make requirements` - Export `requirements.txt` from `uv.lock`
+- `make config-test*` - call `config_test.py`, which is not in the repo
 
 ## Environment-Specific Usage
 
@@ -203,8 +244,8 @@ python start_server.py --env=staging
 # Load production configuration
 make server
 
-# Or with Docker
-make up
+# Or with Docker (make up uses the dev profile; production is the prod profile)
+docker compose --profile prod up -d      # or scripts/deploy-prod.sh
 ```
 
 ## Database Configuration
@@ -254,7 +295,7 @@ python start_server.py --env=production
 
 ### Common Issues
 
-1. **Missing dependencies**: Run `make install` or `pip install -r requirements.txt`
+1. **Missing dependencies**: Run `make install-dev` (`uv sync`); there is no `requirements.txt` in the repo (`make requirements` exports one)
 2. **Database connection errors**: Check `PORTF_DATABASE_URL` and ensure database server is running
 3. **Configuration not loading**: Verify environment variable names have `PORTF_` prefix
 4. **Port already in use**: Change `PORTF_PORT` or use `--port` argument
@@ -271,8 +312,11 @@ python start_server.py --log-level=debug
 ```
 
 ### Environment File Loading
-Environment files are loaded in this order:
-1. `.env.{environment}` (if `--env` specified)
-2. `.env` (default)
+`start_server.py` and `ServerSettings` load, without overriding variables
+already in the environment:
+1. `.env.local`
+2. `.env`
 
-To verify which file is being loaded, check the server startup logs.
+`--env=NAME` only sets `PORTF_ENVIRONMENT`; it prints a warning when
+`.env.NAME` is missing but never loads that file. Use `make dev`
+(`.env.development`) or Docker Compose `env_file:` for per-environment files.
