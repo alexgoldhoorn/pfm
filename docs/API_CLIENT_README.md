@@ -85,6 +85,7 @@ client = APIClient(
 - `get_fx_rate(from_currency, to_currency)` - Get exchange rate
 - `convert(amount, from_currency, to_currency)` - Convert currency
 - `get_price_history(symbol, start_date, end_date=None, currency="USD")` - Get price history
+- `fetch_latest_prices(symbols)` - Latest price per symbol as a `dict[str, float]` (also a module-level convenience function)
 - `clear_cache(prefix=None)` - Clear cache entries
 - `get_cache_stats()` - Get cache statistics
 
@@ -189,11 +190,11 @@ client.clear_cache("price")  # Clear only price cache
 Run the unit tests to verify functionality:
 
 ```bash
-# Run all tests
-python -m pytest test_api_client_unit.py -v
+# Unit tests (network is mocked; the test suite blocks real HTTP calls)
+uv run pytest tests/test_api_client_unit.py -v
 
-# Run integration test (requires network)
-python test_api_client.py
+# Live test (marked @pytest.mark.network, skipped unless opted in)
+PFM_LIVE_NETWORK_TESTS=1 uv run pytest tests/test_api_client.py -v
 ```
 
 ## Dependencies

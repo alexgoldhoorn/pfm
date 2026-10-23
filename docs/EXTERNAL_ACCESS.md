@@ -45,4 +45,5 @@ the single web host — no separate API route required.
 - [ ] Consider NPM Access List (basic auth) as a second layer.
 - [ ] `SERVER_API_KEY` stays server-side; it is only returned after a valid
       password login.
-- [ ] Optionally restrict the public view (Phase 5) and keep the full app behind login.
+- [ ] The public %-only summary (`GET /api/v1/public/summary`) is off unless
+      `PORTF_PUBLIC_VIEW=true`; leave it off to keep the whole app behind login.

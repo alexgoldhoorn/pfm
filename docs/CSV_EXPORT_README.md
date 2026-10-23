@@ -29,6 +29,10 @@ The CSV files contain the following headers in this exact order:
 
 ## Usage
 
+From the CLI the same exporter is behind `export-transactions`
+(`--symbol`, `--start-date`, `--end-date`, `--output`); the API offers
+`GET /api/v1/export/csv`.
+
 ### Basic Usage
 
 ```python
@@ -139,22 +143,22 @@ except Exception as e:
 
 ## Testing
 
-Run the test script to verify functionality:
+Run the tests to verify functionality:
 
 ```bash
-python test_csv_export.py
+uv run pytest tests/test_csv_export.py -v
 ```
 
-The test script will:
+The tests cover:
 1. Export all transactions
 2. Export with symbol filter
 3. Export with date range filter
 4. Export with combined filters
-5. Verify CSV format and headers
+5. CSV format and headers
 
 ## Requirements
 
-- Python 3.12+ (or 3.9+ depending on codebase)
+- Python 3.13 (the project's target)
 - `csv` module (standard library)
 - `datetime` module (standard library)
 - Portfolio Manager database and authentication
@@ -162,8 +166,8 @@ The test script will:
 ## Files
 
 - `portf_manager/csv_export.py` - Main CSV export implementation
-- `test_csv_export.py` - Test script for CSV export functionality
-- `CSV_EXPORT_README.md` - This documentation file
+- `tests/test_csv_export.py` - Tests for CSV export functionality
+- `docs/CSV_EXPORT_README.md` - This documentation file
 
 ## Integration
 

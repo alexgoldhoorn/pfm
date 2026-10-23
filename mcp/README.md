@@ -114,8 +114,12 @@ cd mcp
 python3 -m pytest -q
 ```
 
-The tests need only `pytest` and `mcp`; they patch `pfm_mcp.client._get` and
-refuse any real network call. Tool modules live in `pfm_mcp/tools/`, one per
+The tests need only `pytest` and `mcp` (1.x — `pyproject.toml` pins
+`mcp>=1.2,<2`; with mcp 2.x installed system-wide, collection fails on
+`from mcp.server.fastmcp import FastMCP`, so run them in an environment with
+the pinned version, e.g. `uv run --no-project --with pytest --with "mcp<2"
+python -m pytest -q`); they patch `pfm_mcp.client._get` and refuse any real
+network call. Tool modules live in `pfm_mcp/tools/`, one per
 area; a tool is registered by the `@tool` decorator from `pfm_mcp` and attached
 to the FastMCP object in `pfm_mcp/server.py`.
 
