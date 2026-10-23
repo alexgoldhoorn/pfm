@@ -87,7 +87,7 @@ Status legend: ☐ todo · ◐ in progress · ☑ done
 
 ---
 
-## Phase 4 — External access ◐ code done; see docs/EXTERNAL_ACCESS.md for host steps
+## Phase 4 — External access ✅ code done (web client calls `/api` same-origin, `web_client/nginx.conf` proxies it); host steps in docs/EXTERNAL_ACCESS.md
 
 - Mirror the existing pattern (`app1.example.com`, `app2.example.com` via
   nginx-proxy-manager on this host).
@@ -147,6 +147,7 @@ Status legend: ☐ todo · ◐ in progress · ☑ done
   (`is_gbx` + `normalize_gbx_amounts`, cached per symbol) divides GBX prices/
   amounts ÷100 on import. Wired into `imports.py` save and `sync.py` pull;
   unit-tested in `tests/unit/test_currency_utils.py`.
-- Keep files small: when `analytics.py` or `portfolio_debug.js` grows further,
-  split helpers into `services/` modules / dedicated JS files.
+- Keep files small: when `routers/analytics.py` or one of the five `web_client/js/pfm_*.js`
+  files (the former `portfolio_debug.js`) grows further, split helpers into
+  `services/` modules / dedicated JS files.
 - Every phase: black + flake8 clean (pre-commit), unit tests, update CLAUDE.md.
