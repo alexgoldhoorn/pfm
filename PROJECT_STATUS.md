@@ -5,7 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-10-22
+Last updated: 2026-10-23
+
+**Recent (v2.5.85):** **Anthropic model tiers, multi-tool chat and three allocator chat tools.** Production LLM is now the Anthropic API (`docker-compose.yml` sets `PORTF_LLM_PROVIDER=anthropic`; auto-detect prefers Anthropic over Gemini). Call sites ask for a tier, never a model: `get_llm_client(tier="fast"|"main"|"heavy")`, mapped by `PORTF_ANTHROPIC_{FAST,MAIN,HEAVY}_MODEL` (defaults `claude-haiku-5-5` / `claude-sonnet-5-5` / `claude-opus-5-5`; fast = extraction and category suggestions, main = fund-profile suggest and untiered callers, heavy = research, portfolio analysis, stock report, chat). The Anthropic client sends `output_config.effort` and `max_tokens` per tier, never `temperature` (400 on Claude 5), replays the whole assistant turn (thinking blocks included) with the `tool_result`, and fills `sources` from `web_search` result blocks. Chat: Opus 5.5 answered with an empty `end_turn` ("Anthropic returned no text content") whenever a question needed a second tool, because the two-pass loop forbade tools on the second call; `AnthropicLLMClient.run_tool_loop` now runs up to 6 rounds, executing every `tool_use` block per round, then forces prose with a "tool budget used up" note. `EnhancedChatEngine` uses it when the provider class has it; the other providers keep the two-pass path. Three new chat tools, so the chat can answer "how much can I invest" and "should I rebalance": `get_allocation_targets` (targets plus the Rebalance analysis), `get_deployable_cash` and `get_next_euro` (the allocator) — 18 tools in `portf_server/chat_tools.py`. No schema change. Tests: `tests/unit/test_llm_client.py`, `tests/unit/test_llm_tool_calling.py`, `tests/unit/test_chat_tools.py`. See `docs/features/llm.md`.
 
 **Recent (v2.5.84):** **Price update runs server-side in server mode.** The CLI's `update-prices` in server mode no longer runs `run_price_update` against `PortfolioHTTPClient` (which has no `get_setting`/`set_setting`/`log_event`, so the v2.5.80 price guard made all 62 assets fail on every cron run from 2026-10-18 to 2026-10-21 while the wrapper script still exited 0); it triggers `POST /analytics/trigger-price-update` (new `symbols` and `source` query params), polls `price-update-status`, and reports the run record from `update-runs`, exiting 1 on a 409, a timeout, errors, or a missing record. `~/scripts/portf-update-prices.sh` now propagates the CLI's exit status instead of the snapshot curl's. Tests: `tests/unit/test_price_update_trigger.py`, `TestUpdatePricesServerMode`. See `docs/features/prices-market.md`.
 
@@ -270,9 +272,10 @@ All are re-exported by the remote gateway (now 85 tools) and added to the financ
 
 ### LLM Integration — ✅ Working
 - Provider-agnostic abstraction (`llm_client.py`)
-- **Default: auto-detect** — tries Ollama locally first (zero config), falls back to Gemini, then OpenRouter, then Anthropic
-- Default models: `llama3.2` (Ollama), `gemini-2.5-flash` (Gemini), `claude-sonnet-4-6` (Anthropic)
-- Config via `PORTF_LLM_PROVIDER` (`auto`/`ollama`/`gemini`/`openrouter`/`anthropic`) + `PORTF_LLM_MODEL` + `ANTHROPIC_API_KEY`
+- **Default: auto-detect** — tries Ollama locally first (zero config), falls back to Anthropic, then Gemini, then OpenRouter; production (`docker-compose.yml`) pins `anthropic`
+- Default models: `llama3.2` (Ollama), `gemini-2.5-flash` (Gemini); Anthropic uses **model tiers** `fast`/`main`/`heavy` → `claude-haiku-5-5` / `claude-sonnet-5-5` / `claude-opus-5-5` (`PORTF_ANTHROPIC_<TIER>_MODEL`)
+- Config via `PORTF_LLM_PROVIDER` (`auto`/`ollama`/`gemini`/`openrouter`/`anthropic`) + `PORTF_LLM_MODEL` (pins one model for all tiers) + `ANTHROPIC_API_KEY`
+- Chat: 18 in-process tools (`portf_server/chat_tools.py`); on Anthropic a multi-round tool loop (`run_tool_loop`, up to 6 rounds), two-pass elsewhere
 - Search-grounded research: Gemini/Anthropic implement `generate_with_search()`; research endpoint uses it when available, falls back to yfinance headlines
 - Three use cases: transaction extraction, stock reports, chat/advisor
 
