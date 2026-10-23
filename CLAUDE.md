@@ -117,8 +117,10 @@ the provider there, not only in `.env.local`.
   (crashes without an API key).
 - Search grounding (`generate_with_search`) exists only on Gemini and Anthropic;
   callers detect it with `hasattr`. All four providers implement
-  `ToolCapableLLMClient`; the 15 chat tools in `portf_server/chat_tools.py` call
-  DB/service functions directly, never HTTP.
+  `ToolCapableLLMClient`; the 18 chat tools in `portf_server/chat_tools.py` call
+  DB/service functions directly, never HTTP. Chat on Anthropic runs
+  `AnthropicLLMClient.run_tool_loop` (several tools per answer, 6 rounds); the
+  engine checks for it on the class, so a `MagicMock` LLM keeps the two-pass path.
 - Every provider method is wrapped by `_instrument`: transient errors are retried
   (`PORTF_LLM_MAX_ATTEMPTS`, `PORTF_LLM_RETRY_DELAY`), config/request errors fail
   at once, a final failure raises `LLMError`, and each call is logged as an
