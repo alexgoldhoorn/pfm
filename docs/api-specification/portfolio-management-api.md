@@ -1,5 +1,15 @@
 # Portfolio Management API - Complete Endpoint Documentation
 
+> **Scope note (2026-10-23).** This file documents the core endpoints the API
+> started with (assets, transactions, portfolios, LLM, tax, auth) and was checked
+> against the code on that date. The API has since grown to ~30 routers under
+> `/api/v1/` (`import`, `export`, `bookings`, `spending`, `sync`, `rebalance`,
+> `research`, `analytics`, `fund-profiles`, `reports`, `watchlist`, `goals`,
+> `budgets`, `networth`, `allocate`, `retirement`, `deposits`, `market`,
+> `action-items`, `notifications`, `system`, `public`, `sectors`). Those are
+> documented per area in `docs/features/*.md`; the live OpenAPI schema at
+> `/docs` is always complete.
+
 ## API Overview
 
 **Base URL:** `http://127.0.0.1:8000`  
@@ -23,7 +33,13 @@
 ## Authentication
 
 ### API Key Requirements
-Most endpoints require API Key authentication via the `X-API-Key` header.
+Every data router is protected at include-time by an API key (`portf_server/app.py`,
+`_PROTECTED`); only `/api/v1/auth/*` and `/api/v1/public/*` are outside it. The key
+goes in the `X-API-Key` header (an `Authorization: Bearer <api key>` header is
+accepted as a fallback). Keys are created with
+`python -m portf_server.api_key_cli create NAME` or seeded from the
+`SERVER_API_KEY` environment variable at startup; there is no HTTP endpoint for
+key management and keys carry no per-key permissions.
 
 ```bash
 curl -H "X-API-Key: YOUR_API_KEY_HERE" http://127.0.0.1:8000/api/v1/assets
@@ -234,6 +250,7 @@ Retrieves all transactions with optional filtering.
 **Query Parameters:**
 - `limit` (integer, default: 100) - Number of transactions to return
 - `symbol` (string, optional) - Filter by asset symbol
+- `portfolio_id` (integer, optional) - Filter by portfolio
 
 **Authentication:** Required (API Key)
 
@@ -275,10 +292,16 @@ Creates a new transaction.
   "total_amount": 15025.00,
   "transaction_date": "2025-09-16",
   "portfolio_id": 1,
-  "description": "Purchase of AAPL shares",
-  "user_id": 1
+  "fees": 9.99,
+  "tax": 0,
+  "currency": "USD",
+  "description": "Purchase of AAPL shares"
 }
 ```
+
+`fees`, `tax`, `currency`, `description`, `portfolio_id` and `user_id` are optional;
+`currency` defaults to the asset's currency when omitted. Transaction rows store
+`user_id` NULL in practice (see CLAUDE.md, "Spanish tax").
 
 **Authentication:** Required (API Key)
 
@@ -330,6 +353,29 @@ Updates an existing transaction.
 
 ---
 
+### 5. Delete Transaction
+**DELETE** `/api/v1/transactions/{transaction_id}`
+
+Deletes a transaction permanently.
+
+**Path Parameters:**
+- `transaction_id` (integer) - Transaction ID
+
+**Authentication:** Required (API Key)
+
+**Response (200):**
+```json
+{
+  "message": "Transaction deleted successfully",
+  "id": 1
+}
+```
+
+**Error Responses:**
+- `404` - Transaction not found
+
+---
+
 ## LLM/AI Services
 
 ### 1. Extract Transactions from Text
@@ -378,10 +424,15 @@ Interactive AI chat with portfolio awareness and stock analysis.
   "message": "How is my portfolio performing? Should I buy more AAPL?",
   "session_id": "user123_session",
   "symbols": ["AAPL", "MSFT"],
-  "live": true,
-  "search": true
+  "live": true
 }
 ```
+
+`session_id`, `symbols` and `live` are optional (there is no `search` field; web
+search grounding is decided server-side by the provider). Sessions are persisted
+and managed via `GET`/`POST /api/v1/llm/chat/sessions`,
+`PATCH`/`DELETE /api/v1/llm/chat/sessions/{session_id}` and
+`GET /api/v1/llm/chat/sessions/{session_id}/messages` — see `docs/features/llm.md`.
 
 **Authentication:** Required (API Key)
 
@@ -441,7 +492,10 @@ Generates tax reports for capital gains/losses using FIFO methodology.
 - `symbols` (string, optional) - Comma-separated symbols
 - `format` (string, default: "csv") - Output format ("csv" or "pdf")
 
-**Authentication:** Required (User Authentication)
+**Authentication:** Required — both the API key (`X-API-Key`, router-level) **and** a
+Bearer session token from `POST /api/v1/auth/login` (`get_current_user_id`).
+The web client does not use this endpoint; it reads the JSON report from
+`GET /api/v1/analytics/tax-report` (API key only) — see `docs/features/analytics.md`.
 
 **Response:**
 - CSV or PDF file download
@@ -455,12 +509,28 @@ Generates tax reports for capital gains/losses using FIFO methodology.
 - Summary statistics
 - Professional PDF formatting (requires reportlab)
 
+### 2. Tax Endpoint Index
+**GET** `/api/v1/tax/`
+
+Returns a small JSON description of the tax endpoints, methodology (FIFO) and formats.
+
 ---
 
 ## User Management
 
+These endpoints are **not** behind the API-key dependency. Login issues an **opaque
+session token** (`secrets.token_urlsafe`, held in the server process and in
+`.portf_session`), not a JWT; passwords are hashed with PBKDF2-HMAC. The token is
+sent as `Authorization: Bearer <token>` to `/me`, `/logout`, `/change-password` and
+`/tax/report`. The web client instead calls `/login-key` (below) and then uses the
+API key for everything.
+
 ### 1. Register User
 **POST** `/api/v1/auth/register`
+
+Self-service registration is **disabled by default** and returns `403` unless
+`PORTF_ALLOW_REGISTRATION=true` (a registered user can exchange their password for
+the shared server API key via `/login-key`).
 
 **Request Body:**
 ```json
@@ -500,7 +570,7 @@ Generates tax reports for capital gains/losses using FIFO methodology.
 **Response (200):**
 ```json
 {
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "access_token": "<opaque session token>",
   "token_type": "bearer",
   "user": {
     "id": 1,
@@ -543,21 +613,82 @@ Generates tax reports for capital gains/losses using FIFO methodology.
 
 ---
 
+### 6. Login for API Key (web client)
+**POST** `/api/v1/auth/login-key`
+
+Validates username/password and returns the configured `SERVER_API_KEY` so a browser
+can use `X-API-Key` for all data calls. `500` if `SERVER_API_KEY` is not set.
+Login endpoints are rate-limited to 5 attempts per minute per client+username (`429`).
+
+**Request Body:**
+```json
+{
+  "username": "johndoe",
+  "password": "securepassword123"
+}
+```
+
+**Response (200):**
+```json
+{
+  "api_key": "YOUR_API_KEY_HERE",
+  "username": "johndoe"
+}
+```
+
+---
+
+### 7. Change Password (web client)
+**POST** `/api/v1/auth/change-password-key`
+
+Password change without a Bearer session: the current password is the authorisation.
+
+**Request Body:**
+```json
+{
+  "username": "johndoe",
+  "current_password": "oldpassword",
+  "new_password": "newsecurepassword123"
+}
+```
+
+---
+
 ## Portfolios
+
+A portfolio is a broker account; a bank account is also a `portfolios` row with
+`account_type='bank'` (create-only). Full detail: `docs/features/networth-portfolios.md`.
 
 ### 1. List Portfolios
 **GET** `/api/v1/portfolios/`
 
-*Currently under construction*
-
 ### 2. Create Portfolio
-**POST** `/api/v1/portfolios/`
+**POST** `/api/v1/portfolios/` — `201`
 
-*Currently under construction*
+### 3. Update Portfolio
+**PUT** `/api/v1/portfolios/{portfolio_id}`
+
+### 4. Delete Portfolio
+**DELETE** `/api/v1/portfolios/{portfolio_id}` — `204`
+
+### 5. Clear a Portfolio's Transactions
+**DELETE** `/api/v1/portfolios/{portfolio_id}/transactions`
+
+### 6. Portfolio Values and Holdings
+**GET** `/api/v1/portfolios/values`, **GET** `/api/v1/portfolios/holdings`
+
+Current value per portfolio and current positions (from `compute_positions`, see
+CLAUDE.md "Positions & corporate actions").
+
+**Authentication:** Required (API Key) for all of the above.
 
 ---
 
 ## Entities (Brokers)
+
+Still placeholders as of 2026-10-23: both endpoints return
+`{"message": "... under construction"}` and touch no data (`portf_server/routers/entities.py`).
+Brokers are represented by portfolios in practice.
 
 ### 1. List Entities
 **GET** `/api/v1/entities/`
@@ -581,10 +712,13 @@ Generates tax reports for capital gains/losses using FIFO methodology.
 {
   "status": "healthy",
   "message": "Portfolio Management API is running",
-  "version": "1.0.0",
+  "version": "2.5.9",
   "environment": "development"
 }
 ```
+
+`version` is `Settings.version` in `portf_server/settings.py`; the value above is the
+one at the time of writing. `/health`, `/`, `/docs` and `/openapi.json` need no API key.
 
 ---
 
@@ -595,7 +729,7 @@ Generates tax reports for capital gains/losses using FIFO methodology.
 ```json
 {
   "message": "Welcome to Portfolio Management API",
-  "version": "1.0.0",
+  "version": "2.5.9",
   "environment": "development",
   "documentation": "/docs",
   "openapi": "/openapi.json"
@@ -627,7 +761,9 @@ All endpoints return consistent error responses:
 
 ## Rate Limiting
 
-*Not currently implemented but recommended for production*
+Only the credential endpoints (`/auth/login`, `/auth/login-key`,
+`/auth/change-password-key`) are rate-limited: 5 attempts per minute per client IP +
+username, in-process, answering `429`. Data endpoints have no rate limit.
 
 ---
 
@@ -637,9 +773,22 @@ All endpoints return consistent error responses:
 - `bond` - Government and corporate bonds  
 - `crypto` - Cryptocurrencies
 - `etf` - Exchange-traded funds
+- `index` - Market indices (benchmarks, not holdings)
 - `mutual_fund` - Mutual funds
 - `commodity` - Commodities
 - `cash` - Cash positions
+
+A new value must be added to both `portf_server/schemas/assets.py` and
+`portf_manager/models.py` (see CLAUDE.md).
+
+---
+
+## Transaction Types Supported
+
+- `buy`, `sell`
+- `dividend`, `interest`
+- `split` - stock split; the ratio is stored in `quantity` (2-for-1 = `2.0`)
+- `transfer_in`, `transfer_out`
 
 ---
 
@@ -653,13 +802,11 @@ All endpoints return consistent error responses:
 
 ---
 
-## Next Steps for Web Application
+## Web Application
 
-This API provides a solid foundation for building a comprehensive portfolio management web application. Key integration points include:
-
-1. **Real-time Data:** WebSocket endpoints for live price updates
-2. **File Uploads:** CSV import for bulk transaction loading
-3. **Charting:** Price history and portfolio performance visualization
-4. **Mobile Optimization:** Responsive design for mobile trading
-5. **Advanced Analytics:** Integration with the AI/LLM chat for investment advice
+The web client exists: `web_client/` is a vanilla JS + Bootstrap 5 single-page app
+with no build step, served by nginx and talking to this API with `X-API-Key`
+(see CLAUDE.md "Web Client" and `docs/features/web-client.md`). File import lives
+under `/api/v1/import` (`docs/features/imports-exports.md`); there are no WebSocket
+endpoints — prices are refreshed by a daily cron (`docs/features/prices-market.md`).
 

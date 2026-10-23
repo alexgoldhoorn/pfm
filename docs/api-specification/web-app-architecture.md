@@ -1,5 +1,20 @@
 # Portfolio Management Web Application - Architecture & Technology Plan
 
+> **Status note (2026-10-23).** This is the original design specification, kept for history. The implementation diverged from it and nothing below has been updated:
+> - The shipped frontend (`web_client/`) is vanilla JavaScript + Bootstrap 5.3 with **no
+>   build step**: `index.html` loads `help_text.js` → `pfm_core.js` → `pfm_pages.js` →
+>   `pfm_analytics.js` → `pfm_features.js` in that order, sharing one global scope, plus
+>   Chart.js from a CDN; it is baked into an nginx image. None of React, TypeScript, Vite,
+>   React Router, TanStack Query, Zustand, Tailwind or Recharts is used.
+> - Authentication is an API key in `X-API-Key` (obtained via `/api/v1/auth/login-key`
+>   or pasted directly), not JWT in cookies/localStorage interceptors.
+> - Tests run on Node's built-in runner (`make test-js`, `web_client/js/tests/*.test.mjs`),
+>   not Vitest/Playwright; there is no Vercel/CloudFront deployment.
+> - See CLAUDE.md "Web Client" and `docs/features/web-client.md` for the real layout,
+>   helpers (`Fmt`, `esc`, `notify`, `confirmDialog`) and page wiring.
+>
+> The current reference is `CLAUDE.md` and `docs/features/*.md`.
+
 ## Application Architecture Overview
 
 ```mermaid
