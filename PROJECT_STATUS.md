@@ -233,24 +233,26 @@ All are re-exported by the remote gateway (now 85 tools) and added to the financ
                    │(portf_manager)│    (direct DB in local mode)
                    └──────────────┘
                           │
-                   ┌──────┴───────┐
-                   │  LLM Client   │
-                   │ Gemini/Ollama │
-                   └──────────────┘
+                   ┌──────┴─────────┐
+                   │   LLM Client    │
+                   │Ollama/Anthropic/│
+                   │Gemini/OpenRouter│
+                   └─────────────────┘
 ```
 
 ## Components
 
 ### CLI (`portf_manager/`) — ✅ Working
-- 25+ commands: asset/transaction/portfolio/entity CRUD, import, export, tax, chat, stock-report
+- 32 commands: asset/transaction/portfolio/entity CRUD, import (CSV, Coinbase, PDT, paste), export, PDT Sheets sync, tax, chat, stock-report, update-prices
 - Local mode (direct SQLite) and server mode (`--server` + `--api-key`)
 - Interactive REPL with tab completion (`portf` wrapper script)
 
 ### Backend (`portf_server/`) — ✅ Working
-- FastAPI REST API, 40+ endpoints across routers: auth, assets, transactions,
+- FastAPI REST API, 200+ endpoints across routers: auth, public, assets, transactions,
   portfolios, entities, sectors, llm, tax, analytics, research, rebalance,
-  networth, deposits, spending, budgets, action_items, watchlist, goals,
-  sync, exports, imports, fund_profiles, market, reports
+  networth, retirement, allocate, deposits, bookings, spending, budgets, action_items,
+  watchlist, goals, sync, exports, imports, fund_profiles, market, reports, system,
+  notifications
 - API key authentication
 - Docker support with docker-compose
 
@@ -267,13 +269,13 @@ All are re-exported by the remote gateway (now 85 tools) and added to the financ
 
 ### Database — ✅ Working
 - SQLite (default) + PostgreSQL support via database factory
-- Schema v30 with automatic migrations on startup
-- Tables: assets, transactions, portfolios, prices, bookings, dividends, watchlist, goals, research_notes, price_targets, networth snapshots, fixed_deposits, monthly_cashflow, app_settings, kv_cache, push_subscriptions, chat_sessions, price_update_runs, spending_transactions, spending_rules, spending_categories, budgets, budget_lines, fund_profiles, and more
+- Schema v35 with automatic migrations on startup
+- Tables: assets, transactions (dividends are transaction rows), portfolios, prices, bookings, entities, users, api_keys, watchlist, goals, allocation_targets, price_targets, research_reports, research_notes, portfolio_snapshots, manual_assets, fixed_deposits, monthly_cashflow, app_settings, app_logs, kv_cache, push_subscriptions, chat_sessions, price_update_runs, spending_transactions, spending_rules, spending_categories, budgets, budget_lines, fund_profiles, loans, account_valuations, retirement_incomes
 
 ### LLM Integration — ✅ Working
 - Provider-agnostic abstraction (`llm_client.py`)
 - **Default: auto-detect** — tries Ollama locally first (zero config), falls back to Anthropic, then Gemini, then OpenRouter; production (`docker-compose.yml`) pins `anthropic`
-- Default models: `llama3.2` (Ollama), `gemini-2.5-flash` (Gemini); Anthropic uses **model tiers** `fast`/`main`/`heavy` → `claude-haiku-5-5` / `claude-sonnet-5-5` / `claude-opus-5-5` (`PORTF_ANTHROPIC_<TIER>_MODEL`)
+- Default models: `llama3.2` (Ollama), `gemini-2.5-flash` (Gemini), `openai/gpt-4o-mini` (OpenRouter); Anthropic uses **model tiers** `fast`/`main`/`heavy` → `claude-haiku-5-5` / `claude-sonnet-5-5` / `claude-opus-5-5` (`PORTF_ANTHROPIC_<TIER>_MODEL`)
 - Config via `PORTF_LLM_PROVIDER` (`auto`/`ollama`/`gemini`/`openrouter`/`anthropic`) + `PORTF_LLM_MODEL` (pins one model for all tiers) + `ANTHROPIC_API_KEY`
 - Chat: 18 in-process tools (`portf_server/chat_tools.py`); on Anthropic a multi-round tool loop (`run_tool_loop`, up to 6 rounds), two-pass elsewhere
 - Search-grounded research: Gemini/Anthropic implement `generate_with_search()`; research endpoint uses it when available, falls back to yfinance headlines
@@ -281,18 +283,18 @@ All are re-exported by the remote gateway (now 85 tools) and added to the financ
 
 ## Test Status
 
-**1333 passed, 0 failed, 6 skipped** (unit tests, excluding integration/e2e); JS: **148 passed, 0 failed**
+**1921 passed, 0 failed, 6 skipped** (unit tests, excluding integration/e2e); JS: **235 passed, 0 failed**
 
-All tests passing as of 2026-09-24.
+All tests passing as of 2026-10-23.
 
 ## Recent Changes (main)
 
-See `git log --oneline` for full history. Notable milestones: agentic chat (v2.5), MCP server (v2.5+), generic CSV import (v2.5.3), price-update service (v2.5.2), multi-currency tax report (v2.5.4), pre-public code-review fixes (v2.5.7).
+See `git log --oneline` for full history and the "Recent" paragraphs above for per-release detail. Notable milestones: agentic chat (v2.5), MCP server (v2.5+), generic CSV import (v2.5.3), price-update service (v2.5.2), multi-currency tax report (v2.5.4), pre-public code-review fixes (v2.5.7), spending + budgeting (v2.5.52–55), fund look-through (v2.5.61), PDF reports (v2.5.69), flow-adjusted risk metrics and official performance definitions (v2.5.78), balance sheet + retirement readiness (v2.5.81), next-euro allocator (v2.5.82), MCP package (v2.5.83), Anthropic model tiers (v2.5.85).
 
 ## Pending Work
 
 ### Low Priority
-- [ ] **Web client smoke test** — Frontend verified working via API smoke tests (generic CSV import, tax-report, price-update-status, assets); full browser test not done
+- [x] **Web client smoke test** — one hermetic Playwright e2e test (`tests/e2e/`) visits every sidebar page and fails on any uncaught JS error or 5xx; needs Chromium, not run in CI
 
 ## Data Import Support
 
@@ -303,7 +305,11 @@ See `git log --oneline` for full history. Notable milestones: agentic chat (v2.5
 | Coinbase | CSV | `coinbase_csv_parser.py` | ✅ Working |
 | Mintos | CSV account statement | `mintos_csv_parser.py` | ✅ Working |
 | Any broker | Generic CSV (canonical columns) | `generic_csv_parser.py` | ✅ Working |
-| Any broker | Free text (LLM) | `gemini_client.py` via `paste-transaction` | ✅ Working (needs API key or Ollama) |
+| MyInvestor | "Movimientos" copied from the web/app (paste) | `myinvestor_paste_parser.py` | ✅ Working (web only) |
+| Any broker | Free text (LLM) | `gemini_client.py` (wraps `llm_client.py`) via `paste-transaction` / web text import | ✅ Working (needs API key or Ollama) |
+| PDT | XLSX (5 sheets) / Google Sheets | `pdt_xlsx_parser.py`, `pdt_sheets_sync.py` | ✅ Working |
+| Cash bookings | Generic CSV (`date, action, amount, currency, broker`) | `bookings_csv_parser.py` | ✅ Working (web only) |
+| Fixed deposits | Generic CSV | `deposits_csv_parser.py` | ✅ Working (web only) |
 | Any bank (AEB43/Norma 43 fixed-width) | Bank statement, auto-detected | `aeb43_parser.py` | ✅ Working |
 | Any bank | Generic CSV bank statement | `generic_bank_csv_parser.py` | ✅ Working |
 
@@ -318,10 +324,21 @@ See `git log --oneline` for full history. Notable milestones: agentic chat (v2.5
 
 | Variable | Purpose | Required |
 |---|---|---|
-| `PORTF_LLM_PROVIDER` | LLM backend: `auto` (default), `ollama`, or `gemini` | No |
-| `PORTF_LLM_MODEL` | Model name (e.g. `gemini-2.5-flash`, `llama3`) | No |
+| `PORTF_LLM_PROVIDER` | LLM backend: `auto` (default), `ollama`, `anthropic`, `gemini`, `openrouter` | No (production pins `anthropic` in `docker-compose.yml`) |
+| `PORTF_LLM_MODEL` | Model name (e.g. `gemini-2.5-flash`, `llama3.2`); pins one model for every Anthropic tier | No |
+| `PORTF_ANTHROPIC_FAST_MODEL` / `_MAIN_MODEL` / `_HEAVY_MODEL` | Anthropic model per tier (defaults `claude-haiku-5-5` / `claude-sonnet-5-5` / `claude-opus-5-5`) | No |
+| `PORTF_LLM_MAX_ATTEMPTS` / `PORTF_LLM_RETRY_DELAY` | Retries on transient LLM failures (default 3) and first backoff in seconds (default 2) | No |
+| `ANTHROPIC_API_KEY` | Anthropic API key | Only if provider=anthropic |
 | `GEMINI_API_KEY` | Google Gemini API key | Only if provider=gemini |
+| `OPENROUTER_API_KEY` | OpenRouter API key | Only if provider=openrouter |
 | `OLLAMA_HOST` / `OLLAMA_PORT` | Ollama server address | No (defaults localhost:11434) |
 | `PORTF_SERVER_URL` | Server URL for CLI server mode | No |
 | `PORTF_API_KEY` | API key for server mode | No |
-| `DATABASE_URL` | PostgreSQL connection string | No (defaults to SQLite) |
+| `SERVER_API_KEY` | API key seeded into `api_keys` at server startup | No |
+| `PORTF_SECRET_KEY` | Secret for tokens; production refuses the placeholder or < 32 chars | Yes in production |
+| `PORTF_ALLOW_REGISTRATION` | Self-service user registration | No (default `false`) |
+| `PORTF_PUBLIC_VIEW` | Enable the %-only public summary | No (default `false`) |
+| `PORTF_INDEXA_TOKEN` | Indexa Capital API token for account valuations | No |
+| `PORTF_METRICS_ENABLED` / `PORTF_METRICS_TOKEN` / `PORTF_SENTRY_DSN` / `PORTF_OTEL_ENDPOINT` | Observability, all off by default (`docs/features/observability.md`) | No |
+| `DATABASE_URL` / `PORTF_DATABASE_URL` | PostgreSQL connection string | No (defaults to SQLite) |
+| `GOOGLE_SERVICE_ACCOUNT_FILE` / `GOOGLE_SPREADSHEET_ID` | PDT Google Sheets sync (not `PORTF_`-prefixed) | No |
