@@ -290,7 +290,7 @@ def get_portfolio_analysis(
 
     prompt = build_analysis_prompt(bundle)
     try:
-        llm = get_llm_client()
+        llm = get_llm_client(tier="heavy")
         raw = llm.generate(prompt).strip()
     except Exception as e:
         logger.error(f"LLM call failed for portfolio analysis: {e}")

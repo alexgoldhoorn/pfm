@@ -105,9 +105,12 @@ All transaction SELECT queries use `COALESCE(t.currency, a.currency) AS currency
 
 ### LLM
 Provider-agnostic via `portf_manager/llm_client.py`. `get_llm_client()` auto-detects
-Ollama → Gemini → OpenRouter → Anthropic; override with
-`PORTF_LLM_PROVIDER`/`PORTF_LLM_MODEL`. ⚠️ `docker-compose.yml` sets
-`PORTF_LLM_PROVIDER=gemini` under `environment:`, which overrides `.env*` — change
+Ollama → Anthropic → Gemini → OpenRouter; override with
+`PORTF_LLM_PROVIDER`/`PORTF_LLM_MODEL`. Production runs Anthropic with **model
+tiers**: call sites use `get_llm_client(tier="fast"|"main"|"heavy")` (Haiku /
+Sonnet / Opus 5.x, `PORTF_ANTHROPIC_<TIER>_MODEL`), never a model slug; no
+`temperature` on Claude 5 (see `docs/features/llm.md`). ⚠️ `docker-compose.yml` sets
+`PORTF_LLM_PROVIDER=anthropic` under `environment:`, which overrides `.env*` — change
 the provider there, not only in `.env.local`.
 
 - `EnhancedChatEngine` is lazily initialized — never instantiate it at module level

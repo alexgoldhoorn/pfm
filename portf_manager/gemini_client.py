@@ -98,7 +98,7 @@ class GeminiClient:
             self.llm = GeminiLLMClient(api_key=api_key)
             self.api_key = api_key
         else:
-            self.llm = llm or get_llm_client()
+            self.llm = llm or get_llm_client(tier="fast")
             self.api_key = getattr(self.llm, "api_key", None)
 
     def extract_transactions(self, text: str) -> List[LLMTransaction]:

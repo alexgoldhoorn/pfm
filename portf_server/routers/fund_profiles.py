@@ -183,7 +183,7 @@ def suggest_profile(
     """Ask the LLM to draft a profile. Writes nothing — the user applies it."""
     asset = _asset_or_404(db, asset_id)
     try:
-        llm = get_llm_client()
+        llm = get_llm_client(tier="main")
         raw = llm.generate(_build_suggest_prompt(asset)).strip()
         if raw.startswith("```"):
             raw = "\n".join(

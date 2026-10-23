@@ -168,50 +168,159 @@ class TestAnthropicClient:
         client = AnthropicLLMClient(api_key="test_key")
         assert isinstance(client, SearchCapableLLMClient)
 
-    def test_anthropic_generate_delegates_to_internal(self):
+    @staticmethod
+    def _msg(text="ok", stop="end_turn", blocks=None):
+        block = MagicMock()
+        block.type = "text"
+        block.text = text
+        msg = MagicMock()
+        msg.content = blocks if blocks is not None else [block]
+        msg.stop_reason = stop
+        return msg
+
+    def test_generate_sends_tier_params_and_no_temperature(self):
         from portf_manager.llm_client import AnthropicLLMClient
 
-        client = AnthropicLLMClient(api_key="test_key")
-        with patch.object(client, "_anthropic_generate", return_value="result") as m:
+        client = AnthropicLLMClient(api_key="test_key", tier="fast")
+        with patch("anthropic.Anthropic") as sdk:
+            create = sdk.return_value.messages.create
+            create.return_value = self._msg("result")
             assert client.generate("prompt") == "result"
-            m.assert_called_once_with("prompt")
+        kw = create.call_args.kwargs
+        assert kw["model"] == "claude-haiku-5-5"
+        assert kw["thinking"] == {"type": "disabled"}
+        assert kw["output_config"] == {"effort": "low"}
+        assert kw["max_tokens"] >= 8000
+        assert "temperature" not in kw
 
-    def test_anthropic_generate_with_search_returns_envelope(self):
+    def test_main_and_heavy_tiers_leave_thinking_on(self):
         from portf_manager.llm_client import AnthropicLLMClient
 
-        client = AnthropicLLMClient(api_key="test_key")
-        with patch.object(
-            client, "_anthropic_search", return_value='{"recommendation":"BUY"}'
+        for tier, model in (
+            ("main", "claude-sonnet-5-5"),
+            ("heavy", "claude-opus-5-5"),
         ):
-            raw = client.generate_with_search("prompt", "AAPL")
+            client = AnthropicLLMClient(api_key="test_key", tier=tier)
+            with patch("anthropic.Anthropic") as sdk:
+                create = sdk.return_value.messages.create
+                create.return_value = self._msg()
+                client.generate("p")
+            kw = create.call_args.kwargs
+            assert kw["model"] == model
+            assert "thinking" not in kw  # Sonnet 5.5 rejects "disabled"
 
-        envelope = json.loads(raw)
-        assert envelope["text"] == '{"recommendation":"BUY"}'
-        assert envelope["sources"] == []
-
-    def test_anthropic_search_picks_last_text_block(self):
-        import sys
-
-        from portf_manager.llm_client import AnthropicLLMClient
+    def test_truncated_or_empty_reply_raises(self):
+        from portf_manager.llm_client import AnthropicLLMClient, LLMError
 
         client = AnthropicLLMClient(api_key="test_key")
+        for msg in (self._msg("cut", stop="max_tokens"), self._msg(blocks=[])):
+            with patch("anthropic.Anthropic") as sdk:
+                sdk.return_value.messages.create.return_value = msg
+                with pytest.raises(LLMError):
+                    client.generate("p")
 
-        tool_block = MagicMock()
-        tool_block.type = "tool_result"
-        text_block = MagicMock()
-        text_block.type = "text"
-        text_block.text = '{"recommendation":"HOLD"}'
+    def test_generate_with_search_returns_envelope_with_sources(self):
+        from portf_manager.llm_client import AnthropicLLMClient
 
-        mock_msg = MagicMock()
-        mock_msg.content = [tool_block, text_block]
+        client = AnthropicLLMClient(api_key="test_key", tier="heavy")
+        result = MagicMock()
+        result.type = "web_search_tool_result"
+        hit = MagicMock()
+        hit.url = "https://example.com/a"
+        hit.title = "Example A"
+        result.content = [hit]
+        text = MagicMock()
+        text.type = "text"
+        text.text = '{"recommendation":"HOLD"}'
+        with patch("anthropic.Anthropic") as sdk:
+            create = sdk.return_value.messages.create
+            create.return_value = self._msg(blocks=[result, text])
+            raw = client.generate_with_search("prompt", "AAPL")
+        assert create.call_args.kwargs["tools"][0]["type"] == "web_search_20260209"
+        envelope = json.loads(raw)
+        assert envelope["text"] == '{"recommendation":"HOLD"}'
+        assert envelope["sources"] == [
+            {"title": "Example A", "url": "https://example.com/a"}
+        ]
 
-        mock_anthropic = MagicMock()
-        mock_anthropic.Anthropic.return_value.messages.create.return_value = mock_msg
 
-        with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
-            result = client._anthropic_search("prompt")
+class TestAnthropicTiers:
+    def setup_method(self):
+        from portf_manager.llm_client import reset_llm_client
 
-        assert result == '{"recommendation":"HOLD"}'
+        reset_llm_client()
+
+    teardown_method = setup_method
+
+    def _env(self, **extra):
+        keys = (
+            "PORTF_LLM_MODEL",
+            "PORTF_ANTHROPIC_MODEL",
+            "PORTF_ANTHROPIC_FAST_MODEL",
+            "PORTF_ANTHROPIC_MAIN_MODEL",
+            "PORTF_ANTHROPIC_HEAVY_MODEL",
+        )
+        return patch.dict(
+            os.environ,
+            {**{k: "" for k in keys}, "ANTHROPIC_API_KEY": "k", **extra},
+        )
+
+    def test_default_models_per_tier(self):
+        from portf_manager.llm_client import get_llm_client
+
+        with self._env(PORTF_LLM_PROVIDER="anthropic"):
+            assert get_llm_client(tier="fast").model_name == "claude-haiku-5-5"
+            assert get_llm_client(tier="main").model_name == "claude-sonnet-5-5"
+            assert get_llm_client(tier="heavy").model_name == "claude-opus-5-5"
+            assert get_llm_client().model_name == "claude-sonnet-5-5"
+
+    def test_tier_clients_are_cached(self):
+        from portf_manager.llm_client import get_llm_client
+
+        with self._env(PORTF_LLM_PROVIDER="anthropic"):
+            assert get_llm_client(tier="heavy") is get_llm_client(tier="heavy")
+            assert get_llm_client(tier="heavy") is not get_llm_client(tier="fast")
+            get_llm_client()  # default singleton exists first, then a tier
+            assert get_llm_client(tier="fast").tier == "fast"
+
+    def test_env_overrides(self):
+        from portf_manager.llm_client import get_llm_client
+
+        with self._env(
+            PORTF_LLM_PROVIDER="anthropic",
+            PORTF_ANTHROPIC_HEAVY_MODEL="claude-opus-9",
+            PORTF_ANTHROPIC_MODEL="claude-pinned",
+        ):
+            assert get_llm_client(tier="heavy").model_name == "claude-opus-9"
+            assert get_llm_client(tier="fast").model_name == "claude-pinned"
+
+    def test_unknown_tier_rejected(self):
+        from portf_manager.llm_client import get_llm_client
+
+        with self._env(PORTF_LLM_PROVIDER="anthropic"):
+            with pytest.raises(ValueError, match="tier"):
+                get_llm_client(tier="ultra")
+
+    def test_other_providers_ignore_tier(self):
+        from portf_manager.llm_client import GeminiLLMClient, get_llm_client
+
+        with patch.dict(
+            os.environ, {"PORTF_LLM_PROVIDER": "gemini", "GEMINI_API_KEY": "g"}
+        ):
+            a = get_llm_client(tier="heavy")
+            b = get_llm_client(tier="fast")
+        assert isinstance(a, GeminiLLMClient) and a is b
+
+    def test_llm_info_lists_tiers(self):
+        from portf_manager.llm_client import get_llm_info
+
+        with self._env(PORTF_LLM_PROVIDER="anthropic"):
+            info = get_llm_info()
+        assert info["tiers"] == {
+            "fast": "claude-haiku-5-5",
+            "main": "claude-sonnet-5-5",
+            "heavy": "claude-opus-5-5",
+        }
 
 
 class TestFactoryWiring:
@@ -232,7 +341,7 @@ class TestFactoryWiring:
             client = get_llm_client(provider="anthropic", force_new=True)
         assert isinstance(client, AnthropicLLMClient)
 
-    def test_auto_detect_uses_anthropic_as_fourth_option(self):
+    def test_auto_detect_uses_anthropic_when_only_key(self):
         from portf_manager.llm_client import AnthropicLLMClient, _auto_detect_provider
 
         no_keys = {

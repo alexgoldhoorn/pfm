@@ -214,7 +214,7 @@ def summarize_with_llm(symbol: str, price: PriceSummary, news: List[NewsItem]) -
     )
 
     try:
-        llm = get_llm_client()
+        llm = get_llm_client(tier="heavy")
         return llm.generate(prompt)
     except Exception as e:
         return f"LLM error: {e}"

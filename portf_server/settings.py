@@ -95,13 +95,18 @@ class ServerSettings(BaseSettings):
     # Maps to PORTF_LLM_PROVIDER and PORTF_LLM_MODEL env vars, which llm_client.py reads directly.
     llm_provider: Optional[str] = Field(
         default=None,
-        description="LLM provider: auto (default), ollama, gemini, openrouter",
+        description=(
+            "LLM provider: auto (default), anthropic, ollama, gemini, openrouter"
+        ),
     )
     llm_model: Optional[str] = Field(
         default=None,
         description=(
             "LLM model name. Defaults per provider: "
-            "gemini=gemini-2.5-flash, ollama=llama3.2, openrouter=openai/gpt-4o-mini"
+            "gemini=gemini-2.5-flash, ollama=llama3.2, openrouter=openai/gpt-4o-mini; "
+            "anthropic picks a model per tier (PORTF_ANTHROPIC_FAST_MODEL / "
+            "_MAIN_MODEL / _HEAVY_MODEL = claude-haiku-5-5 / claude-sonnet-5-5 / "
+            "claude-opus-5-5), and PORTF_LLM_MODEL pins one model for all tiers"
         ),
     )
 

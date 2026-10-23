@@ -51,7 +51,7 @@ def advisor(monkeypatch):
         lambda bundle: f"analyse {sorted(bundle)}",
     )
     llm = ScriptedLLM()
-    monkeypatch.setattr("portf_manager.llm_client.get_llm_client", lambda: llm)
+    monkeypatch.setattr("portf_manager.llm_client.get_llm_client", lambda **_kw: llm)
     return llm
 
 

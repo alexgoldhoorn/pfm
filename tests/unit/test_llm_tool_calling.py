@@ -160,6 +160,51 @@ class TestAnthropicToolCalling:
 
         assert result == "You hold 10 AAPL."
 
+    def test_tool_turn_replays_assistant_blocks_and_forces_prose(self):
+        """The raw assistant turn (thinking included) goes back with the
+        tool_result, and the second pass cannot ask for another tool."""
+        from unittest.mock import MagicMock, patch
+        from portf_manager.llm_client import ToolDefinition
+
+        client = self._make_client()
+        tools = [ToolDefinition(name="get_holdings", description=".", parameters=[])]
+        messages = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "holdings?"},
+        ]
+        thinking = MagicMock(type="thinking")
+        thinking.model_dump.return_value = {"type": "thinking", "thinking": "t"}
+        use = MagicMock(type="tool_use", id="toolu_1", input={})
+        use.name = "get_holdings"
+        use.model_dump.return_value = {
+            "type": "tool_use",
+            "id": "toolu_1",
+            "name": "get_holdings",
+            "input": {},
+        }
+        first = MagicMock(content=[thinking, use], stop_reason="tool_use")
+        text = MagicMock(type="text", text="You hold AAPL.")
+        second = MagicMock(content=[text], stop_reason="end_turn")
+
+        with patch("anthropic.Anthropic") as sdk:
+            create = sdk.return_value.messages.create
+            create.side_effect = [first, second]
+            resp = client.generate_with_tools(messages, tools)
+            answer = client.complete_with_tool_result(
+                messages, resp.tool_call, "{}", tools
+            )
+
+        k1, k2 = (c.kwargs for c in create.call_args_list)
+        assert k1["system"] == "sys"
+        assert k1["tool_choice"]["disable_parallel_tool_use"] is True
+        assistant = k2["messages"][-2]
+        assert assistant["role"] == "assistant"
+        assert [b["type"] for b in assistant["content"]] == ["thinking", "tool_use"]
+        assert k2["messages"][-1]["content"][0]["tool_use_id"] == "toolu_1"
+        assert k2["tool_choice"] == {"type": "none"}
+        assert "temperature" not in k1 and "temperature" not in k2
+        assert answer == "You hold AAPL."
+
 
 class TestEnhancedChatEngineToolLoop:
     """Integration test: verifies the tool loop branches and executes tools."""

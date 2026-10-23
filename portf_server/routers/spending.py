@@ -1357,7 +1357,7 @@ async def suggest_categories(
     prompt = _build_suggest_prompt(descriptions)
 
     try:
-        llm = get_llm_client()
+        llm = get_llm_client(tier="fast")
         response_text = llm.generate(prompt).strip()
         if response_text.startswith("```"):
             lines = response_text.split("\n")
