@@ -219,7 +219,7 @@ class EnhancedChatEngine:
         self.technical_engine = get_technical_analysis_engine()
         self.fundamental_engine = get_fundamental_analysis_engine()
         # Use the provider-agnostic LLM client
-        self.llm = get_llm_client()
+        self.llm = get_llm_client(tier="heavy")
 
     async def process_chat_request(
         self, request: ChatRequest, db: Database
@@ -857,7 +857,7 @@ async def extract_transactions_from_text(
     Extract transactions from broker statement text using LLM.
     """
     try:
-        gemini_client = GeminiClient(llm=get_llm_client())
+        gemini_client = GeminiClient(llm=get_llm_client(tier="fast"))
         llm_transactions = gemini_client.extract_transactions(request.text)
 
         valid_transactions = []
@@ -895,7 +895,7 @@ async def extract_bookings_from_text(
 ):
     """Extract cash deposits/withdrawals (bookings) from statement text via LLM."""
     try:
-        gemini_client = GeminiClient(llm=get_llm_client())
+        gemini_client = GeminiClient(llm=get_llm_client(tier="fast"))
         bookings = gemini_client.extract_bookings(request.text)
         return BookingExtractionResponse(bookings=bookings, count=len(bookings))
     except Exception as e:
@@ -909,7 +909,7 @@ async def extract_deposits_from_text(
 ):
     """Extract fixed-term deposit records from statement text via LLM."""
     try:
-        gemini_client = GeminiClient(llm=get_llm_client())
+        gemini_client = GeminiClient(llm=get_llm_client(tier="fast"))
         deposits = gemini_client.extract_deposits(request.text)
         return DepositExtractionResponse(deposits=deposits, count=len(deposits))
     except Exception as e:
@@ -944,7 +944,7 @@ def _prune_extract_jobs() -> None:
 def _run_extraction_job(job_id: str, text: str) -> None:
     """Background worker: extract trades+dividends and cash movements."""
     try:
-        client = GeminiClient(llm=get_llm_client())
+        client = GeminiClient(llm=get_llm_client(tier="fast"))
         transactions = []
         for t in client.extract_transactions(text):
             if t.validate():

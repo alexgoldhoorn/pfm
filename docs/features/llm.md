@@ -4,7 +4,7 @@
 
 ### LLM
 Provider-agnostic via `portf_manager/llm_client.py`. Factory `get_llm_client()` auto-detects in priority order:
-1. Ollama (`OLLAMA_HOST:OLLAMA_PORT`) | 2. Gemini (`GEMINI_API_KEY`, default `gemini-2.5-flash`) | 3. OpenRouter (`OPENROUTER_API_KEY`) | 4. Anthropic (`ANTHROPIC_API_KEY`, default `claude-sonnet-4-6`)
+1. Ollama (`OLLAMA_HOST:OLLAMA_PORT`) | 2. Anthropic (`ANTHROPIC_API_KEY`) | 3. Gemini (`GEMINI_API_KEY`, default `gemini-2.5-flash`) | 4. OpenRouter (`OPENROUTER_API_KEY`)
 
 Override: `PORTF_LLM_PROVIDER=auto|ollama|gemini|openrouter|anthropic`, `PORTF_LLM_MODEL=<model>`.
 
@@ -17,7 +17,9 @@ Override: `PORTF_LLM_PROVIDER=auto|ollama|gemini|openrouter|anthropic`, `PORTF_L
 - 15 in-process tools live in `portf_server/chat_tools.py`; `execute_tool(name, args, db) -> str` is the dispatcher. Tools never make HTTP round-trips — they call DB/service functions directly.
 - `EnhancedChatEngine._generate_with_tool_loop()` branches on `isinstance(self.llm, ToolCapableLLMClient)`; wraps all blocking calls (provider methods + `execute_tool`) in `asyncio.to_thread()`
 
-`docker-compose.yml` sets `PORTF_LLM_PROVIDER=gemini` — these `environment:` entries override `.env*`; change the provider there, not only in `.env.local`.
+`docker-compose.yml` sets `PORTF_LLM_PROVIDER=anthropic` (since 2026-10-23; was gemini) — these `environment:` entries override `.env*`; change the provider there, not only in `.env.local`.
+
+**Model tiers (Anthropic, since 2026-10-23).** A call site asks for a tier, never a model: `get_llm_client(tier="fast"|"main"|"heavy")`. Other providers ignore the tier. The tier resolves to a model via `PORTF_ANTHROPIC_FAST_MODEL` / `_MAIN_MODEL` / `_HEAVY_MODEL` (defaults `claude-haiku-5-5` / `claude-sonnet-5-5` / `claude-opus-5-5`); `PORTF_ANTHROPIC_MODEL` or `PORTF_LLM_MODEL` pins one model for all tiers. Per tier the client sends `output_config.effort` (low/medium/high) and `max_tokens` 16000 (Claude 5 thinks by default and thinking counts against `max_tokens`); `fast` on Haiku also sends `thinking: disabled`. **Never send `temperature`** (400 on Claude 5), and never `thinking: disabled` to Sonnet 5.5 (400). A `max_tokens`/refusal/empty reply raises `LLMResponseError` (wrapped in `LLMError`), not an empty string. Call sites: fast = `GeminiClient` extractions (transactions, bookings, deposits) and spending `suggest-categories`; main = fund-profile `suggest` and anything calling `get_llm_client()` without a tier; heavy = research valuation report (`services/research.py`), portfolio analysis (`routers/research.py`), CLI stock report (`stock_report.py`) and portfolio chat (`EnhancedChatEngine`). Tool use: `ToolCallRequest.raw_content` carries the whole assistant turn (thinking blocks included) and is replayed with the `tool_result`; the second pass sends `tool_choice: none` so it ends in prose; the first pass sets `disable_parallel_tool_use`. Web search uses `web_search_20260209` (Haiku: `web_search_20250305`) and fills `sources` from the result blocks.
 
 All LLM calls: `LLMClient.generate(prompt) -> str`. `GeminiClient` is a legacy wrapper that delegates to `get_llm_client()`.
 

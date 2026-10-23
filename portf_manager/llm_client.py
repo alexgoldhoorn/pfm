@@ -10,7 +10,10 @@ Global overrides (apply to all providers):
 
 Per-provider model overrides (take precedence over PORTF_LLM_MODEL):
   PORTF_GEMINI_MODEL      — e.g. "gemini-2.5-pro"
-  PORTF_ANTHROPIC_MODEL   — e.g. "claude-opus-4-8"
+  PORTF_ANTHROPIC_MODEL   — pins ONE model for every tier (e.g. "claude-opus-5-5")
+  PORTF_ANTHROPIC_FAST_MODEL / _MAIN_MODEL / _HEAVY_MODEL — per tier
+      (defaults claude-haiku-5-5 / claude-sonnet-5-5 / claude-opus-5-5); a call
+      site asks for a tier with get_llm_client(tier="fast"|"main"|"heavy")
   PORTF_OPENROUTER_MODEL  — e.g. "openai/gpt-4o"
   PORTF_OLLAMA_MODEL      — e.g. "llama3.2"
 
@@ -27,9 +30,9 @@ Reliability (every provider, however it was constructed):
 
 Default auto-detection order (provider=auto):
   1. Ollama on localhost:11434 — no API key needed
-  2. Gemini   — if GEMINI_API_KEY is set
-  3. OpenRouter — if OPENROUTER_API_KEY is set
-  4. Anthropic  — if ANTHROPIC_API_KEY is set
+  2. Anthropic  — if ANTHROPIC_API_KEY is set
+  3. Gemini   — if GEMINI_API_KEY is set
+  4. OpenRouter — if OPENROUTER_API_KEY is set
 """
 
 import functools
@@ -90,6 +93,9 @@ class ToolCallRequest:
     name: str
     arguments: dict
     call_id: Optional[str] = None
+    # Provider-specific raw assistant turn (Anthropic: content blocks incl.
+    # thinking), replayed verbatim with the tool result.
+    raw_content: Optional[list] = None
 
 
 @dataclass
@@ -951,124 +957,184 @@ class OpenRouterLLMClient:
         return resp.json()["choices"][0]["message"].get("content", "")
 
 
-DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-6"
+# ── Anthropic model tiers ───────────────────────────────────────────────────
+# Every call site names a tier, never a model slug:
+#   fast  — extraction / classification (statement parsing, categories)
+#   main  — everyday structured generation
+#   heavy — deep reasoning (research, stock reports, portfolio analysis, chat)
+# A tier resolves to a model through env vars, so a model upgrade is a config
+# change, not a code change.
+TIERS = ("fast", "main", "heavy")
+DEFAULT_TIER = "main"
+DEFAULT_ANTHROPIC_MODELS = {
+    "fast": "claude-haiku-5-5",
+    "main": "claude-sonnet-5-5",
+    "heavy": "claude-opus-5-5",
+}
+DEFAULT_ANTHROPIC_MODEL = DEFAULT_ANTHROPIC_MODELS[DEFAULT_TIER]
+# Claude 5 models think by default and thinking tokens count against
+# max_tokens, so every tier gets a generous cap; "fast" also switches thinking
+# off (Haiku only) and runs at low effort. temperature is rejected with a 400
+# on these models and is never sent.
+_ANTHROPIC_TIER_PARAMS = {
+    "fast": {"effort": "low", "max_tokens": 16000},
+    "main": {"effort": "medium", "max_tokens": 16000},
+    "heavy": {"effort": "high", "max_tokens": 16000},
+}
+
+
+def normalize_tier(tier: Optional[str]) -> str:
+    tier = (tier or DEFAULT_TIER).lower()
+    if tier not in TIERS:
+        raise ValueError(f"Unknown LLM tier: '{tier}'. Supported: {', '.join(TIERS)}")
+    return tier
+
+
+def resolve_anthropic_model(tier: Optional[str] = None) -> str:
+    """Model for a tier: PORTF_ANTHROPIC_<TIER>_MODEL, else the single-model
+    pin (PORTF_ANTHROPIC_MODEL / PORTF_LLM_MODEL), else the tier default."""
+    tier = normalize_tier(tier)
+    return (
+        os.getenv(f"PORTF_ANTHROPIC_{tier.upper()}_MODEL")
+        or os.getenv("PORTF_ANTHROPIC_MODEL")
+        or os.getenv("PORTF_LLM_MODEL")
+        or DEFAULT_ANTHROPIC_MODELS[tier]
+    )
+
+
+def _anthropic_tools(tools: list["ToolDefinition"]) -> list[dict]:
+    return [
+        {
+            "name": t.name,
+            "description": t.description,
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    p["name"]: {"type": p["type"], "description": p["description"]}
+                    for p in t.parameters
+                },
+                "required": [p["name"] for p in t.parameters if p.get("required")],
+            },
+        }
+        for t in tools
+    ]
+
+
+def _anthropic_text(msg) -> str:
+    """All text blocks of a reply; a truncated, refused or empty reply raises."""
+    stop = getattr(msg, "stop_reason", None)
+    if stop == "refusal":
+        raise LLMResponseError("Anthropic declined the request (stop_reason=refusal)")
+    text = "".join(
+        b.text for b in msg.content if getattr(b, "type", None) == "text"
+    ).strip()
+    if stop == "max_tokens":
+        raise LLMResponseError(
+            "Anthropic reply hit max_tokens (thinking and output share the cap)"
+        )
+    if not text:
+        raise LLMResponseError("Anthropic returned no text content")
+    return text
 
 
 class AnthropicLLMClient:
-    """Anthropic Claude LLM client with web_search tool support."""
+    """Anthropic Claude client: tiered models, web_search, tool use."""
 
     def __init__(
         self,
         api_key: Optional[str] = None,
         model: Optional[str] = None,
+        tier: Optional[str] = None,
     ):
         self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
         if not self.api_key:
             raise ValueError(
                 "Anthropic API key required. Set ANTHROPIC_API_KEY environment variable."
             )
-        self.model_name = (
-            model
-            or os.getenv("PORTF_ANTHROPIC_MODEL")
-            or os.getenv("PORTF_LLM_MODEL")
-            or DEFAULT_ANTHROPIC_MODEL
+        self.tier = normalize_tier(tier)
+        self.model_name = model or resolve_anthropic_model(self.tier)
+        self._sdk = None
+        logger.info(
+            "Anthropic LLM client initialized (tier=%s, model=%s)",
+            self.tier,
+            self.model_name,
         )
-        logger.info(f"Anthropic LLM client initialized (model={self.model_name})")
+
+    def _client(self):
+        if self._sdk is None:
+            try:
+                import anthropic as anthropic_sdk
+            except ImportError:
+                raise ImportError(
+                    "anthropic package required for Anthropic provider. "
+                    "Install with: pip install anthropic"
+                )
+            self._sdk = anthropic_sdk.Anthropic(api_key=self.api_key)
+        return self._sdk
+
+    def _create(self, **kwargs):
+        params = _ANTHROPIC_TIER_PARAMS[self.tier]
+        kwargs.setdefault("max_tokens", params["max_tokens"])
+        kwargs.setdefault("output_config", {"effort": params["effort"]})
+        if self.tier == "fast" and "haiku" in self.model_name:
+            kwargs.setdefault("thinking", {"type": "disabled"})
+        return self._client().messages.create(model=self.model_name, **kwargs)
 
     def generate(self, prompt: str) -> str:
-        """Generate text using Anthropic Claude (no search tools)."""
-        return self._anthropic_generate(prompt)
-
-    def _anthropic_generate(self, prompt: str) -> str:
-        try:
-            import anthropic as anthropic_sdk
-        except ImportError:
-            raise ImportError(
-                "anthropic package required for Anthropic provider. "
-                "Install with: pip install anthropic"
-            )
-        client = anthropic_sdk.Anthropic(api_key=self.api_key)
-        msg = client.messages.create(
-            model=self.model_name,
-            max_tokens=4096,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return msg.content[0].text
+        """Generate text (no search tools)."""
+        msg = self._create(messages=[{"role": "user", "content": prompt}])
+        return _anthropic_text(msg)
 
     def generate_with_search(self, prompt: str, symbol: str) -> str:
-        """Generate with Anthropic web_search tool (up to 5 searches)."""
+        """Generate with the web_search server tool (up to 5 searches).
+
+        Returns the JSON envelope research.py expects: {"text", "sources"}.
+        """
         import json
 
-        text = self._anthropic_search(prompt)
-        return json.dumps({"text": text, "sources": []})
-
-    def _anthropic_search(self, prompt: str) -> str:
-        try:
-            import anthropic as anthropic_sdk
-        except ImportError:
-            raise ImportError(
-                "anthropic package required for Anthropic provider. "
-                "Install with: pip install anthropic"
-            )
-        client = anthropic_sdk.Anthropic(api_key=self.api_key)
-        msg = client.messages.create(
-            model=self.model_name,
-            max_tokens=4096,
-            tools=[
-                {"type": "web_search_20250305", "name": "web_search", "max_uses": 5}
-            ],
-            messages=[{"role": "user", "content": prompt}],
+        # Dynamic-filtering search needs Opus/Sonnet; Haiku keeps the basic one.
+        search_type = (
+            "web_search_20250305"
+            if "haiku" in self.model_name
+            else "web_search_20260209"
         )
-        text = ""
+        messages = [{"role": "user", "content": prompt}]
+        tools = [{"type": search_type, "name": "web_search", "max_uses": 5}]
+        msg = None
+        for _ in range(4):  # a long server-tool turn can pause; resume it
+            msg = self._create(messages=messages, tools=tools)
+            if msg.stop_reason != "pause_turn":
+                break
+            messages = messages + [{"role": "assistant", "content": msg.content}]
+        sources: list = []
         for block in msg.content:
-            if hasattr(block, "type") and block.type == "text":
-                text = block.text
-        return text
+            if getattr(block, "type", None) == "web_search_tool_result":
+                content = getattr(block, "content", None)
+                if isinstance(content, list):
+                    for r in content:
+                        url = getattr(r, "url", None)
+                        if url and all(s["url"] != url for s in sources):
+                            sources.append(
+                                {"title": getattr(r, "title", "") or url, "url": url}
+                            )
+        return json.dumps({"text": _anthropic_text(msg), "sources": sources})
 
     def generate_with_tools(
         self,
         messages: list[dict],
         tools: list["ToolDefinition"],
     ) -> "ToolResponse":
-        """First pass: returns tool call or final answer using Anthropic tool use."""
-        try:
-            import anthropic as anthropic_sdk
-        except ImportError:
-            raise ImportError(
-                "anthropic package required. Install with: pip install anthropic"
-            )
-
-        client = anthropic_sdk.Anthropic(api_key=self.api_key)
-        anthropic_tools = [
-            {
-                "name": t.name,
-                "description": t.description,
-                "input_schema": {
-                    "type": "object",
-                    "properties": {
-                        p["name"]: {"type": p["type"], "description": p["description"]}
-                        for p in t.parameters
-                    },
-                    "required": [
-                        p["name"] for p in t.parameters if p.get("required", False)
-                    ],
-                },
-            }
-            for t in tools
-        ]
+        """First pass: returns a tool call or a final answer (native tool use)."""
         system = next((m["content"] for m in messages if m["role"] == "system"), None)
-        user_messages = [m for m in messages if m["role"] != "system"]
-
         kwargs: dict = {
-            "model": self.model_name,
-            "max_tokens": 4096,
-            "tools": anthropic_tools,
-            "messages": user_messages,
+            "tools": _anthropic_tools(tools),
+            # The chat engine executes one tool per turn.
+            "tool_choice": {"type": "auto", "disable_parallel_tool_use": True},
+            "messages": [m for m in messages if m["role"] != "system"],
         }
         if system:
             kwargs["system"] = system
-
-        msg = client.messages.create(**kwargs)
+        msg = self._create(**kwargs)
 
         for block in msg.content:
             if getattr(block, "type", None) == "tool_use":
@@ -1077,14 +1143,14 @@ class AnthropicLLMClient:
                         name=block.name,
                         arguments=block.input,
                         call_id=block.id,
+                        # The whole assistant turn (thinking blocks included)
+                        # must be replayed with the tool result.
+                        raw_content=[
+                            b.model_dump(exclude_none=True) for b in msg.content
+                        ],
                     )
                 )
-
-        text = ""
-        for block in msg.content:
-            if getattr(block, "type", None) == "text":
-                text = block.text
-        return ToolResponse(text=text)
+        return ToolResponse(text=_anthropic_text(msg))
 
     def complete_with_tool_result(
         self,
@@ -1093,28 +1159,18 @@ class AnthropicLLMClient:
         tool_result: str,
         tools: Optional[list["ToolDefinition"]] = None,
     ) -> str:
-        """Second pass: send tool result back to Anthropic and return final answer."""
-        try:
-            import anthropic as anthropic_sdk
-        except ImportError:
-            raise ImportError("anthropic package required.")
-
-        client = anthropic_sdk.Anthropic(api_key=self.api_key)
+        """Second pass: send the tool result back and return the final answer."""
         system = next((m["content"] for m in messages if m["role"] == "system"), None)
-        user_messages = [m for m in messages if m["role"] != "system"]
-
-        extended = user_messages + [
+        assistant_content = tool_call.raw_content or [
             {
-                "role": "assistant",
-                "content": [
-                    {
-                        "type": "tool_use",
-                        "id": tool_call.call_id,
-                        "name": tool_call.name,
-                        "input": tool_call.arguments,
-                    }
-                ],
-            },
+                "type": "tool_use",
+                "id": tool_call.call_id,
+                "name": tool_call.name,
+                "input": tool_call.arguments,
+            }
+        ]
+        extended = [m for m in messages if m["role"] != "system"] + [
+            {"role": "assistant", "content": assistant_content},
             {
                 "role": "user",
                 "content": [
@@ -1126,41 +1182,15 @@ class AnthropicLLMClient:
                 ],
             },
         ]
-        kwargs: dict = {
-            "model": self.model_name,
-            "max_tokens": 4096,
-            "messages": extended,
-        }
+        kwargs: dict = {"messages": extended}
         if system:
             kwargs["system"] = system
         if tools is not None:
-            kwargs["tools"] = [
-                {
-                    "name": t.name,
-                    "description": t.description,
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {
-                            p["name"]: {
-                                "type": p["type"],
-                                "description": p["description"],
-                            }
-                            for p in t.parameters
-                        },
-                        "required": [
-                            p["name"] for p in t.parameters if p.get("required", False)
-                        ],
-                    },
-                }
-                for t in tools
-            ]
-
-        msg = client.messages.create(**kwargs)
-        text = ""
-        for block in msg.content:
-            if getattr(block, "type", None) == "text":
-                text = block.text
-        return text
+            kwargs["tools"] = _anthropic_tools(tools)
+            # tools must be declared while the history holds tool_use blocks,
+            # but this pass has to end in prose, not another tool request.
+            kwargs["tool_choice"] = {"type": "none"}
+        return _anthropic_text(self._create(**kwargs))
 
 
 for _provider_cls in (
@@ -1172,14 +1202,17 @@ for _provider_cls in (
     _instrument(_provider_cls)
 
 
-# Singleton cache
+# Singleton cache. ``_llm_client`` is the default-tier client; Anthropic tier
+# clients (same provider, different model) are cached per tier.
 _llm_client: Optional[LLMClient] = None
+_tier_clients: dict = {}
 
 
 def get_llm_client(
     provider: Optional[str] = None,
     model: Optional[str] = None,
     force_new: bool = False,
+    tier: Optional[str] = None,
 ) -> LLMClient:
     """
     Factory function to get an LLM client instance.
@@ -1187,22 +1220,41 @@ def get_llm_client(
     Uses singleton pattern by default. Pass force_new=True to create
     a fresh instance (useful for testing or switching providers at runtime).
 
+    ``tier`` ("fast" | "main" | "heavy") picks the model class for the call:
+    extraction/classification, everyday generation, or deep reasoning. Only the
+    Anthropic provider maps tiers to different models (PORTF_ANTHROPIC_FAST_MODEL
+    / _MAIN_MODEL / _HEAVY_MODEL); other providers ignore it.
+
     Config priority: explicit args > env vars > defaults.
 
-    When provider is "auto" (the default):
-      1. Try Ollama on localhost — works without API keys
-      2. Fall back to Gemini if GEMINI_API_KEY is set
-      3. Raise error if neither is available
+    When provider is "auto" (the default), the first available of Ollama,
+    Anthropic, Gemini, OpenRouter is used.
     """
     global _llm_client
 
+    if tier is not None:
+        tier = normalize_tier(tier)
+
+    if tier is not None and tier in _tier_clients and not force_new:
+        return _tier_clients[tier]
+
     if _llm_client is not None and not force_new:
-        return _llm_client
+        if (
+            tier is None
+            or tier == DEFAULT_TIER
+            or not isinstance(_llm_client, AnthropicLLMClient)
+        ):
+            return _llm_client
+        if tier not in _tier_clients:
+            _tier_clients[tier] = AnthropicLLMClient(
+                api_key=_llm_client.api_key, model=model, tier=tier
+            )
+        return _tier_clients[tier]
 
     provider = (provider or os.getenv("PORTF_LLM_PROVIDER", "auto")).lower()
 
     if provider == "auto":
-        client = _auto_detect_provider(model)
+        client = _auto_detect_provider(model, tier)
     elif provider == "gemini":
         client = GeminiLLMClient(model=model)
     elif provider == "ollama":
@@ -1210,27 +1262,38 @@ def get_llm_client(
     elif provider == "openrouter":
         client = OpenRouterLLMClient(model=model)
     elif provider == "anthropic":
-        client = AnthropicLLMClient(model=model)
+        client = AnthropicLLMClient(model=model, tier=tier)
     else:
         raise ValueError(
             f"Unknown LLM provider: '{provider}'. "
             "Supported: 'auto', 'gemini', 'ollama', 'openrouter', 'anthropic'"
         )
 
+    if isinstance(client, AnthropicLLMClient) and client.tier != DEFAULT_TIER:
+        _tier_clients[client.tier] = client
+        return client
     _llm_client = client
     return _llm_client
 
 
-def _auto_detect_provider(model: Optional[str] = None) -> LLMClient:
+def _auto_detect_provider(
+    model: Optional[str] = None, tier: Optional[str] = None
+) -> LLMClient:
     """
     Auto-detect the best available LLM provider.
 
-    Priority: Ollama (local, no API key) > Gemini (needs key).
+    Priority: Ollama (local, no API key) > Anthropic > Gemini > OpenRouter.
     """
     # Try Ollama first — free, local, no API key
     if OllamaLLMClient.is_available():
         logger.info("Auto-detected Ollama running locally")
         return OllamaLLMClient(model=model)
+
+    # Try Anthropic if API key is available
+    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+    if anthropic_key:
+        logger.info("Auto-detected Anthropic API key, using Claude")
+        return AnthropicLLMClient(api_key=anthropic_key, model=model, tier=tier)
 
     # Try Gemini if API key is available
     gemini_key = (
@@ -1250,12 +1313,6 @@ def _auto_detect_provider(model: Optional[str] = None) -> LLMClient:
         logger.info("Auto-detected OpenRouter API key, using OpenRouter")
         return OpenRouterLLMClient(api_key=openrouter_key, model=model)
 
-    # Try Anthropic if API key is available
-    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-    if anthropic_key:
-        logger.info("Auto-detected Anthropic API key, using Claude")
-        return AnthropicLLMClient(api_key=anthropic_key, model=model)
-
     raise RuntimeError(
         "No LLM provider available. Either:\n"
         "  1. Start Ollama locally: ollama serve && ollama pull llama3.2\n"
@@ -1270,6 +1327,7 @@ def reset_llm_client() -> None:
     """Reset the cached LLM client. Useful for testing."""
     global _llm_client
     _llm_client = None
+    _tier_clients.clear()
 
 
 def get_llm_info() -> dict:
@@ -1305,11 +1363,7 @@ def get_llm_info() -> dict:
         )
         search_capable = False
     elif provider == "anthropic":
-        model = (
-            os.getenv("PORTF_ANTHROPIC_MODEL")
-            or os.getenv("PORTF_LLM_MODEL")
-            or DEFAULT_ANTHROPIC_MODEL
-        )
+        model = resolve_anthropic_model(DEFAULT_TIER)
         search_capable = True
     else:
         # "auto" — can't resolve without a network check
@@ -1322,9 +1376,12 @@ def get_llm_info() -> dict:
         model = getattr(_llm_client, "model_name", model)
         search_capable = isinstance(_llm_client, SearchCapableLLMClient)
 
-    return {
+    info = {
         "provider": provider,
         "model": model,
         "search_capable": search_capable,
         "singleton_active": _llm_client is not None,
     }
+    if provider == "anthropic":
+        info["tiers"] = {t: resolve_anthropic_model(t) for t in TIERS}
+    return info

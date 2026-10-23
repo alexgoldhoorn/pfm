@@ -411,7 +411,9 @@ class TestLLMRouter:
         }
         invalid = {**valid, "tx_type": "transfer"}
         fake = _FakeLLM(json.dumps([valid, invalid]))
-        monkeypatch.setattr("portf_server.routers.llm.get_llm_client", lambda: fake)
+        monkeypatch.setattr(
+            "portf_server.routers.llm.get_llm_client", lambda **_kw: fake
+        )
 
         response = await async_test_client.post(
             "/api/v1/llm/extract-transactions",
@@ -431,7 +433,9 @@ class TestLLMRouter:
         self, async_test_client: AsyncClient, auth_headers, monkeypatch
     ):
         fake = _FakeLLM("sorry, I can't help with that")
-        monkeypatch.setattr("portf_server.routers.llm.get_llm_client", lambda: fake)
+        monkeypatch.setattr(
+            "portf_server.routers.llm.get_llm_client", lambda **_kw: fake
+        )
 
         response = await async_test_client.post(
             "/api/v1/llm/extract-transactions",
@@ -455,7 +459,7 @@ class TestLLMRouter:
         self, async_test_client: AsyncClient, auth_headers, monkeypatch, path, label
     ):
         monkeypatch.setattr(
-            "portf_server.routers.llm.get_llm_client", lambda: _FailingLLM()
+            "portf_server.routers.llm.get_llm_client", lambda **_kw: _FailingLLM()
         )
 
         response = await async_test_client.post(
@@ -470,7 +474,7 @@ class TestLLMRouter:
     def test_async_extraction_job_reports_the_failure(self, monkeypatch):
         from portf_server.routers import llm as llm_router
 
-        monkeypatch.setattr(llm_router, "get_llm_client", lambda: _FailingLLM())
+        monkeypatch.setattr(llm_router, "get_llm_client", lambda **_kw: _FailingLLM())
         llm_router._EXTRACT_JOBS["job1"] = {"status": "pending"}
         try:
             llm_router._run_extraction_job("job1", "statement")
@@ -485,7 +489,7 @@ class TestLLMRouter:
         self, async_test_client: AsyncClient, auth_headers, monkeypatch
     ):
         monkeypatch.setattr(
-            "portf_server.routers.llm.get_llm_client", lambda: _FailingLLM()
+            "portf_server.routers.llm.get_llm_client", lambda **_kw: _FailingLLM()
         )
         monkeypatch.setattr("portf_server.routers.llm._enhanced_chat_engine", None)
         created = await async_test_client.post(
@@ -511,7 +515,7 @@ class TestLLMRouter:
         from portf_server.routers.llm import EnhancedChatEngine
 
         monkeypatch.setattr(
-            "portf_server.routers.llm.get_llm_client", lambda: _FakeLLM("x")
+            "portf_server.routers.llm.get_llm_client", lambda **_kw: _FakeLLM("x")
         )
         engine = EnhancedChatEngine()
         message = (
@@ -524,7 +528,9 @@ class TestLLMRouter:
         self, async_test_client: AsyncClient, auth_headers, monkeypatch
     ):
         fake = _FakeLLM("You hold nothing yet.")
-        monkeypatch.setattr("portf_server.routers.llm.get_llm_client", lambda: fake)
+        monkeypatch.setattr(
+            "portf_server.routers.llm.get_llm_client", lambda **_kw: fake
+        )
         monkeypatch.setattr("portf_server.routers.llm._enhanced_chat_engine", None)
 
         response = await async_test_client.post(
@@ -561,7 +567,7 @@ class TestLLMRouter:
                 raise LLMError("Test", "m", "complete_with_tool_result", 3, "503")
 
         monkeypatch.setattr(
-            "portf_server.routers.llm.get_llm_client", lambda: ToolLLM("unused")
+            "portf_server.routers.llm.get_llm_client", lambda **_kw: ToolLLM("unused")
         )
         monkeypatch.setattr("portf_server.routers.llm._enhanced_chat_engine", None)
 
@@ -579,7 +585,7 @@ class TestLLMRouter:
     async def test_chat_without_provider_is_503(
         self, async_test_client: AsyncClient, auth_headers, monkeypatch
     ):
-        def no_provider():
+        def no_provider(**_kw):
             raise RuntimeError("No LLM provider available")
 
         monkeypatch.setattr("portf_server.routers.llm.get_llm_client", no_provider)
