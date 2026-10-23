@@ -1,5 +1,15 @@
 # Portfolio Management Web Client - Implementation Summary
 
+> **Historical snapshot (noted 2026-10-23).** This file describes the first version of
+> the web client (four pages, one JS module per page). It is kept for history and is
+> not maintained. The current client has 20+ pages and its JS lives in five files
+> loaded in order by `index.html` — `help_text.js`, `pfm_core.js`, `pfm_pages.js`,
+> `pfm_analytics.js`, `pfm_features.js` — with the managers below now created by
+> factory functions (`createAPIClient`, `createAuthManager`, `createNavigationManager`,
+> `createPageManager`, `createModalManager`) rather than classes. The mock data and
+> keyboard shortcuts mentioned below no longer exist. For the current reference see
+> `docs/features/web-client.md`; for setup see `web_client/README.md`.
+
 ## ✅ Completed Implementation
 
 I have successfully created a comprehensive responsive web client for your Portfolio Management API, fulfilling all the requirements from **Step 9** of your plan.
@@ -49,6 +59,8 @@ I have successfully created a comprehensive responsive web client for your Portf
 ## 🏗️ Architecture
 
 ### File Structure
+Original layout (the `js/*.js` modules listed here have since been merged into the five
+files named in the note at the top):
 ```
 web_client/
 ├── index.html              # Main HTML with all UI components
