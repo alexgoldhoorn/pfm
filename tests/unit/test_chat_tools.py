@@ -28,10 +28,16 @@ def db(tmp_path):
     return d
 
 
-def test_tools_list_has_15_entries():
+def test_tools_list_has_18_entries():
     from portf_server.chat_tools import TOOLS
 
-    assert len(TOOLS) == 15
+    assert len(TOOLS) == 18
+
+
+def test_every_tool_definition_has_a_handler():
+    from portf_server.chat_tools import TOOLS, _REGISTRY
+
+    assert {t.name for t in TOOLS} == set(_REGISTRY)
 
 
 def test_all_tool_names_unique():
@@ -155,3 +161,34 @@ def test_execute_tool_get_tax_estimate_returns_year(db):
     data = json.loads(raw)
     assert "year" in data
     assert data["year"] == 2024
+
+
+def test_execute_tool_get_allocation_targets(db):
+    from portf_server.chat_tools import execute_tool
+
+    db.set_allocation_target("stock", 60.0)
+    with patch("portf_manager.market.get_fx_eur", return_value=(0.9, "test")):
+        data = json.loads(execute_tool("get_allocation_targets", {}, db))
+    assert data["targets"][0]["asset_type"] == "stock"
+    assert "analysis" in data
+
+
+def test_execute_tool_get_deployable_cash(db):
+    from portf_server.chat_tools import execute_tool
+
+    with patch(
+        "portf_manager.services.deployable.deployable",
+        return_value={"deployable_eur": 1234.0},
+    ):
+        data = json.loads(execute_tool("get_deployable_cash", {}, db))
+    assert data == {"deployable_eur": 1234.0}
+
+
+def test_execute_tool_get_next_euro_passes_amount(db):
+    from portf_server.chat_tools import execute_tool
+
+    with patch(
+        "portf_manager.services.allocator.next_euro", return_value={"lines": []}
+    ) as next_euro:
+        json.loads(execute_tool("get_next_euro", {"amount": 500}, db))
+    next_euro.assert_called_once_with(db, amount_eur=500.0)

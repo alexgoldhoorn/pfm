@@ -342,6 +342,37 @@ def _get_transactions(
     return _j({"transactions": results, "count": len(results)})
 
 
+@_tool("get_allocation_targets")
+def _get_allocation_targets(db: Database) -> str:
+    # Same numbers as the Rebalance page: targets, current shares, buy/sell gaps.
+    from portf_server.routers.rebalance import get_rebalance_analysis
+
+    return _j(
+        {
+            "targets": db.get_allocation_targets(),
+            "analysis": get_rebalance_analysis(db=db, api_key_info={}),
+        }
+    )
+
+
+@_tool("get_deployable_cash")
+def _get_deployable_cash(db: Database) -> str:
+    from portf_manager.services import deployable as dep
+
+    return _j(dep.deployable(db))
+
+
+@_tool("get_next_euro")
+def _get_next_euro(db: Database, amount: Optional[float] = None) -> str:
+    from portf_manager.services import allocator
+
+    return _j(
+        allocator.next_euro(
+            db, amount_eur=float(amount) if amount is not None else None
+        )
+    )
+
+
 @_tool("get_tax_estimate")
 def _get_tax_estimate(db: Database, year: Optional[int] = None) -> str:
     from portf_manager.tax_calculator import TaxCalculator
@@ -643,6 +674,28 @@ TOOLS: list[ToolDefinition] = [
                 "name": "limit",
                 "type": "integer",
                 "description": "Maximum results (default 20).",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="get_allocation_targets",
+        description="Return the user's target allocation per asset type, the current allocation, and the buy/sell amounts in EUR needed to reach the targets (the Rebalance page).",
+        parameters=[],
+    ),
+    ToolDefinition(
+        name="get_deployable_cash",
+        description="Return the cash that can be invested now: bank cash minus the tax reserve (IVA/IRPF) and the living-expenses buffer, with the breakdown.",
+        parameters=[],
+    ),
+    ToolDefinition(
+        name="get_next_euro",
+        description="Return where the next euros should be invested (allocator: target gaps, caps, candidates, with reasons). Defaults to the deployable cash.",
+        parameters=[
+            {
+                "name": "amount",
+                "type": "number",
+                "description": "Amount in EUR to allocate (default: the deployable cash).",
                 "required": False,
             },
         ],
