@@ -2508,14 +2508,26 @@ function createAPIClient() {
             return this._budgetFetch('/summary', {}, 'Failed to load budget summary');
         },
 
-        async sendChat(message, sessionId) {
+        async sendChat(message, sessionId, tier) {
+            const body = { message, session_id: sessionId, live: false };
+            if (tier) body.tier = tier;
             const response = await fetch(this.baseURL + '/api/v1/llm/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
-                body: JSON.stringify({ message, session_id: sessionId, live: false })
+                body: JSON.stringify(body)
             });
             if (!response.ok) {
                 throw new Error(errorDetailFromBody(await response.text(), 'Chat failed'));
+            }
+            return response.json();
+        },
+
+        async getChatModels() {
+            const response = await fetch(this.baseURL + '/api/v1/llm/chat/models', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) {
+                throw new Error(errorDetailFromBody(await response.text(), 'Failed to load models'));
             }
             return response.json();
         },

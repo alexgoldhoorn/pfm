@@ -758,6 +758,93 @@ function createAuthManager() {
 // Chat page
 // ---------------------------------------------------------------------------
 
+// Pure helpers (window-exported for the DOM-free tests)
+
+// Shift+Enter or Ctrl/Cmd+Enter sends; a plain Enter inserts a newline.
+function chatIsSendKey(e) {
+    return e.key === 'Enter' && !!(e.shiftKey || e.ctrlKey || e.metaKey);
+}
+
+// "Used 2 tools" chip with the calls the model made (name, arguments, ms).
+function chatToolsHtml(tools) {
+    if (!Array.isArray(tools) || !tools.length) return '';
+    const names = [...new Set(tools.map(t => t.name))].join(', ');
+    const items = tools.map(t => {
+        const args = t.arguments && Object.keys(t.arguments).length ? JSON.stringify(t.arguments) : '';
+        const ms = typeof t.ms === 'number' ? `<span class="text-muted">${t.ms} ms</span>` : '';
+        const bad = t.ok === false ? '<span class="text-danger">failed</span>' : '';
+        return `<li><i class="bi bi-tools"></i><code>${esc(t.name)}</code>${args ? `<code>${esc(args)}</code>` : ''}${ms}${bad}</li>`;
+    }).join('');
+    return `<details class="chat-tools"><summary><i class="bi bi-tools"></i>Used ${tools.length} ${tools.length === 1 ? 'tool' : 'tools'}: ${esc(names)}</summary><ul class="chat-tools-list">${items}</ul></details>`;
+}
+
+// Thread as Markdown: a heading, then one section per turn.
+function chatSessionToMarkdown(name, messages) {
+    const lines = [`# ${name || 'Chat'}`, ''];
+    (messages || []).forEach(m => {
+        const who = m.role === 'user' ? 'You' : 'Assistant';
+        const when = m.ts ? ` — ${Fmt.date(m.ts)}` : '';
+        const model = m.role !== 'user' && m.model ? ` (${m.model})` : '';
+        lines.push(`## ${who}${model}${when}`, '', String(m.content || '').trim(), '');
+        const tools = Array.isArray(m.tools_used) ? m.tools_used : [];
+        if (tools.length) {
+            lines.push(`_Tools used: ${tools.map(t => t.name).join(', ')}_`, '');
+        }
+    });
+    return lines.join('\n');
+}
+
+// Thread as a self-contained web page (also what the print/PDF export shows).
+function chatSessionToHtml(name, messages) {
+    const render = (m) => {
+        if (m.role === 'user') return `<p style="white-space:pre-wrap;margin:0">${esc(m.content || '')}</p>`;
+        return (typeof marked !== 'undefined' && marked && marked.parse)
+            ? marked.parse(String(m.content || ''), { breaks: true })
+            : `<p style="white-space:pre-wrap;margin:0">${esc(m.content || '')}</p>`;
+    };
+    const turns = (messages || []).map(m => {
+        const user = m.role === 'user';
+        const meta = [user ? 'You' : 'Assistant', !user && m.model ? m.model : '', m.ts ? Fmt.date(m.ts) : '']
+            .filter(Boolean).map(esc).join(' · ');
+        const tools = Array.isArray(m.tools_used) && m.tools_used.length
+            ? `<div class="tools">Tools used: ${esc(m.tools_used.map(t => t.name).join(', '))}</div>` : '';
+        return `<section class="turn ${user ? 'user' : 'assistant'}"><div class="meta">${meta}</div><div class="bubble">${render(m)}</div>${tools}</section>`;
+    }).join('\n');
+    return `<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(name || 'Chat')}</title>
+<style>
+body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:52rem;margin:2rem auto;padding:0 1rem;color:#1e293b;line-height:1.5}
+h1{font-size:1.4rem;margin-bottom:1.5rem}
+.turn{margin:0 0 1rem;display:flex;flex-direction:column}
+.turn.user{align-items:flex-end}
+.meta{font-size:.72rem;color:#64748b;margin-bottom:.2rem}
+.bubble{padding:.6rem .9rem;border-radius:1rem;max-width:85%;border:1px solid #e2e8f0;background:#fff}
+.turn.user .bubble{background:#0d6efd;color:#fff;border-color:#0d6efd}
+.tools{font-size:.72rem;color:#64748b;margin-top:.2rem}
+table{border-collapse:collapse;width:100%}th,td{border:1px solid #e2e8f0;padding:.2rem .4rem}
+pre{background:#f1f5f9;padding:.5rem;border-radius:.4rem;overflow-x:auto}code{background:#f1f5f9;padding:0 .25rem;border-radius:.25rem}
+@media print{body{margin:0}.bubble{max-width:100%}}
+</style></head><body>
+<h1>${esc(name || 'Chat')}</h1>
+${turns}
+</body></html>`;
+}
+
+// A file name for an exported thread: the name, slugified, plus the date.
+function chatExportFilename(name, ext) {
+    const slug = String(name || 'chat').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'chat';
+    return `${slug}-${new Date().toISOString().slice(0, 10)}.${ext}`;
+}
+
+window.chatIsSendKey = chatIsSendKey;
+window.chatToolsHtml = chatToolsHtml;
+window.chatSessionToMarkdown = chatSessionToMarkdown;
+window.chatSessionToHtml = chatSessionToHtml;
+window.chatExportFilename = chatExportFilename;
+
+const CHAT_TIER_KEY = 'pfmChatTier';
+
 function setupChatPage() {
     const messagesEl = document.getElementById('chatMessages');
     const inputEl    = document.getElementById('chatInput');
@@ -767,10 +854,29 @@ function setupChatPage() {
     const newBtnMob  = document.getElementById('chatNewBtnMobile');
     const sessionsList = document.getElementById('chatSessionsList');
     const threadNameEl = document.getElementById('chatActiveThreadName');
+    const modelSelect  = document.getElementById('chatModelSelect');
+    const exportBtn    = document.getElementById('chatExportBtn');
+    const exportMenu   = document.getElementById('chatExportMenu');
     if (!messagesEl || !inputEl) return;
 
     let sessionId = null;
     let sessions = [];
+    // The turns shown in the active thread, in order — the export source.
+    let currentMessages = [];
+    let typingEl = null;
+
+    const EMPTY_HTML = `
+        <div class="chat-empty" id="chatEmpty">
+            <i class="bi bi-robot"></i>
+            <strong>What can I help you with?</strong>
+            <div class="chat-suggestions">
+                <button type="button" class="chat-suggestion">What is my total P&amp;L?</button>
+                <button type="button" class="chat-suggestion">Show my top holdings</button>
+                <button type="button" class="chat-suggestion">How diversified am I?</button>
+                <button type="button" class="chat-suggestion">Where should my next euro go?</button>
+            </div>
+            <span class="text-muted small">Or paste a broker statement and click <strong>Extract</strong>.</span>
+        </div>`;
 
     function scrollBottom() { messagesEl.scrollTop = messagesEl.scrollHeight; }
 
@@ -785,33 +891,75 @@ function setupChatPage() {
         }[c]));
     }
 
-    function appendMessage(role, text, ts = null) {
+    function renderMarkdown(text) {
+        return window.marked ? marked.parse(String(text || ''), { breaks: true }) : escapeHtml(text);
+    }
+
+    // Suggestion chips fill the composer and send.
+    messagesEl.addEventListener('click', (e) => {
+        const chip = e.target.closest('.chat-suggestion');
+        if (chip) { inputEl.value = chip.textContent; autoGrow(); doSend(); }
+        const copy = e.target.closest('.chat-copy');
+        if (copy) {
+            const text = copy.dataset.text || '';
+            (navigator.clipboard ? navigator.clipboard.writeText(text) : Promise.reject())
+                .then(() => notify('Answer copied', 'success'), () => notify('Could not copy', 'warning'));
+        }
+    });
+
+    // meta: {model, tier, tools_used, error}
+    function appendMessage(role, text, ts = null, meta = {}) {
         removeEmpty();
         const isUser = role === 'user';
-        let body, extraStyle;
-        if (isUser) {
-            body = escapeHtml(text);
-            extraStyle = 'white-space:pre-wrap;';
-        } else if (window.marked) {
-            body = marked.parse(String(text || ''), { breaks: true });
-            extraStyle = '';
-        } else {
-            body = escapeHtml(text);
-            extraStyle = 'white-space:pre-wrap;';
-        }
-        const tsHtml = ts
-            ? `<div class="text-muted ${isUser ? 'text-end' : ''}" style="font-size:0.7rem;">${Fmt.date(ts)}</div>`
-            : '';
+        const isError = !!meta.error;
+        const bubbleClass = isUser ? 'chat-bubble-user' : (isError ? 'chat-bubble-error' : 'chat-bubble-assistant');
+        const body = isUser || isError ? escapeHtml(text) : renderMarkdown(text);
+        const metaBits = [];
+        if (ts) metaBits.push(`<span>${esc(Fmt.date(ts))}</span>`);
+        if (!isUser && meta.model) metaBits.push(`<span title="Model${meta.tier ? ' (' + esc(meta.tier) + ' tier)' : ''}"><i class="bi bi-cpu me-1"></i>${esc(meta.model)}</span>`);
+        if (!isUser && !isError && text) metaBits.push(`<button type="button" class="chat-copy" title="Copy answer" data-text="${escapeForAttr(text)}"><i class="bi bi-clipboard"></i></button>`);
         const div = document.createElement('div');
-        div.className = `d-flex ${isUser ? 'justify-content-end' : 'justify-content-start'}`;
+        div.className = `chat-row ${isUser ? 'chat-user' : 'chat-assistant'}`;
         div.innerHTML = `
-            <div>
-                <div class="px-3 py-2 rounded-3 chat-bubble ${isUser ? 'bg-primary text-white' : 'chat-bubble-assistant border'}"
-                     style="max-width:80%;word-break:break-word;${extraStyle}">${body}</div>
-                ${tsHtml}
+            <div class="chat-avatar"><i class="bi ${isUser ? 'bi-person-fill' : 'bi-robot'}"></i></div>
+            <div class="chat-body">
+                <div class="chat-bubble ${bubbleClass}">${body}</div>
+                ${metaBits.length ? `<div class="chat-meta">${metaBits.join('')}</div>` : ''}
+                ${isUser ? '' : chatToolsHtml(meta.tools_used)}
             </div>`;
         messagesEl.appendChild(div);
+        if (!isError) {
+            currentMessages.push({ role, content: text, ts, model: meta.model || null, tier: meta.tier || null, tools_used: meta.tools_used || [] });
+            if (exportBtn) exportBtn.disabled = false;
+        }
         scrollBottom();
+    }
+
+    function showTyping() {
+        hideTyping();
+        removeEmpty();
+        typingEl = document.createElement('div');
+        typingEl.className = 'chat-row chat-assistant';
+        typingEl.innerHTML = `
+            <div class="chat-avatar"><i class="bi bi-robot"></i></div>
+            <div class="chat-body"><div class="chat-bubble chat-bubble-assistant"><span class="chat-typing" aria-label="Thinking"><span></span><span></span><span></span></span></div></div>`;
+        messagesEl.appendChild(typingEl);
+        scrollBottom();
+    }
+
+    function hideTyping() {
+        if (typingEl) { typingEl.remove(); typingEl = null; }
+    }
+
+    function setBusy(busy) {
+        sendBtn.disabled = busy;
+        extractBtn.disabled = busy;
+        sendBtn.innerHTML = busy ? '<span class="spinner-border spinner-border-sm"></span>' : '<i class="bi bi-send-fill"></i>';
+    }
+
+    function autoGrow() {
+        inputEl.style.height = 'auto';
+        inputEl.style.height = Math.min(inputEl.scrollHeight, 192) + 'px';
     }
 
     function appendTransactionCard(transactions) {
@@ -984,15 +1132,18 @@ function setupChatPage() {
 
     async function activateSession(id) {
         sessionId = id;
+        currentMessages = [];
+        if (exportBtn) exportBtn.disabled = true;
         const s = sessions.find(x => x.id === id);
         if (threadNameEl) threadNameEl.textContent = s ? s.name : '';
-        messagesEl.innerHTML = '<div class="text-muted text-center small mt-auto" id="chatEmpty"><i class="bi bi-robot fs-3 d-block mb-2"></i><strong>What can I help you with?</strong><br><span class="text-muted">Try: "What is my total P&L?" or paste a broker statement.</span></div>';
+        messagesEl.innerHTML = EMPTY_HTML;
         renderSessionsList();
         try {
             const { messages } = await window.apiClient.getChatSessionMessages(id);
             if (messages && messages.length) {
                 messagesEl.innerHTML = '';
-                messages.forEach(m => appendMessage(m.role, m.content, m.ts || null));
+                messages.forEach(m => appendMessage(m.role, m.content, m.ts || null,
+                    { model: m.model, tier: m.tier, tools_used: m.tools_used }));
             }
         } catch (e) { /* leave empty state */ }
     }
@@ -1003,66 +1154,160 @@ function setupChatPage() {
         await activateSession(s.id);
     }
 
-    async function doSend() {
-        const text = inputEl.value.trim();
-        if (!text) return;
-        inputEl.value = '';
-        const userTs = new Date().toISOString();
-        appendMessage('user', text, userTs);
-        sendBtn.disabled = true;
-        sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+    // The thread's name after a turn: the auto-title on a first exchange.
+    function applySessionName(name) {
+        const s = sessions.find(x => x.id === sessionId);
+        if (!name || !s || s.name === name) return;
+        s.name = name;
+        if (threadNameEl) threadNameEl.textContent = name;
+        renderSessionsList();
+    }
+
+    function selectedTier() {
+        return modelSelect && modelSelect.style.display !== 'none' && modelSelect.value ? modelSelect.value : null;
+    }
+
+    // One turn: show the question, the typing dots, then the answer with its
+    // model and tools (or the error in its own bubble).
+    async function sendMessage(text) {
+        appendMessage('user', text, new Date().toISOString());
+        setBusy(true);
+        showTyping();
         try {
-            const data = await window.apiClient.sendChat(text, sessionId);
-            appendMessage('assistant', data.answer || '(no response)', new Date().toISOString());
+            const data = await window.apiClient.sendChat(text, sessionId, selectedTier());
+            hideTyping();
+            appendMessage('assistant', data.answer || '(no response)', new Date().toISOString(),
+                { model: data.model, tier: data.tier, tools_used: data.tools_used });
             const s = sessions.find(x => x.id === sessionId);
             if (s) {
                 s.message_count = (s.message_count || 0) + 2;
                 s.last_message_at = new Date().toISOString();
-                renderSessionsList();
             }
+            applySessionName(data.session_name);
+            renderSessionsList();
         } catch (err) {
-            appendMessage('assistant', 'Error: ' + err.message, new Date().toISOString());
+            hideTyping();
+            appendMessage('assistant', 'Error: ' + err.message, new Date().toISOString(), { error: true });
         } finally {
-            sendBtn.disabled = false;
-            sendBtn.innerHTML = '<i class="bi bi-send me-1"></i>Send';
+            setBusy(false);
+            inputEl.focus();
         }
+    }
+
+    async function doSend() {
+        const text = inputEl.value.trim();
+        if (!text || sendBtn.disabled) return;
+        inputEl.value = '';
+        autoGrow();
+        await sendMessage(text);
     }
 
     async function doExtract() {
         const text = inputEl.value.trim();
         if (!text) { notify('Paste a broker statement first.'); return; }
         inputEl.value = '';
+        autoGrow();
         appendMessage('user', '[Broker statement — extracting transactions…]', new Date().toISOString());
-        extractBtn.disabled = true;
-        extractBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+        setBusy(true);
+        showTyping();
         try {
             const data = await window.apiClient.extractTransactions(text);
+            hideTyping();
             if (!data.transactions || data.transactions.length === 0) {
                 appendMessage('assistant', 'No transactions could be extracted from that text.', new Date().toISOString());
             } else {
                 appendTransactionCard(data.transactions);
             }
         } catch (err) {
-            appendMessage('assistant', 'Extraction error: ' + err.message, new Date().toISOString());
+            hideTyping();
+            appendMessage('assistant', 'Extraction error: ' + err.message, new Date().toISOString(), { error: true });
         } finally {
-            extractBtn.disabled = false;
-            extractBtn.innerHTML = '<i class="bi bi-magic me-1"></i>Extract &amp; Import';
+            setBusy(false);
         }
     }
 
     async function doNewChat() {
         const n = sessions.filter(s => s.name.startsWith('New Chat')).length + 1;
         await createAndActivateSession(`New Chat ${n}`);
+        inputEl.focus();
+    }
+
+    function downloadText(filename, text, mime) {
+        const blob = new Blob([text], { type: mime });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = filename;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+
+    function doExport(format) {
+        if (!currentMessages.length) { notify('Nothing to export yet.'); return; }
+        const s = sessions.find(x => x.id === sessionId);
+        const name = s ? s.name : 'Chat';
+        if (format === 'md') {
+            downloadText(chatExportFilename(name, 'md'), chatSessionToMarkdown(name, currentMessages), 'text/markdown;charset=utf-8');
+        } else if (format === 'html') {
+            downloadText(chatExportFilename(name, 'html'), chatSessionToHtml(name, currentMessages), 'text/html;charset=utf-8');
+        } else if (format === 'print') {
+            const w = window.open('', '_blank');
+            if (!w) { notify('Allow pop-ups to print this thread.', 'warning'); return; }
+            w.document.open();
+            w.document.write(chatSessionToHtml(name, currentMessages));
+            w.document.close();
+            w.focus();
+            setTimeout(() => w.print(), 300);
+        }
+    }
+
+    // Model picker: tiers from the server, the choice kept per browser.
+    async function loadModels() {
+        if (!modelSelect) return;
+        try {
+            const data = await window.apiClient.getChatModels();
+            const tiers = data.tiers || [];
+            if (!tiers.length) return;
+            let saved = null;
+            try { saved = localStorage.getItem(CHAT_TIER_KEY); } catch (e) { /* no storage */ }
+            const current = tiers.some(t => t.tier === saved) ? saved : data.default_tier;
+            modelSelect.innerHTML = tiers.map(t =>
+                `<option value="${esc(t.tier)}" ${t.tier === current ? 'selected' : ''}>${esc(t.tier)} · ${esc(t.model)}</option>`).join('');
+            modelSelect.title = tiers.map(t => `${t.tier}: ${t.description} (${t.model})`).join('\n');
+            modelSelect.style.display = '';
+        } catch (e) {
+            // No provider configured, or an old server: send without a tier.
+            modelSelect.style.display = 'none';
+        }
     }
 
     sendBtn.addEventListener('click', doSend);
     extractBtn.addEventListener('click', doExtract);
-    inputEl.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) doSend(); });
+    inputEl.addEventListener('keydown', e => {
+        if (chatIsSendKey(e)) { e.preventDefault(); doSend(); }
+    });
+    inputEl.addEventListener('input', autoGrow);
     if (newBtn) newBtn.addEventListener('click', doNewChat);
     if (newBtnMob) newBtnMob.addEventListener('click', doNewChat);
+    if (modelSelect) modelSelect.addEventListener('change', () => {
+        try { localStorage.setItem(CHAT_TIER_KEY, modelSelect.value); } catch (e) { /* no storage */ }
+    });
+    if (exportMenu) exportMenu.addEventListener('click', (e) => {
+        const item = e.target.closest('[data-export]');
+        if (!item) return;
+        e.preventDefault();
+        doExport(item.dataset.export);
+    });
 
-    // Initialise: load sessions, handle pending context
+    // A thread opened from another page (Research, Portfolio Health) starts
+    // with that page's message as the first turn.
+    async function openPendingContext(pending) {
+        await createAndActivateSession(pending.threadName);
+        await sendMessage(pending.openingMessage);
+    }
+
+    // Initialise: load sessions and models, handle pending context
     (async () => {
+        loadModels();
         try {
             sessions = await window.apiClient.listChatSessions();
         } catch (e) {
@@ -1074,21 +1319,7 @@ function setupChatPage() {
         window._chatPendingContext = null;
 
         if (pending) {
-            await createAndActivateSession(pending.threadName);
-            appendMessage('user', pending.openingMessage, new Date().toISOString());
-            sendBtn.disabled = true;
-            sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-            try {
-                const data = await window.apiClient.sendChat(pending.openingMessage, sessionId);
-                appendMessage('assistant', data.answer || '(no response)', new Date().toISOString());
-                const s = sessions.find(x => x.id === sessionId);
-                if (s) { s.message_count = (s.message_count || 0) + 2; s.last_message_at = new Date().toISOString(); renderSessionsList(); }
-            } catch (err) {
-                appendMessage('assistant', 'Error: ' + err.message, new Date().toISOString());
-            } finally {
-                sendBtn.disabled = false;
-                sendBtn.innerHTML = '<i class="bi bi-send me-1"></i>Send';
-            }
+            await openPendingContext(pending);
         } else if (sessions.length) {
             await activateSession(sessions[0].id);
         } else {
@@ -1100,21 +1331,7 @@ function setupChatPage() {
         const pending = window._chatPendingContext;
         if (!pending) return;
         window._chatPendingContext = null;
-        await createAndActivateSession(pending.threadName);
-        appendMessage('user', pending.openingMessage, new Date().toISOString());
-        sendBtn.disabled = true;
-        sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-        try {
-            const data = await window.apiClient.sendChat(pending.openingMessage, sessionId);
-            appendMessage('assistant', data.answer || '(no response)', new Date().toISOString());
-            const s = sessions.find(x => x.id === sessionId);
-            if (s) { s.message_count = (s.message_count || 0) + 2; s.last_message_at = new Date().toISOString(); renderSessionsList(); }
-        } catch (err) {
-            appendMessage('assistant', 'Error: ' + err.message, new Date().toISOString());
-        } finally {
-            sendBtn.disabled = false;
-            sendBtn.innerHTML = '<i class="bi bi-send me-1"></i>Send';
-        }
+        await openPendingContext(pending);
     };
 }
 

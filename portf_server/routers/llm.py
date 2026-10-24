@@ -18,7 +18,16 @@ from fastapi import APIRouter, HTTPException, status, Depends, Request
 from pydantic import BaseModel, Field
 
 from portf_manager.gemini_client import GeminiClient
-from portf_manager.llm_client import LLMError, LLMResponseError, get_llm_client
+from portf_manager.llm_client import (
+    TIERS,
+    AnthropicLLMClient,
+    LLMError,
+    LLMResponseError,
+    _provider_name,
+    get_llm_client,
+    normalize_tier,
+    resolve_anthropic_model,
+)
 from portf_manager.services.market_data import get_market_data_service
 from portf_manager.services.analytics.screener import (
     get_stock_screener,
@@ -69,22 +78,31 @@ def _get_history(db, session_id: str) -> List[Dict[str, str]]:
         return []
 
 
-def _append_history(db, session_id: str, role: str, content: str) -> None:
+def _append_history(
+    db,
+    session_id: str,
+    role: str,
+    content: str,
+    meta: Optional[Dict[str, Any]] = None,
+) -> None:
     """Append a message to the session history and persist to DB.
 
     Auto-creates the session row if it does not already exist so that callers
-    (including the chat engine) do not need a separate create step.
+    (including the chat engine) do not need a separate create step. ``meta``
+    (model, tier, tools used) is stored on the row so a reloaded thread can
+    show it; only ``content`` is ever replayed to the model.
     """
     try:
         session = db.get_chat_session(session_id)
         history = session["messages"] if session else []
-        history.append(
-            {
-                "role": role,
-                "content": content,
-                "ts": datetime.now(timezone.utc).isoformat(),
-            }
-        )
+        row: Dict[str, Any] = {
+            "role": role,
+            "content": content,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+        if meta:
+            row.update(meta)
+        history.append(row)
         history = history[-_CHAT_HISTORY_MAX:]
         if not session:
             db.create_chat_session(session_id, "New Chat")
@@ -136,6 +154,18 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = None
     symbols: Optional[List[str]] = None
     live: bool = True
+    # Model tier for this answer ("fast" | "main" | "heavy"); the chat
+    # default is "heavy". Ignored by providers without tiers.
+    tier: Optional[str] = None
+
+
+class ToolUse(BaseModel):
+    """One tool call the model made while answering."""
+
+    name: str
+    arguments: Dict[str, Any] = Field(default_factory=dict)
+    ms: int = 0
+    ok: bool = True
 
 
 class ChatResponse(BaseModel):
@@ -146,6 +176,13 @@ class ChatResponse(BaseModel):
     context_summary: Optional[Dict[str, Any]] = None
     recommendations: Optional[List[Dict[str, Any]]] = None
     warnings: Optional[List[str]] = None
+    # Which model answered and which tools it called, for the chat UI.
+    model: Optional[str] = None
+    tier: Optional[str] = None
+    tools_used: List[ToolUse] = Field(default_factory=list)
+    # The thread's name after this turn; set by the auto-title on the first
+    # exchange of a default-named thread, otherwise unchanged.
+    session_name: Optional[str] = None
 
 
 class CreateSessionRequest(BaseModel):
@@ -158,6 +195,58 @@ class RenameSessionRequest(BaseModel):
     """Request body for renaming an existing chat session."""
 
     name: str
+
+
+# The chat answers on the heavy tier unless the request picks another one.
+CHAT_DEFAULT_TIER = "heavy"
+# Threads the UI creates are "New Chat" / "New Chat 3"; only those get an
+# automatic title, a name the user typed is never overwritten.
+DEFAULT_SESSION_NAME = "New Chat"
+_DEFAULT_NAME_RE = re.compile(r"New Chat(?: \d+)?")
+_TITLE_MAX_CHARS = 60
+
+TIER_DESCRIPTIONS = {
+    "fast": "Quick answers, cheapest",
+    "main": "Everyday questions",
+    "heavy": "Deep analysis (default)",
+}
+
+
+def is_default_session_name(name: Optional[str]) -> bool:
+    """True for the placeholder names the UI gives a new thread."""
+    return bool(_DEFAULT_NAME_RE.fullmatch((name or "").strip()))
+
+
+def clean_chat_title(raw: str) -> str:
+    """Reduce a model reply to one short title line.
+
+    Keeps the first non-empty line, drops wrapping quotes, a "Title:" prefix
+    and a trailing full stop, and caps the length at a word boundary. Returns
+    "" when nothing usable is left.
+    """
+    line = next((ln.strip() for ln in (raw or "").splitlines() if ln.strip()), "")
+    line = re.sub(r"^(?:title\s*:\s*)", "", line, flags=re.IGNORECASE)
+    line = line.strip().strip("\"'`“”‘’").strip().rstrip(".").strip()
+    if len(line) > _TITLE_MAX_CHARS:
+        cut = line[:_TITLE_MAX_CHARS]
+        line = (cut.rsplit(" ", 1)[0] if " " in cut else cut).rstrip(" ,;:-")
+    return line
+
+
+def generate_chat_title(question: str, answer: str) -> str:
+    """Ask the fast tier for a 3-6 word thread title; "" if it gives none.
+
+    Runs once per thread, after the first exchange, so the sidebar shows what
+    the thread is about instead of "New Chat 3". Raises LLMError like any
+    other call; the caller decides that a missing title is not a failed chat.
+    """
+    prompt = (
+        "Write a short title (3 to 6 words, no quotes, no trailing period) for "
+        "a chat thread that starts with the exchange below. Answer with the "
+        "title only.\n\n"
+        f"User: {question[:1500]}\n\nAssistant: {answer[:1500]}"
+    )
+    return clean_chat_title(get_llm_client(tier="fast").generate(prompt))
 
 
 # Intent classification (from enhanced version)
@@ -219,17 +308,29 @@ class EnhancedChatEngine:
         self.technical_engine = get_technical_analysis_engine()
         self.fundamental_engine = get_fundamental_analysis_engine()
         # Use the provider-agnostic LLM client
-        self.llm = get_llm_client(tier="heavy")
+        self.llm = get_llm_client(tier=CHAT_DEFAULT_TIER)
+
+    def _client_for(self, tier: Optional[str]):
+        """The LLM client for a request's tier; the engine's own for the default."""
+        if tier is None or tier == CHAT_DEFAULT_TIER:
+            return self.llm
+        return get_llm_client(tier=tier)
 
     async def process_chat_request(
         self, request: ChatRequest, db: Database
     ) -> ChatResponse:
         """Process enhanced chat request with stock advice integration."""
         try:
+            tier = normalize_tier(request.tier or CHAT_DEFAULT_TIER)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e))
+        try:
             session_id = request.session_id or uuid.uuid4().hex[:12]
             # ensure session row exists (auto-create for API callers without a session)
             if not db.get_chat_session(session_id):
-                db.create_chat_session(session_id, "New Chat")
+                db.create_chat_session(session_id, DEFAULT_SESSION_NAME)
+
+            llm = self._client_for(tier)
 
             # Classify intent to determine if we need advanced stock analysis
             intent = IntentClassifier.classify_intent(request.message)
@@ -242,13 +343,25 @@ class EnhancedChatEngine:
             context = await self._build_enhanced_context(request, intent, db)
 
             # Generate response
-            response_text = await self._generate_enhanced_response(
-                request.message, context, session_id, db
+            response_text, tools_used = await self._generate_enhanced_response(
+                request.message, context, session_id, db, llm
             )
 
             # Update session history
+            model = getattr(llm, "model_name", None)
+            if not isinstance(model, str):
+                model = None
             _append_history(db, session_id, "user", request.message)
-            _append_history(db, session_id, "assistant", response_text)
+            _append_history(
+                db,
+                session_id,
+                "assistant",
+                response_text,
+                {"model": model, "tier": tier, "tools_used": tools_used},
+            )
+            session_name = await self._maybe_auto_title(
+                db, session_id, request.message, response_text
+            )
 
             return ChatResponse(
                 session_id=session_id,
@@ -256,6 +369,10 @@ class EnhancedChatEngine:
                 context_summary=self._create_context_summary(context),
                 recommendations=context.get("recommendations"),
                 warnings=context.get("warnings", []),
+                model=model,
+                tier=tier,
+                tools_used=[ToolUse(**t) for t in tools_used],
+                session_name=session_name,
             )
 
         except HTTPException:
@@ -263,6 +380,31 @@ class EnhancedChatEngine:
         except Exception as e:
             logger.error(f"Error processing enhanced chat request: {e}")
             raise _llm_http_exception(e, "Chat")
+
+    async def _maybe_auto_title(
+        self, db: Database, session_id: str, question: str, answer: str
+    ) -> Optional[str]:
+        """Name a default-named thread after its first exchange.
+
+        Returns the thread's current name. A title call that fails is logged
+        and leaves the placeholder name: the answer was already produced and
+        stored, and a cosmetic step must not turn it into a 502.
+        """
+        session = db.get_chat_session(session_id)
+        if not session:
+            return None
+        name = session.get("name")
+        if not is_default_session_name(name) or len(session["messages"]) > 2:
+            return name
+        try:
+            title = await asyncio.to_thread(generate_chat_title, question, answer)
+        except Exception as e:
+            logger.warning("chat title generation failed for %s: %s", session_id, e)
+            return name
+        if not title:
+            return name
+        db.rename_chat_session(session_id, title)
+        return title
 
     def _extract_symbols(self, message: str) -> List[str]:
         """Extract stock symbols from message."""
@@ -604,13 +746,34 @@ class EnhancedChatEngine:
             return "{}"
 
     async def _generate_with_tool_loop(
-        self, message: str, context: Dict[str, Any], session_id: str, db: Database
-    ) -> str:
+        self,
+        message: str,
+        context: Dict[str, Any],
+        session_id: str,
+        db: Database,
+        llm=None,
+    ) -> tuple[str, List[Dict[str, Any]]]:
         """Tool-calling path: up to 2 LLM calls per user message.
 
         Pass 1: LLM may request a tool call.
         Pass 2 (if tool call): execute tool, send result back, get final answer.
+        Returns the answer and the tool calls made (name, arguments, ms, ok).
         """
+        llm = llm or self.llm
+        tools_used: List[Dict[str, Any]] = []
+
+        def _run_tool(name: str, args: dict) -> str:
+            started = time.monotonic()
+            result = execute_tool(name, args, db)
+            tools_used.append(
+                {
+                    "name": name,
+                    "arguments": args or {},
+                    "ms": int((time.monotonic() - started) * 1000),
+                    "ok": not str(result).startswith("Error:"),
+                }
+            )
+            return result
 
         compact = self._build_compact_context(db)
         system_content = (
@@ -632,46 +795,51 @@ class EnhancedChatEngine:
         # into a 502 naming the cause, and nothing is written to the history.
         # Anthropic: several tools per answer. Checked on the class, not the
         # instance, so a MagicMock stand-in keeps the two-pass path.
-        if getattr(type(self.llm), "run_tool_loop", None):
-            return await asyncio.to_thread(
-                self.llm.run_tool_loop,
-                messages,
-                TOOLS,
-                lambda name, args: execute_tool(name, args, db),
+        if getattr(type(llm), "run_tool_loop", None):
+            answer = await asyncio.to_thread(
+                llm.run_tool_loop, messages, TOOLS, _run_tool
             )
-        response = await asyncio.to_thread(
-            self.llm.generate_with_tools, messages, TOOLS
-        )
+            return answer, tools_used
+        response = await asyncio.to_thread(llm.generate_with_tools, messages, TOOLS)
 
         if response.text:
-            return response.text
+            return response.text, tools_used
 
         if response.tool_call:
             tool_result = await asyncio.to_thread(
-                execute_tool, response.tool_call.name, response.tool_call.arguments, db
+                _run_tool, response.tool_call.name, response.tool_call.arguments
             )
-            return await asyncio.to_thread(
-                self.llm.complete_with_tool_result,
+            answer = await asyncio.to_thread(
+                llm.complete_with_tool_result,
                 messages,
                 response.tool_call,
                 tool_result,
                 TOOLS,
             )
+            return answer, tools_used
 
-        return "I wasn't able to generate a response. Please try again."
+        return "I wasn't able to generate a response. Please try again.", tools_used
 
     async def _generate_enhanced_response(
-        self, message: str, context: Dict[str, Any], session_id: str, db: Database
-    ) -> str:
+        self,
+        message: str,
+        context: Dict[str, Any],
+        session_id: str,
+        db: Database,
+        llm=None,
+    ) -> tuple[str, List[Dict[str, Any]]]:
         """Route to tool loop when provider is tool-capable, else use static-context path."""
         from portf_manager.llm_client import ToolCapableLLMClient
 
-        if isinstance(self.llm, ToolCapableLLMClient):
-            return await self._generate_with_tool_loop(message, context, session_id, db)
+        llm = llm or self.llm
+        if isinstance(llm, ToolCapableLLMClient):
+            return await self._generate_with_tool_loop(
+                message, context, session_id, db, llm
+            )
 
         # Existing static-context path (unchanged)
         prompt = self._build_enhanced_prompt(message, context, session_id, db)
-        return await asyncio.to_thread(self.llm.generate, prompt)
+        return await asyncio.to_thread(llm.generate, prompt), []
 
     def _build_enhanced_prompt(
         self, message: str, context: Dict[str, Any], session_id: str, db: Database
@@ -791,6 +959,47 @@ def get_enhanced_chat_engine() -> EnhancedChatEngine:
 # Chat session management endpoints
 # These must appear before @router.post("/chat") to avoid routing shadowing.
 # ---------------------------------------------------------------------------
+
+
+@router.get("/chat/models")
+def list_chat_models(
+    api_key_info: dict = Depends(get_api_key_auth_for_llm),
+):
+    """The model tiers the chat can answer on, with the model each resolves to.
+
+    Only the Anthropic provider maps tiers to different models; for the others
+    every tier names the one configured model, so the picker still shows which
+    model is answering.
+    """
+    try:
+        client = get_llm_client()
+    except Exception as e:
+        # No provider configured is a state the page shows (no picker), not
+        # a failed request: the chat itself reports the reason on first use.
+        return {
+            "provider": None,
+            "available": False,
+            "error": str(e),
+            "default_tier": CHAT_DEFAULT_TIER,
+            "tiered": False,
+            "tiers": [],
+        }
+    tiered = isinstance(client, AnthropicLLMClient)
+    single_model = getattr(client, "model_name", None) or "?"
+    return {
+        "provider": _provider_name(client),
+        "available": True,
+        "default_tier": CHAT_DEFAULT_TIER,
+        "tiered": tiered,
+        "tiers": [
+            {
+                "tier": t,
+                "model": resolve_anthropic_model(t) if tiered else single_model,
+                "description": TIER_DESCRIPTIONS[t],
+            }
+            for t in TIERS
+        ],
+    }
 
 
 @router.get("/chat/sessions")

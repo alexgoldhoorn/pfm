@@ -246,21 +246,38 @@ class TestEnhancedChatEngineToolLoop:
             },
         )
 
-        with patch(
-            "portf_manager.llm_client.ToolCapableLLMClient.__instancecheck__",
-            return_value=True,
-        ):
-            with patch(
+        # The auto-title asks the fast tier after the first exchange.
+        mock_llm.generate.return_value = "Broker overview"
+        mock_llm.model_name = "mock-model"
+
+        with (
+            patch(
+                "portf_manager.llm_client.ToolCapableLLMClient.__instancecheck__",
+                return_value=True,
+            ),
+            patch("portf_server.routers.llm.get_llm_client", return_value=mock_llm),
+            patch(
                 "portf_server.routers.llm.execute_tool", return_value='{"brokers": []}'
-            ) as mock_execute:
-                request = ChatRequest(
-                    message="List my brokers.", session_id="test_sess"
-                )
-                result = asyncio.run(engine.process_chat_request(request, db))
+            ) as mock_execute,
+        ):
+            request = ChatRequest(message="List my brokers.", session_id="test_sess")
+            result = asyncio.run(engine.process_chat_request(request, db))
 
         assert result.answer == "You have 1 broker."
         mock_execute.assert_called_once_with("get_brokers", {}, db)
         mock_llm.complete_with_tool_result.assert_called_once()
+        # The response and the stored turn say which tools ran on which model.
+        assert [t.name for t in result.tools_used] == ["get_brokers"]
+        assert result.tools_used[0].ok is True
+        assert result.model == "mock-model"
+        assert result.tier == "heavy"
+        assert result.session_name == "Broker overview"
+        session = db.get_chat_session("test_sess")
+        assert session["name"] == "Broker overview"
+        stored = session["messages"][-1]
+        assert stored["role"] == "assistant"
+        assert stored["model"] == "mock-model"
+        assert [t["name"] for t in stored["tools_used"]] == ["get_brokers"]
 
 
 class TestGeminiToolCalling:

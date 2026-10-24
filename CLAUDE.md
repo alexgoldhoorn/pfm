@@ -114,7 +114,11 @@ Sonnet / Opus 5.x, `PORTF_ANTHROPIC_<TIER>_MODEL`), never a model slug; no
 the provider there, not only in `.env.local`.
 
 - `EnhancedChatEngine` is lazily initialized — never instantiate it at module level
-  (crashes without an API key).
+  (crashes without an API key). `POST /chat` takes a per-turn `tier` (default
+  heavy) and returns `model`/`tools_used`/`session_name`; the auto-title (fast
+  tier, first exchange only) renames only `New Chat[ n]` placeholders and a
+  failed title is a warning, not a 502. `GET /chat/models` is 200 with
+  `available: false` when no provider is set — never a 5xx (e2e fails on any).
 - Search grounding (`generate_with_search`) exists only on Gemini and Anthropic;
   callers detect it with `hasattr`. All four providers implement
   `ToolCapableLLMClient`; the 18 chat tools in `portf_server/chat_tools.py` call
