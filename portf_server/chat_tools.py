@@ -418,6 +418,118 @@ def _get_goals(db: Database) -> str:
     )
 
 
+@_tool("get_household_finances")
+def _get_household_finances(db: Database) -> str:
+    # The monthly money picture a goal has to fit into: entered cash flow,
+    # measured income and spending from bank statements, this month's budget,
+    # loans and the planned goal contributions. Each block degrades on its own.
+    from datetime import date
+
+    from portf_manager.services import loans as loan_service
+    from portf_manager.services.goals import goals_summary, list_goals_with_progress
+    from portf_manager.services.progress import savings_and_buffer
+
+    today = date.today()
+    out: dict = {"as_of": today.isoformat()}
+
+    try:
+        from portf_server.routers.networth import get_cashflow
+
+        cf = get_cashflow(db=db, api_key_info={})
+        out["entered_monthly_cashflow"] = {
+            "income_eur": cf["income_eur"],
+            "expenses_eur": cf["expenses_eur"],
+            "net_monthly_eur": cf["net_monthly_eur"],
+            "by_category_eur": cf["by_category"],
+            "entries": len(cf["items"]),
+        }
+    except Exception as e:
+        out["entered_monthly_cashflow"] = {"error": str(e)}
+
+    try:
+        from portf_server.routers.analytics import _cash_eur
+
+        start = date(today.year - 1, today.month, 1).isoformat()
+        rows = [
+            {
+                "date": r["date"],
+                "amount_eur": float(r["amount"]) * _fx(r.get("currency") or "EUR"),
+                "category": r.get("category"),
+            }
+            for r in db.list_spending_transactions(start_date=start, is_transfer=False)
+        ]
+        saved = savings_and_buffer(rows, _cash_eur(db), today)
+        n = len(saved["months_used"])
+        saved["avg_monthly_income_eur"] = (
+            round(saved["income_eur"] / n, 2) if n else None
+        )
+        saved["avg_monthly_net_eur"] = (
+            round((saved["income_eur"] - saved["spent_eur"]) / n, 2) if n else None
+        )
+        out["measured_from_bank_statements"] = saved
+    except Exception as e:
+        out["measured_from_bank_statements"] = {"error": str(e)}
+
+    try:
+        from portf_server.routers.budgets import get_budget_summary
+
+        budget = get_budget_summary(db=db, api_key_info={})
+        if budget is None:
+            out["budget_this_month"] = None
+        else:
+            b = budget.model_dump() if hasattr(budget, "model_dump") else dict(budget)
+            out["budget_this_month"] = {
+                "budget_name": b.get("budget_name"),
+                "sections": [
+                    {
+                        k: sec.get(k)
+                        for k in ("key", "label", "planned_total", "actual_total")
+                    }
+                    for sec in b.get("sections") or []
+                ],
+                "net": b.get("net"),
+            }
+    except Exception as e:
+        out["budget_this_month"] = {"error": str(e)}
+
+    try:
+        loans = []
+        for loan in db.get_loans():
+            loans.append(
+                {
+                    "name": loan.get("name"),
+                    "balance_eur": round(loan_service.balance_on(loan, today), 2),
+                    "monthly_payment_eur": loan_service.payment_of(loan),
+                    "annual_rate_pct": loan.get("annual_rate_pct"),
+                    "ends": loan_service.end_date(loan).isoformat(),
+                }
+            )
+        out["loans"] = loans
+        out["loan_payments_monthly_eur"] = round(
+            sum(ln["monthly_payment_eur"] for ln in loans), 2
+        )
+    except Exception as e:
+        out["loans"] = {"error": str(e)}
+
+    try:
+        summary = goals_summary(list_goals_with_progress(db, today))
+        out["goals_planned_monthly_eur"] = summary["planned_monthly_eur"]
+        out["open_goals"] = summary["total"] - summary["achieved"]
+    except Exception as e:
+        out["goals_planned_monthly_eur"] = {"error": str(e)}
+
+    out["notes"] = (
+        "entered_monthly_cashflow is what the user typed on the Net Worth page "
+        "(rough, may be stale); measured_from_bank_statements is what the "
+        "imported statements show over complete months (transfers excluded, "
+        "loan payments and investments count as spending there). A goal is "
+        "realistic when its contribution fits the measured net after the loan "
+        "payments and the other goals; get_deployable_cash gives the cash "
+        "available today."
+    )
+    return _j(out)
+
+
 @_tool("get_tax_estimate")
 def _get_tax_estimate(db: Database, year: Optional[int] = None) -> str:
     from portf_manager.tax_calculator import TaxCalculator
@@ -748,6 +860,11 @@ TOOLS: list[ToolDefinition] = [
     ToolDefinition(
         name="get_goals",
         description="Return the user's savings goals (the Goals page): target, date, planned monthly contribution, progress, projected value, status (achieved/on_track/off_track/overdue), the monthly amount still required, and the actual saving pace since each goal was set.",
+        parameters=[],
+    ),
+    ToolDefinition(
+        name="get_household_finances",
+        description="Return the monthly money picture: the entered monthly cash flow (income, mortgage, other expenses), the income/spending/savings rate measured from imported bank statements over the last complete months with the emergency-fund cover, this month's budget vs actual, the loans (balance, monthly payment, rate, end date) and the monthly contributions the open goals assume. Use it to judge whether a goal, a contribution or a purchase is realistic.",
         parameters=[],
     ),
     ToolDefinition(

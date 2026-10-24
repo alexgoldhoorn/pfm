@@ -122,7 +122,7 @@ the provider there, not only in `.env.local`.
   `available: false` when no provider is set — never a 5xx (e2e fails on any).
 - Search grounding (`generate_with_search`) exists only on Gemini and Anthropic;
   callers detect it with `hasattr`. All four providers implement
-  `ToolCapableLLMClient`; the 19 chat tools in `portf_server/chat_tools.py` call
+  `ToolCapableLLMClient`; the 20 chat tools in `portf_server/chat_tools.py` call
   DB/service functions directly, never HTTP. Chat on Anthropic runs
   `AnthropicLLMClient.run_tool_loop` (several tools per answer, 6 rounds); the
   engine checks for it on the class, so a `MagicMock` LLM keeps the two-pass path.

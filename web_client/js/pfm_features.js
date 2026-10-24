@@ -149,6 +149,17 @@ function goalsSummaryChips(summary, netCashflow) {
 }
 window.goalsSummaryChips = goalsSummaryChips;
 
+// Pure: "40% of your net cash flow" for a goal's planned contribution, or
+// null when the cash flow is unknown or not positive.
+function goalPlannedShareText(g, netCashflow) {
+    const net = parseFloat(netCashflow);
+    const planned = parseFloat((g && g.monthly_contribution_eur) || 0);
+    if (!Number.isFinite(net) || net <= 0 || planned <= 0) return null;
+    const pct = Math.round(planned / net * 100);
+    return pct > 100 ? `more than your net cash flow` : `${pct}% of your net cash flow`;
+}
+window.goalPlannedShareText = goalPlannedShareText;
+
 // Pure: the opening message for "Ask AI" on a goal card. Plain text with
 // the goal's own numbers, so the chat can reason without a tool call and
 // still has get_goals for the rest.
@@ -168,7 +179,7 @@ function goalChatMessage(g) {
         lines.push(since);
     }
     if (g.notes) lines.push(`- Notes: ${g.notes}`);
-    lines.push('', 'Is this goal realistic? What would you change — contribution, date, target or return assumption — and what trade-offs should I weigh against my other goals? Use get_goals for the others.');
+    lines.push('', 'Is this goal realistic given my income, monthly costs and mortgage? Call get_household_finances (my cash flow, measured spending, budget and loans) and get_goals (my other goals) before answering. Then say what you would change — contribution, date, target or return assumption — and which trade-offs I should weigh.');
     return lines.join('\n');
 }
 window.goalChatMessage = goalChatMessage;
@@ -179,8 +190,9 @@ window.askAiAboutGoal = function(id) {
     openChatWithContext(`Goal: ${g.name || id}`, goalChatMessage(g));
 };
 
-function _goalPaceHtml(g) {
+function _goalPaceHtml(g, netCashflow) {
     const pace = goalPaceModel(g);
+    const share = goalPlannedShareText(g, netCashflow);
     if (!pace) {
         return `<div class="small text-muted mt-2"><i class="bi bi-info-circle me-1"></i>No baseline for this goal — edit it and set "net worth when set" to track the pace.</div>`;
     }
@@ -189,13 +201,13 @@ function _goalPaceHtml(g) {
     const gainedHtml = `<span class="${pace.gained >= 0 ? 'text-success' : 'text-danger'}">${sign}${anFmtEur(Math.abs(pace.gained))}</span>`;
     const closed = pace.gapClosedPct == null ? '' : ` · ${pace.gapClosedPct.toFixed(0)}% of the gap closed`;
     if (pace.tooEarly) {
-        return `<div class="small text-muted mt-2">Since ${esc(since)}: ${gainedHtml}${closed}. Pace shows after the first month.</div>`;
+        return `<div class="small text-muted mt-2">Since ${esc(since)}: ${gainedHtml}${closed}. Pace shows after the first month.${share ? ` Planned ${anFmtEur(pace.plannedMonthly)}/mo is ${esc(share)}.` : ''}</div>`;
     }
     const paceCls = pace.level === 'success' ? 'text-success' : pace.level === 'danger' ? 'text-danger' : 'text-muted';
     const needed = pace.requiredMonthly == null ? '' : ` · needs <strong>${anFmtEur(pace.requiredMonthly)}/mo</strong> from now`;
     return `<div class="small mt-2">
         <span class="text-muted">Since ${esc(since)}:</span> ${gainedHtml}${closed}<br>
-        <span class="text-muted">Pace:</span> <strong class="${paceCls}">${anFmtEur(pace.actualMonthly)}/mo</strong> actual · planned ${anFmtEur(pace.plannedMonthly)}/mo${needed}
+        <span class="text-muted">Pace:</span> <strong class="${paceCls}">${anFmtEur(pace.actualMonthly)}/mo</strong> actual · planned ${anFmtEur(pace.plannedMonthly)}/mo${share ? ` <span class="text-muted">(${esc(share)})</span>` : ''}${needed}
     </div>`;
 }
 
@@ -326,7 +338,7 @@ async function loadGoals() {
                                     <div class="fw-semibold">${anFmtEur(g.projected_value_eur)}</div>
                                 </div>
                             </div>
-                            ${isRetire ? '' : _goalPaceHtml(g)}
+                            ${isRetire ? '' : _goalPaceHtml(g, cf ? cf.net_monthly_eur : null)}
                             ${statusNote}
                         </div>
                     </div>
