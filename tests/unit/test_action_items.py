@@ -223,6 +223,31 @@ class TestGoalsOffTrack:
     def test_no_item_when_no_goals(self, test_database):
         assert check_goals_off_track(test_database) == []
 
+    def test_overdue_goal_names_the_passed_date(self, test_database):
+        test_database.create_goal(
+            name="Old Car",
+            target_amount_eur=10_000_000,
+            target_date="2020-01-01",
+            monthly_contribution_eur=100,
+            expected_return_pct=1,
+        )
+        (item,) = check_goals_off_track(test_database)
+        assert item["title"] == 'Goal "Old Car" is overdue'
+        assert "2020-01-01 has passed" in item["detail"]
+        assert "None" not in item["detail"]
+
+    def test_off_track_detail_shows_required_and_planned(self, test_database):
+        test_database.create_goal(
+            name="House",
+            target_amount_eur=10_000_000,
+            target_date="2027-01-01",
+            monthly_contribution_eur=100,
+            expected_return_pct=1,
+        )
+        (item,) = check_goals_off_track(test_database)
+        assert "Required monthly contribution:" in item["detail"]
+        assert "(planned 100 EUR)" in item["detail"]
+
 
 def _budget_activity_this_month(db, amount=25.0):
     """One real spending row this month, so the no-activity guard stays off."""

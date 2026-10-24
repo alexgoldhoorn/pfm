@@ -70,53 +70,210 @@ function setupWatchlistPage() {
 // Goals page
 // ---------------------------------------------------------------------------
 
+// Status → label and colours. Mirrors services/goals.py: achieved beats
+// everything, overdue is an unmet goal whose date has passed.
+const GOAL_STATUS = {
+    achieved:  { label: 'Achieved',  badge: 'bg-success', bar: 'bg-success', icon: 'bi-trophy' },
+    on_track:  { label: 'On track',  badge: 'bg-success', bar: 'bg-success', icon: 'bi-check-lg' },
+    off_track: { label: 'Off track', badge: 'bg-danger',  bar: 'bg-warning', icon: 'bi-x-lg' },
+    overdue:   { label: 'Overdue',   badge: 'bg-danger',  bar: 'bg-danger',  icon: 'bi-clock-history' },
+};
+
+// Pure: the status entry for a goal row (older rows only carry on_track).
+function goalStatusMeta(g) {
+    const key = (g && g.status) || (g && g.on_track ? 'on_track' : 'off_track');
+    return { key, ...(GOAL_STATUS[key] || GOAL_STATUS.off_track) };
+}
+window.goalStatusMeta = goalStatusMeta;
+
+// Pure: 14 → "1 y 2 mo", 7 → "7 mo", 0 → "due".
+function formatMonthsLeft(months) {
+    const m = parseInt(months, 10);
+    if (!Number.isFinite(m)) return '—';
+    if (m <= 0) return 'due';
+    const y = Math.floor(m / 12);
+    const r = m % 12;
+    if (y === 0) return `${r} mo`;
+    return r ? `${y} y ${r} mo` : `${y} y`;
+}
+window.formatMonthsLeft = formatMonthsLeft;
+
+// Pure: the follow-up figures since the goal was set, or null for a goal
+// without a baseline (created before the baseline existed).
+function goalPaceModel(g) {
+    if (!g || g.gained_since_start_eur == null) return null;
+    const tooEarly = g.actual_monthly_eur == null;
+    const required = g.required_monthly_eur;
+    let level = 'muted';
+    if (!tooEarly && g.pace === 'ahead') level = 'success';
+    else if (!tooEarly && g.pace === 'behind') level = 'danger';
+    return {
+        since: g.start_date || null,
+        gained: parseFloat(g.gained_since_start_eur),
+        gapClosedPct: g.gap_closed_pct == null ? null : parseFloat(g.gap_closed_pct),
+        tooEarly,
+        actualMonthly: tooEarly ? null : parseFloat(g.actual_monthly_eur),
+        requiredMonthly: required == null ? null : parseFloat(required),
+        plannedMonthly: parseFloat(g.monthly_contribution_eur || 0),
+        level,
+    };
+}
+window.goalPaceModel = goalPaceModel;
+
+// Pure: the chips of the summary strip on the Goals page. netCashflow is the
+// Net Worth page's net monthly cash flow (null when unknown).
+function goalsSummaryChips(summary, netCashflow) {
+    if (!summary || !summary.total) return [];
+    const chips = [{ text: `${summary.total} goal${summary.total === 1 ? '' : 's'}`, cls: 'text-bg-secondary' }];
+    if (summary.achieved) chips.push({ text: `${summary.achieved} achieved`, cls: 'text-bg-success' });
+    if (summary.on_track) chips.push({ text: `${summary.on_track} on track`, cls: 'text-bg-success' });
+    if (summary.off_track) chips.push({ text: `${summary.off_track} off track`, cls: 'text-bg-danger' });
+    if (summary.overdue) chips.push({ text: `${summary.overdue} overdue`, cls: 'text-bg-danger' });
+    const planned = parseFloat(summary.planned_monthly_eur || 0);
+    if (planned > 0) {
+        const money = v => Fmt.money(v, 'EUR', 0);
+        let text = `${money(planned)}/mo planned across open goals`;
+        let cls = 'text-bg-light border';
+        if (netCashflow != null && Number.isFinite(parseFloat(netCashflow))) {
+            const net = parseFloat(netCashflow);
+            text += ` vs ${money(net)}/mo net cash flow`;
+            // several goals can each assume the whole cash flow — flag it
+            if (planned > net) cls = 'text-bg-warning';
+        }
+        chips.push({ text, cls });
+    }
+    if (summary.next_target_date) {
+        chips.push({ text: `next due ${Fmt.date(summary.next_target_date)}`, cls: 'text-bg-light border' });
+    }
+    return chips;
+}
+window.goalsSummaryChips = goalsSummaryChips;
+
+// Pure: the opening message for "Ask AI" on a goal card. Plain text with
+// the goal's own numbers, so the chat can reason without a tool call and
+// still has get_goals for the rest.
+function goalChatMessage(g) {
+    const money = v => Fmt.money(v, 'EUR', 0);
+    const st = goalStatusMeta(g);
+    const lines = [`I'd like to review my savings goal "${g.name || 'Goal'}".`, ''];
+    lines.push(`- Target: ${money(g.target_amount_eur)} by ${g.target_date ? String(g.target_date).slice(0, 10) : '—'} (${formatMonthsLeft(g.months_left)} left)`);
+    lines.push(`- Current net worth: ${money(g.current_networth_eur)} (${parseFloat(g.progress_pct || 0).toFixed(1)}% of target)`);
+    lines.push(`- Planned contribution: ${money(g.monthly_contribution_eur)}/month at ${parseFloat(g.expected_return_pct || 0)}% assumed return → projected ${money(g.projected_value_eur)} at the target date (${st.label.toLowerCase()})`);
+    if (g.required_monthly_eur != null) lines.push(`- Needed from now: ${money(g.required_monthly_eur)}/month`);
+    const pace = goalPaceModel(g);
+    if (pace) {
+        const sign = pace.gained >= 0 ? '+' : '−';
+        let since = `- Since set${pace.since ? ' on ' + pace.since : ''}: ${sign}${money(Math.abs(pace.gained))}`;
+        if (!pace.tooEarly) since += ` (${money(pace.actualMonthly)}/month actual)`;
+        lines.push(since);
+    }
+    if (g.notes) lines.push(`- Notes: ${g.notes}`);
+    lines.push('', 'Is this goal realistic? What would you change — contribution, date, target or return assumption — and what trade-offs should I weigh against my other goals? Use get_goals for the others.');
+    return lines.join('\n');
+}
+window.goalChatMessage = goalChatMessage;
+
+window.askAiAboutGoal = function(id) {
+    const g = (window._goalsCache || []).find(x => x.id === id);
+    if (!g) { notify('Goal not found'); return; }
+    openChatWithContext(`Goal: ${g.name || id}`, goalChatMessage(g));
+};
+
+function _goalPaceHtml(g) {
+    const pace = goalPaceModel(g);
+    if (!pace) {
+        return `<div class="small text-muted mt-2"><i class="bi bi-info-circle me-1"></i>No baseline for this goal — edit it and set "net worth when set" to track the pace.</div>`;
+    }
+    const since = pace.since ? Fmt.date(pace.since) : 'start';
+    const sign = pace.gained >= 0 ? '+' : '−';
+    const gainedHtml = `<span class="${pace.gained >= 0 ? 'text-success' : 'text-danger'}">${sign}${anFmtEur(Math.abs(pace.gained))}</span>`;
+    const closed = pace.gapClosedPct == null ? '' : ` · ${pace.gapClosedPct.toFixed(0)}% of the gap closed`;
+    if (pace.tooEarly) {
+        return `<div class="small text-muted mt-2">Since ${esc(since)}: ${gainedHtml}${closed}. Pace shows after the first month.</div>`;
+    }
+    const paceCls = pace.level === 'success' ? 'text-success' : pace.level === 'danger' ? 'text-danger' : 'text-muted';
+    const needed = pace.requiredMonthly == null ? '' : ` · needs <strong>${anFmtEur(pace.requiredMonthly)}/mo</strong> from now`;
+    return `<div class="small mt-2">
+        <span class="text-muted">Since ${esc(since)}:</span> ${gainedHtml}${closed}<br>
+        <span class="text-muted">Pace:</span> <strong class="${paceCls}">${anFmtEur(pace.actualMonthly)}/mo</strong> actual · planned ${anFmtEur(pace.plannedMonthly)}/mo${needed}
+    </div>`;
+}
+
+function _goalsSummaryHtml(summary, netCashflow) {
+    const chips = goalsSummaryChips(summary, netCashflow);
+    if (!chips.length) return '';
+    return `<div class="d-flex flex-wrap gap-2 align-items-center">
+        ${chips.map(c => `<span class="badge rounded-pill ${c.cls} fw-normal">${esc(c.text)}</span>`).join('')}
+    </div>`;
+}
+
 async function loadGoals() {
     const list = document.getElementById('goalsList');
     if (!list) return;
+    const summaryEl = document.getElementById('goalsSummary');
     list.innerHTML = '<div class="col-12 text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading…</div>';
     _autofillGoalMonthlyFromCashflow();
     try {
-        const goals = await window.apiClient.getGoals();
-        if (!Array.isArray(goals) || goals.length === 0) {
+        const data = await window.apiClient.getGoalsSummary();
+        const goals = Array.isArray(data.goals) ? data.goals : [];
+        window._goalsCache = goals;
+        if (!goals.length) {
+            if (summaryEl) summaryEl.innerHTML = '';
             list.innerHTML = '<div class="col-12"><p class="text-muted text-center py-4 mb-0">No goals yet. Add one above to start tracking your progress.</p></div>';
             return;
         }
-        const nw = await window.apiClient.getNetworth().catch(() => null);
-        // One readiness fetch per load; a failure just hides the extra line.
-        const readiness = goals.some(g => /retire/i.test(g.name || ''))
-            ? await window.apiClient.getRetirementReadiness().catch(() => null)
-            : null;
+        // Net worth breakdown, cash flow (for the strip) and readiness are all
+        // best-effort: a failure hides that extra, never the goals.
+        const [nw, cf, readiness] = await Promise.all([
+            window.apiClient.getNetworth().catch(() => null),
+            window.apiClient.getCashflow().catch(() => null),
+            goals.some(g => /retire/i.test(g.name || ''))
+                ? window.apiClient.getRetirementReadiness().catch(() => null)
+                : Promise.resolve(null),
+        ]);
+        if (summaryEl) summaryEl.innerHTML = _goalsSummaryHtml(data.summary, cf ? cf.net_monthly_eur : null);
         list.innerHTML = goals.map(g => {
             // A failed readiness fetch keeps the ordinary progress bar.
             const isRetire = /retire/i.test(g.name || '') && readiness !== null;
             const readyLine = isRetire && window.retirementGoalLineHtml
                 ? window.retirementGoalLineHtml(readiness) : '';
             const progress = Math.max(0, Math.min(100, parseFloat(g.progress_pct || 0)));
-            const onTrack = !!g.on_track;
-            // retirement goals show the readiness line instead of progress
-            const trackBadge = isRetire ? '' : onTrack
-                ? '<span class="badge bg-success"><i class="bi bi-check-lg me-1"></i>On track</span>'
-                : '<span class="badge bg-danger"><i class="bi bi-x-lg me-1"></i>Off track</span>';
-            const barCls = onTrack ? 'bg-success' : 'bg-warning';
-            const monthsLeft = g.months_left != null ? g.months_left : '—';
+            const st = goalStatusMeta(g);
+            // retirement goals show the readiness line instead of a verdict
+            const trackBadge = isRetire ? ''
+                : `<span class="badge ${st.badge}"><i class="bi ${st.icon} me-1"></i>${st.label}</span>`;
+            const monthsLeft = formatMonthsLeft(g.months_left);
             const shortfall = parseFloat(g.shortfall_eur || 0);
-            const reqMonthly = parseFloat(g.required_monthly_eur || 0);
-            const offTrackNote = !onTrack && !isRetire
-                ? `<div class="alert alert-warning py-2 small mb-0 mt-2">
+            const reqMonthly = g.required_monthly_eur == null ? null : parseFloat(g.required_monthly_eur);
+            let statusNote = '';
+            if (!isRetire && st.key === 'off_track') {
+                statusNote = `<div class="alert alert-warning py-2 small mb-0 mt-2">
                        <i class="bi bi-exclamation-triangle me-1"></i>
-                       Need <strong>${anFmtEur2(reqMonthly)}/month</strong> to reach this goal
+                       Need <strong>${anFmtEur2(reqMonthly || 0)}/month</strong> to reach this goal
                        ${shortfall > 0 ? `(projected shortfall ${anFmtEur2(shortfall)})` : ''}.
-                   </div>`
-                : '';
+                   </div>`;
+            } else if (!isRetire && st.key === 'overdue') {
+                statusNote = `<div class="alert alert-danger py-2 small mb-0 mt-2">
+                       <i class="bi bi-clock-history me-1"></i>
+                       Target date passed with ${anFmtEur(g.current_networth_eur)} of ${anFmtEur(g.target_amount_eur)}. Move the date or the target, or delete it if it no longer applies.
+                   </div>`;
+            } else if (!isRetire && st.key === 'achieved') {
+                statusNote = `<div class="alert alert-success py-2 small mb-0 mt-2">
+                       <i class="bi bi-trophy me-1"></i>Target reached. Delete the goal, or raise the target to keep going.
+                   </div>`;
+            }
             return `
                 <div class="col-12 col-lg-6">
-                    <div class="card h-100">
+                    <div class="card h-100" id="goalCard${g.id}">
                         <div class="card-body">
-                            <div class="d-flex justify-content-between align-items-start mb-2">
+                            <div class="d-flex justify-content-between align-items-start mb-2 gap-2">
                                 <h5 class="card-title mb-0"><i class="bi bi-bullseye me-2 text-primary"></i>${esc(g.name || 'Goal')}</h5>
-                                <div class="d-flex align-items-center gap-2">
+                                <div class="d-flex align-items-center gap-2 flex-shrink-0">
                                     ${trackBadge}
                                     <div class="btn-group btn-group-sm">
+                                        <button class="btn btn-outline-primary" onclick="window.askAiAboutGoal(${g.id})" title="Discuss this goal in AI Chat">
+                                            <i class="bi bi-robot"></i>
+                                        </button>
                                         <button class="btn btn-outline-secondary" onclick="window.editGoalRow(${g.id})" title="Edit goal">
                                             <i class="bi bi-pencil"></i>
                                         </button>
@@ -126,6 +283,7 @@ async function loadGoals() {
                                     </div>
                                 </div>
                             </div>
+                            ${g.notes ? `<p class="small text-muted mb-2">${esc(g.notes)}</p>` : ''}
                             <div class="d-flex justify-content-between small text-muted mb-1">
                                 <span>${anFmtEur(g.current_networth_eur)} of ${anFmtEur(g.target_amount_eur)}
                                     ${nw ? `<button class="btn btn-sm btn-link p-0 ms-1 align-baseline" type="button" data-bs-toggle="collapse" data-bs-target="#nwBreak${g.id}" aria-expanded="false" title="Where does this number come from?"><i class="bi bi-info-circle"></i></button>` : ''}
@@ -148,7 +306,7 @@ async function loadGoals() {
                                 </table>
                             </div>` : ''}
                             ${isRetire ? `<div class="mb-3 small">${readyLine}</div>` : `<div class="progress mb-3" style="height:12px;">
-                                <div class="progress-bar ${barCls}" role="progressbar" style="width:${progress}%;"></div>
+                                <div class="progress-bar ${st.bar}" role="progressbar" style="width:${progress}%;"></div>
                             </div>`}
                             <div class="row g-2 small">
                                 <div class="col-6">
@@ -156,19 +314,20 @@ async function loadGoals() {
                                     <div class="fw-semibold">${g.target_date ? Fmt.date(g.target_date) : '—'}</div>
                                 </div>
                                 <div class="col-6">
-                                    <div class="text-muted">Months left</div>
-                                    <div class="fw-semibold">${monthsLeft}</div>
+                                    <div class="text-muted">Time left</div>
+                                    <div class="fw-semibold">${esc(monthsLeft)}</div>
                                 </div>
                                 <div class="col-6">
                                     <div class="text-muted">Monthly contribution</div>
-                                    <div class="fw-semibold">${anFmtEur(g.monthly_contribution_eur)}</div>
+                                    <div class="fw-semibold">${anFmtEur(g.monthly_contribution_eur)} <span class="text-muted fw-normal">at ${parseFloat(g.expected_return_pct || 0)}%</span></div>
                                 </div>
                                 <div class="col-6">
                                     <div class="text-muted">Projected at target</div>
                                     <div class="fw-semibold">${anFmtEur(g.projected_value_eur)}</div>
                                 </div>
                             </div>
-                            ${offTrackNote}
+                            ${isRetire ? '' : _goalPaceHtml(g)}
+                            ${statusNote}
                         </div>
                     </div>
                 </div>`;
@@ -205,8 +364,11 @@ window.deleteGoalRow = async function(id, name) {
 };
 
 window.editGoalRow = async function(id) {
-    const goals = await window.apiClient.getGoals().catch(() => []);
-    const g = goals.find(x => x.id === id);
+    let g = (window._goalsCache || []).find(x => x.id === id);
+    if (!g) {
+        const goals = await window.apiClient.getGoals().catch(() => []);
+        g = goals.find(x => x.id === id);
+    }
     if (!g) { notify('Goal not found'); return; }
 
     document.getElementById('editGoalId').value = g.id;
@@ -215,6 +377,14 @@ window.editGoalRow = async function(id) {
     document.getElementById('editGoalDate').value = (g.target_date || '').slice(0, 10);
     document.getElementById('editGoalMonthly').value = g.monthly_contribution_eur || 0;
     document.getElementById('editGoalReturn').value = g.expected_return_pct ?? 6;
+    document.getElementById('editGoalStart').value = g.start_networth_eur == null ? '' : g.start_networth_eur;
+    document.getElementById('editGoalNotes').value = g.notes || '';
+    const startHelp = document.getElementById('editGoalStartHelp');
+    if (startHelp) {
+        startHelp.textContent = g.start_networth_eur == null
+            ? 'Empty: no pace is shown. Enter your net worth when you set this goal, or today\'s to start measuring from now.'
+            : `Measured since ${g.start_date ? Fmt.date(g.start_date) : 'creation'}. Change it to reset the baseline.`;
+    }
     document.getElementById('editGoalStatus').innerHTML = '';
 
     bootstrap.Modal.getOrCreateInstance(document.getElementById('editGoalModal')).show();
@@ -226,12 +396,16 @@ function setupEditGoalModal() {
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
         const id = parseInt(document.getElementById('editGoalId').value);
+        const startRaw = document.getElementById('editGoalStart').value;
         const body = {
             name: document.getElementById('editGoalName').value.trim(),
             target_amount_eur: parseFloat(document.getElementById('editGoalTarget').value),
             target_date: document.getElementById('editGoalDate').value,
             monthly_contribution_eur: parseFloat(document.getElementById('editGoalMonthly').value),
-            expected_return_pct: parseFloat(document.getElementById('editGoalReturn').value)
+            expected_return_pct: parseFloat(document.getElementById('editGoalReturn').value),
+            // empty keeps the stored baseline (the API treats null as "unchanged")
+            start_networth_eur: startRaw === '' ? null : parseFloat(startRaw),
+            notes: document.getElementById('editGoalNotes').value.trim()
         };
         const btn = document.getElementById('editGoalSaveBtn');
         btn.disabled = true;
@@ -258,12 +432,14 @@ function setupGoalsPage() {
     if (!form) return;
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
+        const notesEl = document.getElementById('addGoalNotes');
         const body = {
             name: document.getElementById('addGoalName').value.trim(),
             target_amount_eur: parseFloat(document.getElementById('addGoalTarget').value),
             target_date: document.getElementById('addGoalDate').value,
             monthly_contribution_eur: parseFloat(document.getElementById('addGoalMonthly').value),
-            expected_return_pct: parseFloat(document.getElementById('addGoalReturn').value)
+            expected_return_pct: parseFloat(document.getElementById('addGoalReturn').value),
+            notes: notesEl ? notesEl.value.trim() : ''
         };
         const btn = document.getElementById('addGoalBtn');
         btn.disabled = true;
@@ -282,6 +458,61 @@ function setupGoalsPage() {
         }
     });
 }
+
+// Dashboard card: one line per goal (status, thin bar, pace), hidden when
+// there are no goals. Same GET /goals/summary as the page, so the two agree.
+async function loadDashboardGoals() {
+    const card = document.getElementById('dashGoalsCard');
+    const area = document.getElementById('dashGoalsArea');
+    if (!card || !area) return;
+    let data;
+    try {
+        data = await window.apiClient.getGoalsSummary();
+    } catch (err) {
+        card.style.display = 'none';
+        return;
+    }
+    const goals = (data && Array.isArray(data.goals)) ? data.goals : [];
+    if (!goals.length) {
+        card.style.display = 'none';
+        return;
+    }
+    card.style.display = '';
+    const sub = document.getElementById('dashGoalsSummary');
+    if (sub) {
+        const s = data.summary || {};
+        const parts = [];
+        if (s.achieved) parts.push(`${s.achieved} achieved`);
+        if (s.on_track) parts.push(`${s.on_track} on track`);
+        if (s.off_track) parts.push(`${s.off_track} off track`);
+        if (s.overdue) parts.push(`${s.overdue} overdue`);
+        sub.textContent = parts.join(' · ');
+    }
+    area.innerHTML = goals.map(g => {
+        const st = goalStatusMeta(g);
+        const isRetire = /retire/i.test(g.name || '');
+        const progress = Math.max(0, Math.min(100, parseFloat(g.progress_pct || 0)));
+        const pace = goalPaceModel(g);
+        const bits = [];
+        if (!isRetire && st.key !== 'achieved' && g.required_monthly_eur != null) bits.push(`needs ${fmtEurWhole(g.required_monthly_eur)}/mo`);
+        bits.push(`planned ${fmtEurWhole(g.monthly_contribution_eur || 0)}/mo`);
+        if (pace && !pace.tooEarly) bits.push(`<span class="${pace.level === 'success' ? 'text-success' : pace.level === 'danger' ? 'text-danger' : ''}">actual ${fmtEurWhole(pace.actualMonthly)}/mo</span>`);
+        const verdict = isRetire
+            ? `<a href="#" class="small" onclick="window.navigationManager.showPage('networth'); return false;">readiness <i class="bi bi-arrow-right"></i></a>`
+            : `<span class="badge ${st.badge}">${st.label}</span>`;
+        return `<div class="mb-2">
+            <div class="d-flex justify-content-between align-items-center small gap-2">
+                <span class="text-truncate"><a href="#" class="text-reset text-decoration-none fw-semibold" onclick="window.navigationManager.showPage('goals'); return false;">${esc(g.name || 'Goal')}</a> ${verdict}</span>
+                <span class="text-nowrap text-muted">${fmtEurWhole(g.current_networth_eur)} / ${fmtEurWhole(g.target_amount_eur)} · ${esc(formatMonthsLeft(g.months_left))}</span>
+            </div>
+            ${isRetire ? '' : `<div class="progress" style="height:6px;" title="${progress.toFixed(1)}%">
+                <div class="progress-bar ${st.bar}" style="width:${progress}%"></div>
+            </div>`}
+            <div class="small text-muted">${bits.join(' · ')}</div>
+        </div>`;
+    }).join('');
+}
+window.loadDashboardGoals = loadDashboardGoals;
 
 // ---------------------------------------------------------------------------
 // Action Items — cross-cutting maintenance checklist
@@ -874,6 +1105,7 @@ function setupChatPage() {
                 <button type="button" class="chat-suggestion">Show my top holdings</button>
                 <button type="button" class="chat-suggestion">How diversified am I?</button>
                 <button type="button" class="chat-suggestion">Where should my next euro go?</button>
+                <button type="button" class="chat-suggestion">Am I on track for my goals?</button>
             </div>
             <span class="text-muted small">Or paste a broker statement and click <strong>Extract</strong>.</span>
         </div>`;

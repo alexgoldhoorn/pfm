@@ -74,6 +74,7 @@ window.PAGE_HELP = {
         <li><strong>Return</strong> defaults to lifetime (cost-basis) return. Switching to YTD / 1Y uses daily snapshots, so it only covers the period since snapshots began.</li>
         <li>The <strong>Risk, last 12 months</strong> row shows your return against the benchmark, how far you are below the 12-month high, volatility and Sharpe. Green / amber / red come with a word (Good, Pullback, Behind…); hover a label for the ranges. Volatility is described, not coloured — how much swing is acceptable depends on you. The same numbers, plus more, are on Analytics → Risk.</li>
         <li><strong>Top Positions</strong> and the <strong>allocation donut</strong> reflect current open positions by EUR value, plus a Cash slice.</li>
+        <li>The <strong>Goals</strong> card (shown once you have a goal) gives one line per goal: status, progress towards the target, time left, and the monthly amount needed against what you planned and your actual pace since the goal was set. Click a goal name to open the Goals page.</li>
         <li>The <strong>Needs attention</strong> strip below the KPI tiles combines two groups: <em>price signals</em> (price targets crossed, watchlist buy zones, stale price data) and <em>to-dos</em> from the Action Items page (stale imports, data-quality issues, price-update errors, stale research, off-track goals, Net Worth setup). Click a group to expand it; the × hides it until something changes.</li>
         <li>Hover any chart for exact values — the history chart shows value, cost basis and unrealised gain for each day; donuts show the amount and share of each slice.</li>
         <li><strong>Portfolio Value History</strong> plots actual daily snapshots (past) — cash isn't tracked historically, so it's positions-only, like the current value under Invested above. The <strong>Wealth Simulator</strong> card below it is a projection of the future, not history.</li>
@@ -140,8 +141,12 @@ window.PAGE_HELP = {
     body: `
       <p>Set financial targets and check whether your current net worth plus monthly contributions keep you on track.</p>
       <ul class="mb-2">
+        <li>The strip at the top counts goals per status and adds up the monthly contributions your open goals assume — amber when that is more than your net monthly cash flow, because several goals can't each have the whole of it.</li>
         <li>Each goal projects forward from your current net worth using your <strong>monthly contribution</strong> and an assumed annual <strong>return %</strong> (compounded).</li>
-        <li>Progress compares the projected value at the target date against the target amount.</li>
+        <li>Status: <strong>On track</strong> / <strong>Off track</strong> compare the projected value at the target date with the target; <strong>Achieved</strong> means your net worth is already past the target; <strong>Overdue</strong> means the date passed without reaching it.</li>
+        <li><strong>Since set</strong> shows how your net worth has moved since the goal was created and the share of the gap that closed, and <strong>Pace</strong> compares the actual monthly change with what you planned and with what is still needed from now. It needs the goal's baseline (stored automatically for new goals; older goals get one via Edit → "Net worth when set"), and the first month shows no pace. Net worth includes market moves, so a bad month is not a missed deposit.</li>
+        <li>The <i class="bi bi-robot"></i> button opens AI Chat with the goal's numbers filled in, so you can ask whether it is realistic and what to change. The chat can also read all goals itself (<em>get_goals</em>).</li>
+        <li>Goals also appear as a card on the Dashboard (one line each) and off-track or overdue goals as Action Items.</li>
         <li>The "Monthly €" field is pre-filled with your current net Monthly Cash Flow (income − expenses, from the Net Worth page) when adding a new goal — still yours to edit, and different goals can assume different contributions.</li>
         <li>Click the <i class="bi bi-info-circle"></i> next to a goal's current/target figures to see the breakdown (brokerage + fixed deposits + manual assets − liabilities) behind the current net-worth number — useful when it's lower (or more negative) than you expect.</li>
       </ul>

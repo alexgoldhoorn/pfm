@@ -373,6 +373,51 @@ def _get_next_euro(db: Database, amount: Optional[float] = None) -> str:
     )
 
 
+@_tool("get_goals")
+def _get_goals(db: Database) -> str:
+    # Same rows as the Goals page: projection, status and pace since set.
+    from portf_manager.services.goals import goals_summary, list_goals_with_progress
+
+    goals = list_goals_with_progress(db)
+    fields = (
+        "id",
+        "name",
+        "notes",
+        "target_amount_eur",
+        "target_date",
+        "monthly_contribution_eur",
+        "expected_return_pct",
+        "current_networth_eur",
+        "progress_pct",
+        "months_left",
+        "projected_value_eur",
+        "shortfall_eur",
+        "required_monthly_eur",
+        "status",
+        "start_date",
+        "start_networth_eur",
+        "months_elapsed",
+        "gained_since_start_eur",
+        "gap_closed_pct",
+        "actual_monthly_eur",
+        "pace",
+    )
+    return _j(
+        {
+            "summary": goals_summary(goals),
+            "goals": [{k: g.get(k) for k in fields} for g in goals],
+            "notes": (
+                "status: achieved | on_track | off_track | overdue. "
+                "projected_value_eur assumes the planned monthly contribution "
+                "and expected return from today's net worth. "
+                "actual_monthly_eur is the net-worth change per month since the "
+                "goal was set (null when no baseline or under a month old); "
+                "pace compares it with required_monthly_eur."
+            ),
+        }
+    )
+
+
 @_tool("get_tax_estimate")
 def _get_tax_estimate(db: Database, year: Optional[int] = None) -> str:
     from portf_manager.tax_calculator import TaxCalculator
@@ -699,6 +744,11 @@ TOOLS: list[ToolDefinition] = [
                 "required": False,
             },
         ],
+    ),
+    ToolDefinition(
+        name="get_goals",
+        description="Return the user's savings goals (the Goals page): target, date, planned monthly contribution, progress, projected value, status (achieved/on_track/off_track/overdue), the monthly amount still required, and the actual saving pace since each goal was set.",
+        parameters=[],
     ),
     ToolDefinition(
         name="get_tax_estimate",

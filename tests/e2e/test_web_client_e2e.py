@@ -181,3 +181,68 @@ def test_bad_api_key_keeps_app_hidden(browser, server_url):
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
+
+
+def test_goals_render_on_their_page_and_the_dashboard(page, server_url):
+    """A stored goal shows up as a card, in the summary strip and on the dashboard."""
+    headers = {"X-API-Key": API_KEY}
+    created = []
+    for body in (
+        {
+            "name": "Example Emergency Fund",
+            "target_amount_eur": 1_000_000,
+            "target_date": "2032-01-01",
+            "monthly_contribution_eur": 100,
+            "expected_return_pct": 2,
+            "notes": "Twelve months of expenses",
+        },
+        {
+            "name": "Example Old Goal",
+            "target_amount_eur": 1_000_000,
+            "target_date": "2020-01-01",
+            "monthly_contribution_eur": 100,
+            "expected_return_pct": 2,
+        },
+    ):
+        resp = httpx.post(f"{server_url}/api/v1/goals/", json=body, headers=headers)
+        assert resp.status_code == 201, resp.text
+        created.append(resp.json()["id"])
+    try:
+        page.goto(f"{server_url}/index.html")
+        page.wait_for_load_state("networkidle")
+        page.locator(
+            "#appShell .sidebar-nav-link[data-page='goals']"
+        ).first.dispatch_event("click")
+        page.wait_for_function(
+            "document.querySelectorAll('#goalsList .card').length === 2"
+        )
+        cards = page.locator("#goalsList").inner_text()
+        assert "Example Emergency Fund" in cards
+        assert "Twelve months of expenses" in cards
+        assert "Off track" in cards
+        assert "Overdue" in cards
+        # a goal created today has a baseline but no pace yet
+        assert "Pace shows after the first month" in cards
+        strip = page.locator("#goalsSummary").inner_text()
+        assert "2 goals" in strip
+        assert "1 off track" in strip and "1 overdue" in strip
+        # the Ask AI message carries the goal's numbers
+        msg = page.evaluate(
+            f"goalChatMessage(window._goalsCache.find(g => g.id === {created[0]}))"
+        )
+        assert 'savings goal "Example Emergency Fund"' in msg
+        assert "Notes: Twelve months of expenses" in msg
+
+        page.locator(
+            "#appShell .sidebar-nav-link[data-page='dashboard']"
+        ).first.dispatch_event("click")
+        page.wait_for_function(
+            "document.getElementById('dashGoalsCard').style.display === ''"
+        )
+        dash = page.locator("#dashGoalsArea").inner_text()
+        assert "Example Emergency Fund" in dash and "Example Old Goal" in dash
+        assert "1 off track" in page.locator("#dashGoalsSummary").inner_text()
+        assert page.errors == []
+    finally:
+        for gid in created:
+            httpx.delete(f"{server_url}/api/v1/goals/{gid}", headers=headers)
