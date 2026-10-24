@@ -1,5 +1,23 @@
 # Portfolio Management API - Flow Diagrams
 
+> **Status note (2026-10-23).** This is the original design specification, kept for history. The implementation diverged from it and nothing below has been updated:
+> - Login returns an opaque session token, not a JWT, and there is no `user_sessions`
+>   table; data endpoints are gated router-wide by the API key (`X-API-Key`).
+> - There is no Redis, Alpha Vantage, WebSocket feed or `IntentClassifier`: caching is
+>   the `kv_cache` SQLite table (`portf_manager/cache.py`), prices come from yfinance
+>   (`portf_manager/market.py`, daily cron — `docs/features/prices-market.md`), and chat
+>   runs a provider tool loop (production: Anthropic, `AnthropicLLMClient.run_tool_loop`
+>   with the chat tools in `portf_server/chat_tools.py`), not Gemini intent routing —
+>   see `docs/features/llm.md`.
+> - Positions are not stored or updated on write (`PortfolioEngine.update_portfolio_positions`
+>   does not exist); every holdings/analytics endpoint recomputes them from transactions
+>   via `portf_manager/positions.py::compute_positions`.
+> - The tax flow is broadly right (FIFO over the full history, CSV/PDF), but
+>   `/api/v1/tax/report` additionally needs a Bearer session token; the web client uses
+>   `GET /api/v1/analytics/tax-report` instead (`docs/features/analytics.md`).
+>
+> The current reference is `CLAUDE.md` and `docs/features/*.md`.
+
 ## 1. User Authentication Flow
 
 ```mermaid

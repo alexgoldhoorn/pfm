@@ -1,10 +1,21 @@
 # New API Endpoints: LLM Transaction Parsing & Tax Reporting
 
+> **Historical note (2026-10-23).** This is the original design note for the
+> first LLM and tax endpoints. The LLM route shipped as
+> `POST /api/v1/llm/extract-transactions` (never `/parse`), the provider is
+> chosen by `portf_manager/llm_client.py` (Anthropic in production, not only
+> Gemini), and the whole API now sits behind the `X-API-Key` header. The
+> current reference is `docs/features/llm.md` (extraction, chat) and
+> `docs/features/analytics.md` (`/api/v1/analytics/tax-report`, the IRPF
+> report the web client uses); `GET /api/v1/tax/report` still exists as
+> described below. `test_new_endpoints.py` is gone; the routers are covered by
+> `tests/unit/test_api_routers.py`.
+
 This document describes the newly implemented LLM and Tax endpoints in the Portfolio Management API.
 
 ## LLM Transaction Parsing Endpoint
 
-### POST `/api/v1/llm/parse`
+### POST `/api/v1/llm/extract-transactions`
 
 Parses raw broker statement text into structured transaction objects using AI.
 
@@ -97,7 +108,10 @@ GET /api/v1/tax/report?start_date=2024-01-01&end_date=2024-12-31&symbols=AAPL,GO
 ## Implementation Details
 
 ### Authentication
-Both endpoints require user authentication via Bearer token or API key.
+Both routers are mounted behind the API key dependency (`X-API-Key` header,
+or `Authorization: Bearer <api-key>`). `GET /api/v1/tax/report` additionally
+depends on `get_current_user_id`, i.e. the session token from
+`POST /api/v1/auth/login`.
 
 ### Error Handling
 - **400 Bad Request**: Invalid parameters or date ranges
@@ -141,10 +155,6 @@ curl -X GET "http://localhost:8000/api/v1/tax/report?start_date=2024-01-01&end_d
 
 ## Testing
 
-Run the included test script to verify endpoint functionality:
-
 ```bash
-python test_new_endpoints.py
+uv run pytest tests/unit/test_api_routers.py -v
 ```
-
-This validates model definitions, router setup, and endpoint availability.

@@ -7,7 +7,10 @@ The Portfolio Management API now supports API key authentication for securing no
 - **Simple `X-API-Key` header validation** against the `api_keys` database table
 - **CLI utility** for generating, listing, and managing API keys
 - **Secured endpoints** require valid API keys for access
-- **Public endpoints** (like health checks and asset listings) remain open
+- **Public endpoints** (health check, root, the auth surface) remain open
+- **`SERVER_API_KEY`** env var is auto-seeded into `api_keys` at startup
+  (`portf_server/app.py` lifespan) and handed to the web client by
+  `POST /api/v1/auth/login-key` after a valid username/password login
 
 ## How It Works
 
@@ -91,20 +94,21 @@ curl -H "Authorization: Bearer YOUR_API_KEY_HERE" http://localhost:8000/api/v1/a
 
 ## Protected Endpoints
 
-The following endpoints require API key authentication:
-
-### Assets
-- `POST /api/v1/assets` - Create asset
-- `PUT /api/v1/assets/{id}` - Update asset  
-- `DELETE /api/v1/assets/{id}` - Delete asset
-- `POST /api/v1/assets/{id}/prices` - Add price data
+Every data router is protected at include time in `portf_server/app.py`
+(`dependencies=[Depends(require_api_key_dep)]`), so **all** `/api/v1/*`
+endpoints require an API key — reads included (`GET /api/v1/assets`,
+`GET /api/v1/assets/{id}/prices`, ...). Some endpoints additionally keep a
+local dependency (e.g. `get_api_key_auth_for_assets` in `routers/assets.py`);
+`APIKeyBearer` caches the validation on `request.state`, so one request does
+one DB lookup. `tests/unit/test_auth_coverage.py` enforces the allowlist below.
 
 ### Public Endpoints (No API Key Required)
-- `GET /api/v1/assets` - List assets
-- `GET /api/v1/assets/{id}` - Get asset details
-- `GET /api/v1/assets/{id}/prices` - Get price history
 - `GET /health` - Health check
 - `GET /` - API information
+- `/api/v1/auth/*` - login, `login-key`, registration (registration only with
+  `PORTF_ALLOW_REGISTRATION=true`)
+- `/api/v1/public/summary` - %-only summary, off unless `PORTF_PUBLIC_VIEW=true`
+- `GET /api/v1/notifications/vapid-key` - browsers need it before they have a key
 
 ## Security Features
 
@@ -135,6 +139,8 @@ HTTP Status: `401 Unauthorized`
 2. **APIKeyBearer**: Custom FastAPI security scheme supporting both headers
 3. **require_api_key()**: Dependency factory for mandatory authentication
 4. **optional_api_key()**: Dependency factory for optional authentication
+5. **require_api_key_dep** (`portf_server/dependencies.py`): the router-level
+   dependency used for every data router in `app.py`
 
 ### Integration
 
