@@ -443,8 +443,12 @@ function createPageManager() {
             // Wealth Simulator live preview + Bank Accounts + Spending
             // summary + Budget — independent, non-blocking (a failure in any
             // one must not blank the rest of the dashboard).
-            try { if (window.loadDashboardForecastPreview) window.loadDashboardForecastPreview(totalValue); }
-            catch (e) { console.error('Forecast preview failed:', e); }
+            try {
+                if (window.loadDashboardForecastPreview) {
+                    Promise.resolve(window.loadDashboardForecastPreview(totalValue))
+                        .catch(e => console.error('Forecast preview failed:', e));
+                }
+            } catch (e) { console.error('Forecast preview failed:', e); }
             if (window.loadDashboardBankAccounts) window.loadDashboardBankAccounts();
             if (window.loadDashboardSpending) window.loadDashboardSpending();
             if (window.loadDashboardNetworthHistory) window.loadDashboardNetworthHistory();

@@ -338,7 +338,7 @@ const ACTIONITEMS_CATEGORY_LABELS = {
     import: 'Broker Imports', data_quality: 'Data Quality', errors: 'Errors',
     goals: 'Goals', watchlist: 'Price Alerts', networth: 'Net Worth',
     spending: 'Spending', budget: 'Budget', exposure: 'Fund Exposure',
-    retirement: 'Retirement', allocate: 'Allocation',
+    retirement: 'Retirement', allocate: 'Allocation', forecast: 'Wealth Plan',
 };
 const ACTIONITEMS_SEVERITY_BADGE = {
     high: 'text-bg-danger', medium: 'text-bg-warning', low: 'text-bg-secondary',
@@ -547,7 +547,7 @@ function createNavigationManager() {
                 case 'importexport': if (window.loadImportExportPage) window.loadImportExportPage(); break;
                 case 'portfolios':   window.pageManager.loadPortfoliosPage(); break;
                 case 'research':     if (window.loadResearchPage) window.loadResearchPage(); break;
-                case 'forecast':     if (window._fcLoadStartValue) window._fcLoadStartValue(); if (window._fcLoadGoals) window._fcLoadGoals(); break;
+                case 'forecast':     if (window._fcLoadStartValue) window._fcLoadStartValue(); if (window._fcLoadGoals) window._fcLoadGoals(); if (window._fcLoadScenarios) window._fcLoadScenarios(); break;
                 case 'help':         if (window.renderHelpPage) window.renderHelpPage(); break;
                 case 'version':      break;
                 case 'about':        break;
@@ -2691,6 +2691,133 @@ function loadForecastConfig() {
 window.saveForecastConfig = saveForecastConfig;
 window.loadForecastConfig = loadForecastConfig;
 
+// ---------------------------------------------------------------------------
+// Saved scenarios — pure helpers (unit-tested in web_client/js/tests/)
+// ---------------------------------------------------------------------------
+
+// The page's input config (strings, camelCase, the pfmForecastConfig shape)
+// against the API's params (numbers, snake_case). One map, two directions.
+const FORECAST_PARAM_KEYS = {
+    cashAmount: 'cash_amount', cashRate: 'cash_rate_pct',
+    stocksAmount: 'stocks_amount', stocksRate: 'stocks_rate_pct', stocksVol: 'stocks_vol_pct',
+    stocksContribution: 'stocks_contribution_monthly',
+    bondsAmount: 'bonds_amount', bondsRate: 'bonds_rate_pct',
+    mortgagePrincipal: 'mortgage_principal', mortgageRate: 'mortgage_rate_pct',
+    monthlyPayment: 'mortgage_payment_monthly',
+    years: 'years', confidence: 'confidence_z',
+};
+const FORECAST_PARAM_DEFAULTS = {
+    cash_amount: 0, cash_rate_pct: 1.5, stocks_amount: 0, stocks_rate_pct: 8, stocks_vol_pct: 16,
+    stocks_contribution_monthly: 0, bonds_amount: 0, bonds_rate_pct: 4,
+    mortgage_principal: 0, mortgage_rate_pct: 3.5, mortgage_payment_monthly: 0,
+    years: 30, confidence_z: 0.674,
+};
+
+function forecastParamsFromInputs(cfg) {
+    const out = {};
+    Object.entries(FORECAST_PARAM_KEYS).forEach(([inputKey, paramKey]) => {
+        const raw = cfg ? cfg[inputKey] : undefined;
+        const n = paramKey === 'years' ? parseInt(raw, 10) : parseFloat(raw);
+        out[paramKey] = Number.isFinite(n) ? n : FORECAST_PARAM_DEFAULTS[paramKey];
+    });
+    return out;
+}
+window.forecastParamsFromInputs = forecastParamsFromInputs;
+
+function forecastInputsFromParams(params) {
+    const out = {};
+    Object.entries(FORECAST_PARAM_KEYS).forEach(([inputKey, paramKey]) => {
+        const v = params && params[paramKey] != null ? params[paramKey] : FORECAST_PARAM_DEFAULTS[paramKey];
+        out[inputKey] = String(v);
+    });
+    return out;
+}
+window.forecastInputsFromParams = forecastInputsFromParams;
+
+// runProjection() with the API's params object instead of 13 positionals.
+function runProjectionFromParams(p) {
+    const q = Object.assign({}, FORECAST_PARAM_DEFAULTS, p || {});
+    return runProjection(
+        q.cash_amount, q.cash_rate_pct, q.stocks_amount, q.stocks_rate_pct,
+        q.bonds_amount, q.bonds_rate_pct, q.mortgage_principal, q.mortgage_rate_pct,
+        q.mortgage_payment_monthly, q.years, q.confidence_z, q.stocks_vol_pct / 100,
+        q.stocks_contribution_monthly
+    );
+}
+window.runProjectionFromParams = runProjectionFromParams;
+
+const WEALTH_TRACKING_STATUS = {
+    on_track:    { label: 'On track',          cls: 'bg-success' },
+    ahead:       { label: 'Ahead of plan',     cls: 'bg-primary' },
+    behind:      { label: 'Behind plan',       cls: 'bg-warning text-dark' },
+    too_early:   { label: 'Too early to tell', cls: 'bg-secondary' },
+    no_baseline: { label: 'No baseline',       cls: 'bg-secondary' },
+};
+
+function wealthTrackingBadgeHtml(status) {
+    const st = WEALTH_TRACKING_STATUS[status] || WEALTH_TRACKING_STATUS.no_baseline;
+    return `<span class="badge ${st.cls}">${st.label}</span>`;
+}
+window.wealthTrackingBadgeHtml = wealthTrackingBadgeHtml;
+
+// "+€1,234" / "−€1,234" — the sign carried outside the money format.
+function signedEurWhole(v) {
+    const n = parseFloat(v) || 0;
+    return (n < 0 ? '−' : '+') + fmtEurWhole(Math.abs(n));
+}
+window.signedEurWhole = signedEurWhole;
+
+// Plan-vs-actual sentence(s) for one scenario's tracking block.
+// compact: a single line for the Dashboard card.
+function wealthTrackingHtml(tr, opts) {
+    const compact = !!(opts && opts.compact);
+    if (!tr) return '';
+    const amt = v => Fmt.amt(esc(signedEurWhole(v)));
+    const since = tr.baseline_date ? Fmt.date(tr.baseline_date) : null;
+    if (tr.status === 'no_baseline') {
+        return `<span class="text-muted">No net worth baseline${since ? ` (saved ${esc(since)})` : ''} — the balance sheet was unavailable when this scenario was saved. Re-baseline to start tracking.</span>`;
+    }
+    if (compact) {
+        return `${wealthTrackingBadgeHtml(tr.status)} <span class="text-muted">${amt(tr.actual_change_eur)} vs ${amt(tr.expected_change_eur)} expected since ${esc(since || '?')}</span>`;
+    }
+    const days = tr.days_elapsed != null ? ` (${tr.days_elapsed} days)` : '';
+    const parts = [
+        `Since <strong>${esc(since || '?')}</strong>${days}: net worth ${amt(tr.actual_change_eur)}, the plan expected ${amt(tr.expected_change_eur)} (likely range ${amt(tr.expected_low_change_eur)} to ${amt(tr.expected_high_change_eur)}).`,
+    ];
+    if (tr.gap_eur != null) {
+        const pct = tr.gap_pct != null ? ` (${tr.gap_pct >= 0 ? '+' : '−'}${Math.abs(tr.gap_pct).toFixed(1)}% of the baseline net worth)` : '';
+        parts.push(`Gap to plan: <strong>${amt(tr.gap_eur)}</strong>${esc(pct)}.`);
+    }
+    if (tr.status === 'too_early') parts.push('<span class="text-muted">A verdict needs at least 30 days of tracking.</span>');
+    if (tr.status === 'behind') parts.push('<span class="text-muted">Check the return assumptions, or re-baseline if the plan has changed.</span>');
+    return parts.join(' ');
+}
+window.wealthTrackingHtml = wealthTrackingHtml;
+
+// The opening message of an AI chat thread about a scenario. `view` is the
+// API's scenario (name, params, summary, tracking, baseline_date); for the
+// unsaved inputs the caller builds the same shape client-side.
+function scenarioChatMessage(view) {
+    const p = view.params || {};
+    const s = view.summary || {};
+    const eur = v => fmtEurWhole(v);
+    const lines = [
+        `Review my Wealth Simulator scenario "${view.name}"${view.baseline_date ? ` (saved ${view.baseline_date}; it is in get_wealth_scenarios)` : ' (not saved yet)'}.`,
+        `Inputs: cash ${eur(p.cash_amount)} at ${p.cash_rate_pct}%, stocks/ETFs ${eur(p.stocks_amount)} at ${p.stocks_rate_pct}% real return with ${p.stocks_vol_pct}% volatility and ${eur(p.stocks_contribution_monthly)}/month added, bonds ${eur(p.bonds_amount)} at ${p.bonds_rate_pct}%` +
+            (p.mortgage_principal > 0 ? `, mortgage ${eur(p.mortgage_principal)} at ${p.mortgage_rate_pct}% paying ${eur(p.mortgage_payment_monthly)}/month` : ', no mortgage') +
+            `; horizon ${p.years} years.`,
+        `Expected net worth at year ${s.horizon_years != null ? s.horizon_years : p.years}: ${eur(s.final_net_worth_eur)} (likely range ${eur(s.final_net_worth_low_eur)} to ${eur(s.final_net_worth_high_eur)})` +
+            (s.mortgage_paid_off_year ? `, mortgage paid off in year ${s.mortgage_paid_off_year}.` : '.'),
+    ];
+    const tr = view.tracking;
+    if (tr && tr.status && tr.status !== 'no_baseline') {
+        lines.push(`Tracking: ${(WEALTH_TRACKING_STATUS[tr.status] || {}).label || tr.status} — net worth ${signedEurWhole(tr.actual_change_eur)} since ${tr.baseline_date} vs ${signedEurWhole(tr.expected_change_eur)} expected.`);
+    }
+    lines.push('Are the return and volatility assumptions reasonable for my actual portfolio and history? Am I on track, and what single change would improve the outcome most?');
+    return lines.join('\n');
+}
+window.scenarioChatMessage = scenarioChatMessage;
+
 function setupForecastPage() {
     // DOM refs - asset allocation inputs
     const cashAmountInput   = document.getElementById('fcCashAmount');
@@ -2724,6 +2851,24 @@ function setupForecastPage() {
     const summaryRow       = document.getElementById('fcSummaryRow');
     const rangeRow         = document.getElementById('fcRangeRow');
     const totalLiquidBadge = document.getElementById('fcTotalLiquidBadge');
+
+    // Saved scenarios
+    const scenariosListEl  = document.getElementById('fcScenariosList');
+    const scenariosCountEl = document.getElementById('fcScenariosCount');
+    const scenarioNameEl   = document.getElementById('fcScenarioName');
+    const scenarioSaveBtn  = document.getElementById('fcScenarioSaveBtn');
+    const scenarioNoteEl   = document.getElementById('fcScenarioNote');
+    const trackingCard     = document.getElementById('fcTrackingCard');
+    const trackingNameEl   = document.getElementById('fcTrackingName');
+    const trackingBadgeEl  = document.getElementById('fcTrackingBadge');
+    const trackingBodyEl   = document.getElementById('fcTrackingBody');
+    const askAiBtn         = document.getElementById('fcAskAiBtn');
+    const compareLegendEl  = document.getElementById('fcCompareLegend');
+    // The API's scenario views, the one last loaded/saved (its tracking card
+    // is shown), and the ids overlaid on the chart for comparison.
+    let _fcScenarios = [];
+    let _fcActiveId = null;
+    const _fcCompare = new Set();
 
     if (!runBtn) return;
 
@@ -2830,9 +2975,11 @@ function setupForecastPage() {
             mortgageMinNote.textContent = 'Leave at 0 if no mortgage.';
         }
     }
-    // SVG chart rendering
-    function renderChart(projResult, totalStarting, years, goals) {
+    // SVG chart rendering. `compare` is [{name, data}] — other saved
+    // scenarios' expected paths, drawn as dashed lines over this projection.
+    function renderChart(projResult, totalStarting, years, goals, compare) {
         const { data, mortgagePaidOffYear } = projResult;
+        compare = compare || [];
         const container = document.getElementById('fcChartContainer');
         const W = container.clientWidth || 600;
         const H = 340;
@@ -2840,8 +2987,11 @@ function setupForecastPage() {
         const innerW = W - PAD.left - PAD.right;
         const innerH = H - PAD.top - PAD.bottom;
 
-        const allVals = data.flatMap(p => [p.netWorthHigh, p.netWorthLow, p.mortgage, 0]);
-        const axisCap = projectionAxisMax(data, 2.5, data.map(p => p.mortgage));
+        // A compared scenario's expected path counts towards the axis (it is
+        // a line to read, not a band), so it is never clipped away.
+        const compareVals = compare.flatMap(c => c.data.filter(p => p.year <= years).map(p => p.netWorth));
+        const allVals = data.flatMap(p => [p.netWorthHigh, p.netWorthLow, p.mortgage, 0]).concat(compareVals);
+        const axisCap = projectionAxisMax(data, 2.5, data.map(p => p.mortgage).concat(compareVals));
         const naturalMax = axisCap.max;
         const naturalMin = Math.min(...allVals, 0);
 
@@ -2917,6 +3067,20 @@ function setupForecastPage() {
                      stroke="currentColor" stroke-opacity="0.45" stroke-width="1" stroke-dasharray="3 3"/>`
             : '';
 
+        // Compared scenarios: dashed expected paths, labelled at their end.
+        const COMPARE_COLORS = ['var(--viz-6)', 'var(--viz-2)', 'var(--viz-5)', 'var(--viz-3)'];
+        const compareLines = compare.map((c, i) => {
+            const color = COMPARE_COLORS[i % COMPARE_COLORS.length];
+            const pts = c.data.filter(p => p.year <= years);
+            if (pts.length < 2) return '';
+            const d = pts.map((p, j) => (j === 0 ? 'M' : 'L') + xScale(p.year).toFixed(1) + ',' + yScale(p.netWorth).toFixed(1)).join(' ');
+            const last = pts[pts.length - 1];
+            return `
+                <path d="${d}" fill="none" style="stroke:${color}" stroke-width="1.8" stroke-dasharray="6 3" stroke-linejoin="round"/>
+                <text x="${(xScale(last.year) - 6).toFixed(1)}" y="${(yScale(last.netWorth) - 6).toFixed(1)}" text-anchor="end" font-size="10" style="fill:${color}">${esc(c.name)}</text>`;
+        }).join('');
+        if (compareLegendEl) compareLegendEl.classList.toggle('d-none', compare.length === 0);
+
         const GOAL_COLORS = ['var(--viz-7)', 'var(--viz-4)', 'var(--viz-3)', 'var(--viz-5)'];
         const goalLines = onChartOverlays.map((o, i) => {
             const color = GOAL_COLORS[i % GOAL_COLORS.length];
@@ -2983,6 +3147,9 @@ function setupForecastPage() {
             <!-- Goal target lines -->
             ${goalLines}
 
+            <!-- Compared scenarios -->
+            <g clip-path="url(#fcPlotClip)">${compareLines}</g>
+
             <!-- Starting net worth marker -->
             <line x1="${PAD.left}" y1="${startY.toFixed(1)}" x2="${(PAD.left + innerW).toFixed(1)}" y2="${startY.toFixed(1)}"
                   stroke="currentColor" stroke-opacity="0.4" stroke-width="1" stroke-dasharray="6 4"/>
@@ -3022,7 +3189,11 @@ function setupForecastPage() {
                     { label: `${confPct} range`.trim(), value: `${fmtEurWhole(p.netWorthLow)} – ${fmtEurWhole(p.netWorthHigh)}` },
                 ];
                 if (hasMortgage) rows.push({ label: 'Mortgage left', value: fmtEurWhole(p.mortgage), color: 'var(--viz-8)', dashed: true });
-                if (i > 0) rows.push({ label: 'vs today', value: (p.netWorth - data[0].netWorth >= 0 ? '+' : '−') + fmtEurWhole(Math.abs(p.netWorth - data[0].netWorth)) });
+                if (i > 0) rows.push({ label: 'vs today', value: signedEurWhole(p.netWorth - data[0].netWorth) });
+                compare.forEach((c, k) => {
+                    const cp = c.data[i];
+                    if (cp) rows.push({ label: c.name, value: fmtEurWhole(cp.netWorth), color: COMPARE_COLORS[k % COMPARE_COLORS.length], dashed: true });
+                });
                 return chartTipHtml(p.year === 0 ? 'Today' : `Year ${p.year} (${thisYear + p.year})`, rows);
             },
         });
@@ -3031,6 +3202,32 @@ function setupForecastPage() {
         // so an inline display:none never hid it; swap the class instead.
         chartPlaceholder.classList.remove('d-flex');
         chartPlaceholder.classList.add('d-none');
+    }
+
+    // Everything the inputs hold, in the pfmForecastConfig shape (strings).
+    function collectInputs() {
+        return {
+            cashAmount: cashAmountInput.value,
+            cashRate: cashRateInput.value,
+            stocksAmount: stocksAmountInput.value,
+            stocksRate: stocksRateInput.value,
+            stocksVol: stocksVolInput ? stocksVolInput.value : '16',
+            stocksContribution: stocksContributionInput ? stocksContributionInput.value : '0',
+            bondsAmount: bondsAmountInput.value,
+            bondsRate: bondsRateInput.value,
+            mortgagePrincipal: mortgagePrincipalInput.value,
+            mortgageRate: mortgageRateInput.value,
+            monthlyPayment: monthlyPaymentInput.value,
+            years: yearsSlider.value,
+            confidence: confSelect.value,
+        };
+    }
+
+    // The scenarios ticked for comparison, as chart series.
+    function compareSeries() {
+        return _fcScenarios
+            .filter(sc => _fcCompare.has(sc.id))
+            .map(sc => ({ name: sc.name, data: runProjectionFromParams(sc.params).data }));
     }
 
     // Run forecast
@@ -3049,27 +3246,17 @@ function setupForecastPage() {
         const stocksVol     = stocksVolInput ? (parseFloat(stocksVolInput.value) || 16) / 100 : null;
         const stocksContribution = stocksContributionInput ? (parseFloat(stocksContributionInput.value) || 0) : 0;
 
-        saveForecastConfig({
-            cashAmount: cashAmountInput.value,
-            cashRate: cashRateInput.value,
-            stocksRate: stocksRateInput.value,
-            stocksVol: stocksVolInput ? stocksVolInput.value : '16',
-            stocksContribution: stocksContributionInput ? stocksContributionInput.value : '0',
-            bondsAmount: bondsAmountInput.value,
-            bondsRate: bondsRateInput.value,
-            mortgagePrincipal: mortgagePrincipalInput.value,
-            mortgageRate: mortgageRateInput.value,
-            monthlyPayment: monthlyPaymentInput.value,
-            years: yearsSlider.value,
-            confidence: confSelect.value,
-        });
+        // the stocks amount always tracks live holdings, so it is not persisted
+        const cfg = collectInputs();
+        delete cfg.stocksAmount;
+        saveForecastConfig(cfg);
 
         const proj = runProjection(
             cashAmt, cashRate, stocksAmt, stocksRate, bondsAmt, bondsRate,
             mortPrincipal, mortRate, mortPayment, years, sigma, stocksVol, stocksContribution
         );
 
-        renderChart(proj, cashAmt + stocksAmt + bondsAmt, years, selectedForecastGoals());
+        renderChart(proj, cashAmt + stocksAmt + bondsAmt, years, selectedForecastGoals(), compareSeries());
 
         // Update mortgage payoff badge
         if (proj.mortgagePaidOffYear !== null) {
@@ -3186,6 +3373,236 @@ function setupForecastPage() {
             } catch (e) {
                 if (histNote) histNote.textContent = 'Could not load history: ' + e.message;
             }
+        });
+    }
+
+    // ── Saved scenarios ───────────────────────────────────────────────────
+
+    // Put a scenario's params into the inputs and run it.
+    function applyParams(params) {
+        const v = forecastInputsFromParams(params);
+        cashAmountInput.value = v.cashAmount;
+        cashRateInput.value = v.cashRate;
+        stocksAmountInput.value = v.stocksAmount;
+        stocksRateInput.value = v.stocksRate;
+        if (stocksVolInput) stocksVolInput.value = v.stocksVol;
+        if (stocksContributionInput) stocksContributionInput.value = v.stocksContribution;
+        bondsAmountInput.value = v.bondsAmount;
+        bondsRateInput.value = v.bondsRate;
+        mortgagePrincipalInput.value = v.mortgagePrincipal;
+        mortgageRateInput.value = v.mortgageRate;
+        monthlyPaymentInput.value = v.monthlyPayment;
+        yearsSlider.value = v.years;
+        confSelect.value = v.confidence;
+        if (yearsDisplay) yearsDisplay.textContent = yearsSlider.value;
+        if (startNote) startNote.textContent = 'Stocks value as saved in the scenario — hit refresh for today\'s holdings.';
+        updateTotalLiquidBadge();
+        updateMortgageNote();
+        runForecast();
+    }
+
+    function activeScenario() {
+        return _fcScenarios.find(sc => sc.id === _fcActiveId) || null;
+    }
+
+    function renderTrackingCard() {
+        const sc = activeScenario();
+        if (!trackingCard) return;
+        if (!sc) { trackingCard.classList.add('d-none'); return; }
+        trackingCard.classList.remove('d-none');
+        if (trackingNameEl) trackingNameEl.textContent = sc.name;
+        if (trackingBadgeEl) trackingBadgeEl.innerHTML = wealthTrackingBadgeHtml(sc.tracking && sc.tracking.status);
+        if (trackingBodyEl) trackingBodyEl.innerHTML = `<div class="small">${wealthTrackingHtml(sc.tracking)}</div>`;
+    }
+
+    function renderScenarioList() {
+        if (!scenariosListEl) return;
+        if (scenariosCountEl) scenariosCountEl.textContent = _fcScenarios.length ? String(_fcScenarios.length) : '';
+        if (!_fcScenarios.length) {
+            scenariosListEl.innerHTML = '<span class="text-muted">Nothing saved yet. Set the inputs, then save them under a name to track the plan over time.</span>';
+            return;
+        }
+        scenariosListEl.innerHTML = _fcScenarios.map(sc => {
+            const active = sc.id === _fcActiveId;
+            const sum = sc.summary || {};
+            const tr = sc.tracking || {};
+            return `
+            <div class="d-flex align-items-start gap-2 py-2 border-bottom ${active ? 'fc-scn-active' : ''}" data-id="${sc.id}">
+                <input type="checkbox" class="form-check-input mt-1 flex-shrink-0" data-action="compare" ${_fcCompare.has(sc.id) ? 'checked' : ''} title="Overlay this scenario's expected path on the chart" aria-label="Compare ${esc(sc.name)}">
+                <div class="flex-grow-1" style="min-width:0;">
+                    <div class="d-flex align-items-center gap-1 flex-wrap">
+                        <a href="#" class="fw-semibold text-truncate text-decoration-none" data-action="load" title="Load this scenario into the inputs">${esc(sc.name)}</a>
+                        ${sc.is_primary ? '<i class="bi bi-star-fill text-warning" title="Primary: shown on the Dashboard and watched by Action Items"></i>' : ''}
+                        ${wealthTrackingBadgeHtml(tr.status)}
+                    </div>
+                    <div class="text-muted">Expected in ${esc(String(sum.horizon_years || sc.params.years))}y: ${Fmt.amt(esc(fmtEurWhole(sum.final_net_worth_eur)))} · saved ${esc(sc.baseline_date ? Fmt.date(sc.baseline_date) : '—')}</div>
+                </div>
+                <div class="dropdown flex-shrink-0">
+                    <button type="button" class="btn btn-sm btn-link p-0 text-muted" data-bs-toggle="dropdown" aria-expanded="false" title="Scenario actions"><i class="bi bi-three-dots-vertical"></i></button>
+                    <ul class="dropdown-menu dropdown-menu-end small">
+                        <li><a class="dropdown-item" href="#" data-action="load"><i class="bi bi-box-arrow-in-down me-2"></i>Load into inputs</a></li>
+                        <li><a class="dropdown-item" href="#" data-action="update"><i class="bi bi-save me-2"></i>Update with current inputs</a></li>
+                        <li><a class="dropdown-item" href="#" data-action="primary"><i class="bi ${sc.is_primary ? 'bi-star' : 'bi-star-fill'} me-2"></i>${sc.is_primary ? 'Unset as primary' : 'Set as primary (Dashboard)'}</a></li>
+                        <li><a class="dropdown-item" href="#" data-action="rebaseline"><i class="bi bi-arrow-repeat me-2"></i>Re-baseline (track from today)</a></li>
+                        <li><a class="dropdown-item" href="#" data-action="chat"><i class="bi bi-chat-dots me-2"></i>Ask AI about it</a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><a class="dropdown-item text-danger" href="#" data-action="delete"><i class="bi bi-trash me-2"></i>Delete</a></li>
+                    </ul>
+                </div>
+            </div>`;
+        }).join('');
+    }
+
+    async function loadScenarios() {
+        if (!scenariosListEl) return;
+        try {
+            _fcScenarios = await window.apiClient.getWealthScenarios();
+        } catch (e) {
+            scenariosListEl.innerHTML = `<span class="text-danger">Could not load scenarios: ${esc(e.message)}</span>`;
+            return;
+        }
+        // a scenario deleted elsewhere drops out of the comparison and the card
+        const ids = new Set(_fcScenarios.map(sc => sc.id));
+        Array.from(_fcCompare).forEach(id => { if (!ids.has(id)) _fcCompare.delete(id); });
+        if (_fcActiveId != null && !ids.has(_fcActiveId)) _fcActiveId = null;
+        renderScenarioList();
+        renderTrackingCard();
+    }
+    window._fcLoadScenarios = loadScenarios;
+
+    function scenarioNote(msg, isError) {
+        if (!scenarioNoteEl) return;
+        scenarioNoteEl.textContent = msg;
+        scenarioNoteEl.classList.toggle('text-danger', !!isError);
+    }
+
+    async function saveScenario() {
+        const name = (scenarioNameEl && scenarioNameEl.value || '').trim();
+        if (!name) { notify('Give the scenario a name first.', 'warning'); if (scenarioNameEl) scenarioNameEl.focus(); return; }
+        scenarioSaveBtn.disabled = true;
+        try {
+            const view = await window.apiClient.createWealthScenario({
+                name,
+                params: forecastParamsFromInputs(collectInputs()),
+                // the first plan saved is the one the Dashboard shows
+                is_primary: _fcScenarios.length === 0,
+            });
+            if (scenarioNameEl) scenarioNameEl.value = '';
+            _fcActiveId = view.id;
+            await loadScenarios();
+            runForecastIfShown();
+            scenarioNote(`Saved "${view.name}" — tracking from ${Fmt.date(view.baseline_date)}.`);
+            notify(`Scenario "${view.name}" saved.`, 'success');
+        } catch (e) {
+            scenarioNote(e.message, true);
+            notify(e.message, 'danger');
+        } finally {
+            scenarioSaveBtn.disabled = false;
+        }
+    }
+
+    function runForecastIfShown() {
+        if (chartSvg.style.display !== 'none') runForecast();
+    }
+
+    async function scenarioAction(action, sc) {
+        try {
+            if (action === 'load') {
+                _fcActiveId = sc.id;
+                applyParams(sc.params);
+                renderScenarioList();
+                renderTrackingCard();
+                scenarioNote(`Loaded "${sc.name}".`);
+            } else if (action === 'compare') {
+                if (_fcCompare.has(sc.id)) _fcCompare.delete(sc.id); else _fcCompare.add(sc.id);
+                runForecastIfShown();
+            } else if (action === 'update') {
+                const ok = await confirmDialog({
+                    title: 'Update scenario',
+                    message: `Replace the inputs of "${sc.name}" with the current ones? Tracking restarts from today.`,
+                    confirmLabel: 'Update',
+                });
+                if (!ok) return;
+                await window.apiClient.updateWealthScenario(sc.id, { params: forecastParamsFromInputs(collectInputs()) });
+                _fcActiveId = sc.id;
+                await loadScenarios();
+                runForecastIfShown();
+                notify(`Scenario "${sc.name}" updated.`, 'success');
+            } else if (action === 'primary') {
+                await window.apiClient.updateWealthScenario(sc.id, { is_primary: !sc.is_primary });
+                await loadScenarios();
+            } else if (action === 'rebaseline') {
+                const ok = await confirmDialog({
+                    title: 'Re-baseline scenario',
+                    message: `Track "${sc.name}" from today's net worth instead of ${sc.baseline_date ? Fmt.date(sc.baseline_date) : 'its current baseline'}? The inputs stay as they are.`,
+                    confirmLabel: 'Re-baseline',
+                });
+                if (!ok) return;
+                await window.apiClient.rebaselineWealthScenario(sc.id);
+                await loadScenarios();
+                notify(`"${sc.name}" now tracks from today.`, 'success');
+            } else if (action === 'chat') {
+                openChatWithContext(`Wealth plan: ${sc.name}`, scenarioChatMessage(sc));
+            } else if (action === 'delete') {
+                const ok = await confirmDialog({
+                    title: 'Delete scenario',
+                    message: `Delete "${sc.name}"? Its tracking history is lost.`,
+                    confirmLabel: 'Delete',
+                    danger: true,
+                });
+                if (!ok) return;
+                await window.apiClient.deleteWealthScenario(sc.id);
+                _fcCompare.delete(sc.id);
+                if (_fcActiveId === sc.id) _fcActiveId = null;
+                await loadScenarios();
+                runForecastIfShown();
+                notify(`Scenario "${sc.name}" deleted.`, 'success');
+            }
+        } catch (e) {
+            notify(e.message, 'danger');
+        }
+    }
+
+    if (scenariosListEl) {
+        scenariosListEl.addEventListener('click', (e) => {
+            const el = e.target.closest('[data-action]');
+            if (!el || el.tagName === 'INPUT') return;
+            e.preventDefault();
+            const row = el.closest('[data-id]');
+            const sc = row && _fcScenarios.find(x => x.id === parseInt(row.dataset.id, 10));
+            if (sc) scenarioAction(el.dataset.action, sc);
+        });
+        scenariosListEl.addEventListener('change', (e) => {
+            const el = e.target.closest('input[data-action="compare"]');
+            if (!el) return;
+            const row = el.closest('[data-id]');
+            const sc = row && _fcScenarios.find(x => x.id === parseInt(row.dataset.id, 10));
+            if (sc) scenarioAction('compare', sc);
+        });
+    }
+    if (scenarioSaveBtn) scenarioSaveBtn.addEventListener('click', saveScenario);
+    if (scenarioNameEl) scenarioNameEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); saveScenario(); } });
+
+    // Ask AI: the loaded scenario when there is one, else the current inputs
+    // summarised client-side in the same shape.
+    if (askAiBtn) {
+        askAiBtn.addEventListener('click', () => {
+            const sc = activeScenario();
+            if (sc) { openChatWithContext(`Wealth plan: ${sc.name}`, scenarioChatMessage(sc)); return; }
+            const params = forecastParamsFromInputs(collectInputs());
+            const proj = runProjectionFromParams(params);
+            const last = proj.data[proj.data.length - 1];
+            openChatWithContext('Wealth Simulator', scenarioChatMessage({
+                name: 'current inputs',
+                params,
+                summary: {
+                    horizon_years: params.years,
+                    final_net_worth_eur: last.netWorth,
+                    final_net_worth_low_eur: last.netWorthLow,
+                    final_net_worth_high_eur: last.netWorthHigh,
+                    mortgage_paid_off_year: proj.mortgagePaidOffYear,
+                },
+            }));
         });
     }
 
@@ -3322,11 +3739,43 @@ const DASH_FORECAST_DEFAULTS = {
     years: '30', confidence: '1.96',
 };
 
-// stocksTotalValue: current holdings total (already fetched for the KPI
-// cards) — always live, never read from pfmForecastConfig.
-function loadDashboardForecastPreview(stocksTotalValue) {
+// The primary saved scenario, when there is one, is the plan the card shows:
+// its saved inputs (the baseline the tracking refers to) plus the plan-vs-
+// actual line. Without one the card falls back to the last-run inputs.
+async function loadDashboardForecastPreview(stocksTotalValue) {
     const area = document.getElementById('dashForecastArea');
     if (!area) return;
+    let primary = null;
+    try {
+        const scenarios = await window.apiClient.getWealthScenarios();
+        primary = (scenarios || []).find(sc => sc.is_primary) || null;
+    } catch (e) {
+        // no scenarios reachable: the last-run inputs still make a chart
+    }
+    if (primary) {
+        const years = Math.max(1, parseInt(primary.params.years, 10) || 30);
+        // the card always shows the 50% band, whatever the scenario saved
+        const proj = runProjectionFromParams(Object.assign({}, primary.params, { confidence_z: 0.674 }));
+        const start = proj.data[0].netWorth;
+        if (proj.data.every(pt => pt.netWorth === start && pt.netWorthHigh === start)) {
+            area.innerHTML = '<p class="card-text text-muted small mb-0">The primary scenario has no amounts yet.</p>';
+            return;
+        }
+        renderDashboardForecastChart(area, proj.data, years);
+        area.insertAdjacentHTML('beforeend', `
+            <div class="small mt-2 d-flex flex-wrap align-items-center gap-1" id="dashForecastPlan">
+                <span class="text-muted"><i class="bi bi-star-fill text-warning me-1"></i>${esc(primary.name)}</span>
+                <span class="ms-auto">${wealthTrackingHtml(primary.tracking, { compact: true })}</span>
+            </div>`);
+        return;
+    }
+    loadDashboardForecastFromInputs(area, stocksTotalValue);
+}
+window.loadDashboardForecastPreview = loadDashboardForecastPreview;
+
+// stocksTotalValue: current holdings total (already fetched for the KPI
+// cards) — always live, never read from pfmForecastConfig.
+function loadDashboardForecastFromInputs(area, stocksTotalValue) {
     const cfg = Object.assign({}, DASH_FORECAST_DEFAULTS, loadForecastConfig() || {});
 
     const cashAmt    = parseFloat(cfg.cashAmount)    || 0;
@@ -3361,7 +3810,6 @@ function loadDashboardForecastPreview(stocksTotalValue) {
     );
     renderDashboardForecastChart(area, proj.data, years);
 }
-window.loadDashboardForecastPreview = loadDashboardForecastPreview;
 
 // ---------------------------------------------------------------------------
 // Rebalancing (Holdings page)

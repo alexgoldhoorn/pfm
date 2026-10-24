@@ -163,10 +163,19 @@ window.PAGE_HELP = {
         <li><strong>Goals</strong> — tick any goal to overlay its target on the chart: a dashed line at the target amount, plus a marker at the target date if it falls within the years shown. A target far outside the chart's natural range (e.g. a much larger goal than the current projection) is shown as a small chip above the chart instead of a line, so it doesn't flatten everything else.</li>
       </ul>
 
+      <h6 class="fw-semibold mt-2 mb-1">Saved scenarios</h6>
+      <ul class="small mb-2">
+        <li><strong>Save</strong> stores the inputs under a name (e.g. "Base case", "Pay mortgage faster", "Retire at 60") together with a <strong>baseline</strong>: today's date and your balance-sheet net worth. The first scenario you save becomes the <strong>primary</strong> one (★), shown on the Dashboard and watched by Action Items; change it from a scenario's menu.</li>
+        <li><strong>Load</strong> puts a scenario back into the inputs (the stocks value as saved — hit refresh for today's holdings). <strong>Update with current inputs</strong> overwrites it and restarts its tracking from today.</li>
+        <li>Tick the box next to scenarios to <strong>compare</strong> them: their expected paths are drawn as dashed lines on the chart and appear in the hover tooltip.</li>
+        <li><strong>Plan vs actual</strong> (the card under the chart, for the loaded scenario) compares how your net worth has <em>changed</em> since the baseline with the change the scenario expected over the same days. <strong>On track</strong> means the real change lies inside the scenario's confidence band; <strong>Ahead</strong>/<strong>Behind</strong> means outside it. It works on changes, not levels, because the simulator models liquid assets minus the mortgage while the balance sheet also holds property and other manual lines. A verdict needs 30 days. <strong>Re-baseline</strong> restarts tracking from today without touching the inputs — use it when the plan itself changed (a big purchase, an inheritance).</li>
+        <li><strong>Ask AI</strong> opens a chat thread with the scenario's inputs, expected outcome and tracking; the assistant can also read every saved scenario itself.</li>
+      </ul>
+
       <h6 class="fw-semibold mt-2 mb-1">Chart</h6>
       <ul class="small mb-2">
         <li>The <strong>mean</strong> line is deterministic compound growth. The <strong>shaded band</strong> is the GBM confidence interval, widening over time as uncertainty compounds.</li>
-        <li><strong>95% interval</strong> (default): ~1 in 20 outcomes falls outside the band. <strong>99%</strong> is wider but still not exhaustive — extreme events aren't modelled.</li>
+        <li><strong>50% likely range</strong> (default): half of the simulated outcomes fall inside the band. <strong>95%</strong>: ~1 in 20 outcomes falls outside. <strong>99%</strong> is wider but still not exhaustive — extreme events aren't modelled. Whatever the band, the y-axis stops at 2.5× the expected path so the expected line stays readable.</li>
         <li>Net Worth = cash + stocks + bonds − remaining mortgage balance at each year.</li>
       </ul>
 

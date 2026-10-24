@@ -26,6 +26,7 @@ Per-feature reference for the code as it is today: endpoints, schema, UI wiring 
 - **[Budgeting](features/budgeting.md)**
 - **[Action Items](features/action-items.md)**
 - **[Next-euro allocator](features/allocator.md)**
+- **[Wealth Simulator and saved scenarios](features/wealth-simulator.md)**
 - **[Price updates and market data](features/prices-market.md)**
 - **[Web client](features/web-client.md)**
 - **[Observability: metrics, error tracking, traces](features/observability.md)**

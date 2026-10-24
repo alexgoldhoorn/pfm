@@ -934,3 +934,10 @@ svg[tabindex]:focus-visible { outline: 2px solid var(--viz-1); outline-offset: 4
 }
 .dash-pos-name { max-width: 220px; }
 @media (max-width: 575.98px) { .dash-pos-name { max-width: 42vw; } }
+
+/* Wealth Simulator: the saved scenario currently loaded into the inputs */
+.fc-scn-active {
+    border-left: 3px solid var(--viz-1);
+    padding-left: 0.5rem;
+    margin-left: -0.5rem;
+}
