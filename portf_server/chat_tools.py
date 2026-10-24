@@ -419,6 +419,44 @@ def _get_tax_estimate(db: Database, year: Optional[int] = None) -> str:
     )
 
 
+@_tool("get_wealth_scenarios")
+def _get_wealth_scenarios(db: Database) -> str:
+    # The saved Wealth Simulator scenarios: inputs, expected net worth at the
+    # milestones and whether the real net worth tracks the plan since the
+    # day it was saved. Same service the page and the dashboard use.
+    from portf_manager.services import wealth_scenarios as ws
+
+    views = ws.list_views(db)
+    return _j(
+        {
+            "count": len(views),
+            "notes": [
+                "Returns are the user's assumed long-run REAL returns (after inflation).",
+                "net worth in a scenario = cash + stocks + bonds - mortgage; "
+                "tracking compares the CHANGE since baseline_date in the "
+                "balance-sheet net worth with the change the scenario expected, "
+                "so a status of on_track means the change lies inside the "
+                "scenario's confidence band.",
+                "The primary scenario is the one shown on the dashboard and the "
+                "one the Action Items watch.",
+            ],
+            "scenarios": [
+                {
+                    "id": v["id"],
+                    "name": v["name"],
+                    "description": v["description"],
+                    "is_primary": v["is_primary"],
+                    "params": v["params"],
+                    "baseline_date": v["baseline_date"],
+                    "summary": v["summary"],
+                    "tracking": v["tracking"],
+                }
+                for v in views
+            ],
+        }
+    )
+
+
 @_tool("asset_details")
 def _asset_details(db: Database, symbol: str) -> str:
     asset = db.get_asset_by_symbol(symbol)
@@ -711,6 +749,11 @@ TOOLS: list[ToolDefinition] = [
                 "required": False,
             },
         ],
+    ),
+    ToolDefinition(
+        name="get_wealth_scenarios",
+        description="Return the user's saved Wealth Simulator scenarios: the inputs (amounts, assumed real returns, volatility, monthly contribution, mortgage, horizon), the expected net worth at 5/10 years and at the horizon with its confidence range, the mortgage payoff year, and the tracking since the scenario was saved (expected vs actual change in net worth, status on_track/ahead/behind/too_early). Use it for questions about wealth plans, projections, 'am I on track' or 'what if' assumptions.",
+        parameters=[],
     ),
     ToolDefinition(
         name="asset_details",

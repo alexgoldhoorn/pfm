@@ -289,6 +289,41 @@ _BALANCE_SHEET_DUPLICATE_NOTE = (
 )
 
 
+def check_wealth_scenario(db, today: date | None = None) -> list[dict]:
+    """The primary wealth scenario when the real net worth has fallen behind it.
+
+    Only the primary scenario is a plan to keep; the other saved scenarios
+    are what-ifs and raise nothing.
+    """
+    from portf_manager.services import wealth_scenarios as ws
+
+    rows = [r for r in db.get_wealth_scenarios() if r.get("is_primary")]
+    if not rows:
+        return []
+    view = ws.scenario_view(rows[0], ws.current_net_worth(db), today)
+    tr = view["tracking"]
+    if tr["status"] != "behind":
+        return []
+    return [
+        {
+            "id": f"wealth_scenario:behind:{view['id']}",
+            "category": "forecast",
+            "severity": "medium",
+            "title": f"Wealth plan \"{view['name']}\" is behind its likely range",
+            "detail": (
+                f"Net worth changed {tr['actual_change_eur']:+,.0f} EUR since "
+                f"{tr['baseline_date']}; the plan expected "
+                f"{tr['expected_change_eur']:+,.0f} EUR "
+                f"(likely range {tr['expected_low_change_eur']:+,.0f} to "
+                f"{tr['expected_high_change_eur']:+,.0f}). Check the assumptions "
+                f"or re-baseline the scenario on the Wealth Simulator page."
+            ),
+            "link_page": "forecast",
+            "context": {"scenario_id": view["id"]},
+        }
+    ]
+
+
 def check_balance_sheet_freshness(db, today: date | None = None) -> list[dict]:
     """Balance-sheet lines whose data is too old, and manual duplicates."""
     from portf_manager.services import balance_sheet
@@ -748,6 +783,7 @@ _CHECKS = (
     check_goals_off_track,
     check_balance_sheet_freshness,
     check_retirement_readiness,
+    check_wealth_scenario,
     check_allocation,
     check_price_alerts,
     check_budget_overruns,

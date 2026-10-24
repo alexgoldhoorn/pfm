@@ -28,10 +28,10 @@ def db(tmp_path):
     return d
 
 
-def test_tools_list_has_18_entries():
+def test_tools_list_has_19_entries():
     from portf_server.chat_tools import TOOLS
 
-    assert len(TOOLS) == 18
+    assert len(TOOLS) == 19
 
 
 def test_every_tool_definition_has_a_handler():
@@ -192,3 +192,29 @@ def test_execute_tool_get_next_euro_passes_amount(db):
     ) as next_euro:
         json.loads(execute_tool("get_next_euro", {"amount": 500}, db))
     next_euro.assert_called_once_with(db, amount_eur=500.0)
+
+
+def test_get_wealth_scenarios_returns_saved_plans(db):
+    import json as _json
+
+    from portf_server.chat_tools import execute_tool
+
+    db.create_wealth_scenario(
+        "Base case",
+        _json.dumps({"stocks_amount": 1000, "years": 10}),
+        "2026-01-01",
+        100.0,
+        is_primary=True,
+    )
+    with patch(
+        "portf_manager.services.wealth_scenarios.current_net_worth",
+        return_value=150.0,
+    ):
+        out = _json.loads(execute_tool("get_wealth_scenarios", {}, db))
+    assert out["count"] == 1
+    s = out["scenarios"][0]
+    assert s["name"] == "Base case" and s["is_primary"] is True
+    assert s["params"]["years"] == 10
+    assert s["summary"]["milestones"][-1]["year"] == 10
+    assert s["tracking"]["status"] in {"on_track", "ahead", "behind", "too_early"}
+    assert out["notes"]
