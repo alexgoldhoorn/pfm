@@ -88,9 +88,19 @@ test("goalChatMessage carries the goal's numbers, pace and notes", () => {
     assert.ok(msg.includes("/month actual)"));
     assert.ok(msg.includes("Notes: Example house deposit"));
     assert.ok(msg.includes("get_goals"));
+    assert.ok(msg.includes("get_household_finances"));
+    assert.ok(msg.includes("mortgage"));
     // no baseline, no notes: those lines are simply absent
     const bare = win.goalChatMessage(goal({ gained_since_start_eur: null, required_monthly_eur: null }));
     assert.ok(!bare.includes("Since set"));
     assert.ok(!bare.includes("Needed from now"));
     assert.ok(!bare.includes("Notes:"));
+});
+
+test("goalPlannedShareText reads the contribution against the net cash flow", () => {
+    assert.equal(win.goalPlannedShareText(goal({ monthly_contribution_eur: 500 }), 2000), "25% of your net cash flow");
+    assert.equal(win.goalPlannedShareText(goal({ monthly_contribution_eur: 2500 }), 2000), "more than your net cash flow");
+    assert.equal(win.goalPlannedShareText(goal(), null), null);
+    assert.equal(win.goalPlannedShareText(goal(), 0), null);
+    assert.equal(win.goalPlannedShareText(goal({ monthly_contribution_eur: 0 }), 2000), null);
 });
