@@ -1220,6 +1220,336 @@ async function loadLogsTab() {
 }
 window.loadLogsTab = loadLogsTab;
 
+// ── Follow-up state shared with the server (services/action_item_acks.py) ────
+// A finding (action item, duplicate pair, suspicious row) can be *checked* or
+// *snoozed*; the record lives in app_settings so every device, the AI chat and
+// the MCP tools agree. These helpers are pure and mirror ack_is_active().
+
+// Local calendar day as YYYY-MM-DD (toISOString would shift the date past
+// midnight for anyone east of UTC).
+function localIsoDay(d) {
+    const dt = d ? new Date(d) : new Date();
+    const m = String(dt.getMonth() + 1).padStart(2, '0');
+    const day = String(dt.getDate()).padStart(2, '0');
+    return `${dt.getFullYear()}-${m}-${day}`;
+}
+window.localIsoDay = localIsoDay;
+
+function ackIsActive(ack, today) {
+    if (!ack) return false;
+    if (ack.status === 'checked') return true;
+    if (ack.status === 'snoozed' && ack.until) {
+        const todayStr = typeof today === 'string' ? today.slice(0, 10) : localIsoDay(today);
+        return String(ack.until).slice(0, 10) >= todayStr;
+    }
+    return false;
+}
+window.ackIsActive = ackIsActive;
+
+function activeAckIds(acks, today) {
+    return Object.keys(acks || {}).filter(id => ackIsActive(acks[id], today));
+}
+window.activeAckIds = activeAckIds;
+
+function findingStatus(acks, id, today) {
+    const ack = (acks || {})[id];
+    return ackIsActive(ack, today) ? ack.status : 'open';
+}
+window.findingStatus = findingStatus;
+
+// Attach {status, ack} to every item (server items already carry them for
+// ?status=all; the Net Worth checklist items are computed client-side).
+function annotateActionItems(items, acks, today) {
+    return (items || []).map(i => {
+        const ack = (acks || {})[i.id] || null;
+        return Object.assign({}, i, { ack, status: ackIsActive(ack, today) ? ack.status : 'open' });
+    });
+}
+window.annotateActionItems = annotateActionItems;
+
+function filterActionItems(items, opts) {
+    const o = opts || {};
+    const sev = o.severity || 'all';
+    return (items || []).filter(i =>
+        (o.showResolved || i.status === 'open') && (sev === 'all' || i.severity === sev));
+}
+window.filterActionItems = filterActionItems;
+
+// "checked 20 Oct 2026 · note" / "snoozed until 15 Nov 2026"
+function ackLabel(ack) {
+    if (!ack) return '';
+    if (ack.status === 'snoozed') return `snoozed until ${ack.until ? Fmt.date(ack.until) : '?'}`;
+    const when = ack.at ? Fmt.date(String(ack.at).slice(0, 10)) : '';
+    return `checked${when ? ' ' + when : ''}`;
+}
+window.ackLabel = ackLabel;
+
+// Writes one follow-up record and returns the stored ack (null once reopened).
+async function setFindingStatus(id, status, opts) {
+    const o = opts || {};
+    const resp = await window.apiClient.setActionItemStatus({ id, status, note: o.note, days: o.days, until: o.until });
+    return resp.ack || null;
+}
+window.setFindingStatus = setFindingStatus;
+
+// One-shot move of the pre-2026-10-24 browser-only dismissals to the server,
+// so nothing already waved away reappears. Idempotent: a failed call leaves
+// the keys in place for the next page load.
+let _dismissMigration = null;
+function migrateLocalDismissals() {
+    if (_dismissMigration) return _dismissMigration;
+    _dismissMigration = (async () => {
+        const todo = [];
+        try {
+            JSON.parse(localStorage.getItem('pfmDismissedActionItems') || '[]')
+                .forEach(i => { if (i && i.id) todo.push({ id: i.id, at: i.dismissed_at }); });
+            JSON.parse(localStorage.getItem('pfmDismissedIssues') || '[]')
+                .forEach(i => { if (i && i.key) todo.push({ id: 'dq:' + i.key, at: i.dismissed_at }); });
+        } catch (e) {
+            // Corrupt JSON: nothing worth migrating.
+        }
+        if (!todo.length) return;
+        for (const t of todo) {
+            try {
+                await setFindingStatus(t.id, 'checked', {
+                    note: `Dismissed in this browser${t.at ? ' on ' + String(t.at).slice(0, 10) : ''} (migrated)`,
+                });
+            } catch (e) {
+                _dismissMigration = null;
+                return;
+            }
+        }
+        localStorage.removeItem('pfmDismissedActionItems');
+        localStorage.removeItem('pfmDismissedIssues');
+    })();
+    return _dismissMigration;
+}
+window.migrateLocalDismissals = migrateLocalDismissals;
+
+// ── Chat hand-offs: the opening message of an "Ask AI" thread ───────────────
+const ACTIONITEM_CATEGORY_NAMES = {
+    import: 'Broker Imports', data_quality: 'Data Quality', errors: 'Errors',
+    goals: 'Goals', watchlist: 'Price Alerts', networth: 'Net Worth',
+    spending: 'Spending', budget: 'Budget', exposure: 'Fund Exposure',
+    retirement: 'Retirement', allocate: 'Allocation',
+};
+window.ACTIONITEM_CATEGORY_NAMES = ACTIONITEM_CATEGORY_NAMES;
+
+function actionItemChatPrompt(item) {
+    const i = item || {};
+    const lines = [
+        'Help me follow up on this action item from my Portfolio Manager:',
+        `- Id: ${i.id}`,
+        `- Severity: ${i.severity} · Category: ${ACTIONITEM_CATEGORY_NAMES[i.category] || i.category}`,
+        `- ${i.title}`,
+    ];
+    if (i.detail) lines.push(`- Detail: ${i.detail}`);
+    if (i.ack && i.ack.note) lines.push(`- My earlier note: ${i.ack.note}`);
+    lines.push('',
+        'Use get_action_items, get_diagnostics and the portfolio tools to look at the underlying data, '
+        + 'explain what is going on and what I should do. If it turns out to be fine, offer to mark it '
+        + 'checked with a short note (set_action_item_status) — ask before you do.');
+    return lines.join('\n');
+}
+window.actionItemChatPrompt = actionItemChatPrompt;
+
+function actionItemsChatPrompt(items) {
+    const open = (items || []).filter(i => i.status === 'open' || i.status == null);
+    if (!open.length) {
+        return 'My Action Items list is empty. Call get_action_items and get_diagnostics to confirm nothing '
+            + 'needs attention, then tell me the one thing most worth doing next.';
+    }
+    const lines = [`I have ${open.length} open action item${open.length === 1 ? '' : 's'}. Help me work through them in order of importance:`];
+    open.slice(0, 20).forEach((i, n) => {
+        lines.push(`${n + 1}. [${i.severity}] ${i.title}${i.detail ? ' — ' + i.detail : ''} (id ${i.id})`);
+    });
+    if (open.length > 20) lines.push(`… and ${open.length - 20} more (call get_action_items for the full list).`);
+    lines.push('', 'For each one say whether it needs action, what exactly to do, or whether it can be marked checked. '
+        + 'Ask before calling set_action_item_status.');
+    return lines.join('\n');
+}
+window.actionItemsChatPrompt = actionItemsChatPrompt;
+
+// kind: 'dup' | 'susp' | 'stale'
+function dqFindingChatPrompt(kind, f) {
+    const tx = t => `#${t.id} ${t.date} ${t.type} ${Fmt.num(t.quantity, 0, 4)} @ ${Fmt.num(t.price, 0, 4)}`;
+    if (kind === 'dup') {
+        return [
+            `Possible duplicate transactions (${String(f.label || '').toUpperCase()}) in ${f.tx_a.portfolio} for ${f.tx_a.asset}${f.tx_a.asset_name ? ' (' + f.tx_a.asset_name + ')' : ''}:`,
+            `- ${tx(f.tx_a)}`,
+            `- ${tx(f.tx_b)}`,
+            `Finding id: dq:${f.key}`,
+            '',
+            `Use get_transactions(symbol="${f.tx_a.asset}") to see the surrounding history and judge whether these are the same trade imported twice or two real fills. `
+            + 'If one should be deleted, tell me which and why; if both are legitimate, offer to mark the finding checked with a note (set_action_item_status).',
+        ].join('\n');
+    }
+    if (kind === 'susp') {
+        return [
+            `Suspicious transaction pattern (${f.severity}) on ${f.asset}${f.asset_name ? ' (' + f.asset_name + ')' : ''}: ${f.description}`,
+            `- Date ${f.date}, type ${f.type}${f.transaction_id ? `, transaction #${f.transaction_id}` : ''}`,
+            `Finding id: dq:${f.key}`,
+            '',
+            `Use get_transactions(symbol="${f.asset}") and asset_details to check whether this is a data error (wrong units, missing buy, GBX/GBP) or expected. `
+            + 'Tell me what to fix, or offer to mark it checked with a note (set_action_item_status).',
+        ].join('\n');
+    }
+    return [
+        `The price for ${f.name || f.symbol} (${f.symbol}) is ${f.reason}${f.age_days != null ? `: last price ${f.price_date}, ${f.age_days} days old` : ''}.`,
+        '',
+        'Use get_diagnostics, asset_details and get_quote to work out why (delisted, wrong ticker, no Yahoo data, auto-price off) and what I should do about it.',
+    ].join('\n');
+}
+window.dqFindingChatPrompt = dqFindingChatPrompt;
+
+// ── Diagnostics overview ────────────────────────────────────────────────────
+// Parses the app_logs UTC timestamp; a bare "YYYY-MM-DDTHH:MM:SS" would be
+// read as local time otherwise.
+function utcDate(s) {
+    const str = String(s || '');
+    if (!str) return null;
+    const hasZone = /([zZ]|[+-]\d\d:?\d\d)$/.test(str);
+    const d = new Date(hasZone ? str : str.replace(' ', 'T') + 'Z');
+    return isNaN(d.getTime()) ? null : d;
+}
+window.utcDate = utcDate;
+
+// state: {fresh, runs, dups, susp, logs, acks}; now: Date (injectable).
+// Returns {chips: [{key, tab, tone, label, value}], badges: {price, dq, logs}}.
+function diagOverviewModel(state, now) {
+    const s = state || {};
+    const nowDt = now ? new Date(now) : new Date();
+    const chips = [];
+    const badges = { price: 0, dq: 0, logs: 0 };
+
+    const fresh = s.fresh;
+    if (fresh) {
+        const ageH = fresh.refresh_age_hours;
+        let tone = 'success', label = 'Prices fresh';
+        if (ageH == null || ageH > 48) { tone = 'danger'; label = 'Prices very stale'; }
+        else if (ageH > 30 || fresh.stale_count > 0) { tone = 'warning'; label = 'Prices aging'; }
+        chips.push({ key: 'prices', tab: 'price', tone, label,
+            value: `${relAge(ageH)}${fresh.stale_count ? ` · ${fresh.stale_count} stale` : ''}` });
+        badges.price += fresh.stale_count || 0;
+    } else {
+        chips.push({ key: 'prices', tab: 'price', tone: 'secondary', label: 'Prices', value: 'unavailable' });
+    }
+
+    const run = (s.runs || [])[0];
+    if (run) {
+        const errs = run.error_count || 0;
+        const when = run.finished_at ? Fmt.date(String(run.finished_at).replace(' ', 'T')) : '—';
+        chips.push({ key: 'run', tab: 'price', tone: errs ? 'danger' : 'success', label: 'Last price update',
+            value: `${when} · ${run.updated_count} updated${errs ? ` · ${errs} failed` : ''}` });
+        badges.price += errs;
+    } else {
+        chips.push({ key: 'run', tab: 'price', tone: 'secondary', label: 'Last price update', value: 'no runs yet' });
+    }
+
+    const acks = s.acks || {};
+    const dups = s.dups || [];
+    const susp = s.susp || [];
+    const openDups = dups.filter(d => findingStatus(acks, 'dq:' + d.key, nowDt) === 'open');
+    const openSusp = susp.filter(i => findingStatus(acks, 'dq:' + i.key, nowDt) === 'open');
+    const dqOpen = openDups.length + openSusp.length;
+    const dqChecked = dups.length + susp.length - dqOpen;
+    const serious = openDups.some(d => d.label === 'likely') || openSusp.some(i => i.severity === 'warning');
+    chips.push({ key: 'dq', tab: 'dq', tone: dqOpen ? (serious ? 'danger' : 'warning') : 'success', label: 'Data quality',
+        value: dqOpen
+            ? `${dqOpen} open finding${dqOpen === 1 ? '' : 's'}${dqChecked ? ` · ${dqChecked} checked` : ''}`
+            : (dqChecked ? `all ${dqChecked} checked` : 'no findings') });
+    badges.dq = dqOpen;
+
+    const cutoff = nowDt.getTime() - 24 * 3600 * 1000;
+    let warnings24 = 0, errors24 = 0;
+    (s.logs || []).forEach(e => {
+        const d = utcDate(e.created_at);
+        if (!d || d.getTime() < cutoff) return;
+        const lvl = String(e.level || '').toUpperCase();
+        if (lvl === 'ERROR' || lvl === 'CRITICAL') errors24 += 1;
+        else if (lvl === 'WARNING') warnings24 += 1;
+    });
+    const problems24 = warnings24 + errors24;
+    chips.push({ key: 'logs', tab: 'logs', tone: errors24 ? 'danger' : (problems24 ? 'warning' : 'success'), label: 'Log, last 24 h',
+        value: problems24 ? `${errors24} error${errors24 === 1 ? '' : 's'} · ${warnings24} warning${warnings24 === 1 ? '' : 's'}` : 'no warnings or errors' });
+    badges.logs = problems24;
+
+    return { chips, badges };
+}
+window.diagOverviewModel = diagOverviewModel;
+
+function diagnosticsChatPrompt(state, now) {
+    const s = state || {};
+    const model = diagOverviewModel(s, now);
+    const lines = ['Here is the current state of my Portfolio Manager Diagnostics page:'];
+    model.chips.forEach(c => lines.push(`- ${c.label}: ${c.value}`));
+    const stale = (s.fresh && s.fresh.stale) || [];
+    if (stale.length) {
+        lines.push('Stale or unpriced holdings:');
+        stale.slice(0, 10).forEach(x => lines.push(`  - ${x.name || x.symbol} (${x.symbol}): ${x.reason}${x.age_days != null ? `, ${x.age_days} days` : ''}`));
+        if (stale.length > 10) lines.push(`  - … and ${stale.length - 10} more`);
+    }
+    const run = (s.runs || [])[0];
+    if (run && (run.error_symbols || []).length) {
+        lines.push(`Failed in the last price update: ${run.error_symbols.join(', ')}`);
+        (run.api_errors || []).slice(0, 5).forEach(e => lines.push(`  - ${e}`));
+    }
+    lines.push('',
+        'Call get_diagnostics for the full detail (open duplicate pairs and suspicious rows carry finding ids). '
+        + 'Tell me what matters, what is noise, and what to do first. When I say a finding is fine, record it with set_action_item_status.');
+    return lines.join('\n');
+}
+window.diagnosticsChatPrompt = diagnosticsChatPrompt;
+
+// ── Diagnostics page ────────────────────────────────────────────────────────
+// Everything the page fetched, so the overview, the tab badges and the DQ
+// cards work from one snapshot (Re-run buttons refetch their own part).
+let _diagState = { fresh: null, runs: [], dups: null, susp: null, logs: [], acks: {} };
+
+function _diagTone(tone) {
+    return { success: 'text-bg-success', warning: 'text-bg-warning', danger: 'text-bg-danger' }[tone] || 'text-bg-secondary';
+}
+
+function renderDiagOverview() {
+    const box = document.getElementById('diagOverview');
+    if (!box) return;
+    const { chips, badges } = diagOverviewModel(_diagState);
+    box.innerHTML = chips.map(c => `
+        <button type="button" class="btn btn-sm btn-light border d-inline-flex align-items-center gap-2 py-1" data-diag-open-tab="${esc(c.tab)}" title="Open the ${esc(c.tab === 'dq' ? 'Data Quality' : c.tab === 'logs' ? 'Logs' : 'Price Health')} tab">
+            <span class="badge rounded-pill ${_diagTone(c.tone)}" style="width:.75rem;height:.75rem;padding:0;">&nbsp;</span>
+            <span class="text-muted">${esc(c.label)}</span>
+            <span class="fw-semibold">${esc(c.value)}</span>
+        </button>`).join('');
+    box.querySelectorAll('[data-diag-open-tab]').forEach(btn => {
+        btn.addEventListener('click', () => showDiagTab(btn.dataset.diagOpenTab));
+    });
+    const set = (id, n, danger) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = n ? String(n) : '';
+        el.className = `badge rounded-pill ms-1 ${danger ? 'text-bg-danger' : 'text-bg-warning'}`;
+        el.style.display = n ? '' : 'none';
+    };
+    const run = _diagState.runs[0];
+    set('diagTabPriceBadge', badges.price, !!(run && run.error_count));
+    set('diagTabDQBadge', badges.dq, chips.some(c => c.key === 'dq' && c.tone === 'danger'));
+    set('diagTabLogsBadge', badges.logs, chips.some(c => c.key === 'logs' && c.tone === 'danger'));
+}
+window.renderDiagOverview = renderDiagOverview;
+
+function showDiagTab(tab) {
+    const id = tab === 'dq' ? 'diagTabDQ' : tab === 'logs' ? 'diagTabLogs' : 'diagTabPrice';
+    const btn = document.getElementById(id);
+    if (!btn) return;
+    if (window.bootstrap && window.bootstrap.Tab) {
+        new window.bootstrap.Tab(btn).show();
+    }
+    // Panes already active fire no shown.bs.tab; load directly.
+    if (tab === 'dq') loadDataQualityTab();
+    else if (tab === 'logs') loadLogsTab();
+}
+window.showDiagTab = showDiagTab;
+
 async function loadDiagnosticsPage() {
     const freshBox = document.getElementById('diagFreshness');
     const staleBody = document.getElementById('diagStaleBody');
@@ -1228,7 +1558,7 @@ async function loadDiagnosticsPage() {
 
     _dqLoaded = false; // reset so DQ refreshes when tab is next activated
 
-    // Wire the refresh button once.
+    // Wire the header buttons once.
     const refreshBtn = document.getElementById('refreshDiagnostics');
     if (refreshBtn && !refreshBtn._wired) {
         refreshBtn._wired = true;
@@ -1240,10 +1570,17 @@ async function loadDiagnosticsPage() {
                 loadLogsTab();
             } else if (dqActive) {
                 _dqLoaded = false;
-                loadDataQualityTab();
+                loadDataQualityTab(true);
             } else {
                 loadDiagnosticsPage();
             }
+        });
+    }
+    const askBtn = document.getElementById('diagAskAi');
+    if (askBtn && !askBtn._wired) {
+        askBtn._wired = true;
+        askBtn.addEventListener('click', () => {
+            openChatWithContext(`Diagnostics ${localIsoDay()}`, diagnosticsChatPrompt(_diagState));
         });
     }
 
@@ -1287,18 +1624,31 @@ async function loadDiagnosticsPage() {
 
     // Persist active tab to localStorage on switch
     document.querySelectorAll('#diagTabs button[data-bs-toggle="tab"]').forEach(btn => {
+        if (btn._persistWired) return;
+        btn._persistWired = true;
         btn.addEventListener('shown.bs.tab', () => {
             const tab = btn.id === 'diagTabDQ' ? 'dq' : btn.id === 'diagTabLogs' ? 'logs' : 'price';
             localStorage.setItem('pfmDiagTab', tab);
         });
     });
 
-    const esc = s => String(s == null ? '' : s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+    await migrateLocalDismissals();
 
-    const [fresh, runsResp] = await Promise.all([
+    const [fresh, runsResp, acks, dupsResp, suspResp, logsResp] = await Promise.all([
         window.apiClient.getDataFreshness().catch(() => null),
         window.apiClient.getUpdateRuns(20).catch(() => ({ runs: [] })),
+        window.apiClient.getActionItemAcks().catch(() => ({})),
+        window.apiClient.getDQDuplicates().catch(() => null),
+        window.apiClient.getDQSuspicious().catch(() => null),
+        window.apiClient.getLogs({ level: 'WARNING' }).catch(() => ({ items: [] })),
     ]);
+    _diagState.fresh = fresh;
+    _diagState.runs = (runsResp && runsResp.runs) || [];
+    _diagState.acks = acks || {};
+    _diagState.dups = dupsResp ? (dupsResp.duplicates || []) : null;
+    _diagState.susp = suspResp ? (suspResp.issues || []) : null;
+    _diagState.logs = (logsResp && logsResp.items) || [];
+    renderDiagOverview();
 
     // --- Freshness summary ---
     if (fresh) {
@@ -1323,18 +1673,25 @@ async function loadDiagnosticsPage() {
         if (!stale.length) {
             staleBody.innerHTML = '<tr><td colspan="4" class="text-success small"><i class="bi bi-check-circle me-1"></i>All auto-priced holdings are up to date.</td></tr>';
         } else {
-            staleBody.innerHTML = stale.map(s => {
+            staleBody.innerHTML = stale.map((s, n) => {
                 const age = s.age_days != null ? `${s.age_days}d` : '—';
                 const reasonCls = s.reason === 'no price data' ? 'text-muted' : 'text-warning';
                 return `<tr><td><code>${esc(s.symbol)}</code></td><td class="small">${esc(s.name)}</td>`
-                    + `<td class="text-end">${age}</td><td class="small ${reasonCls}">${esc(s.reason)}</td></tr>`;
+                    + `<td class="text-end">${age}</td><td class="small ${reasonCls} text-nowrap">${esc(s.reason)}`
+                    + ` <button type="button" class="btn btn-link btn-sm p-0 ms-1 diag-stale-chat" data-n="${n}" title="Ask AI about this price"><i class="bi bi-robot"></i></button></td></tr>`;
             }).join('');
+            staleBody.querySelectorAll('.diag-stale-chat').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const s = stale[parseInt(btn.dataset.n, 10)];
+                    if (s) openChatWithContext(`Stale price: ${s.symbol}`, dqFindingChatPrompt('stale', s));
+                });
+            });
         }
     }
 
     // --- Update history ---
     if (runsBody) {
-        const runs = (runsResp && runsResp.runs) || [];
+        const runs = _diagState.runs;
         if (!runs.length) {
             runsBody.innerHTML = '<tr><td colspan="7" class="text-muted small">No update runs recorded yet. The first run will appear after the next price update.</td></tr>';
         } else {
@@ -1342,12 +1699,24 @@ async function loadDiagnosticsPage() {
                 const when = r.finished_at ? Fmt.date(String(r.finished_at).replace(' ', 'T')) : '—';
                 const dur = r.duration_seconds != null ? `${r.duration_seconds}s` : '—';
                 const errCls = r.error_count > 0 ? 'text-danger fw-semibold' : '';
+                const failed = r.error_symbols || [];
+                const apiErrors = r.api_errors || [];
                 const skipList = (r.skipped_symbols || []).join(', ');
-                const skipCell = skipList ? `<span class="small text-muted" title="${esc(skipList)}">${esc(skipList.length > 60 ? skipList.slice(0, 60) + '…' : skipList)}</span>` : '';
+                const parts = [];
+                if (failed.length) {
+                    const detail = apiErrors.length
+                        ? `<details class="small mt-1"><summary class="text-muted">${apiErrors.length} API error${apiErrors.length === 1 ? '' : 's'}</summary>`
+                          + apiErrors.map(x => `<div class="font-monospace text-break">${esc(x)}</div>`).join('') + '</details>'
+                        : '';
+                    parts.push(`<div class="small text-danger"><i class="bi bi-x-circle me-1"></i>Failed: ${esc(failed.join(', '))}</div>${detail}`);
+                }
+                if (skipList) {
+                    parts.push(`<div class="small text-muted" title="${esc(skipList)}">Skipped: ${esc(skipList.length > 60 ? skipList.slice(0, 60) + '…' : skipList)}</div>`);
+                }
                 return `<tr><td class="small">${esc(when)}</td><td class="small">${esc(r.source)}</td>`
                     + `<td class="text-end small">${dur}</td><td class="text-end">${r.updated_count}</td>`
                     + `<td class="text-end">${r.skipped_count}</td><td class="text-end ${errCls}">${r.error_count}</td>`
-                    + `<td>${skipCell}</td></tr>`;
+                    + `<td>${parts.join('')}</td></tr>`;
             }).join('');
         }
     }
@@ -1358,21 +1727,49 @@ window.loadDiagnosticsPage = loadDiagnosticsPage;
 
 let _dqLoaded = false;
 
-function _dqDismissed(check, key) {
-    const items = JSON.parse(localStorage.getItem('pfmDismissedIssues') || '[]');
-    return items.some(i => i.check === check && i.key === key);
-}
-function _dqDismiss(check, key) {
-    const items = JSON.parse(localStorage.getItem('pfmDismissedIssues') || '[]');
-    if (!items.some(i => i.check === check && i.key === key)) {
-        items.push({ check, key, dismissed_at: new Date().toISOString() });
-        localStorage.setItem('pfmDismissedIssues', JSON.stringify(items));
+// Shared by the duplicates and suspicious cards: the follow-up buttons for one
+// finding and what happens when one is pressed.
+function _dqActionButtons(id, status, ack, extraHtml) {
+    if (status !== 'open') {
+        return `<span class="badge text-bg-secondary me-1" title="${esc((ack && ack.note) || '')}"><i class="bi bi-check2 me-1"></i>${esc(ackLabel(ack))}</span>`
+            + `<button type="button" class="btn btn-outline-secondary btn-sm dq-ack" data-id="${esc(id)}" data-status="open" title="Reopen"><i class="bi bi-arrow-counterclockwise"></i></button>`
+            + `<button type="button" class="btn btn-outline-primary btn-sm dq-chat" data-id="${esc(id)}" title="Ask AI"><i class="bi bi-robot"></i></button>`;
     }
+    return (extraHtml || '')
+        + `<button type="button" class="btn btn-outline-success btn-sm dq-ack" data-id="${esc(id)}" data-status="checked" title="Mark checked (looked at, fine)"><i class="bi bi-check2"></i><span class="d-none d-md-inline ms-1">Checked</span></button>`
+        + `<button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle" data-bs-toggle="dropdown" title="Snooze"><i class="bi bi-alarm"></i></button>`
+        + `<ul class="dropdown-menu dropdown-menu-end">`
+        + `<li><button type="button" class="dropdown-item dq-ack" data-id="${esc(id)}" data-status="snoozed" data-days="7">Snooze 7 days</button></li>`
+        + `<li><button type="button" class="dropdown-item dq-ack" data-id="${esc(id)}" data-status="snoozed" data-days="30">Snooze 30 days</button></li>`
+        + `</ul>`
+        + `<button type="button" class="btn btn-outline-primary btn-sm dq-chat" data-id="${esc(id)}" title="Ask AI about this finding"><i class="bi bi-robot"></i></button>`;
 }
-function _dqUndismiss(check, key) {
-    const items = JSON.parse(localStorage.getItem('pfmDismissedIssues') || '[]');
-    localStorage.setItem('pfmDismissedIssues',
-        JSON.stringify(items.filter(i => !(i.check === check && i.key === key))));
+
+async function _dqApplyAck(btn, title) {
+    const id = btn.dataset.id;
+    const status = btn.dataset.status;
+    const opts = {};
+    if (status === 'snoozed') opts.days = parseInt(btn.dataset.days, 10) || 30;
+    if (status === 'checked') {
+        const note = await noteDialog({
+            title: 'Mark as checked',
+            message: `${title}\n\nWhy is this fine? (optional, shown on the finding and to the AI chat)`,
+            placeholder: 'e.g. two partial fills on the same day',
+            confirmLabel: 'Mark checked',
+        });
+        if (note === null) return false;
+        if (note) opts.note = note;
+    }
+    try {
+        const ack = await setFindingStatus(id, status, opts);
+        if (ack) _diagState.acks[id] = ack; else delete _diagState.acks[id];
+        notify(status === 'open' ? 'Finding reopened' : status === 'snoozed' ? `Snoozed for ${opts.days} days` : 'Marked as checked', 'success');
+        renderDiagOverview();
+        return true;
+    } catch (e) {
+        notify('Could not save: ' + e.message, 'danger');
+        return false;
+    }
 }
 
 async function loadDataQualityTab(force = false) {
@@ -1384,13 +1781,17 @@ async function loadDataQualityTab(force = false) {
         if (btn && !btn._dqWired) { btn._dqWired = true; btn.addEventListener('click', fn); }
     }
     _wireOnce('dqRerunRecon', () => { _dqLoaded = false; _loadReconCard(); });
-    _wireOnce('dqRerunDups',  () => { _dqLoaded = false; _loadDupsCard(); });
-    _wireOnce('dqRerunSusp',  () => { _dqLoaded = false; _loadSuspCard(); });
+    _wireOnce('dqRerunDups',  () => { _dqLoaded = false; _loadDupsCard(true); });
+    _wireOnce('dqRerunSusp',  () => { _dqLoaded = false; _loadSuspCard(true); });
+
+    if (!Object.keys(_diagState.acks).length) {
+        try { _diagState.acks = (await window.apiClient.getActionItemAcks()) || {}; } catch (_) { /* keep empty */ }
+    }
 
     await Promise.all([
         _loadReconCard().catch(() => {}),
-        _loadDupsCard().catch(() => {}),
-        _loadSuspCard().catch(() => {}),
+        _loadDupsCard(force).catch(() => {}),
+        _loadSuspCard(force).catch(() => {}),
     ]);
 
     async function _loadReconCard() {
@@ -1418,50 +1819,56 @@ async function loadDataQualityTab(force = false) {
             </tr>`).join('');
     }
 
-    async function _loadDupsCard() {
+    async function _loadDupsCard(refetch = false) {
         const body   = document.getElementById('dqDupsBody');
         const footer = document.getElementById('dqDupsFooter');
         if (!body) return;
-        body.innerHTML = '<div class="text-muted small p-3">Loading…</div>';
-        let data = null;
-        try { data = await window.apiClient.getDQDuplicates(); } catch (_) {}
-        if (!data) {
-            body.innerHTML = '<div class="text-danger small p-3">Could not load duplicates.</div>';
-            return;
+        if (refetch || !Array.isArray(_diagState.dups)) {
+            body.innerHTML = '<div class="text-muted small p-3">Loading…</div>';
+            let data = null;
+            try { data = await window.apiClient.getDQDuplicates(); } catch (_) {}
+            if (!data) {
+                body.innerHTML = '<div class="text-danger small p-3">Could not load duplicates.</div>';
+                return;
+            }
+            _diagState.dups = data.duplicates || [];
+            renderDiagOverview();
         }
-        const dups = data.duplicates || [];
+        const dups = _diagState.dups;
         if (!dups.length) {
             body.innerHTML = '<div class="text-success small p-3"><i class="bi bi-check-circle me-1"></i>No possible duplicates found.</div>';
             if (footer) footer.innerHTML = '';
             return;
         }
 
-        let showDismissed = false;
+        let showResolved = false;
+        const idOf = d => 'dq:' + d.key;
+        const statusOf = d => findingStatus(_diagState.acks, idOf(d));
 
         function _renderDups() {
-            const toShow = showDismissed ? dups : dups.filter(d => !_dqDismissed('dup', d.key));
+            const toShow = showResolved ? dups : dups.filter(d => statusOf(d) === 'open');
             if (!toShow.length) {
-                body.innerHTML = '<div class="text-success small p-3"><i class="bi bi-check-circle me-1"></i>All findings dismissed.</div>';
+                body.innerHTML = '<div class="text-success small p-3"><i class="bi bi-check-circle me-1"></i>Every finding has been checked.</div>';
             } else {
                 body.innerHTML = toShow.map(d => {
-                    const isDism = _dqDismissed('dup', d.key);
+                    const status = statusOf(d);
+                    const ack = _diagState.acks[idOf(d)];
                     const badge = d.label === 'likely'
                         ? '<span class="badge bg-danger">LIKELY</span>'
                         : '<span class="badge bg-warning text-dark">POSSIBLE</span>';
                     const olderId = d.tx_a.date <= d.tx_b.date ? d.tx_a.id : d.tx_b.id;
-                    const op = isDism ? ' opacity-50' : '';
-                    return `<div class="border-bottom p-2${op}" data-dup-key="${esc(d.key)}">
-                        <div class="d-flex justify-content-between align-items-start mb-1">
-                            <div>${badge} <span class="small text-muted">${esc(d.tx_a.portfolio)}</span></div>
-                            <div class="btn-group btn-group-sm">
+                    const op = status !== 'open' ? ' opacity-50' : '';
+                    const deleteHtml = `
                                 <button type="button" class="btn btn-outline-danger btn-sm dq-del-older" data-id="${olderId}" data-key="${esc(d.key)}"><i class="bi bi-trash me-1"></i>Delete older</button>
                                 <button type="button" class="btn btn-outline-danger btn-sm dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown" aria-label="More delete options"><span class="visually-hidden">Toggle dropdown</span></button>
                                 <ul class="dropdown-menu dropdown-menu-end">
                                     <li><button type="button" class="dropdown-item dq-del-tx" data-id="${d.tx_a.id}" data-key="${esc(d.key)}">Delete #${esc(d.tx_a.id)} (${Fmt.date(d.tx_a.date)})</button></li>
                                     <li><button type="button" class="dropdown-item dq-del-tx" data-id="${d.tx_b.id}" data-key="${esc(d.key)}">Delete #${esc(d.tx_b.id)} (${Fmt.date(d.tx_b.date)})</button></li>
-                                </ul>
-                                <button type="button" class="btn btn-outline-secondary btn-sm dq-dism-dup" data-key="${esc(d.key)}" title="${isDism ? 'Undismiss' : 'Dismiss'}">${isDism ? '<i class="bi bi-eye"></i>' : '<i class="bi bi-eye-slash"></i>'}</button>
-                            </div>
+                                </ul>`;
+                    return `<div class="border-bottom p-2${op}" data-dup-key="${esc(d.key)}">
+                        <div class="d-flex flex-wrap justify-content-between align-items-start gap-2 mb-1">
+                            <div>${badge} <span class="small text-muted">${esc(d.tx_a.portfolio)}</span>${ack && ack.note ? `<div class="small text-muted"><i class="bi bi-chat-left-text me-1"></i>${esc(ack.note)}</div>` : ''}</div>
+                            <div class="btn-group btn-group-sm flex-wrap">${_dqActionButtons(idOf(d), status, ack, deleteHtml)}</div>
                         </div>
                         <div class="row small g-1">
                             <div class="col-6 bg-body-secondary rounded p-1">
@@ -1485,20 +1892,29 @@ async function loadDataQualityTab(force = false) {
                         if (!(await confirmDialog({ title: 'Delete transaction', message: `Delete transaction #${id}? Holdings, cost basis and tax figures are recalculated without it. This cannot be undone.`, danger: true }))) return;
                         try {
                             await window.apiClient.deleteTransaction(id);
-                            _dqDismiss('dup', key);
-                            await _loadDupsCard();
+                            // The pair no longer exists; record what was done for the audit trail.
+                            try {
+                                const ack = await setFindingStatus('dq:' + key, 'checked', { note: `Deleted transaction #${id}` });
+                                if (ack) _diagState.acks['dq:' + key] = ack;
+                            } catch (_) { /* the finding disappears anyway */ }
+                            await _loadDupsCard(true);
                         } catch (e) {
                             notify('Failed to delete: ' + e.message);
                         }
                     });
                 });
 
-                body.querySelectorAll('.dq-dism-dup').forEach(btn => {
+                body.querySelectorAll('.dq-ack').forEach(btn => {
+                    btn.addEventListener('click', async () => {
+                        const d = dups.find(x => idOf(x) === btn.dataset.id);
+                        const title = d ? `${d.tx_a.asset}: #${d.tx_a.id} and #${d.tx_b.id}` : btn.dataset.id;
+                        if (await _dqApplyAck(btn, title)) { _renderDups(); _renderDupsFooter(); }
+                    });
+                });
+                body.querySelectorAll('.dq-chat').forEach(btn => {
                     btn.addEventListener('click', () => {
-                        const key = btn.dataset.key;
-                        _dqDismissed('dup', key) ? _dqUndismiss('dup', key) : _dqDismiss('dup', key);
-                        _renderDups();
-                        _renderDupsFooter();
+                        const d = dups.find(x => idOf(x) === btn.dataset.id);
+                        if (d) openChatWithContext(`Duplicate? ${d.tx_a.asset} #${d.tx_a.id}/#${d.tx_b.id}`, dqFindingChatPrompt('dup', d));
                     });
                 });
             }
@@ -1506,11 +1922,11 @@ async function loadDataQualityTab(force = false) {
 
         function _renderDupsFooter() {
             if (!footer) return;
-            const n = dups.filter(d => _dqDismissed('dup', d.key)).length;
+            const n = dups.filter(d => statusOf(d) !== 'open').length;
             if (!n) { footer.innerHTML = ''; return; }
-            footer.innerHTML = `<button type="button" class="btn btn-link btn-sm p-0 text-muted">${showDismissed ? 'Hide' : 'Show'} ${n} dismissed</button>`;
+            footer.innerHTML = `<button type="button" class="btn btn-link btn-sm p-0 text-muted">${showResolved ? 'Hide' : 'Show'} ${n} checked/snoozed</button>`;
             footer.querySelector('button').addEventListener('click', () => {
-                showDismissed = !showDismissed;
+                showResolved = !showResolved;
                 _renderDups();
                 _renderDupsFooter();
             });
@@ -1520,48 +1936,53 @@ async function loadDataQualityTab(force = false) {
         _renderDupsFooter();
     }
 
-    async function _loadSuspCard() {
+    async function _loadSuspCard(refetch = false) {
         const body   = document.getElementById('dqSuspBody');
         const footer = document.getElementById('dqSuspFooter');
         if (!body) return;
-        body.innerHTML = '<tr><td colspan="6" class="text-muted small p-3">Loading…</td></tr>';
-        let data = null;
-        try { data = await window.apiClient.getDQSuspicious(); } catch (_) {}
-        if (!data) {
-            body.innerHTML = '<tr><td colspan="6" class="text-danger small p-3">Could not load suspicious patterns.</td></tr>';
-            return;
+        if (refetch || !Array.isArray(_diagState.susp)) {
+            body.innerHTML = '<tr><td colspan="6" class="text-muted small p-3">Loading…</td></tr>';
+            let data = null;
+            try { data = await window.apiClient.getDQSuspicious(); } catch (_) {}
+            if (!data) {
+                body.innerHTML = '<tr><td colspan="6" class="text-danger small p-3">Could not load suspicious patterns.</td></tr>';
+                return;
+            }
+            _diagState.susp = data.issues || [];
+            renderDiagOverview();
         }
-        const issues = data.issues || [];
+        const issues = _diagState.susp;
         if (!issues.length) {
             body.innerHTML = '<tr><td colspan="6" class="text-success small p-3"><i class="bi bi-check-circle me-1"></i>No suspicious patterns found.</td></tr>';
             if (footer) footer.innerHTML = '';
             return;
         }
 
-        let showDismissed = false;
+        let showResolved = false;
+        const idOf = i => 'dq:' + i.key;
+        const statusOf = i => findingStatus(_diagState.acks, idOf(i));
 
         function _renderSusp() {
-            const toShow = showDismissed ? issues : issues.filter(i => !_dqDismissed('susp', i.key));
+            const toShow = showResolved ? issues : issues.filter(i => statusOf(i) === 'open');
             if (!toShow.length) {
-                body.innerHTML = '<tr><td colspan="6" class="text-success small p-3"><i class="bi bi-check-circle me-1"></i>All findings dismissed.</td></tr>';
+                body.innerHTML = '<tr><td colspan="6" class="text-success small p-3"><i class="bi bi-check-circle me-1"></i>Every finding has been checked.</td></tr>';
             } else {
                 body.innerHTML = toShow.map(i => {
-                    const isDism = _dqDismissed('susp', i.key);
+                    const status = statusOf(i);
+                    const ack = _diagState.acks[idOf(i)];
                     const badge = i.severity === 'warning'
                         ? '<span class="badge bg-warning text-dark">warning</span>'
                         : '<span class="badge bg-info text-dark">info</span>';
-                    const op = isDism ? ' class="opacity-50"' : '';
+                    const op = status !== 'open' ? ' class="opacity-50"' : '';
+                    const extra = `<button type="button" class="btn btn-outline-secondary btn-sm dq-view-tx" data-asset="${esc(i.asset)}" title="View transactions"><i class="bi bi-box-arrow-up-right"></i></button>`
+                        + (i.transaction_id ? `<button type="button" class="btn btn-outline-danger btn-sm dq-del-susp" data-id="${i.transaction_id}" data-key="${esc(i.key)}" title="Delete transaction"><i class="bi bi-trash"></i></button>` : '');
                     return `<tr${op}>
                         <td>${badge}</td>
                         <td><code>${esc(i.asset)}</code><div class="small text-muted">${esc(i.asset_name)}</div></td>
                         <td class="small">${Fmt.date(i.date)}</td>
                         <td class="small">${esc(i.type)}</td>
-                        <td class="small">${esc(i.description)}</td>
-                        <td class="text-nowrap">
-                            <button type="button" class="btn btn-link btn-sm p-0 me-1 dq-view-tx" data-asset="${esc(i.asset)}" title="View transactions"><i class="bi bi-box-arrow-up-right"></i></button>
-                            ${i.transaction_id ? `<button type="button" class="btn btn-link btn-sm p-0 me-1 text-danger dq-del-susp" data-id="${i.transaction_id}" title="Delete transaction"><i class="bi bi-trash"></i></button>` : ''}
-                            <button type="button" class="btn btn-link btn-sm p-0 text-muted dq-dism-susp" data-key="${esc(i.key)}" title="${isDism ? 'Undismiss' : 'Dismiss'}">${isDism ? '<i class="bi bi-eye"></i>' : '<i class="bi bi-eye-slash"></i>'}</button>
-                        </td>
+                        <td class="small">${esc(i.description)}${ack && ack.note ? `<div class="text-muted"><i class="bi bi-chat-left-text me-1"></i>${esc(ack.note)}</div>` : ''}</td>
+                        <td class="text-nowrap"><div class="btn-group btn-group-sm">${_dqActionButtons(idOf(i), status, ack, extra)}</div></td>
                     </tr>`;
                 }).join('');
 
@@ -1579,19 +2000,28 @@ async function loadDataQualityTab(force = false) {
                         if (!(await confirmDialog({ title: 'Delete transaction', message: `Delete transaction #${id}? Holdings, cost basis and tax figures are recalculated without it. This cannot be undone.`, danger: true }))) return;
                         try {
                             await window.apiClient.deleteTransaction(id);
-                            await _loadSuspCard();
+                            try {
+                                const ack = await setFindingStatus('dq:' + btn.dataset.key, 'checked', { note: `Deleted transaction #${id}` });
+                                if (ack) _diagState.acks['dq:' + btn.dataset.key] = ack;
+                            } catch (_) { /* the finding disappears anyway */ }
+                            await _loadSuspCard(true);
                         } catch (e) {
                             notify('Failed to delete: ' + e.message);
                         }
                     });
                 });
 
-                body.querySelectorAll('.dq-dism-susp').forEach(btn => {
+                body.querySelectorAll('.dq-ack').forEach(btn => {
+                    btn.addEventListener('click', async () => {
+                        const i = issues.find(x => idOf(x) === btn.dataset.id);
+                        const title = i ? `${i.asset} · ${i.description}` : btn.dataset.id;
+                        if (await _dqApplyAck(btn, title)) { _renderSusp(); _renderSuspFooter(); }
+                    });
+                });
+                body.querySelectorAll('.dq-chat').forEach(btn => {
                     btn.addEventListener('click', () => {
-                        const key = btn.dataset.key;
-                        _dqDismissed('susp', key) ? _dqUndismiss('susp', key) : _dqDismiss('susp', key);
-                        _renderSusp();
-                        _renderSuspFooter();
+                        const i = issues.find(x => idOf(x) === btn.dataset.id);
+                        if (i) openChatWithContext(`Suspicious: ${i.asset} ${i.type}`, dqFindingChatPrompt('susp', i));
                     });
                 });
             }
@@ -1599,11 +2029,11 @@ async function loadDataQualityTab(force = false) {
 
         function _renderSuspFooter() {
             if (!footer) return;
-            const n = issues.filter(i => _dqDismissed('susp', i.key)).length;
+            const n = issues.filter(i => statusOf(i) !== 'open').length;
             if (!n) { footer.innerHTML = ''; return; }
-            footer.innerHTML = `<button type="button" class="btn btn-link btn-sm p-0 text-muted">${showDismissed ? 'Hide' : 'Show'} ${n} dismissed</button>`;
+            footer.innerHTML = `<button type="button" class="btn btn-link btn-sm p-0 text-muted">${showResolved ? 'Hide' : 'Show'} ${n} checked/snoozed</button>`;
             footer.querySelector('button').addEventListener('click', () => {
-                showDismissed = !showDismissed;
+                showResolved = !showResolved;
                 _renderSusp();
                 _renderSuspFooter();
             });
@@ -2927,11 +3357,32 @@ function createAPIClient() {
             return resp.json();
         },
 
-        async getActionItems() {
-            const resp = await fetch(this.baseURL + '/api/v1/action-items/', {
+        // status: 'open' (default) hides checked/snoozed items; 'all' returns
+        // every item with its status/ack. Both carry {summary, acks}.
+        async getActionItems(status = 'open') {
+            const resp = await fetch(this.baseURL + '/api/v1/action-items/?status=' + encodeURIComponent(status), {
                 headers: { 'X-API-Key': this.apiKey }
             });
             if (!resp.ok) throw new Error('Failed to load action items');
+            return resp.json();
+        },
+
+        async getActionItemAcks() {
+            const resp = await fetch(this.baseURL + '/api/v1/action-items/acks', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(errorDetailFromBody(await resp.text(), 'Failed to load follow-up state'));
+            return (await resp.json()).acks || {};
+        },
+
+        // {id, status: 'open'|'checked'|'snoozed', note?, days?, until?}
+        async setActionItemStatus(body) {
+            const resp = await fetch(this.baseURL + '/api/v1/action-items/ack', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(body)
+            });
+            if (!resp.ok) throw new Error(errorDetailFromBody(await resp.text(), 'Failed to save follow-up state'));
             return resp.json();
         },
 
@@ -4190,6 +4641,22 @@ function confirmDialog(opts) {
     });
 }
 window.confirmDialog = confirmDialog;
+
+// confirmDialog with a free-text field. Resolves to the trimmed text ('' when
+// left empty) or null when cancelled.
+async function noteDialog(opts) {
+    const o = opts || {};
+    const ok = await confirmDialog({
+        title: o.title,
+        message: o.message,
+        confirmLabel: o.confirmLabel || 'Save',
+        detailHtml: `<textarea class="form-control form-control-sm mt-2" id="pfmDialogNote" rows="2" maxlength="2000" placeholder="${esc(o.placeholder || '')}">${esc(o.value || '')}</textarea>`,
+    });
+    if (!ok) return null;
+    const ta = document.getElementById('pfmDialogNote');
+    return ta ? ta.value.trim() : '';
+}
+window.noteDialog = noteDialog;
 
 // Result box: headline + stat chips + key facts + collapsible lists.
 // model: { title, level, chips: [{label, value, cls}], facts: [{label, value}],
