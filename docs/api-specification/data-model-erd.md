@@ -1,5 +1,24 @@
 # Portfolio Management API - Data Model & ERD
 
+> **Status note (2026-10-23).** This is the original design specification, kept for history. The implementation diverged from it and nothing below has been updated:
+> - The live schema is `DATABASE_VERSION = 35` in `portf_manager/database.py`
+>   (`_create_all_tables`, ~30 tables): besides the core tables there are `bookings`,
+>   `api_keys`, `allocation_targets`, `price_targets`, `research_reports`, `watchlist`,
+>   `goals`, `kv_cache`, `manual_assets`, `loans`, `spending_*`, `budgets`,
+>   `fund_profiles`, `app_logs` and more — see the migration history in CLAUDE.md.
+> - Core tables differ: `portfolios.name` is UNIQUE with `base_currency`, `entity_id`
+>   and `account_type` (`brokerage`|`bank`); `transactions` has `tax` and `currency`
+>   columns and types `buy|sell|dividend|interest|split|transfer_in|transfer_out`;
+>   `asset_type` also allows `index`; `api_keys` has `key_prefix`/`description` and
+>   no `user_id` or `permissions`; `chat_sessions` has a TEXT primary key and a
+>   `messages` JSON column; `entities` has `user_id` and types `broker|bank|platform|other`.
+> - There is no `user_sessions` table (the login session lives in the server process
+>   and `.portf_session`), and the `portfolio_positions` / `portfolio_performance` views
+>   do not exist — positions are computed on read by
+>   `portf_manager/positions.py::compute_positions`, which also handles splits.
+>
+> The current reference is `CLAUDE.md` and `docs/features/*.md`.
+
 ## Entity Relationship Diagram
 
 ```mermaid

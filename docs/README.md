@@ -11,8 +11,29 @@ Welcome to the comprehensive documentation for the Portfolio Management System. 
 - **[API Flow Diagrams](api-specification/api-flow-diagrams.md)** - Sequence diagrams and data flow architecture
 
 ### Web Application Development
-- **[Web Application Architecture](api-specification/web-app-architecture.md)** - React/TypeScript SPA architecture plan
+- **[Web Application Architecture](api-specification/web-app-architecture.md)** - React/TypeScript SPA architecture plan (historical; the shipped client is the vanilla JS app in `web_client/`, see [Web client](features/web-client.md))
 - **[Implementation Guidelines](api-specification/implementation-guidelines.md)** - Coding standards, testing, and best practices
+- **[Wireframe Specifications](api-specification/wireframe-specifications.md)** - Page wireframes
+
+### Feature Reference (`features/`)
+Per-feature reference for the code as it is today: endpoints, schema, UI wiring and design rationale. Read the doc for an area before changing it.
+- **[Broker parsers, PDT, import/export, bookings](features/imports-exports.md)**
+- **[LLM providers, chat API and logging](features/llm.md)**
+- **[Analytics, fund look-through and PDF reports](features/analytics.md)**
+- **[Research, Portfolio Health and the rebalance planner](features/research-rebalance.md)**
+- **[Net worth, brokers/portfolios, goals, watchlist and sync](features/networth-portfolios.md)**
+- **[Spending tracking (bank accounts)](features/spending.md)**
+- **[Budgeting](features/budgeting.md)**
+- **[Action Items](features/action-items.md)**
+- **[Next-euro allocator](features/allocator.md)**
+- **[Price updates and market data](features/prices-market.md)**
+- **[Web client](features/web-client.md)**
+- **[Observability: metrics, error tracking, traces](features/observability.md)**
+
+### Setup & Operations
+- **[Configuration](CONFIGURATION.md)** · **[API key authentication](API_KEY_AUTHENTICATION.md)** · **[Backup & restore](BACKUP.md)** · **[External access](EXTERNAL_ACCESS.md)** · **[Docker CI/CD](DOCKER_CI_CD.md)** · **[PostgreSQL setup](POSTGRESQL_SETUP.md)** · **[Database abstraction](DATABASE_ABSTRACTION_README.md)** · **[Migration guide](MIGRATION_GUIDE.md)**
+- **[CLI setup](CLI_SETUP_README.md)** · **[API client](API_CLIENT_README.md)** · **[Transaction management](TRANSACTION_MANAGEMENT.md)** · **[Transaction filtering](TRANSACTION_FILTERING_README.md)** · **[CSV export](CSV_EXPORT_README.md)** · **[Google Sheets export](GOOGLE_SHEETS_EXPORT_README.md)** · **[Demo account](DEMO_ACCOUNT_README.md)**
+- **[Testing](TESTING.md)** · **[Web UI patterns](web-ui-patterns.md)** · **[Roadmap](ROADMAP.md)** · `superpowers/` (specs and plans) · `design/`
 
 ## 🎯 Quick Start Guide
 
@@ -33,7 +54,7 @@ The Portfolio Management System consists of:
 - **FastAPI Backend** - RESTful API with AI/LLM integration
 - **Authentication Layer** - JWT tokens and API key management  
 - **Database Layer** - SQLite/PostgreSQL with comprehensive data model
-- **AI Integration** - Google Gemini for portfolio analysis and chat
+- **AI Integration** - Provider-agnostic LLM client (Ollama, Anthropic, Gemini, OpenRouter) for extraction, research and chat
 - **Market Data** - Real-time price feeds and historical data
 - **Tax Reporting** - FIFO-based capital gains calculations
 
@@ -119,9 +140,9 @@ TanStack Query     ↓                   ↓
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Python 3.12+ with FastAPI
-- Node.js 18+ for web application
-- API keys for Google Gemini and market data services
+- Python 3.13 with FastAPI, managed with [`uv`](https://github.com/astral-sh/uv)
+- Node.js 18+ (only for the web client's JS tests, `make test-js`)
+- An LLM provider: a local Ollama, or an API key for Anthropic, Gemini or OpenRouter
 
 ### API Server Setup
 ```bash
@@ -130,7 +151,7 @@ git clone <repository>
 cd pfm
 
 # Install dependencies
-pip install -r requirements.txt
+uv sync
 
 # Configure environment
 cp .env.example .env
@@ -197,7 +218,7 @@ npm run dev
 
 ### Performance
 - Apply [code splitting strategies](api-specification/implementation-guidelines.md#performance-optimization)
-- Implement [caching patterns](api-specification/api-consumption-patterns.md)
+- Implement [caching patterns](api-specification/implementation-guidelines.md#api-consumption-patterns)
 - Use [retry logic and circuit breakers](api-specification/implementation-guidelines.md#api-consumption-patterns)
 
 ## 🤝 Contributing
@@ -236,7 +257,7 @@ This project is licensed under the MIT License. See LICENSE file for details.
 
 ---
 
-**Last Updated**: September 16, 2025  
-**Documentation Version**: 1.0.0  
+**Last Updated**: October 23, 2026  
+**Documentation Version**: 1.1.0  
 **API Version**: v1
 

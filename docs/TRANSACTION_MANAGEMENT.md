@@ -12,16 +12,22 @@ List recent transactions with optional filtering:
 # List recent transactions (default: last 10)
 python -m portf_manager list-transactions
 
-# List more transactions
-python -m portf_manager list-transactions --limit 20
+# List more transactions (the limit is a positional argument: a number or 'all')
+python -m portf_manager list-transactions 20
+python -m portf_manager list-transactions all
 
-# Filter by asset symbol
+# Filter by asset symbol (wildcards allowed, e.g. BTC*)
 python -m portf_manager list-transactions --symbol AAPL
+
+# Other filters: --name, --price, --total, --quantity (e.g. >100, <500, 100-500),
+# --from-date / --to-date (YYYY-MM-DD), --type buy|sell, --portfolio / -p NAME
 ```
 
 ### Add Transactions
 
-Add new buy/sell/dividend transactions:
+Add new transactions (`--type` accepts every `TransactionType`: buy, sell,
+dividend, interest, split, transfer_in, transfer_out; `--symbol`, `--amount`,
+`--price`, `--currency`, `--type` and `--date` are all required):
 
 ```bash
 # Add a buy transaction
@@ -253,7 +259,9 @@ The update-asset command supports the following options:
 - `--currency CURRENCY`: Update the base currency
 - `--sector SECTOR`: Update the sector classification
 - `--description DESCRIPTION`: Add or update asset description
-- `--active {True,False}`: Set active status (True/False)
+- `--active {True,False}`: Set active status (True/False). ⚠️ The flag is
+  declared with argparse `type=bool`, so any non-empty value — including
+  `False` — is parsed as `True`; to deactivate an asset use `delete-asset`.
 
 ### Asset Management Examples
 
@@ -271,7 +279,7 @@ python -m portf_manager update-asset 5 --name "Apple Inc." --exchange NASDAQ --s
 
 ```bash
 # Mark an asset as inactive (soft delete)
-python -m portf_manager update-asset 5 --active False
+python -m portf_manager delete-asset 5
 
 # To reactivate later
 python -m portf_manager update-asset 5 --active True
@@ -297,7 +305,7 @@ python -m portf_manager delete-asset 5
 #### Soft Delete Design
 - Assets are **never permanently deleted** from the database
 - `delete-asset` marks assets as `inactive` but preserves all data
-- Inactive assets can be reactivated using `update-asset --active True`
+- Inactive assets can be reactivated using `update-asset --active True` (see the `--active` caveat above)
 - This design protects against data loss and maintains transaction history integrity
 
 #### Transaction Safety

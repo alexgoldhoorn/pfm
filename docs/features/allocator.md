@@ -86,8 +86,8 @@ portfolio ids must exist.
    yields a traspaso of the smaller gap from the highest-TER (or smaller overlap
    member) fund to the best-ranked fund of the underweight bucket. A fund blocked by
    the antiaplicación rule is never a destination (it may be a source: nothing is
-   sold), and a traspaso under `min_line_eur` is not proposed. with the gain a sale would have
-   realised (FIFO). Only funds move (`mutual_fund`, exchange `"Funds"`, or a fund
+   sold), and a traspaso under `min_line_eur` is not proposed. Each traspaso
+   carries `gain_eur`, the gain a sale would have realised (FIFO). Only funds move (`mutual_fund`, exchange `"Funds"`, or a fund
    word in the name of a non-ETF); ETFs and managed portfolios never do.
 4. **Water-filling.** New money is split over underweight buckets on the
    post-traspaso state, proportional to gap and capped at each gap, the remainder
@@ -124,9 +124,11 @@ portfolio ids must exist.
 
 The bucket table's `before_pct` is the mix as it stands now, before the
 traspasos; `after_pct` includes the traspasos and the new money.
-`deployable()` is cached for 60 seconds in `kv_cache` (keyed on the date, bypassed
-when `fx` or `settings` are passed explicitly, cleared by a settings PUT) and is
-used by `next_euro` and `check_allocation`.
+`deployable_cached()` wraps `deployable()` in `kv_cache` for 60 seconds
+(`DEPLOYABLE_CACHE_TTL`, key `allocator:deployable:{date}`; `save_settings`
+clears the prefix, so a settings PUT invalidates it) and is used by `next_euro`
+and `check_allocation`. `next_euro` bypasses it and calls `deployable()` directly
+when `fx`/`fx_on` are passed explicitly (tests).
 
 An `amount` above deployable is allowed with a warning; `nothing_to_deploy` only
 applies when no amount was given and deployable is 0.
@@ -163,7 +165,8 @@ the ceiling), `allocate:buffer_low` (medium, below the floor),
 
 ## MCP
 
-Five read-only tools in `mcp/server.py`; a missing field prints `n/a`, never 0, and
+Five read-only tools in `mcp/pfm_mcp/tools/allocate.py` (re-exported by the
+`mcp/server.py` shim); a missing field prints `n/a`, never 0, and
 an API error returns `Error fetching <what>: <e>`:
 
 - `next_euro(amount=None)` prints `chat_summary` whatever the status; only when
@@ -179,12 +182,11 @@ an API error returns `Error fetching <what>: <e>`:
   (`GET /allocate/settings`).
 
 `GET /api/v1/allocate/candidates` returns `bucket`, `total_value_eur`,
-`target_pct`, `current_pct` (null without a bucket) and `candidates`, each with
+`target_pct`, `current_pct` (null without a bucket), `candidates`, each with
 `cap_room_eur` (only for single stocks: `max_single_stock_pct` of the portfolio
 minus the position, floor 0) and `rank_reason` from `allocator.rank_reasons`,
-which reuses the ranking helpers. An unknown bucket is a 404. Tests are in
-`mcp/test_server_local.py` until they move to `~/mcp/pfm`. The gateway, finance
-adapter and persona register the tools after the merge.
+which reuses the ranking helpers, and `warnings`. An unknown bucket is a 404
+(`allocator.candidates_view`). Tests are in `mcp/tests/test_allocate.py`.
 
 ## Known limits
 
@@ -192,5 +194,6 @@ adapter and persona register the tools after the merge.
 - Region is not used as a fund tie-break (the spec's informational rule).
 - Modelo 130 is a flat per-quarter estimate, not cumulative.
 - Traspasos are only shown when there is new money to deploy.
-- `wash_sale.py` imports the private `analytics._build_tax_report_data`, and the
-  FX helpers (`_get_fx_rate`, `_get_fx_rate_on`) come from the portfolios router.
+- `wash_sale.py` imports the private `analytics._build_tax_report_data`, and
+  `allocator.py`/`deployable.py` take their FX helpers (`_get_fx_rate`,
+  `_get_fx_rate_on`) from the portfolios router.
