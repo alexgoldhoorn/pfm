@@ -28,10 +28,10 @@ def db(tmp_path):
     return d
 
 
-def test_tools_list_has_18_entries():
+def test_tools_list_has_19_entries():
     from portf_server.chat_tools import TOOLS
 
-    assert len(TOOLS) == 18
+    assert len(TOOLS) == 19
 
 
 def test_every_tool_definition_has_a_handler():
@@ -192,3 +192,30 @@ def test_execute_tool_get_next_euro_passes_amount(db):
     ) as next_euro:
         json.loads(execute_tool("get_next_euro", {"amount": 500}, db))
     next_euro.assert_called_once_with(db, amount_eur=500.0)
+
+
+def test_execute_tool_get_goals_returns_summary_and_rows(db):
+    from portf_server.chat_tools import execute_tool
+
+    db.create_goal(
+        name="Example Fund",
+        target_amount_eur=50_000,
+        target_date="2040-01-01",
+        monthly_contribution_eur=200,
+        expected_return_pct=5,
+        start_networth_eur=1_000,
+        notes="For the example house",
+    )
+    # the balance sheet behind net worth would look up USD→EUR live
+    with patch("portf_server.routers.networth.net_worth_eur", return_value=1500.0):
+        data = json.loads(execute_tool("get_goals", {}, db))
+    assert data["summary"]["total"] == 1
+    (goal,) = data["goals"]
+    assert goal["name"] == "Example Fund"
+    assert goal["notes"] == "For the example house"
+    assert goal["status"] in {"on_track", "off_track"}
+    assert goal["start_networth_eur"] == 1_000
+    assert goal["current_networth_eur"] == 1500.0
+    assert goal["gained_since_start_eur"] == 500.0
+    assert "required_monthly_eur" in goal
+    assert "notes" in data

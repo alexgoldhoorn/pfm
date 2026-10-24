@@ -257,26 +257,43 @@ def check_stale_research(db, today: date = None) -> list[dict]:
 
 
 def check_goals_off_track(db) -> list[dict]:
-    """Savings goals whose projected value falls short of their target."""
-    from portf_server.routers.goals import list_goals
+    """Savings goals whose projected value falls short of their target.
+
+    An unmet goal whose target date has passed is reported as overdue (there
+    is no monthly amount that still reaches it), the rest with the monthly
+    contribution now required.
+    """
+    from portf_manager.services.goals import STATUS_OVERDUE, list_goals_with_progress
 
     items = []
-    for g in list_goals(db=db, api_key_info={}):
+    for g in list_goals_with_progress(db):
         # retirement goals are judged by the readiness verdict, not progress
         if g.get("on_track") or re.search(r"retire", g.get("name") or "", re.I):
             continue
+        if g.get("status") == STATUS_OVERDUE:
+            title = f"Goal \"{g['name']}\" is overdue"
+            detail = (
+                f"Target date {str(g['target_date'])[:10]} has passed with "
+                f"{g['current_networth_eur']:,.0f} EUR of the "
+                f"{g['target_amount_eur']:,.0f} EUR target reached. "
+                f"Move the date, lower the target or mark it done by deleting it."
+            )
+        else:
+            title = f"Goal \"{g['name']}\" is off track"
+            detail = (
+                f"Projected {g['projected_value_eur']:,.0f} EUR vs target "
+                f"{g['target_amount_eur']:,.0f} EUR by {str(g['target_date'])[:10]}. "
+                f"Required monthly contribution: "
+                f"{g.get('required_monthly_eur') or 0:,.0f} EUR "
+                f"(planned {g.get('monthly_contribution_eur') or 0:,.0f} EUR)."
+            )
         items.append(
             {
                 "id": f"goals:{g['id']}",
                 "category": "goals",
                 "severity": "medium",
-                "title": f"Goal \"{g['name']}\" is off track",
-                "detail": (
-                    f"Projected {g['projected_value_eur']:,.0f} EUR vs target "
-                    f"{g['target_amount_eur']:,.0f} EUR by {g['target_date']}. "
-                    f"Required monthly contribution: "
-                    f"{g.get('required_monthly_eur')} EUR."
-                ),
+                "title": title,
+                "detail": detail,
                 "link_page": "goals",
                 "context": {"goal_id": g["id"]},
             }
