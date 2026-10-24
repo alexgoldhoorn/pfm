@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.13%2B-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Code Style](https://img.shields.io/badge/Code%20Style-Black-000000.svg)](https://github.com/psf/black)
-[![Testing](https://img.shields.io/badge/Tests-728%20passing-brightgreen.svg)](https://pytest.org)
+[![Testing](https://img.shields.io/badge/Tests-1921%20passing-brightgreen.svg)](https://pytest.org)
 
 Python CLI + FastAPI server + web client for tracking stocks, ETFs, funds, bonds, crypto and commodities across multiple brokers. Features LLM-powered import, an agentic AI chat with live portfolio tools, an MCP server for AI assistants, full Portfolio Dividend Tracker (PDT) v2 compatibility, Google Sheets sync, and Spanish IRPF tax reporting.
 
@@ -31,12 +31,12 @@ Python CLI + FastAPI server + web client for tracking stocks, ETFs, funds, bonds
 
 ## Features
 
-- **Multi-broker tracking**: IndexaCapital (trades + cash "Movimientos"), MyInvestor, Mintos (P2P), Coinbase, PDT XLSX, and a **generic CSV** for any broker — parsers with European number/date format auto-detection. Asset types: stocks, ETFs, a distinct **index fund** type, crypto, bonds, commodities, cash — plus first-class **interest** income (P2P/savings) that feeds the tax savings base
+- **Multi-broker tracking**: IndexaCapital (trades + cash "Movimientos"), MyInvestor (CSV and app paste), Mintos (P2P), Coinbase, PDT XLSX, and a **generic CSV** for any broker — parsers with European number/date format auto-detection. Asset types: stocks, ETFs, mutual funds, a distinct **index fund** type, crypto, bonds, commodities, cash — plus first-class **interest** income (P2P/savings) that feeds the tax savings base
 - **Full PDT v2 compatibility**: import/export Transactions, Dividends, and Bookings (deposits/withdrawals) with correct per-transaction currencies
 - **Google Sheets sync**: pull from / push to a PDT-format Google Spreadsheet via service account
-- **LLM-powered import**: paste any transaction text; Ollama, Gemini, OpenRouter, or Anthropic parses it automatically (extracts fees, dedupes duplicates, assigns to a portfolio)
-- **Agentic AI chat**: ask about your portfolio in natural language using an agentic loop with 15 live in-process tools (holdings, performance, risk, diversification, tax, quotes, research, news). Persistent named chat sessions. All 4 LLM providers supported. Dark-mode aware
-- **MCP server**: 18 tools exposing holdings, transactions, performance, dividends, risk, tax, research, watchlist, goals and more — connect any MCP-compatible AI assistant (Claude, etc.) to your live portfolio data
+- **LLM-powered import**: paste any transaction text; Ollama, Anthropic, Gemini, or OpenRouter parses it automatically (extracts fees, dedupes duplicates, assigns to a portfolio)
+- **Agentic AI chat**: ask about your portfolio in natural language using an agentic loop with 18 live in-process tools (holdings, performance, risk, diversification, tax, quotes, research, news, allocation targets, deployable cash, next-euro allocator). Persistent named chat sessions. All 4 LLM providers supported. Dark-mode aware
+- **MCP server** (`mcp/`, package `pfm-mcp`): 32 read-only tools exposing holdings, transactions, performance, dividends, risk, tax, research, watchlist, goals, net worth, spending, budget, retirement and the next-euro allocator — connect any MCP-compatible AI assistant (Claude, etc.) to your live portfolio data
 - **Daily prices in EUR**: yfinance prices updated daily via cron or on-demand from the dashboard "Refresh prices" button. GBX→GBP normalized, all values FX-converted to EUR. yfinance lookups (sector/country, fundamentals, news, benchmarks) are cached for speed
 - **Analytics** (tabbed, lazy-loaded): performance (total return, money-weighted IRR, benchmark vs S&P/AEX/IBEX/CAC/FTSE/DAX, YTD/1M/1Y/all) + net-worth chart; dividend income with **forward income & calendar**; **gain/loss leaderboard** (top winners/losers by € and %); tax estimate + **per-lot tax report with CSV export**; diversification + concentration (HHI over holdings); risk (drawdown/volatility/Sharpe); fee drag
 - **Research workbench**: ticker autocomplete, your position (cost basis, P/L, **sell calculator**, average-cost chart), Yahoo fundamentals with sources, LLM valuation (fair value, BUY/HOLD/SELL), and a **downloadable Markdown research report** per ticker; price-target alerts to Telegram
@@ -51,7 +51,7 @@ Python CLI + FastAPI server + web client for tracking stocks, ETFs, funds, bonds
 - **Per-user settings** (browser-local): theme/dark mode, number & date format, default currency, default broker, holdings sort, hide-tiny-positions, benchmark, landing page; plus in-app **change password**
 - **Authentication**: username/password login (web) + API-key (machine); external HTTPS via nginx-proxy-manager (`portfolio.example.com`)
 - **Web client**: Bootstrap 5 responsive UI with a grouped, collapsible sidebar, per-page Help + glossary, About and Resources pages, and metric tooltips (static, no build step)
-- **FastAPI backend**: REST API with API-key auth, 70+ endpoints
+- **FastAPI backend**: REST API with API-key auth, 200+ endpoints
 - **Dual-mode CLI**: direct SQLite access (local mode) or REST API (server mode)
 - **PostgreSQL support**: drop-in via `DATABASE_URL` env var
 
@@ -81,8 +81,8 @@ Python CLI + FastAPI server + web client for tracking stocks, ETFs, funds, bonds
                           │ HTTP (MCP)
                    ┌──────┴───────┐
                    │  MCP Server   │
-                   │  18 tools     │
-                   │(mcp/server.py)│
+                   │  32 tools     │
+                   │ (mcp/pfm_mcp) │
                    └──────────────┘
 ```
 
@@ -108,19 +108,25 @@ uv sync
 Copy `.env.example` to `.env` and set relevant values:
 
 ```bash
-# LLM provider (auto = tries Ollama → Gemini → OpenRouter)
+# LLM provider (auto = tries Ollama → Anthropic → Gemini → OpenRouter)
 PORTF_LLM_PROVIDER=auto
 PORTF_LLM_MODEL=llama3.2
 
 # Provider API keys
+ANTHROPIC_API_KEY=sk-ant-...
 GEMINI_API_KEY=your_key_here
 OPENROUTER_API_KEY=sk-or-...
+# Anthropic model tiers (optional; defaults claude-haiku-5-5 / claude-sonnet-5-5 / claude-opus-5-5)
+PORTF_ANTHROPIC_FAST_MODEL=claude-haiku-5-5
+PORTF_ANTHROPIC_MAIN_MODEL=claude-sonnet-5-5
+PORTF_ANTHROPIC_HEAVY_MODEL=claude-opus-5-5
 
 # Optional: PostgreSQL
 DATABASE_URL=postgresql://user:pass@localhost:5432/portf_db
 
-# CLI server mode
+# CLI server mode (PORTF_API_KEY is what the CLI sends; SERVER_API_KEY is what the server seeds)
 PORTF_SERVER_URL=http://localhost:8000
+PORTF_API_KEY=your_api_key
 SERVER_API_KEY=your_api_key
 
 # Google Sheets PDT sync
@@ -128,7 +134,7 @@ GOOGLE_SERVICE_ACCOUNT_FILE=service-account.json
 GOOGLE_SPREADSHEET_ID=your_sheet_id_here   # optional default
 
 # Database backup (~/scripts/portf-backup.sh, daily cron at 03:00)
-PFM_BACKUP_DIR=/home/youruser/backups/pfm
+PFM_BACKUP_DIR=~/backups/pfm
 PFM_BACKUP_KEEP=30   # days of retention
 ```
 
@@ -197,9 +203,9 @@ See [PDT Format & Google Sheets Sync](#pdt-format--google-sheets-sync) for setup
 # CSV / paste import
 python -m portf_manager import-csv "Movimientos Mi Cuenta MyInvestor.csv"
 python -m portf_manager import-csv "IndexaCapital.csv" --portfolio "IndexaCapital"
-python -m portf_manager paste-transaction   # LLM free-text (interactive)
-python -m portf_manager paste indexacapital
-python -m portf_manager paste coinbase
+python -m portf_manager paste-transaction "<pasted text>"   # LLM free-text
+python -m portf_manager paste-transaction "<pasted text>" --format indexacapital
+python -m portf_manager paste-transaction "<pasted text>" --format coinbase
 ```
 
 ### Export
@@ -231,9 +237,9 @@ python start_server.py --host 0.0.0.0 --workers 4
 
 API docs: **Swagger UI** at http://localhost:8000/docs · **ReDoc** at http://localhost:8000/redoc
 
-All endpoints require `X-API-Key` header. Create a key:
+All endpoints require `X-API-Key` header. Set `SERVER_API_KEY` in `.env`/`.env.local` and it is seeded into the `api_keys` table at startup; or create one by hand:
 ```bash
-python create_api_key.py --username admin
+python scripts/create_api_key.py
 ```
 
 ---
@@ -264,7 +270,11 @@ Import/Export page also has direct **Pull/Push** buttons for Google Sheets sync.
 | PDT (Portfolio Dividend Tracker) | XLSX | `pdt_xlsx_parser.py` | ✅ | ✅ |
 | PDT Google Sheets | Sheets API | `pdt_sheets_sync.py` | ✅ | ✅ |
 | Any broker | Free-text (LLM) | `llm_client.py` | ✅ | ✅ |
+| MyInvestor | "Movimientos" copied from the web/app (paste) | `myinvestor_paste_parser.py` | — | ✅ |
 | Cash deposits/withdrawals | Generic CSV (`date, action, amount, currency, broker`) | `bookings_csv_parser.py` | — | ✅ |
+| Fixed deposits | Generic CSV (`name, principal, interest_rate, start_date, maturity_date`, …) | `deposits_csv_parser.py` | — | ✅ |
+| Any Spanish bank (spending) | AEB43 / Norma 43 fixed-width statement, auto-detected | `aeb43_parser.py` | — | ✅ |
+| Any bank (spending) | Generic CSV statement (`date, description, amount` + optional `balance, currency`) | `generic_bank_csv_parser.py` | — | ✅ |
 
 **Duplicate handling**: every import path (file, CSV, PDT, text/LLM) flags rows that already
 exist and lets you choose **skip** (default), **import anyway**, or **overwrite**. Matching is
@@ -410,15 +420,15 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the phased feature history.
 | Provider | Env var | Default model |
 |---|---|---|
 | Ollama (local) | `OLLAMA_HOST` / `OLLAMA_PORT` | `llama3.2` |
+| Anthropic | `ANTHROPIC_API_KEY` | **tiers** `fast`/`main`/`heavy` → `claude-haiku-5-5` / `claude-sonnet-5-5` / `claude-opus-5-5` (`PORTF_ANTHROPIC_<TIER>_MODEL`) |
 | Gemini | `GEMINI_API_KEY` | `gemini-2.5-flash` |
 | OpenRouter | `OPENROUTER_API_KEY` | `openai/gpt-4o-mini` |
-| Anthropic | `ANTHROPIC_API_KEY` | `claude-sonnet-4-6` |
 
-Auto mode (default) tries in order: **Ollama → Gemini → OpenRouter → Anthropic**. Override with `PORTF_LLM_PROVIDER=ollama|gemini|openrouter|anthropic` and `PORTF_LLM_MODEL=<model>`.
+Auto mode (default) tries in order: **Ollama → Anthropic → Gemini → OpenRouter**. Override with `PORTF_LLM_PROVIDER=ollama|anthropic|gemini|openrouter` and `PORTF_LLM_MODEL=<model>` (pins one model for every Anthropic tier). Production (`docker-compose.yml`) pins `anthropic`; call sites ask for a tier (`get_llm_client(tier="fast"|"main"|"heavy")`), never a model slug.
 
 ### Agentic chat (tool-calling loop)
 
-The AI chat page uses an agentic two-pass loop: all 4 providers implement a `ToolCapableLLMClient` protocol with 15 in-process portfolio tools:
+The AI chat page uses an agentic tool loop: all 4 providers implement a `ToolCapableLLMClient` protocol with 18 in-process portfolio tools. On Anthropic, `run_tool_loop` runs up to 6 rounds (several tools per answer); the other providers use a two-pass loop:
 
 | Tool | What it returns |
 |---|---|
@@ -437,6 +447,9 @@ The AI chat page uses an agentic two-pass loop: all 4 providers implement a `Too
 | `asset_details` | Full asset metadata + position |
 | `asset_news` | Recent news headlines for a symbol |
 | `financial_news` | General market/financial news |
+| `get_allocation_targets` | Allocation targets plus the Rebalance analysis |
+| `get_deployable_cash` | Cash available to invest after tax reserve and household buffer |
+| `get_next_euro` | The next-euro allocator's proposal |
 
 Tools never make HTTP round-trips — they call DB/service functions directly. Chat history is persisted as named sessions (DB v24).
 
@@ -448,7 +461,7 @@ Gemini and Anthropic providers implement `generate_with_search()` — the Resear
 
 ## MCP Server
 
-The `mcp/server.py` file exposes your portfolio data as **18 MCP tools** so any MCP-compatible AI assistant (Claude Desktop, Claude Code, etc.) can query your live portfolio directly.
+The `mcp/` directory is its own package, `pfm-mcp` (`mcp/pfm_mcp/`, one module per area under `tools/`), exposing your portfolio data as **32 read-only MCP tools** so any MCP-compatible AI assistant (Claude Desktop, Claude Code, etc.) can query your live portfolio directly. `mcp/server.py` is only a compatibility shim. Full tool table and setup: [`mcp/README.md`](mcp/README.md).
 
 ### Available tools
 
@@ -472,17 +485,27 @@ The `mcp/server.py` file exposes your portfolio data as **18 MCP tools** so any 
 | `tax_report` | Per-lot FIFO realised gains + dividend withholding |
 | `goals` | FIRE/savings goals with on-track progress |
 | `bookings` | Cash deposits and withdrawals |
+| `networth` | Net worth with accounts and balance sheet |
+| `retirement_readiness` | Retirement scenarios in today's euros |
+| `action_items` | Open items pfm has detected |
+| `data_freshness` | How current the price data is |
+| `rebalance_analysis` | Allocation drift against the targets |
+| `wash_sale_check` | Antiaplicación (art. 33.5 LIRPF) windows and blocked losses |
+| `budget_summary` | Active budget, planned vs actual |
+| `spending_summary`, `spending_transactions` | Bank spending totals, trend and individual rows |
+| `next_euro`, `deployable_cash`, `allocation_targets`, `allocation_candidates`, `allocator_settings` | The next-euro allocator |
 
 ### Setup
 
-The server reads credentials from `~/repos/pfm/.env.local` at startup. Register it in your MCP client config:
+The server reads `PFM_URL` / `PFM_API_KEY`, then the dotenv file named by `PFM_ENV_FILE`, then the legacy `~/repos/pfm/.env.local`. Register it in your MCP client config:
 
 ```json
 {
   "mcpServers": {
     "pfm": {
-      "command": "uv",
-      "args": ["run", "python", "~/repos/pfm/mcp/server.py"]
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/alexgoldhoorn/pfm#subdirectory=mcp", "pfm-mcp"],
+      "env": { "PFM_URL": "http://127.0.0.1:8000", "PFM_API_KEY": "your_api_key" }
     }
   }
 }
@@ -509,8 +532,9 @@ python -m portf_manager extract-tax-report \
 ## Docker
 
 ```bash
-docker-compose up -d        # server + PostgreSQL
-docker compose --profile dev up --build   # dev with auto-reload
+# Every service has a profile, so plain `docker compose up` starts nothing.
+WEB_PORT=8080 docker compose --profile dev up -d --build   # backend (uvicorn --reload) + PostgreSQL + web (`make up`)
+docker compose --profile prod up -d                        # production images
 ```
 
 ---
@@ -525,7 +549,7 @@ uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e
 uv run pytest tests/ --cov=portf_manager --cov-report=term-missing
 ```
 
-**Current status**: 705 passed, 6 skipped.
+**Current status**: 1921 passed, 6 skipped (unit, 2026-10-23); JS: 235 passed (`make test-js`).
 
 Key test files:
 - `tests/test_pdt_xlsx_parser.py` — PDT XLSX parse/export roundtrip
@@ -533,7 +557,7 @@ Key test files:
 - `tests/unit/test_generic_csv_parser.py` — generic CSV parser (date/decimal style, asset_type pass-through)
 - `tests/unit/test_imports_exports.py` — server import/export/sync API
 - `tests/unit/test_api_routers.py` — all routers incl. tax-report FIFO shape assertion
-- `tests/test_database.py` — database CRUD + migrations (schema v24)
+- `tests/test_database.py` — database CRUD + migrations (schema v35)
 - `tests/test_cli_update_prices.py` — CLI update-prices via shared service
 
 ---
@@ -544,7 +568,7 @@ Key test files:
 pfm/
 ├── portf_manager/              # Core CLI package
 │   ├── cli.py                  # 30+ commands (argparse)
-│   ├── database.py             # SQLite layer + auto-migrations (schema v24)
+│   ├── database.py             # SQLite layer + auto-migrations (schema v35)
 │   ├── database_factory.py     # SQLite/PostgreSQL auto-detection
 │   ├── models.py               # Enums: AssetType, TransactionType
 │   ├── llm_client.py           # Provider-agnostic LLM client (Ollama/Gemini/OpenRouter/Anthropic)
@@ -558,14 +582,21 @@ pfm/
 │   │   ├── myinvestor_csv_parser.py
 │   │   ├── mintos_csv_parser.py
 │   │   ├── coinbase_csv_parser.py
+│   │   ├── myinvestor_paste_parser.py  # MyInvestor "Movimientos" copied from the app
+│   │   ├── bookings_csv_parser.py      # Cash deposits/withdrawals CSV
+│   │   ├── deposits_csv_parser.py      # Fixed-deposit CSV
+│   │   ├── aeb43_parser.py             # AEB43 / Norma 43 bank statements (spending)
+│   │   ├── generic_bank_csv_parser.py  # Generic bank-statement CSV (spending)
 │   │   ├── pdt_xlsx_parser.py          # PDT XLSX import + export (5 sheets)
 │   │   └── pdt_sheets_sync.py          # PDT Google Sheets pull/push
 │   └── services/
 │       ├── price_updater.py            # run_price_update() — shared by CLI and API
 │       ├── analytics_service.py
 │       ├── portfolio_advisor.py        # AI-scored portfolio health
-│       └── research.py
-├── portf_server/               # FastAPI REST API (70+ endpoints)
+│       ├── research.py
+│       └── ...                         # performance, risk_metrics, exposure, balance_sheet, loans,
+│                                       # retirement, allocator, budget, recurring, wash_sale, pdf_reports, …
+├── portf_server/               # FastAPI REST API (200+ endpoints)
 │   ├── app.py                  # Lifespan, router registration, API key seed
 │   ├── routers/
 │   │   ├── analytics.py        # Performance, risk, tax, diversification, snapshots
@@ -579,21 +610,25 @@ pfm/
 │   │   ├── llm.py              # Chat (agentic loop), transaction extraction, sessions
 │   │   ├── research.py         # Workbench, portfolio health, compare, alerts
 │   │   ├── market.py           # Quotes, FX rates, fundamentals (cached)
-│   │   └── auth.py
-│   ├── chat_tools.py           # 15 in-process portfolio tools for the agentic chat loop
+│   │   ├── auth.py
+│   │   └── ...                 # networth, retirement, allocate, spending, budgets, action_items,
+│   │                           # fund_profiles, reports, rebalance, watchlist, goals, public, system, …
+│   ├── chat_tools.py           # 18 in-process portfolio tools for the agentic chat loop
 │   ├── schemas/
 │   └── auth_middleware.py
 ├── web_client/                 # Bootstrap 5 + Chart.js frontend (no build step)
 │   ├── index.html
 │   ├── js/
-│   │   ├── help_text.js        # PAGE_HELP / METRIC_HELP — all 14 pages documented
+│   │   ├── help_text.js        # PAGE_HELP / METRIC_HELP — all 20 pages documented
 │   │   ├── pfm_core.js         # Prefs, Fmt, AssetSearch, API/modal managers
 │   │   ├── pfm_pages.js        # Nav, dashboard, transactions, assets, holdings
 │   │   ├── pfm_analytics.js    # Net-worth/dividend/analytics/diversification charts
 │   │   └── pfm_features.js     # Watchlist, goals, chat, portfolios, import/export, research
 │   └── css/
-├── mcp/
-│   └── server.py               # 18 MCP tools backed by the FastAPI server
+├── mcp/                        # pfm-mcp package: 32 read-only MCP tools backed by the FastAPI server
+│   ├── pfm_mcp/                # client.py, config.py, tools/ (one module per area)
+│   ├── tests/
+│   └── server.py               # Compatibility shim for the ~/mcp symlink
 ├── tests/
 │   ├── unit/
 │   ├── integration/
@@ -613,8 +648,10 @@ Key env vars:
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `PORTF_LLM_PROVIDER` | `auto` | `auto` / `ollama` / `gemini` / `openrouter` / `anthropic` |
-| `PORTF_LLM_MODEL` | provider default | Model name override |
+| `PORTF_LLM_PROVIDER` | `auto` | `auto` / `ollama` / `anthropic` / `gemini` / `openrouter` |
+| `PORTF_LLM_MODEL` | provider default | Model name override (pins one model for all Anthropic tiers) |
+| `PORTF_ANTHROPIC_FAST_MODEL` / `_MAIN_MODEL` / `_HEAVY_MODEL` | `claude-haiku-5-5` / `claude-sonnet-5-5` / `claude-opus-5-5` | Anthropic model per tier |
+| `PORTF_LLM_MAX_ATTEMPTS` / `PORTF_LLM_RETRY_DELAY` | `3` / `2` | Retries on transient LLM failures, first backoff in seconds |
 | `GEMINI_API_KEY` | — | Required for Gemini |
 | `OPENROUTER_API_KEY` | — | Required for OpenRouter |
 | `ANTHROPIC_API_KEY` | — | Required for Anthropic |
@@ -622,8 +659,13 @@ Key env vars:
 | `OLLAMA_PORT` | `11434` | Ollama server port |
 | `DATABASE_URL` | `sqlite:///portfolio.db` | PostgreSQL connection string |
 | `PORTF_SERVER_URL` | `http://localhost:8000` | CLI server mode URL |
-| `SERVER_API_KEY` | auto-seeded | API key for all endpoints (auto-generated on first start) |
+| `PORTF_API_KEY` | — | API key the CLI sends in server mode |
+| `SERVER_API_KEY` | — | API key seeded into the `api_keys` table at startup |
+| `PORTF_SECRET_KEY` | placeholder | Must be set (≥ 32 chars) in production or startup fails |
+| `PORTF_ALLOW_REGISTRATION` | `false` | Allow self-service user registration |
 | `PORTF_PUBLIC_VIEW` | `false` | Enable %-only shareable public summary page |
+| `PORTF_INDEXA_TOKEN` | — | Indexa Capital API token for account valuations (balance sheet) |
+| `PORTF_METRICS_ENABLED` / `PORTF_SENTRY_DSN` / `PORTF_OTEL_ENDPOINT` | off | Observability, see `docs/features/observability.md` |
 | `GOOGLE_SERVICE_ACCOUNT_FILE` | `service-account.json` | Google service account JSON path |
 | `GOOGLE_SPREADSHEET_ID` | — | Default PDT sync spreadsheet ID |
 
@@ -631,11 +673,11 @@ Key env vars:
 
 ## Contributing
 
-1. Fork and create a feature branch off `develop`
+1. Fork and create a feature branch off `main`
 2. Code style: `black` (line 88), Google-style docstrings, type hints everywhere
 3. Run tests: `uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e`
 4. Commit: conventional format (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`)
-5. Open a pull request against `develop`
+5. Open a pull request against `main`
 
 ---
 

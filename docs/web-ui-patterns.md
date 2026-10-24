@@ -44,9 +44,14 @@ Bootstrap handles show/hide natively — no custom CSS or JS needed for the togg
 
 | Element | Pattern | Example |
 |---------|---------|---------|
-| Tab bar `ul` | `{page}Tabs` | `#analyticsTabs` |
-| Tab button | `{page}TabBtn{Name}` | `#anTabBtnPerformance` |
-| Tab pane | `{page}Tab{Name}` | `#anTabPerformance` |
+| Tab bar `ul` | `{page}Tabs` | `#ioTabs`, `#bgTabs` |
+| Tab button | `{page}TabBtn{Name}` | `#ioTabBtnImport`, `#bgTabBtnOverview` |
+| Tab pane | `{page}Tab{Name}` or `{page}Pane{Name}` | `#ioTabImport`, `#bgPaneOverview` |
+
+Existing pages are not uniform: Import/Export uses `ioTabBtn*`/`ioTab*`, Spending and
+Budget use `spTabBtn*`/`spPane*` and `bgTabBtn*`/`bgPane*`, Analytics uses `anTab*`
+(buttons) and `anPane*` (panes), Diagnostics `diagTab*`/`diag*`. Follow the
+`{page}TabBtn{Name}` / `{page}Pane{Name}` pair for a new page; don't rename the old ones.
 
 ### Lazy loading
 

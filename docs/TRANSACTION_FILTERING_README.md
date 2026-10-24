@@ -130,19 +130,16 @@ if not auth_manager.is_authenticated():
 
 ## Testing
 
-### Demo Script
-Run the demonstration script to see the filtering service in action:
+The service is exercised through the CSV exporter's tests (the
+`export-transactions` CLI command builds a `TransactionFilter` and hands it to
+`csv_export`):
 
 ```bash
-python demo_transaction_filtering.py
+uv run pytest tests/test_csv_export.py -v
 ```
 
-### Test Script
-Run the test script to verify functionality:
-
-```bash
-python test_transaction_filter.py
-```
+The earlier `demo_transaction_filtering.py` and `test_transaction_filter.py`
+scripts are no longer in the repo.
 
 ## Integration
 
@@ -182,7 +179,7 @@ The service uses the existing `DatabaseAdapter` protocol for database operations
 ## Dependencies
 
 - `datetime` - Date and time handling
-- `zoneinfo` - Timezone support (Python 3.9+)
+- `zoneinfo` - Timezone support (standard library; the project targets Python 3.13)
 - `typing` - Type hints
 - `dataclasses` - Data class support
 - `portf_manager.models` - Transaction and DatabaseAdapter
@@ -193,13 +190,13 @@ The service uses the existing `DatabaseAdapter` protocol for database operations
 ```
 portf_manager/
 ├── transaction_filter.py     # Main implementation
+├── csv_export.py             # Consumer: export-transactions / CSV export
 ├── models.py                 # Transaction and DatabaseAdapter
 ├── database.py              # Database implementation
 ├── auth.py                   # Authentication management
 └── __init__.py              # Package exports
 
-demo_transaction_filtering.py # Demonstration script
-test_transaction_filter.py   # Test script
+tests/test_csv_export.py      # Tests that drive the filter through the exporter
 ```
 
 This implementation successfully completes Step 4 of the broader plan by providing a robust, user-friendly transaction filtering service that handles all the specified requirements.

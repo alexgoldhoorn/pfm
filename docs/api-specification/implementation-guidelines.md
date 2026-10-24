@@ -1,5 +1,20 @@
 # Portfolio Management Web Application - Implementation Guidelines & Best Practices
 
+> **Status note (2026-10-23).** This is the original design specification, kept for history. The implementation diverged from it and nothing below has been updated:
+> - The ESLint/Prettier/TypeScript/React/Vitest/Playwright toolchain described here was
+>   never adopted: the frontend is plain JavaScript with no `package.json`, tested with
+>   Node's built-in runner (`make test-js`); the backend is Python 3.13 formatted with
+>   **black** (line length 88), linted with **flake8**, tested with **pytest**.
+> - Conventions that actually apply live in CLAUDE.md: "Code Style" (black, comments on
+>   the line before, Google docstrings), "Web Client" (`esc()` before `innerHTML`,
+>   `notify`/`confirmDialog` instead of `alert`/`confirm`, `Fmt.money`), and "Testing"
+>   (no network in tests, exact assertions).
+> - Pre-commit runs black + flake8 + autoflake and the privacy hook
+>   `scripts/check_no_real_financials.py`; pre-push runs the unit suite — not the
+>   GitHub Actions release flow sketched below.
+>
+> The current reference is `CLAUDE.md` and `docs/features/*.md`.
+
 ## 📋 Table of Contents
 
 1. [Coding Standards](#coding-standards)

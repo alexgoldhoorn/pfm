@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > [`PROJECT_STATUS.md`](PROJECT_STATUS.md) (one "Recent (vX.Y.Z)" paragraph per
 > release). This file records major milestones only.
 
+## [2.5.10 – 2.5.85] - 2026-07/10
+
+See `PROJECT_STATUS.md` ("Recent (vX.Y.Z)" paragraphs, latest v2.5.85 on
+2026-10-23) for the per-release detail: bank-account spending tracking and
+budgeting (schema v25–v29, v32–v33), fund look-through (v30), persistent app
+logs and LLM retries (v31), ongoing charges and the price-spike guard (v34),
+balance sheet, loans and retirement readiness (v35), PDF reports, flow-adjusted
+risk metrics, the next-euro allocator, the `pfm-mcp` package (32 tools),
+Anthropic model tiers and the multi-tool chat loop.
+
 ## [2.5.9] - 2026-07-07
 
 ### Fixed

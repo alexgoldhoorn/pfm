@@ -4,29 +4,35 @@ This document provides comprehensive information about the testing suite for the
 
 ## 🧪 Overview
 
-The testing suite includes comprehensive tests for:
+The testing suite includes tests for:
 
 - **FastAPI Endpoints** - Unit and integration tests with `pytest` + `httpx.AsyncClient`
 - **CLI Operations** - Tests in both local and server modes using fixtures with ephemeral FastAPI server
 - **Web Client E2E** - Smoke tests with Playwright for browser automation
-- **Performance** - Load testing and performance benchmarking
-- **Security** - Vulnerability scanning and code analysis
+- **Web Client JS** - DOM-free tests of the `window.`-exported helpers with Node's built-in runner (`web_client/js/tests/*.test.mjs`, `make test-js`)
+
+There are no performance/load or security-scanning tests in the repo.
 
 ## 📁 Test Structure
 
 ```
 tests/
-├── conftest.py                 # Global pytest configuration
+├── conftest.py                 # Global pytest configuration (HOME isolation, network guard, markers)
 ├── fixtures/
 │   └── test_fixtures.py       # Shared test fixtures
+├── test_*.py                   # Older unit tests at the top level (database, CLI, parsers, tax, ...)
 ├── unit/
-│   └── test_api_routers.py    # Unit tests for FastAPI routers
+│   ├── test_api_routers.py    # Unit tests for FastAPI routers
+│   └── test_*.py              # ~80 more modules, one per service/router/feature
 ├── integration/
 │   ├── test_api_endpoints.py  # Integration tests for API endpoints
 │   └── test_cli_modes.py      # CLI tests for both modes
 ├── e2e/
-│   └── test_web_client_e2e.py # End-to-end web client tests
+│   └── test_web_client_e2e.py # End-to-end web client smoke test
 └── __init__.py
+
+web_client/js/tests/*.test.mjs  # JS tests (Node built-in runner)
+mcp/tests/                      # MCP server tests, run separately (cd mcp && python3 -m pytest -q)
 ```
 
 ## 🚀 Quick Start
@@ -34,69 +40,69 @@ tests/
 ### Prerequisites
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+# Install dependencies (dev deps included; pytest, pytest-asyncio, pytest-cov,
+# pytest-timeout, playwright, ... come from [tool.uv] dev-dependencies)
+uv sync
 
-# Install Playwright browsers (for E2E tests)
-playwright install
+# Install the Playwright browser (for E2E tests; the smoke test needs Chromium)
+uv run playwright install chromium
 ```
+
+If the project `.venv` is root-owned (Docker-created), run tooling with
+`UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run ...`.
 
 ### Running Tests
 
-#### Using the Test Runner Script
-
 ```bash
-# Run all tests (excluding slow tests)
-python run_tests.py all
+# Unit suite (what CI runs; ~1.9k tests, under a minute)
+uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e
 
-# Run specific test categories
-python run_tests.py unit                    # Unit tests only
-python run_tests.py integration             # Integration tests only
-python run_tests.py e2e                     # End-to-end tests only
-python run_tests.py cli                     # CLI tests only
-python run_tests.py slow                    # Performance/slow tests
+# Integration + e2e (each spawns the real app on a temp DB; e2e needs Chromium)
+uv run pytest tests/integration tests/e2e
 
-# Run with options
-python run_tests.py unit --verbose --failfast
-python run_tests.py e2e --browser firefox --no-headless
-python run_tests.py all --include-slow     # Include performance tests
+# Web client JS tests
+make test-js
+
+# MCP server tests (separate package, no pfm dependencies)
+cd mcp && python3 -m pytest -q
+
+# Everything under tests/ (make test)
+uv run pytest tests/ -v --tb=short
 ```
 
-#### Using pytest Directly
-
 ```bash
-# Run all tests with coverage
-pytest tests/ --cov=portf_server --cov=portf_manager --cov-report=html
-
 # Run specific test types using markers
-pytest -m "unit and not slow"              # Unit tests, no slow tests
-pytest -m "integration"                    # Integration tests only
-pytest -m "e2e"                           # End-to-end tests only
-pytest -m "slow"                          # Performance tests only
+uv run pytest -m "unit"                       # Unit tests only
+uv run pytest -m "integration"                # Integration tests only
+uv run pytest -m "e2e"                        # End-to-end tests only
 
 # Run tests for specific components
-pytest tests/unit/test_api_routers.py      # API router tests
-pytest tests/integration/test_cli_modes.py # CLI tests
-pytest tests/e2e/test_web_client_e2e.py   # Web client tests
+uv run pytest tests/unit/test_api_routers.py      # API router tests
+uv run pytest tests/integration/test_cli_modes.py # CLI tests
+uv run pytest tests/e2e/test_web_client_e2e.py   # Web client tests
 
 # Run with specific options
-pytest tests/ -v --tb=short --maxfail=3    # Verbose, short traceback, stop after 3 failures
-pytest tests/ --browser=firefox --headless=false  # E2E tests with Firefox, visible browser
+uv run pytest tests/ -v --tb=short --maxfail=3    # Verbose, short traceback, stop after 3 failures
+uv run pytest tests/e2e --browser firefox --headed # pytest-playwright options
 ```
+
+Live network tests (`@pytest.mark.network`) are skipped unless
+`PFM_LIVE_NETWORK_TESTS=1` is set.
 
 ## 🏷️ Test Categories and Markers
 
-Tests are organized using pytest markers:
+Tests are organized using pytest markers (`pytest.ini` runs with
+`--strict-markers`, so every marker must be declared there):
 
-- `@pytest.mark.unit` - Unit tests (fast, isolated)
-- `@pytest.mark.integration` - Integration tests (moderate speed, may require services)
-- `@pytest.mark.e2e` - End-to-end tests (slower, full browser automation)
-- `@pytest.mark.slow` - Performance/load tests (very slow)
+- `unit` / `integration` / `e2e` - added automatically from the directory by
+  `pytest_collection_modifyitems` in `tests/conftest.py` (never from test names)
+- `@pytest.mark.slow` - Slow tests
 - `@pytest.mark.api` - API-specific tests
 - `@pytest.mark.cli` - CLI-specific tests
 - `@pytest.mark.web` - Web client tests
 - `@pytest.mark.auth` - Authentication tests
 - `@pytest.mark.database` - Database-related tests
+- `@pytest.mark.network` - Makes real outbound calls; skipped unless `PFM_LIVE_NETWORK_TESTS=1`
 
 ### Running Tests by Category
 
@@ -119,7 +125,8 @@ pytest -m "auth"
 
 ## 📊 Coverage Reports
 
-Coverage reports are generated automatically and saved in multiple formats:
+Coverage is not part of the default `addopts`; ask for it explicitly
+(`pytest-cov` is a dev dependency, `make test-coverage` does this):
 
 ```bash
 # HTML report (browse to htmlcov/index.html)
@@ -136,46 +143,47 @@ pytest --cov=portf_server --cov=portf_manager --cov-report=xml
 
 ### pytest.ini Configuration
 
-Key configuration options in `pytest.ini`:
+Key configuration options in `pytest.ini` (the section header must be
+`[pytest]`; `[tool:pytest]` is silently ignored):
 
 ```ini
 [pytest]
-# Test discovery
+minversion = 6.0
+addopts = -ra --ignore=mcp --strict-config --strict-markers --tb=short -v
 testpaths = tests tests/unit tests/integration tests/e2e
 python_files = test_*.py *_test.py
-
-# Coverage settings
-addopts = 
-    --cov=portf_server
-    --cov=portf_manager
-    --cov-report=term-missing
-    --cov-report=html:htmlcov
-    --tb=short
-
-# Async support
-asyncio_mode = auto
-
-# Test markers
 markers =
-    unit: Unit tests
-    integration: Integration tests
-    e2e: End-to-end tests
-    slow: Slow tests
-    api: API tests
-    cli: CLI tests
+    unit: ...
+    integration: ...
+    e2e: ...
+    slow: ...
+    api: ...
+    cli: ...
+    web: ...
+    database: ...
+    auth: ...
+    network: makes real outbound calls; skipped unless PFM_LIVE_NETWORK_TESTS=1
+asyncio_mode = strict
+timeout = 300          # needs the pytest-timeout dev dep
+filterwarnings = error, ignore::UserWarning, ignore::DeprecationWarning, ...
 ```
 
-### Environment Variables
+### Environment and isolation
 
-Tests use specific environment variables:
+No environment variables need to be exported. `tests/conftest.py` sets up each
+test:
 
-```bash
-export PORTF_DATABASE_URL="sqlite:///test.db"
-export PORTF_SECRET_KEY="test-secret-key"
-export PORTF_ENVIRONMENT="testing"
-export PORTF_LOG_LEVEL="DEBUG"
-export GEMINI_API_KEY="test-gemini-key"  # For LLM tests
-```
+- every test gets its own empty `HOME` (the CLI writes `~/.portf_session`);
+  write test files under `tmp_path`, never the working directory
+- `PORTF_LLM_RETRY_DELAY=0` so LLM retry tests do not sleep
+- the €STR (`risk_free.py`) and HICP (`inflation.py`) fetchers are stubbed
+- **a network guard fails any real HTTP call**, even one the app swallows;
+  mock at the seam (`portf_manager.market._fetch_quote_live`,
+  `currency_utils.is_gbx`, `portf_server.routers.llm.get_llm_client`) or mark
+  the test `@pytest.mark.network`. Loopback is allowed only in integration/e2e.
+
+Integration and e2e tests start the real app in a **spawned** (not forked)
+process on a temp DB with `SERVER_API_KEY` seeded.
 
 ## 🖥️ CLI Testing
 
@@ -339,58 +347,33 @@ def server_config(ephemeral_server):
 
 ### GitHub Actions Workflow
 
-The comprehensive CI/CD pipeline (`.github/workflows/ci.yml`) includes:
+`.github/workflows/ci.yml` runs on pushes and pull requests to `main`, on
+Python 3.13 with `uv sync --frozen`, in three jobs:
 
-1. **Lint and Code Quality**
-   - Black formatter check
-   - Flake8 linting
-   - MyPy type checking
-   - Pre-commit hooks
+1. **lint** - `black --check .`, `ruff check portf_manager portf_server`,
+   `flake8 portf_manager portf_server --max-line-length=88 --extend-ignore=E203,W503,E501`
+2. **test** - the unit suite:
+   `uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q`
+3. **test-js** - `node --test web_client/js/tests/` on Node 20
 
-2. **Database Migration Tests**
-   - SQLite and PostgreSQL
-   - Multiple Python versions
+Integration and e2e tests are **not** run in CI (they need a spawned server
+and Chromium); run them locally before pushing. Docker images are built by
+`.github/workflows/docker-build-push.yml` only on `v*` tags or manual dispatch
+(see `docs/DOCKER_CI_CD.md`).
 
-3. **Unit and Integration Tests**
-   - Parallel test execution
-   - Coverage reporting
-   - Multiple Python versions
-
-4. **End-to-End Tests**
-   - Multiple browsers (Chromium, Firefox, WebKit)
-   - Screenshot capture on failure
-
-5. **CLI Tests**
-   - Both local and server modes
-   - Cross-platform testing
-
-6. **Security Scanning**
-   - Safety vulnerability checks
-   - Bandit security analysis
-
-7. **Docker Image Build and Test**
-   - Multi-stage builds
-   - Container health checks
-   - Image testing
-
-8. **Performance Tests**
-   - Load testing with Locust
-   - Performance benchmarking
+Locally, `.pre-commit-config.yaml` runs the real-financials check, black,
+flake8 and autoflake on commit. The project convention (`CLAUDE.md`) is a
+pre-push hook that runs the full unit suite; it is a local git hook, not
+installed by `.pre-commit-config.yaml`.
 
 ### Running Locally Like CI
 
 ```bash
-# Run the full CI suite locally
-python run_tests.py all --include-slow
-
-# Run security checks
-safety check
-bandit -r portf_server portf_manager
-
-# Run linting
-black --check .
-flake8 .
-mypy portf_server portf_manager
+uv run black --check .
+uv run ruff check portf_manager portf_server
+uv run flake8 portf_manager portf_server --max-line-length=88 --extend-ignore=E203,W503,E501
+uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e -q
+make test-js
 ```
 
 ## 🐛 Debugging Tests
@@ -433,40 +416,6 @@ def test_with_db_inspection(test_database):
     cursor = conn.cursor()
     cursor.execute("SELECT * FROM assets")
     print(cursor.fetchall())
-```
-
-## 📈 Performance Testing
-
-### Load Testing
-
-```bash
-# Run performance tests
-pytest -m "slow" --verbose
-
-# Use Locust for load testing
-locust -f tests/performance/locustfile.py --host=http://localhost:8000
-```
-
-### Memory and CPU Profiling
-
-```python
-import pytest
-import psutil
-import time
-
-@pytest.mark.slow
-def test_memory_usage():
-    process = psutil.Process()
-    start_memory = process.memory_info().rss
-    
-    # Run memory-intensive operation
-    large_dataset = create_large_dataset()
-    
-    end_memory = process.memory_info().rss
-    memory_increase = end_memory - start_memory
-    
-    # Assert memory usage is within acceptable limits
-    assert memory_increase < 100 * 1024 * 1024  # 100MB
 ```
 
 ## 🛠️ Custom Test Utilities
@@ -544,13 +493,8 @@ def performance_data():
 
 ### Test Timeout Issues
 
-```bash
-# Increase timeout for slow tests
-pytest --timeout=300 tests/
-
-# Or in pytest.ini
-timeout = 300
-```
+`pytest.ini` sets `timeout = 300` (thread method) via `pytest-timeout`;
+override per run with `pytest --timeout=600 tests/`.
 
 ## 📚 Resources
 
@@ -569,8 +513,10 @@ When adding new tests:
 3. **Write descriptive test names**: `test_create_asset_with_valid_data`
 4. **Use fixtures for setup**: Leverage existing fixtures or create new ones
 5. **Add docstrings**: Document what the test is verifying
-6. **Follow black formatting**: Use `black .` to format code
-7. **Update documentation**: Add new test categories to this document
+6. **Follow black formatting**: Use `uv run black <file>` to format code
+7. **Assert the exact outcome**: no "any of 200/403/500" or `if "id" in data: ... else: pass` tests — they pass against missing endpoints
+8. **Invent data**: fictional asset names and prices, never real holdings
+9. **Update documentation**: Add new test categories to this document
 
 ### Example New Test
 
