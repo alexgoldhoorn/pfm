@@ -27,7 +27,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-matrix@2.0.1/dist/chartjs-chart-matrix.min.js"></script>
 
     <!-- Custom CSS -->
-    <link href="css/styles.css?v=1790700000" rel="stylesheet">
+    <link href="css/styles.css?v=1792000000" rel="stylesheet">
     <style>
         /* Privacy mode: blur monetary amounts until hovered */
         body.pfm-privacy .pfm-amt { filter: blur(0.45em); transition: filter .12s ease; user-select: none; }
@@ -1534,7 +1534,7 @@
                                         <i class="bi bi-plus-lg"></i>
                                     </button>
                                 </div>
-                                <div id="chatSessionsList" class="list-group list-group-flush overflow-auto" style="max-height:60vh;">
+                                <div id="chatSessionsList" class="list-group list-group-flush overflow-auto" style="max-height:66vh;">
                                     <div class="list-group-item text-muted small py-2">Loading…</div>
                                 </div>
                             </div>
@@ -1542,33 +1542,54 @@
 
                         <!-- Message area -->
                         <div class="col-12 col-md-9">
-                            <!-- Active thread name + mobile new-chat -->
-                            <div class="d-flex align-items-center gap-2 mb-2">
-                                <span id="chatActiveThreadName" class="fw-semibold text-truncate"></span>
-                                <button class="btn btn-sm btn-outline-primary d-md-none ms-auto" id="chatNewBtnMobile">
-                                    <i class="bi bi-plus-lg me-1"></i>New
-                                </button>
-                            </div>
-                            <!-- Message thread -->
-                            <div id="chatMessages" class="border rounded bg-white p-3 mb-3" style="height:clamp(260px,50vh,520px);overflow-y:auto;display:flex;flex-direction:column;gap:12px;">
-                                <div class="text-muted text-center small mt-auto" id="chatEmpty">
-                                    <i class="bi bi-robot fs-3 d-block mb-2"></i>
-                                    <strong>What can I help you with?</strong><br>
-                                    <span class="text-muted">Try: "What is my total P&amp;L?" &middot; "Show me my top holdings" &middot; or paste a broker statement and click <strong>Extract &amp; Import</strong>.</span>
-                                </div>
-                            </div>
-
-                            <!-- Input area -->
-                            <div class="card">
-                                <div class="card-body pb-2">
-                                    <textarea class="form-control mb-2" id="chatInput" rows="3"
-                                        placeholder="Ask a question about your portfolio, or paste a broker statement to extract transactions&#10;&#10;Tip: Ctrl+Enter to send quickly."></textarea>
-                                    <div class="d-flex gap-2 justify-content-end">
-                                        <button class="btn btn-outline-secondary btn-sm" id="chatExtractBtn" title="Extract buy/sell transactions from pasted broker statement">
-                                            <i class="bi bi-magic me-1"></i>Extract &amp; Import
+                            <div class="chat-panel d-flex flex-column">
+                                <!-- Thread header: name, model picker, export -->
+                                <div class="chat-header d-flex align-items-center gap-2 flex-wrap">
+                                    <span id="chatActiveThreadName" class="fw-semibold text-truncate flex-grow-1" style="min-width:0;"></span>
+                                    <div class="d-flex align-items-center gap-1 ms-auto">
+                                        <select class="form-select form-select-sm chat-model-select" id="chatModelSelect" title="Model used for the next answer" aria-label="Model" style="display:none;"></select>
+                                        <div class="dropdown">
+                                            <button class="btn btn-sm btn-outline-secondary" id="chatExportBtn" data-bs-toggle="dropdown" aria-expanded="false" title="Export this thread" disabled>
+                                                <i class="bi bi-download"></i><span class="d-none d-sm-inline ms-1">Export</span>
+                                            </button>
+                                            <ul class="dropdown-menu dropdown-menu-end" id="chatExportMenu">
+                                                <li><a class="dropdown-item" href="#" data-export="md"><i class="bi bi-markdown me-2"></i>Markdown (.md)</a></li>
+                                                <li><a class="dropdown-item" href="#" data-export="html"><i class="bi bi-filetype-html me-2"></i>Web page (.html)</a></li>
+                                                <li><a class="dropdown-item" href="#" data-export="print"><i class="bi bi-printer me-2"></i>Print / save as PDF</a></li>
+                                            </ul>
+                                        </div>
+                                        <button class="btn btn-sm btn-outline-primary d-md-none" id="chatNewBtnMobile" title="New chat">
+                                            <i class="bi bi-plus-lg"></i>
                                         </button>
-                                        <button class="btn btn-primary btn-sm" id="chatSendBtn" title="Send message (Ctrl+Enter)">
-                                            <i class="bi bi-send me-1"></i>Send
+                                    </div>
+                                </div>
+
+                                <!-- Message thread -->
+                                <div id="chatMessages" class="chat-thread flex-grow-1">
+                                    <div class="chat-empty" id="chatEmpty">
+                                        <i class="bi bi-robot"></i>
+                                        <strong>What can I help you with?</strong>
+                                        <div class="chat-suggestions">
+                                            <button type="button" class="chat-suggestion">What is my total P&amp;L?</button>
+                                            <button type="button" class="chat-suggestion">Show my top holdings</button>
+                                            <button type="button" class="chat-suggestion">How diversified am I?</button>
+                                            <button type="button" class="chat-suggestion">Where should my next euro go?</button>
+                                        </div>
+                                        <span class="text-muted small">Or paste a broker statement and click <strong>Extract</strong>.</span>
+                                    </div>
+                                </div>
+
+                                <!-- Composer -->
+                                <div class="chat-composer">
+                                    <textarea class="form-control" id="chatInput" rows="1"
+                                        placeholder="Ask about your portfolio, or paste a broker statement…" aria-label="Message"></textarea>
+                                    <div class="d-flex align-items-center gap-2 mt-2">
+                                        <span class="text-muted chat-hint d-none d-sm-inline">Shift+Enter to send · Enter for a new line</span>
+                                        <button class="btn btn-outline-secondary btn-sm ms-auto" id="chatExtractBtn" title="Extract buy/sell transactions from a pasted broker statement">
+                                            <i class="bi bi-magic me-1"></i>Extract
+                                        </button>
+                                        <button class="btn btn-primary btn-sm chat-send-btn" id="chatSendBtn" title="Send (Shift+Enter)" aria-label="Send">
+                                            <i class="bi bi-send-fill"></i>
                                         </button>
                                     </div>
                                 </div>
@@ -4796,7 +4817,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
 
     <!-- Centralized help text (must load before the app scripts) -->
-    <script src="js/help_text.js?v=1790700000"></script>
+    <script src="js/help_text.js?v=1792000000"></script>
 
     <!-- App scripts: portfolio_debug.js was split into these four classic
          scripts. They share one global scope and MUST load in this order:
@@ -4946,10 +4967,10 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
       </div>
     </div>
 
-    <script src="js/pfm_core.js?v=1790700000"></script>
-    <script src="js/pfm_pages.js?v=1790700000"></script>
-    <script src="js/pfm_analytics.js?v=1790700000"></script>
-    <script src="js/pfm_features.js?v=1790700000"></script>
+    <script src="js/pfm_core.js?v=1792000000"></script>
+    <script src="js/pfm_pages.js?v=1792000000"></script>
+    <script src="js/pfm_analytics.js?v=1792000000"></script>
+    <script src="js/pfm_features.js?v=1792000000"></script>
     <script>
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('/sw.js');
