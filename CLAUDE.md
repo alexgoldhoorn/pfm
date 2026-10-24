@@ -61,7 +61,7 @@ remote_gateway/server.py".
 - `portf_server/` — FastAPI REST API server with routers, schemas, auth middleware.
 - `web_client/` — Vanilla JS + Bootstrap 5 frontend (static files, no build step). See the Web Client section for load order.
 - `tests/` — pytest test suite. `tests/unit/`, `tests/integration/`, `tests/e2e/`.
-- `docs/features/` — full per-feature reference (see the Feature reference table). `docs/superpowers/` holds specs and plans.
+- `docs/features/` — full per-feature reference (see the Feature reference table). `docs/superpowers/` holds specs and plans. `docs/api-specification/` is the original 2025 design spec (JWT, React SPA — never built), kept for history; only `portfolio-management-api.md` there is maintained.
 
 ## Key Patterns
 
@@ -117,8 +117,10 @@ the provider there, not only in `.env.local`.
   (crashes without an API key).
 - Search grounding (`generate_with_search`) exists only on Gemini and Anthropic;
   callers detect it with `hasattr`. All four providers implement
-  `ToolCapableLLMClient`; the 15 chat tools in `portf_server/chat_tools.py` call
-  DB/service functions directly, never HTTP.
+  `ToolCapableLLMClient`; the 18 chat tools in `portf_server/chat_tools.py` call
+  DB/service functions directly, never HTTP. Chat on Anthropic runs
+  `AnthropicLLMClient.run_tool_loop` (several tools per answer, 6 rounds); the
+  engine checks for it on the class, so a `MagicMock` LLM keeps the two-pass path.
 - Every provider method is wrapped by `_instrument`: transient errors are retried
   (`PORTF_LLM_MAX_ATTEMPTS`, `PORTF_LLM_RETRY_DELAY`), config/request errors fail
   at once, a final failure raises `LLMError`, and each call is logged as an
@@ -168,7 +170,7 @@ it.** The column on the right lists only what's easy to break.
 | Spending (bank accounts) | `spending.md` | Bank accounts are `portfolios` rows with `account_type='bank'` and never touch `transactions`/`bookings`. `GET /spending/` returns `{items, total}`. A category's tree root must match the amount's sign. Un-transferring a row resets its reciprocal counterpart (`reset_transfer_counterpart`). Exclude already-linked bookings before transfer matching. Rules match description OR merchant; a rule whose category root conflicts with the sign is skipped, not a stop. "Missed" recurring needs an import past the due date. |
 | Budgeting | `budgeting.md` | `GET /summary` must stay before `/{budget_id}`. Positive variance always means favourable. Attribute unbudgeted actuals by SIGN, not tree root. Budget and `/spending/trend` must reconcile to the cent. An all-digits investment `ref_key` is a broker — use `line_uses_category()`. `net` is cash flow, not "better off". Never show a flattering variance for a month with nothing imported. |
 | Action Items | `action-items.md` | Each check is wrapped independently. Net Worth checklist gaps are merged client-side (`computeNetWorthChecklist`), never duplicated server-side. Item ids are deterministic per entity. Only `consolidation_candidate` fund overlaps raise an item. |
-| Next-euro allocator | `allocator.md` | The tax reserve reads only the work-income merchants ticked in the settings. Traspasos are planned before the new-money split. Antiaplicación unavailable → no stock is proposed. |
+| Next-euro allocator | `allocator.md` | The tax reserve reads only the work-income merchants ticked in the settings; an empty list counts every income row and adds a warning. Traspasos are planned before the new-money split. Antiaplicación unavailable → no stock is proposed. |
 | Price updates, market data | `prices-market.md` | `run_price_update(db)` takes the real `Database`, never `PortfolioHTTPClient`: in server mode the CLI delegates to `POST /analytics/trigger-price-update` (`symbols`, `source`) and reports the run record (adding a DB method to the updater broke every cron run for four nights in 2026-10). A fetched price far outside the band around the last stored one is held, not stored (`services/price_guard.py`; held state is `app_settings` `price_guard:{asset_id}`) and shown as an Action Item until a later fetch confirms it; manual prices skip the guard. yfinance returns UK prices in GBX — ÷100 when `fast_info.currency == "GBp"`. `_CRYPTO_YF_OVERRIDES` lives only in `price_updater.py`. Read `previous_close` by subscript, never `fast_info.get()` (silently None). Currency self-healing skips crypto. |
 | Web client | `web-client.md` | See the Web Client section below. |
 | Metrics, error tracking, traces | `observability.md` | All off unless configured (`PORTF_METRICS_ENABLED`, `PORTF_SENTRY_DSN`, `PORTF_OTEL_ENDPOINT`). Telemetry must never stop the API: a feature that fails to start is logged and skipped. LLM metrics/spans hook `_call_with_retry`/`_log_llm_call`, so every `_instrument`-wrapped call is covered. Prompt text goes on spans only with `PORTF_OTEL_CAPTURE_LLM_CONTENT`. `/metrics` is `include_in_schema=False` and outside the API-key dependency, so protect it with `PORTF_METRICS_TOKEN`. |
@@ -177,8 +179,9 @@ it.** The column on the right lists only what's easy to break.
 Vanilla JS + Bootstrap 5.3, no build step. `index.html` loads five files **in this
 order**, sharing one global scope: `help_text.js` → `pfm_core.js` (prefs, `Fmt`,
 `esc`, API/modal managers, shared chart helpers, `notify`/`confirmDialog`) →
-`pfm_pages.js` (nav, dashboard, transactions, assets) → `pfm_analytics.js`
-(charts) → `pfm_features.js` (all other pages + `DOMContentLoaded` bootstrap).
+`pfm_pages.js` (page manager: dashboard, transactions, assets, help) →
+`pfm_analytics.js` (charts, net worth) → `pfm_features.js` (nav and auth
+managers, all other pages + `DOMContentLoaded` bootstrap).
 Full reference (dashboard layout, chart helpers, page-by-page wiring):
 `docs/features/web-client.md`.
 
@@ -206,7 +209,7 @@ Full reference (dashboard layout, chart helpers, page-by-page wiring):
 
 ## Testing
 - Unit: `uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e`
-  (~1.5k tests, ~50s; also passes as root). JS: `make test-js`.
+  (~1.9k tests, 1–2 min; also passes as root). JS: `make test-js`.
 - Integration + e2e: `uv run pytest tests/integration tests/e2e` (~30s). Each
   starts the real app in a **spawned** (not forked — a fork inherits
   already-imported settings) process on a temp DB with `SERVER_API_KEY` seeded.
@@ -274,7 +277,7 @@ When writing tests, invent asset names (e.g. "Example Corp", "Global Bond Fund")
 ## Git
 - Public repo `github.com:alexgoldhoorn/pfm` — develop on `main`. Push: `GIT_SSH_COMMAND="ssh -o IdentitiesOnly=no" git push origin main`.
 - Use `git -P` or `GIT_PAGER=cat` (some git versions don't support `--no-pager` as a flag).
-- Conventional commits: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`. Co-author: `Co-Authored-By: Oz <oz-agent@warp.dev>`.
+- Conventional commits: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`. Co-author line names the agent that wrote the commit (e.g. `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`).
 - **Pre-commit**: black + flake8 + autoflake via `.pre-commit-config.yaml`. **Pre-push**: full unit suite.
 
 ## Important Gotchas

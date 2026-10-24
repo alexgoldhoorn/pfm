@@ -1,5 +1,19 @@
 # Portfolio Management Web Application - Wireframe Specifications
 
+> **Status note (2026-10-23).** This is the original design specification, kept for history. The implementation diverged from it and nothing below has been updated:
+> - The shipped UI is a single-page Bootstrap app (`web_client/index.html`) with a
+>   sidebar navigation and a login **modal** offering Password / Create account / API key
+>   tabs — there are no separate login/registration pages, no email login, no "forgot
+>   password" flow and no per-user API-key management screen.
+> - The page set grew well beyond these eight wireframes (Net Worth, Spending,
+>   Budget, Action Items, Analytics, Research, Watchlist, Goals, Forecast, Diagnostics,
+>   Import/Export, Chat); amounts are shown in EUR via `Fmt.money`, and the Tailwind
+>   palette here was replaced by Bootstrap tokens and `--viz-*` CSS variables.
+> - The dollar figures in the mock-ups are illustrative design placeholders.
+> - See `docs/features/web-client.md` for the page-by-page wiring that exists.
+>
+> The current reference is `CLAUDE.md` and `docs/features/*.md`.
+
 ## 📋 Wireframe Overview
 
 This document outlines the wireframe specifications for each page of the Portfolio Management web application. While actual wireframes should be created in Figma or similar tools, this serves as a comprehensive guide for UI/UX designers and developers.

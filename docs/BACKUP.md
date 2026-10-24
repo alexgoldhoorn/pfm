@@ -13,10 +13,11 @@ gzips it to `~/backups/pfm/portfolio-YYYYMMDD-HHMMSS.db.gz`, and keeps the
 newest 30. Schedule it with cron:
 
 ```cron
-0 3 * * * /home/you/scripts/portf-backup.sh
+0 3 * * * $HOME/scripts/portf-backup.sh
 ```
 
-Tunable via env: `PFM_DB`, `PFM_BACKUP_DIR`, `PFM_BACKUP_KEEP`.
+Tunable via env: `PFM_DB` (default `~/repos/pfm/portfolio.db`),
+`PFM_BACKUP_DIR` (default `~/backups/pfm`), `PFM_BACKUP_KEEP` (default 30).
 (If you also sync `~/backups` off-box — e.g. to Google Drive — these go with it.)
 
 ## On-demand backup
@@ -25,6 +26,11 @@ Tunable via env: `PFM_DB`, `PFM_BACKUP_DIR`, `PFM_BACKUP_KEEP`.
 - **Manual**: `cp portfolio.db portfolio.db.bak` (fine when the app is stopped).
 
 ## Restore
+The web UI (Import / Export → **Restore DB backup**) and
+`POST /api/v1/system/restore` replace the live database with an uploaded `.db`
+file and, when `PFM_BACKUP_DIR` is set, save a pre-restore snapshot there
+first. For a manual swap:
+
 1. Stop the backend so nothing writes during the swap:
    ```bash
    docker stop portf_backend_dev

@@ -1,5 +1,21 @@
 # Portfolio Management API - Authentication & Security Guide
 
+> **Status note (2026-10-23).** This is the original design specification, kept for history. The implementation diverged from it and nothing below has been updated:
+> - There is no JWT. `POST /api/v1/auth/login` returns an opaque in-process session
+>   token (`portf_manager/auth.py`, PBKDF2 passwords, not bcrypt); every data endpoint
+>   takes an API key in `X-API-Key` (or `Authorization: Bearer <api key>`), applied
+>   router-wide in `portf_server/app.py` and validated by `portf_server/auth_middleware.py`.
+> - The `/api/v1/auth/api-keys` endpoints, per-key `permissions` and 90-day rotation were
+>   never built. Keys are created with `python -m portf_server.api_key_cli create NAME`
+>   or seeded from `SERVER_API_KEY` at startup (CLAUDE.md, "Auth").
+> - The web client logs in with `POST /api/v1/auth/login-key`, which exchanges a
+>   username/password for the server API key; registration is closed unless
+>   `PORTF_ALLOW_REGISTRATION=true`. The React/TypeScript code below describes a frontend
+>   that was not built (`web_client/` is vanilla JS).
+> - For the implemented endpoints see `portfolio-management-api.md` in this directory.
+>
+> The current reference is `CLAUDE.md` and `docs/features/*.md`.
+
 ## Authentication Methods Overview
 
 The Portfolio Management API supports two primary authentication methods:
