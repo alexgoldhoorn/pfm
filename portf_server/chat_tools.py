@@ -8,7 +8,7 @@ used by EnhancedChatEngine.
 
 import json
 import logging
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from portf_manager.database import Database
@@ -484,6 +484,168 @@ def _financial_news(db: Database, query: str) -> str:
         return _j({"query": query, "error": str(e), "news": []})
 
 
+@_tool("get_action_items")
+def _get_action_items(db: Database, include_resolved: bool = False) -> str:
+    """Open action items (what needs attention) with their follow-up state."""
+    from portf_manager.services.action_items import action_items_report
+
+    report = action_items_report(db, status="all" if include_resolved else "open")
+    items = [
+        {
+            "id": i["id"],
+            "severity": i["severity"],
+            "category": i["category"],
+            "status": i["status"],
+            "title": i["title"],
+            "detail": i.get("detail"),
+            "page": i.get("link_page"),
+            "note": (i.get("ack") or {}).get("note"),
+            "snoozed_until": (i.get("ack") or {}).get("until"),
+        }
+        for i in report["items"]
+    ]
+    return _j(
+        {
+            "items": items,
+            "count": len(items),
+            "summary": report["summary"],
+            "how_to_follow_up": (
+                "set_action_item_status marks an item checked or snoozed once "
+                "the user has looked at it; ids are stable per finding."
+            ),
+        }
+    )
+
+
+@_tool("set_action_item_status")
+def _set_action_item_status(
+    db: Database,
+    id: str,
+    status: str,
+    note: Optional[str] = None,
+    days: Optional[int] = None,
+) -> str:
+    """Mark an action item or Data Quality finding checked/snoozed, or reopen it."""
+    from portf_manager.services.action_item_acks import set_ack
+
+    try:
+        ack = set_ack(db, id, status, note=note, days=days)
+    except ValueError as e:
+        return _j({"id": id, "error": str(e)})
+    return _j({"id": id, "status": status, "ack": ack})
+
+
+@_tool("get_diagnostics")
+def _get_diagnostics(db: Database) -> str:
+    """Price-data health, last update runs, open data-quality counts, recent errors."""
+    from portf_server.routers.analytics import (
+        compute_data_freshness,
+        dq_duplicates,
+        dq_suspicious,
+    )
+    from portf_manager.services.action_item_acks import ack_is_active, list_acks
+
+    out: dict = {}
+    try:
+        fresh = compute_data_freshness(db)
+        out["price_data"] = {
+            "last_refresh": fresh.get("last_refresh"),
+            "refresh_age_hours": fresh.get("refresh_age_hours"),
+            "prices_as_of": fresh.get("prices_as_of"),
+            "priced_holdings": fresh.get("checked"),
+            "stale_count": fresh.get("stale_count"),
+            "stale": fresh.get("stale", [])[:15],
+        }
+    except Exception as e:
+        out["price_data"] = {"error": str(e)}
+
+    try:
+        runs = db.get_price_update_runs(limit=5)
+        out["price_update_runs"] = [
+            {
+                "finished_at": r.get("finished_at"),
+                "source": r.get("source"),
+                "duration_seconds": r.get("duration_seconds"),
+                "updated": r.get("updated_count"),
+                "skipped": r.get("skipped_count"),
+                "errors": r.get("error_count"),
+                "error_symbols": r.get("error_symbols") or [],
+                "api_errors": (r.get("api_errors") or [])[:5],
+            }
+            for r in runs
+        ]
+    except Exception as e:
+        out["price_update_runs"] = {"error": str(e)}
+
+    try:
+        acks = list_acks(db)
+        dups = dq_duplicates(db=db, api_key_info={})["duplicates"]
+        issues = dq_suspicious(db=db, api_key_info={})["issues"]
+        open_dups = [d for d in dups if not ack_is_active(acks.get(f"dq:{d['key']}"))]
+        open_issues = [
+            i for i in issues if not ack_is_active(acks.get(f"dq:{i['key']}"))
+        ]
+        out["data_quality"] = {
+            "duplicates_open": len(open_dups),
+            "duplicates_checked": len(dups) - len(open_dups),
+            "suspicious_open": len(open_issues),
+            "suspicious_checked": len(issues) - len(open_issues),
+            "open_duplicates": [
+                {
+                    "finding_id": f"dq:{d['key']}",
+                    "label": d["label"],
+                    "asset": d["tx_a"].get("asset"),
+                    "portfolio": d["tx_a"].get("portfolio"),
+                    "tx_a": {
+                        k: d["tx_a"].get(k)
+                        for k in ("id", "date", "type", "quantity", "price")
+                    },
+                    "tx_b": {
+                        k: d["tx_b"].get(k)
+                        for k in ("id", "date", "type", "quantity", "price")
+                    },
+                }
+                for d in open_dups[:10]
+            ],
+            "open_suspicious": [
+                {
+                    "finding_id": f"dq:{i['key']}",
+                    "severity": i.get("severity"),
+                    "asset": i.get("asset"),
+                    "date": i.get("date"),
+                    "type": i.get("type"),
+                    "description": i.get("description"),
+                    "transaction_id": i.get("transaction_id"),
+                }
+                for i in open_issues[:10]
+            ],
+        }
+    except Exception as e:
+        out["data_quality"] = {"error": str(e)}
+
+    try:
+        if hasattr(db, "list_logs"):
+            problems = db.list_logs(limit=200, min_level="WARNING")
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            recent = [p for p in problems if str(p.get("created_at") or "") >= cutoff]
+            out["log_problems"] = {
+                "last_24h": len(recent),
+                "latest": [
+                    {
+                        "at": p.get("created_at"),
+                        "level": p.get("level"),
+                        "source": p.get("source"),
+                        "message": p.get("message"),
+                    }
+                    for p in problems[:5]
+                ],
+            }
+    except Exception as e:
+        out["log_problems"] = {"error": str(e)}
+
+    return _j(out)
+
+
 # ── public catalog ─────────────────────────────────────────────────────────
 
 TOOLS: list[ToolDefinition] = [
@@ -747,5 +909,73 @@ TOOLS: list[ToolDefinition] = [
                 "required": True,
             },
         ],
+    ),
+    ToolDefinition(
+        name="get_action_items",
+        description=(
+            "Return what needs the user's attention: the Action Items checklist "
+            "(stale broker imports, data-quality findings, price-update failures, "
+            "held prices, off-track goals, price alerts, budget overruns, fund "
+            "look-through gaps, balance-sheet staleness, retirement readiness). "
+            "Each item has a stable id, severity, status (open/checked/snoozed) "
+            "and the page it lives on. Call this for 'what needs my attention', "
+            "'anything wrong', 'what should I check'."
+        ),
+        parameters=[
+            {
+                "name": "include_resolved",
+                "type": "boolean",
+                "description": "Also return items already checked or snoozed (default false).",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="set_action_item_status",
+        description=(
+            "Record the follow-up on an action item or Data Quality finding once "
+            "the user has decided: status 'checked' (looked at, fine, optionally "
+            "with a note), 'snoozed' (hide for N days) or 'open' (reopen). Use the "
+            "id from get_action_items or the finding_id from get_diagnostics. Only "
+            "call it when the user asks to mark, dismiss, snooze or reopen something."
+        ),
+        parameters=[
+            {
+                "name": "id",
+                "type": "string",
+                "description": "Action item id or finding id (e.g. dq:dup:12:15).",
+                "required": True,
+            },
+            {
+                "name": "status",
+                "type": "string",
+                "description": "checked, snoozed or open.",
+                "required": True,
+            },
+            {
+                "name": "note",
+                "type": "string",
+                "description": "Why it is fine / what was decided (shown on the item).",
+                "required": False,
+            },
+            {
+                "name": "days",
+                "type": "integer",
+                "description": "For snoozed: hide for this many days from today.",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="get_diagnostics",
+        description=(
+            "Return the Diagnostics page's data: price-data freshness and stale or "
+            "unpriced holdings, the last price-update runs with failed symbols and "
+            "API errors, open vs checked Data Quality findings (possible duplicate "
+            "transactions, suspicious patterns) with their finding ids, and recent "
+            "warnings/errors from the application log. Use it to explain why a "
+            "value looks off or whether the nightly price update worked."
+        ),
+        parameters=[],
     ),
 ]

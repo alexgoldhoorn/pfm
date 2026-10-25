@@ -1315,24 +1315,14 @@ def get_tax_report_pdf(
     )
 
 
-@router.get("/data-freshness")
-async def get_data_freshness(
-    stale_days: int = Query(
-        4,
-        description=(
-            "Flag held auto-priced assets whose latest price is older than this "
-            "many calendar days (4 covers a normal weekend)."
-        ),
-    ),
-    db=Depends(get_database),
-    api_key_info: dict = Depends(_auth),
-):
-    """Freshness of the external price data behind value / gain-loss figures.
+def compute_data_freshness(db, stale_days: int = 4) -> dict:
+    """Freshness of the stored prices behind every value / gain figure.
 
-    Reports when prices were last fetched, the market date they are 'as of',
-    and any currently-held auto-priced assets whose price has gone stale (or was
-    never available). Manual-price assets (auto_price=0) are excluded from the
-    stale check since their prices are intentionally hand-maintained.
+    Shared by ``GET /analytics/data-freshness`` and the chat's
+    ``get_diagnostics`` tool. Reports the last fetch time, the market date
+    prices are "as of", and the held auto-priced assets whose price is older
+    than ``stale_days`` or missing altogether. Manual-price assets
+    (``auto_price=0``) are excluded from the stale check.
     """
     positions, _ = _compute_positions(db)
     held_ids = [aid for aid, d in positions.items() if d["quantity"] > 0]
@@ -1414,6 +1404,28 @@ async def get_data_freshness(
         "stale_count": len(stale),
         "stale": stale,
     }
+
+
+@router.get("/data-freshness")
+async def get_data_freshness(
+    stale_days: int = Query(
+        4,
+        description=(
+            "Flag held auto-priced assets whose latest price is older than this "
+            "many calendar days (4 covers a normal weekend)."
+        ),
+    ),
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Freshness of the external price data behind value / gain-loss figures.
+
+    Reports when prices were last fetched, the market date they are 'as of',
+    and any currently-held auto-priced assets whose price has gone stale (or was
+    never available). Manual-price assets (auto_price=0) are excluded from the
+    stale check since their prices are intentionally hand-maintained.
+    """
+    return compute_data_freshness(db, stale_days)
 
 
 @router.get("/update-runs")
