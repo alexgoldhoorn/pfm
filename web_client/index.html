@@ -600,6 +600,26 @@
                         </div>
                     </div>
 
+                    <!-- Goals (hidden until a goal exists) -->
+                    <div class="row g-3 mb-4" id="dashGoalsCard" style="display:none;">
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <span><i class="bi bi-bullseye me-2"></i>Goals</span>
+                                    <span class="d-flex align-items-center gap-3">
+                                        <span class="text-muted small" id="dashGoalsSummary"></span>
+                                        <a href="#" class="small" data-page="goals">Open goals <i class="bi bi-arrow-right"></i></a>
+                                    </span>
+                                </div>
+                                <div class="card-body">
+                                    <div id="dashGoalsArea">
+                                        <div class="text-muted small">Loading…</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Budget (hidden until an active budget exists) -->
                     <div class="row g-3 mb-4" id="dashBudgetCard" style="display:none;">
                         <div class="col-12">
@@ -1470,6 +1490,9 @@
                         </button>
                     </div>
 
+                    <!-- Summary strip: counts per status, planned vs cash flow -->
+                    <div id="goalsSummary" class="mb-3"></div>
+
                     <!-- Add goal -->
                     <div class="card mb-4">
                         <div class="card-header fw-semibold">
@@ -1502,7 +1525,11 @@
                                         <i class="bi bi-plus-lg me-1"></i>Add
                                     </button>
                                 </div>
+                                <div class="col-12">
+                                    <input type="text" class="form-control form-control-sm" id="addGoalNotes" maxlength="500" placeholder="Notes (optional) — what is this goal for, what does it assume?">
+                                </div>
                             </form>
+                            <div class="form-text">Today's net worth is stored as the goal's baseline, so the page can show how much of the gap has closed since.</div>
                             <div id="goalFormStatus" class="small mt-2"></div>
                         </div>
                     </div>
@@ -4874,6 +4901,15 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                             <div class="col-6">
                                 <label class="form-label" for="editGoalReturn">Return % *</label>
                                 <input type="number" step="any" class="form-control" id="editGoalReturn" required>
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label" for="editGoalStart">Net worth when set (€)</label>
+                                <input type="number" step="any" class="form-control" id="editGoalStart" placeholder="baseline for the pace">
+                                <div class="form-text" id="editGoalStartHelp"></div>
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label" for="editGoalNotes">Notes</label>
+                                <textarea class="form-control" id="editGoalNotes" rows="2" maxlength="500" placeholder="What is this goal for? What does it assume?"></textarea>
                             </div>
                         </div>
                         <div id="editGoalStatus" class="mt-2"></div>

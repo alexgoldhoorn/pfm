@@ -28,10 +28,10 @@ def db(tmp_path):
     return d
 
 
-def test_tools_list_has_21_entries():
+def test_tools_list_has_23_entries():
     from portf_server.chat_tools import TOOLS
 
-    assert len(TOOLS) == 21
+    assert len(TOOLS) == 23
 
 
 def test_every_tool_definition_has_a_handler():
@@ -192,6 +192,70 @@ def test_execute_tool_get_next_euro_passes_amount(db):
     ) as next_euro:
         json.loads(execute_tool("get_next_euro", {"amount": 500}, db))
     next_euro.assert_called_once_with(db, amount_eur=500.0)
+
+
+def test_execute_tool_get_goals_returns_summary_and_rows(db):
+    from portf_server.chat_tools import execute_tool
+
+    db.create_goal(
+        name="Example Fund",
+        target_amount_eur=50_000,
+        target_date="2040-01-01",
+        monthly_contribution_eur=200,
+        expected_return_pct=5,
+        start_networth_eur=1_000,
+        notes="For the example house",
+    )
+    # the balance sheet behind net worth would look up USD→EUR live
+    with patch("portf_server.routers.networth.net_worth_eur", return_value=1500.0):
+        data = json.loads(execute_tool("get_goals", {}, db))
+    assert data["summary"]["total"] == 1
+    (goal,) = data["goals"]
+    assert goal["name"] == "Example Fund"
+    assert goal["notes"] == "For the example house"
+    assert goal["status"] in {"on_track", "off_track"}
+    assert goal["start_networth_eur"] == 1_000
+    assert goal["current_networth_eur"] == 1500.0
+    assert goal["gained_since_start_eur"] == 500.0
+    assert "required_monthly_eur" in goal
+    assert "notes" in data
+
+
+def test_execute_tool_get_household_finances(db):
+    from portf_server.chat_tools import execute_tool
+
+    db.create_monthly_cashflow("Salary", "salary", 3000)
+    db.create_monthly_cashflow("Mortgage", "mortgage", 900)
+    db.create_loan(
+        name="Example Mortgage",
+        principal=120_000,
+        annual_rate_pct=3.0,
+        start_date="2024-01-01",
+        term_months=300,
+    )
+    db.create_goal("Example Trip", 5_000, "2028-01-01", 150, 2, start_networth_eur=0)
+    # the balance sheet behind the cash figure and net worth would look up FX live
+    with (
+        patch("portf_server.routers.analytics._cash_eur", return_value=4_000.0),
+        patch("portf_server.routers.networth.net_worth_eur", return_value=1_000.0),
+    ):
+        data = json.loads(execute_tool("get_household_finances", {}, db))
+    cf = data["entered_monthly_cashflow"]
+    assert cf["income_eur"] == 3000 and cf["expenses_eur"] == 900
+    assert cf["net_monthly_eur"] == 2100
+    measured = data["measured_from_bank_statements"]
+    # no bank imports: nothing measured, but the cash buffer is known
+    assert measured["months_used"] == []
+    assert measured["cash_eur"] == 4_000.0
+    assert measured["avg_monthly_net_eur"] is None
+    assert data["budget_this_month"] is None
+    (loan,) = data["loans"]
+    assert loan["name"] == "Example Mortgage"
+    assert loan["monthly_payment_eur"] > 0
+    assert data["loan_payments_monthly_eur"] == loan["monthly_payment_eur"]
+    assert data["goals_planned_monthly_eur"] == 150
+    assert data["open_goals"] == 1
+    assert "realistic" in data["notes"]
 
 
 # ── action items / diagnostics tools ──────────────────────────────────────

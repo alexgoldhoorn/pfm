@@ -3929,6 +3929,16 @@ function createAPIClient() {
             return resp.json();
         },
 
+        // Goals plus the status counts, one call for the page strip and the
+        // dashboard card.
+        async getGoalsSummary() {
+            const resp = await fetch(this.baseURL + '/api/v1/goals/summary', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
         async createGoal(body) {
             const resp = await fetch(this.baseURL + '/api/v1/goals/', {
                 method: 'POST',
