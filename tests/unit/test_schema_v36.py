@@ -12,7 +12,7 @@ def test_fresh_db_has_goal_baseline_and_notes(tmp_path):
         version = conn.execute("SELECT MAX(version) FROM database_version").fetchone()[
             0
         ]
-    assert version == DATABASE_VERSION == 36
+    assert version == DATABASE_VERSION >= 36
     assert {"start_networth_eur", "notes"} <= cols
 
 

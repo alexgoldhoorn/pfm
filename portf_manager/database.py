@@ -16,7 +16,7 @@ from pathlib import Path
 from portf_manager.services.merchant import fold_for_search, normalize_merchant
 
 # Database version for migration tracking
-DATABASE_VERSION = 36
+DATABASE_VERSION = 37
 
 
 # black
@@ -570,6 +570,22 @@ class Database:
 
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS wealth_scenarios (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                is_primary INTEGER NOT NULL DEFAULT 0,
+                params TEXT NOT NULL,
+                baseline_date TEXT NOT NULL,
+                baseline_net_worth_eur REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """
+        )
+
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS fixed_deposits (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -905,6 +921,8 @@ class Database:
             self._migrate_to_v35(conn)
         if current_version < 36:
             self._migrate_to_v36(conn)
+        if current_version < 37:
+            self._migrate_to_v37(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -2018,6 +2036,30 @@ class Database:
         )
         conn.commit()
 
+    def _migrate_to_v37(self, conn: sqlite3.Connection) -> None:
+        """Migrate from v36 to v37 — saved Wealth Simulator scenarios.
+
+        Adds the ``wealth_scenarios`` table (inputs as JSON plus the baseline
+        date and net worth the projection is tracked against). Guarded, so a
+        rerun is harmless.
+        """
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS wealth_scenarios (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                is_primary INTEGER NOT NULL DEFAULT 0,
+                params TEXT NOT NULL,
+                baseline_date TEXT NOT NULL,
+                baseline_net_worth_eur REAL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """
+        )
+        conn.commit()
+
     # ── Application log ──────────────────────────────────────────────────────
 
     def log_event(
@@ -2697,6 +2739,131 @@ class Database:
         with self.get_connection() as conn:
             cur = conn.execute(
                 "DELETE FROM retirement_incomes WHERE id = ?", (income_id,)
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    # ── Wealth scenarios (saved Wealth Simulator inputs) ────────────────────
+
+    _WEALTH_SCENARIO_FIELDS = {
+        "name",
+        "description",
+        "params",
+        "baseline_date",
+        "baseline_net_worth_eur",
+    }
+
+    def create_wealth_scenario(
+        self,
+        name: str,
+        params: str,
+        baseline_date: str,
+        baseline_net_worth_eur: Optional[float] = None,
+        description: Optional[str] = None,
+        is_primary: bool = False,
+    ) -> int:
+        """Save a scenario; ``params`` is the JSON-encoded simulator inputs.
+
+        Raises ``ValueError`` when the name is already taken. A primary
+        scenario demotes the current one.
+        """
+        # get_connection() wraps any exception in DatabaseError, so the
+        # duplicate name is checked first and reported outside the block.
+        if self._wealth_scenario_name_taken(name):
+            raise ValueError(f"A scenario named '{name}' already exists")
+        with self.get_connection() as conn:
+            if is_primary:
+                conn.execute("UPDATE wealth_scenarios SET is_primary = 0")
+            cur = conn.execute(
+                "INSERT INTO wealth_scenarios (name, description, is_primary, "
+                "params, baseline_date, baseline_net_worth_eur) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    name,
+                    description,
+                    1 if is_primary else 0,
+                    params,
+                    baseline_date,
+                    baseline_net_worth_eur,
+                ),
+            )
+            conn.commit()
+            return cur.lastrowid
+
+    def _wealth_scenario_name_taken(
+        self, name: str, except_id: Optional[int] = None
+    ) -> bool:
+        """True when another scenario already uses ``name``."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT id FROM wealth_scenarios WHERE name = ? "
+                "AND (? IS NULL OR id != ?)",
+                (name, except_id, except_id),
+            ).fetchone()
+            return row is not None
+
+    def get_wealth_scenarios(self) -> List[Dict]:
+        """All saved scenarios, the primary one first, then by name."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM wealth_scenarios "
+                "ORDER BY is_primary DESC, name COLLATE NOCASE"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_wealth_scenario(self, scenario_id: int) -> Optional[Dict]:
+        """One scenario row, or None."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM wealth_scenarios WHERE id = ?", (scenario_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def update_wealth_scenario(self, scenario_id: int, **fields) -> bool:
+        """Update known columns; ``description``/``baseline_net_worth_eur`` may be NULL.
+
+        Raises ``ValueError`` when renaming onto an existing name.
+        """
+        new_name = fields.get("name")
+        if new_name is not None and self._wealth_scenario_name_taken(
+            new_name, except_id=scenario_id
+        ):
+            raise ValueError(f"A scenario named '{new_name}' already exists")
+        return self._update_row(
+            "wealth_scenarios",
+            scenario_id,
+            self._WEALTH_SCENARIO_FIELDS,
+            fields,
+            nullable={"description", "baseline_net_worth_eur"},
+        )
+
+    def set_primary_wealth_scenario(self, scenario_id: Optional[int]) -> bool:
+        """Make one scenario the primary (shown on the dashboard); None clears it.
+
+        Returns False when ``scenario_id`` does not exist (nothing changes).
+        """
+        with self.get_connection() as conn:
+            if scenario_id is not None:
+                exists = conn.execute(
+                    "SELECT 1 FROM wealth_scenarios WHERE id = ?", (scenario_id,)
+                ).fetchone()
+                if not exists:
+                    return False
+            conn.execute("UPDATE wealth_scenarios SET is_primary = 0")
+            if scenario_id is not None:
+                conn.execute(
+                    "UPDATE wealth_scenarios SET is_primary = 1, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+                    (scenario_id,),
+                )
+            conn.commit()
+            return True
+
+    def delete_wealth_scenario(self, scenario_id: int) -> bool:
+        """Delete a scenario; True when a row was removed."""
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                "DELETE FROM wealth_scenarios WHERE id = ?", (scenario_id,)
             )
             conn.commit()
             return cur.rowcount > 0

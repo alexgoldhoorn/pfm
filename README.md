@@ -44,7 +44,7 @@ Python CLI + FastAPI server + web client for tracking stocks, ETFs, funds, bonds
 - **Alerts**: in-app dashboard banner + Telegram for price targets crossed and watchlist buy zones
 - **Watchlist**: track not-yet-owned tickers with buy-zone alerts
 - **Goals / FIRE tracker**: target net worth + date with on-track projection
-- **Wealth Simulator**: GBM wealth projection (cash/stocks/bonds + mortgage) with confidence bands
+- **Wealth Simulator**: GBM wealth projection (cash/stocks/bonds + mortgage) with confidence bands; named scenarios saved server-side, compared on the chart and tracked against the real net worth, shown on the dashboard and readable by the AI chat
 - **Tax reporting**: Spanish IRPF FIFO cost-basis export, savings-base tax estimate, per-lot realised-gains report, withholding summary, tax-loss-harvesting candidates
 - **Telegram reports**: daily portfolio section + monthly summary + price/watchlist alerts
 - **Public view**: optional shareable %-only page (no amounts), like PDT's public view

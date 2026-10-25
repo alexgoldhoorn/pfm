@@ -68,7 +68,7 @@ remote_gateway/server.py".
 ### Database
 SQLite by default (`portfolio.db`), PostgreSQL via `DATABASE_URL` env var. Use `portf_manager/database.py` for SQLite, `database_factory.py` for auto-detection.
 
-**Current schema version: 36.** Migrations run automatically on startup.
+**Current schema version: 37.** Migrations run automatically on startup.
 
 Migration history (condensed — see `_migrate_to_vN` for full schema detail):
 - v5: `bookings` table (deposits/withdrawals); `tax` on `transactions`
@@ -92,6 +92,7 @@ Migration history (condensed — see `_migrate_to_vN` for full schema detail):
 - v34: `fund_profiles.ongoing_charges_pct` (REAL, nullable; the fund's TER in % of NAV a year) — feeds the `ongoing_charges` block of `GET /analytics/fees`. See `docs/features/analytics.md`.
 - v35: `manual_assets.as_of` (TEXT, backfilled from `updated_at`); `loans` (principal, annual_rate_pct, `rate_as_of` + `balance_as_of` anchor, start_date, term_months, extra_payment_eur), `account_valuations` (portfolio_id PK, provider, account_ref, value incl. cash, cash, as_of, fetched_at, last_error), `retirement_incomes` (owner `self`|`partner`, monthly_eur in today's euros, from_age, to_age, indexed) — feed the balance sheet and retirement readiness. See `docs/features/networth-portfolios.md`.
 - v36: `goals.start_networth_eur` (REAL, nullable — the net worth when the goal was set, written by `POST /goals/`; NULL for older goals, nothing is backfilled because there is no net-worth history) and `goals.notes` (TEXT) — feed the "since set" gain and the actual-vs-needed monthly pace. See `docs/features/networth-portfolios.md`.
+- v37: `wealth_scenarios` (name UNIQUE, is_primary [at most one], params [JSON of the simulator inputs], baseline_date, baseline_net_worth_eur [nullable]) — saved Wealth Simulator scenarios tracked against the balance-sheet net worth. See `docs/features/wealth-simulator.md`.
 
 ⚠️ **New tables must appear in BOTH `_create_all_tables` (fresh DBs) AND `_migrate_to_vN` (existing DBs)** — migration-only adds break fresh installs/tests with "no such table".
 ⚠️ **CHECK constraint rebuilds** require `PRAGMA legacy_alter_table=ON` around the `RENAME` — see `_migrate_to_v13`.
@@ -122,7 +123,7 @@ the provider there, not only in `.env.local`.
   `available: false` when no provider is set — never a 5xx (e2e fails on any).
 - Search grounding (`generate_with_search`) exists only on Gemini and Anthropic;
   callers detect it with `hasattr`. All four providers implement
-  `ToolCapableLLMClient`; the 23 chat tools in `portf_server/chat_tools.py` call
+  `ToolCapableLLMClient`; the 24 chat tools in `portf_server/chat_tools.py` call
   DB/service functions directly, never HTTP. `set_action_item_status` is the only
   one that writes (follow-up state only); `tests/unit/test_chat_tools.py` pins the count. Chat on Anthropic runs
   `AnthropicLLMClient.run_tool_loop` (several tools per answer, 6 rounds); the
@@ -173,6 +174,7 @@ it.** The column on the right lists only what's easy to break.
 | Research, Portfolio Health, rebalance planner | `research-rebalance.md` | Single-segment GET routes (`portfolio-analysis`, `compare`, `bulk-refresh-status`) must be registered before `/{symbol}`. `upsert_price_target` treats `None` as "leave unchanged"; only `clear=` nulls a field. `/rebalance/analysis` and `/plan` both use `compute_positions`. |
 | Analytics, fund look-through, PDF reports | `analytics.md` | `/tax-report` converts at transaction-date FX (`_fx_on`); `/fees` at current FX. `TaxTransaction` internal field names differ from the response keys. Fund region weights come from hand-maintained `benchmarks.json`, never yfinance. `by_currency` ≠ `by_currency_exposure`. `compute_exposure()` backs both `/diversification` and Portfolio Health — don't fork it. The Portfolio Health PDF section reads the cache only, never runs the LLM. Risk metrics come only from `risk_metrics.compute_risk_metrics` (flow-adjusted returns) — never from raw snapshot value changes; snapshots are calendar-daily, so don't annualise with 252. Lifetime return/IRR come only from `performance.compute_performance`. Cost, realised gains and flows convert at **transaction-date** FX (`to_eur_transactions`), value at the valuation day's — a snapshot cost at today's FX turns currency moves into fake flows. Benchmarks are compared in EUR (`to_eur_closes`); beta uses weekly returns; Sharpe/Sortino/alpha subtract €STR (`risk_free.py`, stubbed autouse in tests). Real returns use HICP (`inflation.py`, also stubbed) with no fallback; savings rate/emergency fund count only complete months that have bank imports. Good/bad bands live only in `METRIC_RATINGS` (`pfm_core.js`). |
 | Net worth, balance sheet, loans, retirement, brokers/portfolios, goals, sync | `networth-portfolios.md` | Goal figures (status, projection, pace) come only from `services/goals.py` — the router, the `get_goals` chat tool and the Action Items check share it; `PUT /goals/{id}` treats a missing `start_networth_eur`/`notes` as "leave unchanged". `net_worth_eur(db)` is the one total (Goals uses it) and is `build_balance_sheet(db)["totals"]["net_worth_eur"]`. A fresh account valuation (≤ 7 days) replaces the portfolio's positions and cash lines. Ledger cash excludes `asset_type='cash'` assets; a negative ledger line is shown but not counted. Bank balances come from the latest `spending_transactions.balance`; an account with none is excluded, not zero. `account_type` is create-only. `cash_eur`/`cost_eur` use transaction-date FX, `value_eur` the live rate; a ~1–2% gap vs the broker's own EUR figure is expected FX noise. |
+| Wealth Simulator, saved scenarios | `wealth-simulator.md` | The projection exists twice — `runProjection` (JS) and `services/wealth_scenarios.py` (Python) — pinned to one fixture in both test suites; change both or the Dashboard/chat quote figures the page doesn't show. Tracking compares *changes* since the baseline, never levels (the simulator omits property). Sending `params` on PUT re-baselines. Only the primary scenario raises an Action Item. Names are checked before INSERT because `get_connection()` turns an `IntegrityError` into `DatabaseError`. |
 | Spending (bank accounts) | `spending.md` | Bank accounts are `portfolios` rows with `account_type='bank'` and never touch `transactions`/`bookings`. `GET /spending/` returns `{items, total}`. A category's tree root must match the amount's sign. Un-transferring a row resets its reciprocal counterpart (`reset_transfer_counterpart`). Exclude already-linked bookings before transfer matching. Rules match description OR merchant; a rule whose category root conflicts with the sign is skipped, not a stop. "Missed" recurring needs an import past the due date. |
 | Budgeting | `budgeting.md` | `GET /summary` must stay before `/{budget_id}`. Positive variance always means favourable. Attribute unbudgeted actuals by SIGN, not tree root. Budget and `/spending/trend` must reconcile to the cent. An all-digits investment `ref_key` is a broker — use `line_uses_category()`. `net` is cash flow, not "better off". Never show a flattering variance for a month with nothing imported. |
 | Action Items, Diagnostics follow-up | `action-items.md` | Each check is wrapped independently. Net Worth checklist gaps are merged client-side (`computeNetWorthChecklist`), never duplicated server-side. Item ids are deterministic per entity. Only `consolidation_candidate` fund overlaps raise an item. Checked/snoozed state is server-side in `app_settings` `action_item_ack:{id}` (`services/action_item_acks.py`), never `localStorage`; Data Quality findings use id `dq:{finding_key}` and `check_data_quality` counts only un-checked ones. `GET /action-items/` defaults to `status=open`; the web page asks for `all`. |
@@ -241,7 +243,7 @@ Full reference (dashboard layout, chart helpers, page-by-page wiring):
 - Pre-push hook runs the full unit suite. F541 fixer:
   `uv run python scripts/fix_f541.py`. Reset the LLM singleton with
   `portf_manager.llm_client.reset_llm_client()`.
-- DB version bump: update every `== 36` assertion in `tests/test_database.py`.
+- DB version bump: update every `== 37` assertion in `tests/test_database.py` (the schema tests compare with `DATABASE_VERSION`).
 
 ## Documentation (Default Behaviour)
 When adding or changing a feature, always update:

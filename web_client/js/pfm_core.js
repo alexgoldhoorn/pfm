@@ -1331,7 +1331,7 @@ const ACTIONITEM_CATEGORY_NAMES = {
     import: 'Broker Imports', data_quality: 'Data Quality', errors: 'Errors',
     goals: 'Goals', watchlist: 'Price Alerts', networth: 'Net Worth',
     spending: 'Spending', budget: 'Budget', exposure: 'Fund Exposure',
-    retirement: 'Retirement', allocate: 'Allocation',
+    retirement: 'Retirement', allocate: 'Allocation', forecast: 'Wealth Plan',
 };
 window.ACTIONITEM_CATEGORY_NAMES = ACTIONITEM_CATEGORY_NAMES;
 
@@ -3176,6 +3176,47 @@ function createAPIClient() {
             const resp = await fetch(this.baseURL + '/api/v1/networth/balance-sheet', { headers: { 'X-API-Key': this.apiKey } });
             if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to load balance sheet');
             return resp.json().catch(() => ({}));
+        },
+        // Saved Wealth Simulator scenarios (projection + tracking server-side).
+        async getWealthScenarios() {
+            const resp = await fetch(this.baseURL + '/api/v1/wealth-scenarios/', { headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to load scenarios');
+            return resp.json();
+        },
+        async getWealthScenario(id) {
+            const resp = await fetch(this.baseURL + '/api/v1/wealth-scenarios/' + id, { headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to load scenario');
+            return resp.json();
+        },
+        async createWealthScenario(body) {
+            const resp = await fetch(this.baseURL + '/api/v1/wealth-scenarios/', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(body)
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to save scenario');
+            return resp.json();
+        },
+        async updateWealthScenario(id, body) {
+            const resp = await fetch(this.baseURL + '/api/v1/wealth-scenarios/' + id, {
+                method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(body)
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to update scenario');
+            return resp.json();
+        },
+        async rebaselineWealthScenario(id) {
+            const resp = await fetch(this.baseURL + '/api/v1/wealth-scenarios/' + id + '/rebaseline', {
+                method: 'POST', headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to re-baseline scenario');
+            return resp.json();
+        },
+        async deleteWealthScenario(id) {
+            const resp = await fetch(this.baseURL + '/api/v1/wealth-scenarios/' + id, {
+                method: 'DELETE', headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to delete scenario');
+            return resp.json();
         },
         async getLoans() {
             const resp = await fetch(this.baseURL + '/api/v1/networth/loans', { headers: { 'X-API-Key': this.apiKey } });

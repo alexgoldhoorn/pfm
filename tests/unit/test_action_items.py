@@ -927,3 +927,44 @@ def test_allocation_holdings_read_error_is_reported(tmp_path, monkeypatch):
     monkeypatch.setattr(rebalance_planner, "compute_before_state", boom)
     items = check_allocation(db)
     assert items[0]["detail"] == "could not read current holdings: db locked"
+
+
+def test_wealth_scenario_check_is_registered():
+    from portf_manager.services.action_items import (
+        check_wealth_scenario,
+        checks_for_tests,
+    )
+
+    assert check_wealth_scenario in checks_for_tests()
+
+
+def test_wealth_scenario_check_only_flags_a_primary_that_is_behind(tmp_path):
+    import json
+    from datetime import date
+    from unittest.mock import patch
+
+    from portf_manager.database import Database
+    from portf_manager.services.action_items import check_wealth_scenario
+
+    db = Database(str(tmp_path / "t.db"))
+    params = json.dumps({"stocks_amount": 100000, "stocks_rate_pct": 6, "years": 10})
+    whatif = db.create_wealth_scenario("What if", params, "2025-01-01", 100000.0)
+    today = date(2026, 1, 1)
+    with patch(
+        "portf_manager.services.wealth_scenarios.current_net_worth",
+        return_value=80000.0,
+    ):
+        # a non-primary scenario far behind raises nothing
+        assert check_wealth_scenario(db, today) == []
+        db.set_primary_wealth_scenario(whatif)
+        items = check_wealth_scenario(db, today)
+    assert len(items) == 1
+    assert items[0]["id"] == f"wealth_scenario:behind:{whatif}"
+    assert items[0]["category"] == "forecast"
+    assert items[0]["link_page"] == "forecast"
+    assert "-20,000" in items[0]["detail"]
+    with patch(
+        "portf_manager.services.wealth_scenarios.current_net_worth",
+        return_value=106000.0,
+    ):
+        assert check_wealth_scenario(db, today) == []
