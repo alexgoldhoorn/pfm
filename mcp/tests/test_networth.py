@@ -55,6 +55,59 @@ def test_goals_reports_shortfall_when_behind():
     assert "contributing 500.00 EUR/mo" in result
 
 
+def test_goals_reports_status_pace_and_notes():
+    payload = [
+        {
+            "name": "Car",
+            "target_amount_eur": 10000.0,
+            "current_networth_eur": 12000.0,
+            "progress_pct": 120.0,
+            "on_track": True,
+            "status": "achieved",
+            "target_date": "2027-01-01",
+            "required_monthly_eur": 0,
+            "projected_value_eur": 12000.0,
+            "monthly_contribution_eur": 100.0,
+            "shortfall_eur": 0.0,
+            "start_date": "2026-01-01",
+            "gained_since_start_eur": 4000.0,
+            "gap_closed_pct": 100.0,
+            "actual_monthly_eur": 410.0,
+            "pace": "ahead",
+            "notes": "Second-hand estate",
+        },
+        {
+            "name": "Old",
+            "target_amount_eur": 10000.0,
+            "current_networth_eur": 2000.0,
+            "progress_pct": 20.0,
+            "on_track": False,
+            "status": "overdue",
+            "target_date": "2020-01-01",
+            "required_monthly_eur": None,
+            "projected_value_eur": 2000.0,
+            "monthly_contribution_eur": 100.0,
+            "shortfall_eur": 8000.0,
+            "start_date": "2026-10-20",
+            "gained_since_start_eur": -50.0,
+            "gap_closed_pct": 0.0,
+            "actual_monthly_eur": None,
+            "pace": None,
+        },
+    ]
+    with patch("pfm_mcp.client._get", return_value=reply(payload)):
+        result = networth.goals()
+    assert "🏁 ACHIEVED" in result
+    assert "since 2026-01-01: +4,000.00 EUR (100% of the gap closed)" in result
+    assert "pace 410.00 EUR/mo actual — AHEAD of what is needed" in result
+    assert "notes: Second-hand estate" in result
+    assert "⏰ OVERDUE (date passed)" in result
+    assert (
+        "since 2026-10-20: -50.00 EUR (0% of the gap closed), pace after the first month"
+        in result
+    )
+
+
 def test_goals_reports_none_defined():
     with patch("pfm_mcp.client._get", return_value=reply([])):
         result = networth.goals()

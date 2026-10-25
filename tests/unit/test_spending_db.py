@@ -2,7 +2,7 @@
 portfolios.account_type)."""
 
 import pytest
-from portf_manager.database import Database
+from portf_manager.database import DATABASE_VERSION, Database
 
 
 @pytest.fixture
@@ -379,7 +379,7 @@ def test_migration_v33_heals_db_stamped_32_without_v32_columns(tmp_path):
         rule_cols
     )
     assert merchant == "EXAMPLE SHOP MADRID"
-    assert version == 36
+    assert version == DATABASE_VERSION
 
 
 def test_rule_conditions_round_trip(db):

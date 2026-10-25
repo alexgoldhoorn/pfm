@@ -21,7 +21,7 @@
 - `GET /api/v1/analytics/data-freshness?stale_days=4` — price freshness + stale asset list; powers dashboard chip + alerts banner
 - `GET /api/v1/analytics/stress-test?scenario=2008|2020|2022|dotcom` or `?from=&to=` — portfolio against a historical crash window (presets cached 7 days, custom ranges live).
 - `GET /api/v1/analytics/correlation?portfolio_id=&days=90` (30–365) — Pearson correlation matrix of daily log-returns for held assets with ≥ 10 stored prices in the window; the Analytics page's correlation heatmap.
-- **Data Quality**: `GET /api/v1/analytics/dq/reconciliation|duplicates|suspicious` — pure DB checks (plain `def`). Powers Diagnostics page Data Quality tab. Dismissals in `localStorage["pfmDismissedIssues"]`.
+- **Data Quality**: `GET /api/v1/analytics/dq/reconciliation|duplicates|suspicious` — pure DB checks (plain `def`). Powers the Diagnostics page's Data Quality tab and the chat's `get_diagnostics` tool. A finding is marked checked/snoozed server-side under ack id `dq:{key}` (see `action-items.md` → Follow-up state); the old `localStorage["pfmDismissedIssues"]` list is migrated once and removed. `compute_data_freshness(db, stale_days)` is the sync body of `GET /analytics/data-freshness`, shared with that chat tool.
 - `services/tax_rates.py` — IRPF brackets; `GET /api/v1/public/summary` off unless `PORTF_PUBLIC_VIEW=true`
 - Auth: `POST /api/v1/auth/login-key`
 - Cron: `portf-price-alerts.sh` (20:05), `portf-monthly-report.sh` (1st of month 09:00)

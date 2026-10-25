@@ -5,14 +5,14 @@ from datetime import date
 
 import pytest
 
-from portf_manager.database import Database
+from portf_manager.database import DATABASE_VERSION, Database
 
 
 def _db(tmp_path) -> Database:
     return Database(str(tmp_path / "t.db"))
 
 
-def test_fresh_db_has_v35_tables(tmp_path):
+def test_fresh_db_is_current_and_has_v35_tables(tmp_path):
     db = _db(tmp_path)
     with db.get_connection() as conn:
         names = {
@@ -23,7 +23,7 @@ def test_fresh_db_has_v35_tables(tmp_path):
         version = conn.execute("SELECT MAX(version) FROM database_version").fetchone()[
             0
         ]
-    assert version == 36
+    assert version == DATABASE_VERSION
     assert {"loans", "account_valuations", "retirement_incomes"} <= names
     assert "as_of" in cols
 
@@ -40,7 +40,7 @@ def test_migration_backfills_as_of_from_updated_at(tmp_path):
         "INSERT INTO manual_assets (name, updated_at) VALUES ('Old', '2026-03-04 10:00:00')"
     )
     raw.execute("INSERT INTO database_version (version) VALUES (34)")
-    raw.execute("DELETE FROM database_version WHERE version >= 35")
+    raw.execute("DELETE FROM database_version WHERE version > 34")
     raw.commit()
     raw.close()
 

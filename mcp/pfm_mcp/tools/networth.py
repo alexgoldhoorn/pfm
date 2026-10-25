@@ -35,9 +35,18 @@ def goals() -> str:
         contributing = g.get("monthly_contribution_eur")
         shortfall = g.get("shortfall_eur")
 
-        track_str = (
-            "  ✅ ON TRACK" if on_track else ("  ⚠️ BEHIND" if on_track is False else "")
-        )
+        # status (since 2026-10-24) refines on_track: achieved / overdue
+        status = g.get("status")
+        if status == "achieved":
+            track_str = "  🏁 ACHIEVED"
+        elif status == "overdue":
+            track_str = "  ⏰ OVERDUE (date passed)"
+        else:
+            track_str = (
+                "  ✅ ON TRACK"
+                if on_track
+                else ("  ⚠️ BEHIND" if on_track is False else "")
+            )
         monthly_str = ""
         if monthly:
             contrib_str = (
@@ -57,6 +66,27 @@ def goals() -> str:
             f"  ({progress:.1f}%)  by {str(horizon)[:10]}"
             f"{proj_str}{monthly_str}{short_str}{track_str}"
         )
+        # Follow-up since the goal was set (goals with a stored baseline only).
+        gained = g.get("gained_since_start_eur")
+        if gained is not None:
+            since = str(g.get("start_date") or "start")[:10]
+            sign = "+" if gained >= 0 else "-"
+            pace_line = f"    since {since}: {sign}{_fmt_currency(abs(gained))}"
+            closed = g.get("gap_closed_pct")
+            if closed is not None:
+                pace_line += f" ({closed:.0f}% of the gap closed)"
+            actual = g.get("actual_monthly_eur")
+            if actual is not None:
+                pace_line += f", pace {_fmt_currency(actual)}/mo actual"
+                pace = g.get("pace")
+                if pace:
+                    pace_line += f" — {pace.upper()} of what is needed"
+            else:
+                pace_line += ", pace after the first month"
+            lines.append(pace_line)
+        notes = g.get("notes")
+        if notes:
+            lines.append(f"    notes: {notes}")
     return "\n".join(lines)
 
 

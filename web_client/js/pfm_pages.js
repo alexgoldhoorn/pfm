@@ -453,6 +453,7 @@ function createPageManager() {
             if (window.loadDashboardSpending) window.loadDashboardSpending();
             if (window.loadDashboardNetworthHistory) window.loadDashboardNetworthHistory();
             if (window.loadDashboardBudget) window.loadDashboardBudget();
+            if (window.loadDashboardGoals) window.loadDashboardGoals();
 
             // Headline is positions + all idle cash. The positions' current
             // value sits under Invested, next to the cost it compares with.

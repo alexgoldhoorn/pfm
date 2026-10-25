@@ -38,7 +38,7 @@ volatility — a quirk of the page kept so both charts agree at the origin;
 tracking passes `exact_origin=True` so that on the baseline day the expected
 range is exactly zero.
 
-## Schema (v36)
+## Schema (v37)
 
 `wealth_scenarios`: `id`, `name` (UNIQUE), `description`, `is_primary` (0/1, at
 most one row is 1), `params` (JSON, see below), `baseline_date` (ISO),
@@ -157,7 +157,7 @@ to be.
 - Chat tool `get_wealth_scenarios` (`portf_server/chat_tools.py`, no
   arguments): every scenario's params, summary and tracking plus `notes`
   reminding the model that returns are real, how tracking is defined and what
-  "primary" means. 19 tools in total.
+  "primary" means. 24 tools in total.
 - `check_wealth_scenario` (`services/action_items.py`, category `forecast`,
   label "Wealth Plan" in the web client): one `medium` item,
   `wealth_scenario:behind:{id}`, when the **primary** scenario's tracking is
