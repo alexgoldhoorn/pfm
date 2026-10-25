@@ -352,13 +352,14 @@ window.PAGE_HELP = {
   diagnostics: {
     title: "Diagnostics",
     body: `
-      <p>Two tabs: <strong>Price Health</strong> monitors live price data; <strong>Data Quality</strong> runs automated checks on your transaction records.</p>
+      <p>Three tabs: <strong>Price Health</strong> monitors live price data; <strong>Data Quality</strong> runs automated checks on your transaction records; <strong>Logs</strong> shows warnings, errors and every LLM call. The overview chips above the tabs summarise all three, and each tab shows a count of what is still open.</p>
+      <p class="small"><strong>Following up.</strong> Every Data Quality finding can be marked <em>checked</em> (looked at, fine — add a note saying why) or <em>snoozed</em> for a while. The state is stored on the server, so your phone, your laptop and the AI chat all see the same list, and the Action Items page only counts findings nobody has checked. A finding id names one concrete occurrence, so a new duplicate never hides behind an old check. <strong>Discuss with AI</strong> opens a chat thread with today's freshness, last run and open findings as context; the chat can also read them itself (<code>get_diagnostics</code>) and record your decision (<code>set_action_item_status</code>).</p>
 
       <h6 class="fw-semibold mt-3 mb-1">Price Health tab</h6>
       <ul class="mb-2 small">
         <li><strong>Freshness</strong>: hours since the last price refresh. <em>Fresh</em> = under 30 h; <em>Aging</em> = 30–48 h or one or more stale holdings; <em>Very stale</em> = over 48 h.</li>
         <li><strong>Stale &amp; unpriced holdings</strong>: auto-priced assets whose latest stored price is older than 4 days, or that have never been priced. Assets with auto-price disabled (manual prices) are excluded.</li>
-        <li><strong>Update history</strong>: each daily run (20:00 UTC) logs duration, updated/skipped/error counts and the list of skipped symbols.</li>
+        <li><strong>Update history</strong>: each daily run (20:00 UTC) logs duration, updated/skipped/error counts, the symbols that failed (with the API error) and the ones skipped.</li>
       </ul>
 
       <h6 class="fw-semibold mt-3 mb-1">Data Quality tab</h6>
@@ -375,7 +376,7 @@ window.PAGE_HELP = {
         <li><strong>LIKELY</strong> (red): same calendar date <em>and</em> quantity within ±1% <em>and</em> price within ±1%.</li>
         <li><strong>POSSIBLE</strong> (yellow): dates within ±3 days <em>and</em> quantity within ±5% <em>and</em> price within ±5%.</li>
       </ul>
-      Use <em>Delete older</em> to remove the earlier of the two, or pick a specific row from the dropdown. Dismiss findings that are intentional (e.g. two separate partial fills on the same day).</p>
+      Use <em>Delete older</em> to remove the earlier of the two, or pick a specific row from the dropdown. Mark findings that are intentional (e.g. two separate partial fills on the same day) as <em>checked</em>, with a note.</p>
 
       <p class="small mb-1"><strong>Suspicious Patterns</strong><br>
       Five automated checks run chronologically across all transactions:
@@ -386,12 +387,13 @@ window.PAGE_HELP = {
         <li><strong>dividend_before_buy</strong> (info): a dividend recorded before the first buy for that asset — may indicate an import ordering issue.</li>
         <li><strong>price_outlier</strong> (warning): a buy/sell price that is more than 5× or less than 0.2× the median price for that asset (requires at least 3 price data points). Common cause: GBX/GBP unit confusion.</li>
       </ul></p>
-      <p class="text-muted small mb-0">Dismissals are stored in your browser (localStorage) and survive page reloads.</p>`
+      <p class="text-muted small mb-0">Checked and snoozed findings are stored on the server (shared by every device and the AI chat); "Show checked" at the foot of a card lists them again, and a finding can be reopened at any time.</p>`
   },
   actionitems: {
     title: "Action Items",
     body: `
-      <p>A single, dismissible checklist of everything that needs your attention across the app — pulled from Diagnostics, Net Worth, Goals, Watchlist, and Research so you don't have to visit each page separately.</p>
+      <p>A single checklist of everything that needs your attention across the app — pulled from Diagnostics, Net Worth, Goals, Watchlist, Budget, Spending, Allocation and Research so you don't have to visit each page separately.</p>
+      <p class="small"><strong>Following up.</strong> <em>Checked</em> means you looked at it and it is fine (add a note saying why); <em>Snooze</em> hides it for a week or a month. Both are stored on the server, shared by every device and the AI chat. Filter by severity, and switch on <em>Show checked &amp; snoozed</em> to review or reopen earlier decisions. <strong>Ask AI</strong> on an item opens a chat thread about that one finding; the button in the header does it for every open item. In the chat you can also say "mark that as checked" — the assistant records it with <code>set_action_item_status</code>.</p>
       <ul class="mb-2 small">
         <li><strong>Broker Imports</strong>: a broker/portfolio with transaction history but no activity in 60+ days.</li>
         <li><strong>Data Quality</strong>: possible duplicate transactions or suspicious patterns (same checks as the Diagnostics Data Quality tab).</li>
@@ -399,8 +401,9 @@ window.PAGE_HELP = {
         <li><strong>Goals</strong>: a savings goal is projected to miss its target.</li>
         <li><strong>Price Alerts</strong>: a watchlist symbol dropped into its buy zone, or a held position crossed a saved price target.</li>
         <li><strong>Net Worth</strong>: setup gaps (missing bank balance, income, etc.) or a fixed deposit past maturity — same checklist as the Net Worth page.</li>
+        <li><strong>Budget / Spending / Allocation / Fund Exposure / Retirement</strong>: overruns, missed recurring charges, idle cash, funds without a look-through profile, a retirement plan that falls short.</li>
       </ul>
-      <p class="text-muted small mb-0">Dismissing an item hides it until the underlying issue changes (e.g. a new failing price-update run gets its own item).</p>`
+      <p class="text-muted small mb-0">Item ids name one concrete occurrence, so checking an item hides it only until the underlying issue changes (e.g. a new failing price-update run gets its own item). Data Quality items count only the findings nobody has checked on the Diagnostics page.</p>`
   },
   chat: {
     title: "Chat",
