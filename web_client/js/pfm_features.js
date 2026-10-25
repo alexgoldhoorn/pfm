@@ -288,18 +288,12 @@ function setupGoalsPage() {
 // ---------------------------------------------------------------------------
 const ACTIONITEMS_SEVERITY_ORDER = { high: 0, medium: 1, low: 2 };
 
-function _actionItemDismiss(id) {
-    const items = JSON.parse(localStorage.getItem('pfmDismissedActionItems') || '[]');
-    if (!items.some(i => i.id === id)) {
-        items.push({ id, dismissed_at: new Date().toISOString() });
-        localStorage.setItem('pfmDismissedActionItems', JSON.stringify(items));
-    }
-}
-
 // Pure: converts the Net Worth checklist's {checklist, attention} shape into
 // action-item-shaped objects, merges with the backend-provided items,
 // filters dismissed ids, and sorts by severity. Unit-tested in
-// web_client/js/tests/web_client.test.mjs.
+// web_client/js/tests/web_client.test.mjs. Follow-up state (checked /
+// snoozed) now lives on the server: callers pass activeAckIds(acks) as the
+// ids to hide, or [] and annotate afterwards (annotateActionItems).
 function mergeActionItems(backendItems, netWorthResult, dismissedIds) {
     backendItems = backendItems || [];
     dismissedIds = dismissedIds || [];
@@ -334,15 +328,21 @@ function mergeActionItems(backendItems, netWorthResult, dismissedIds) {
 }
 window.mergeActionItems = mergeActionItems;
 
-const ACTIONITEMS_CATEGORY_LABELS = {
-    import: 'Broker Imports', data_quality: 'Data Quality', errors: 'Errors',
-    goals: 'Goals', watchlist: 'Price Alerts', networth: 'Net Worth',
-    spending: 'Spending', budget: 'Budget', exposure: 'Fund Exposure',
-    retirement: 'Retirement', allocate: 'Allocation',
-};
+const ACTIONITEMS_CATEGORY_LABELS = ACTIONITEM_CATEGORY_NAMES;
 const ACTIONITEMS_SEVERITY_BADGE = {
     high: 'text-bg-danger', medium: 'text-bg-warning', low: 'text-bg-secondary',
 };
+
+// "3 open · 1 checked · 2 snoozed" for the filter bar and the dashboard.
+function actionItemsSummaryText(items) {
+    const n = { open: 0, checked: 0, snoozed: 0 };
+    (items || []).forEach(i => { n[i.status || 'open'] = (n[i.status || 'open'] || 0) + 1; });
+    const parts = [`${n.open} open`];
+    if (n.checked) parts.push(`${n.checked} checked`);
+    if (n.snoozed) parts.push(`${n.snoozed} snoozed`);
+    return parts.join(' · ');
+}
+window.actionItemsSummaryText = actionItemsSummaryText;
 
 // Dashboard-only: compact summary banner for the same action items the full
 // Action Items page lists in detail — so a stale import or off-track goal is
@@ -351,19 +351,23 @@ const ACTIONITEMS_SEVERITY_BADGE = {
 async function loadDashboardActionItems() {
     if (!document.getElementById('dashActionItems')) return;
     try {
+        await migrateLocalDismissals();
         const [backendData, nwData, cfData] = await Promise.all([
-            window.apiClient.getActionItems(),
+            window.apiClient.getActionItems('open'),
             window.apiClient.getNetworth(),
             window.apiClient.getCashflow(),
         ]);
         const nwResult = computeNetWorthChecklist(nwData.items, (cfData && cfData.items) || [], nwData.deposits, nwData.bank_accounts);
-        const dismissed = JSON.parse(localStorage.getItem('pfmDismissedActionItems') || '[]').map(i => i.id);
+        // The server already filtered its own items; the Net Worth checklist
+        // items are computed here, so hide the ones checked/snoozed by id.
+        const hidden = activeAckIds(backendData.acks || {});
         // "watchlist" items reuse the exact same check_watchlist_alerts /
         // compute_price_target_alerts sources the Alerts banner above already
         // shows in full — excluded here so the two banners don't repeat the
         // same triggers.
-        const items = mergeActionItems(backendData.items, nwResult, dismissed)
+        const items = mergeActionItems(backendData.items, nwResult, hidden)
             .filter(i => i.category !== 'watchlist');
+        window._dashActionItems = items;
         if (!items.length) { dashAttentionSet('dashActionItems', null); return; }
 
         // Dismissal keyed by the item-id set, same "reappear only if the set
@@ -386,27 +390,48 @@ async function loadDashboardActionItems() {
         ).join('');
         const more = items.length > PREVIEW_N
             ? `<div class="small text-muted">+${items.length - PREVIEW_N} more</div>` : '';
+        const resolved = (backendData.summary && (backendData.summary.checked || 0) + (backendData.summary.snoozed || 0)) || 0;
+        const resolvedNote = resolved ? `<span class="small text-muted ms-2">${resolved} checked or snoozed</span>` : '';
 
         dashAttentionSet('dashActionItems', {
             summaryHtml: `<span>${items.length} to-do${items.length > 1 ? 's' : ''}</span>${countBadges}`,
             detailHtml: `
-                <div class="fw-semibold mb-1">Action items</div>
+                <div class="fw-semibold mb-1">Action items${resolvedNote}</div>
                 <ul class="list-unstyled mb-1 small">${preview}</ul>
                 ${more}
-                <a href="#" class="small" data-page="actionitems">Open Action Items <i class="bi bi-arrow-right"></i></a>`,
+                <a href="#" class="small" data-page="actionitems">Open Action Items <i class="bi bi-arrow-right"></i></a>
+                <a href="#" class="small ms-3" data-ai-dash-chat="1" title="Open a chat thread about these items"><i class="bi bi-robot me-1"></i>Ask AI</a>`,
             onDismiss: () => localStorage.setItem('pfmDashActionItemsDismissed', sig),
         });
+        if (!window._dashAiChatWired) {
+            window._dashAiChatWired = true;
+            document.addEventListener('click', (e) => {
+                const a = e.target.closest('[data-ai-dash-chat]');
+                if (!a) return;
+                e.preventDefault();
+                openChatWithContext(`Action items ${localIsoDay()}`, actionItemsChatPrompt(window._dashActionItems || []));
+            });
+        }
     } catch (e) {
         dashAttentionSet('dashActionItems', null);
     }
 }
 window.loadDashboardActionItems = loadDashboardActionItems;
 
-function _renderActionItems(items) {
+// Page state: every item (annotated with status/ack) plus the filters.
+const _aiState = { items: [], acks: {}, severity: 'all', showResolved: false };
+
+function _renderActionItems() {
     const wrap = document.getElementById('actionItemsList');
     if (!wrap) return;
+    const summaryEl = document.getElementById('aiSummary');
+    if (summaryEl) summaryEl.textContent = actionItemsSummaryText(_aiState.items);
+    const items = filterActionItems(_aiState.items, { severity: _aiState.severity, showResolved: _aiState.showResolved });
     if (!items.length) {
-        wrap.innerHTML = '<div class="alert alert-success"><i class="bi bi-check-circle me-1"></i>All clear — nothing needs your attention.</div>';
+        const resolved = _aiState.items.filter(i => i.status !== 'open').length;
+        const hint = !_aiState.showResolved && resolved
+            ? ` <span class="text-muted">${resolved} item${resolved === 1 ? '' : 's'} checked or snoozed — switch on "Show checked &amp; snoozed" to review them.</span>` : '';
+        wrap.innerHTML = `<div class="alert alert-success"><i class="bi bi-check-circle me-1"></i>All clear — nothing needs your attention${_aiState.severity !== 'all' ? ' at this severity' : ''}.${hint}</div>`;
         return;
     }
     wrap.innerHTML = items.map(item => {
@@ -425,23 +450,68 @@ function _renderActionItems(items) {
             ? ` data-portfolio-id="${esc(imp.portfolio_id)}" data-account-type="${esc(imp.account_type || 'brokerage')}"`
               + ` data-since-date="${esc(imp.since_date || '')}" data-portfolio-name="${esc(imp.portfolio_name || '')}"`
             : '';
+        // Diagnostics items name the tab they live on (price / dq).
+        const tabAttr = item.link_page === 'diagnostics' && item.context && item.context.tab
+            ? ` data-diag-tab="${esc(item.context.tab)}"` : '';
+        const resolved = item.status !== 'open';
+        const ack = item.ack || {};
+        const statusHtml = resolved
+            ? `<span class="badge text-bg-secondary ms-1"><i class="bi ${item.status === 'snoozed' ? 'bi-alarm' : 'bi-check2'} me-1"></i>${esc(ackLabel(ack))}</span>` : '';
+        const noteHtml = ack.note ? `<div class="small text-muted"><i class="bi bi-chat-left-text me-1"></i>${esc(ack.note)}</div>` : '';
+        const followUp = resolved
+            ? `<button class="btn btn-sm btn-outline-secondary" data-ai-ack="open" data-ai-id="${esc(item.id)}" title="Reopen"><i class="bi bi-arrow-counterclockwise"></i></button>`
+            : `<button class="btn btn-sm btn-outline-success" data-ai-ack="checked" data-ai-id="${esc(item.id)}" title="Mark checked (looked at, fine)"><i class="bi bi-check2"></i><span class="d-none d-md-inline ms-1">Checked</span></button>
+               <div class="btn-group btn-group-sm">
+                   <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" title="Snooze"><i class="bi bi-alarm"></i></button>
+                   <ul class="dropdown-menu dropdown-menu-end">
+                       <li><button type="button" class="dropdown-item" data-ai-ack="snoozed" data-ai-days="7" data-ai-id="${esc(item.id)}">Snooze 7 days</button></li>
+                       <li><button type="button" class="dropdown-item" data-ai-ack="snoozed" data-ai-days="30" data-ai-id="${esc(item.id)}">Snooze 30 days</button></li>
+                   </ul>
+               </div>`;
         return `
-        <div class="card mb-2">
-            <div class="card-body py-2 d-flex justify-content-between align-items-start">
-                <div>
+        <div class="card mb-2${resolved ? ' opacity-75' : ''}">
+            <div class="card-body py-2 d-flex flex-wrap justify-content-between align-items-start gap-2">
+                <div class="flex-grow-1" style="min-width:0;">
                     <span class="badge ${ACTIONITEMS_SEVERITY_BADGE[item.severity] || 'text-bg-secondary'} me-2">${esc(item.severity)}</span>
-                    <span class="text-muted small">${esc(ACTIONITEMS_CATEGORY_LABELS[item.category] || item.category)}</span>
+                    <span class="text-muted small">${esc(ACTIONITEMS_CATEGORY_LABELS[item.category] || item.category)}</span>${statusHtml}
                     <div class="fw-semibold">${esc(item.title)}</div>
                     <div class="small text-muted">${esc(item.detail || '')}</div>
+                    ${noteHtml}
                 </div>
-                <div class="d-flex gap-2 ms-2 flex-shrink-0">
-                    <a href="#" data-page="${esc(item.link_page)}"${symAttr}${impAttr} class="btn btn-sm btn-outline-primary">Go to page</a>
-                    <button class="btn btn-sm btn-outline-secondary" data-dismiss-action-item="${esc(item.id)}" title="Dismiss"><i class="bi bi-x-lg"></i></button>
+                <div class="d-flex flex-wrap gap-1 ms-auto flex-shrink-0">
+                    <a href="#" data-page="${esc(item.link_page)}"${symAttr}${impAttr}${tabAttr} class="btn btn-sm btn-outline-primary">Go to page</a>
+                    <button class="btn btn-sm btn-outline-primary" data-ai-chat="${esc(item.id)}" title="Ask AI about this item"><i class="bi bi-robot"></i></button>
+                    ${followUp}
                 </div>
             </div>
         </div>`;
     }).join('');
 }
+
+// Writes the follow-up state for one item and re-renders.
+window.setActionItemStatus = async function(id, status, opts) {
+    const o = opts || {};
+    const item = _aiState.items.find(i => i.id === id);
+    if (status === 'checked' && !o.skipNote) {
+        const note = await noteDialog({
+            title: 'Mark as checked',
+            message: `${item ? item.title : id}\n\nWhy is this fine? (optional, shown on the item and to the AI chat)`,
+            placeholder: 'e.g. verified against the broker statement',
+            confirmLabel: 'Mark checked',
+        });
+        if (note === null) return;
+        if (note) o.note = note;
+    }
+    try {
+        const ack = await setFindingStatus(id, status, o);
+        if (ack) _aiState.acks[id] = ack; else delete _aiState.acks[id];
+        _aiState.items = annotateActionItems(_aiState.items, _aiState.acks);
+        _renderActionItems();
+        notify(status === 'open' ? 'Item reopened' : status === 'snoozed' ? `Snoozed for ${o.days} days` : 'Marked as checked', 'success');
+    } catch (e) {
+        notify('Could not save: ' + e.message, 'danger');
+    }
+};
 
 async function loadActionItemsPage() {
     const wrap = document.getElementById('actionItemsList');
@@ -452,39 +522,65 @@ async function loadActionItemsPage() {
         refreshBtn._wired = true;
         refreshBtn.addEventListener('click', () => loadActionItemsPage());
     }
+    const askBtn = document.getElementById('aiAskAi');
+    if (askBtn && !askBtn._wired) {
+        askBtn._wired = true;
+        askBtn.addEventListener('click', () => {
+            openChatWithContext(`Action items ${localIsoDay()}`, actionItemsChatPrompt(_aiState.items));
+        });
+    }
+    const bar = document.getElementById('aiFilterBar');
+    if (bar && !bar._wired) {
+        bar._wired = true;
+        bar.querySelectorAll('[data-ai-sev]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                _aiState.severity = btn.dataset.aiSev;
+                bar.querySelectorAll('[data-ai-sev]').forEach(b => b.classList.toggle('active', b === btn));
+                _renderActionItems();
+            });
+        });
+        const toggle = document.getElementById('aiShowResolved');
+        if (toggle) {
+            toggle.addEventListener('change', () => { _aiState.showResolved = toggle.checked; _renderActionItems(); });
+        }
+    }
 
-    if (!wrap._dismissWired) {
-        wrap._dismissWired = true;
+    if (!wrap._actionsWired) {
+        wrap._actionsWired = true;
         wrap.addEventListener('click', (e) => {
-            const btn = e.target.closest('[data-dismiss-action-item]');
-            if (btn) window._dismissActionItem(btn.dataset.dismissActionItem);
+            const ackBtn = e.target.closest('[data-ai-ack]');
+            if (ackBtn) {
+                const opts = {};
+                if (ackBtn.dataset.aiAck === 'snoozed') opts.days = parseInt(ackBtn.dataset.aiDays, 10) || 30;
+                window.setActionItemStatus(ackBtn.dataset.aiId, ackBtn.dataset.aiAck, opts);
+                return;
+            }
+            const chatBtn = e.target.closest('[data-ai-chat]');
+            if (chatBtn) {
+                const item = _aiState.items.find(i => i.id === chatBtn.dataset.aiChat);
+                if (item) openChatWithContext(`Action item: ${item.title.slice(0, 60)}`, actionItemChatPrompt(item));
+            }
         });
     }
 
     wrap.innerHTML = '<div class="text-muted small">Loading…</div>';
     try {
+        await migrateLocalDismissals();
         const [backendData, nwData, cfData] = await Promise.all([
-            window.apiClient.getActionItems(),
+            window.apiClient.getActionItems('all'),
             window.apiClient.getNetworth(),
             window.apiClient.getCashflow(),
         ]);
         const nwResult = computeNetWorthChecklist(nwData.items, (cfData && cfData.items) || [], nwData.deposits);
-        window._lastActionItems = { backendItems: backendData.items, nwResult };
-        const dismissed = JSON.parse(localStorage.getItem('pfmDismissedActionItems') || '[]').map(i => i.id);
-        _renderActionItems(mergeActionItems(backendData.items, nwResult, dismissed));
+        _aiState.acks = backendData.acks || {};
+        _aiState.items = annotateActionItems(mergeActionItems(backendData.items, nwResult, []), _aiState.acks);
+        window._lastActionItems = { items: _aiState.items, acks: _aiState.acks };
+        _renderActionItems();
     } catch (err) {
         wrap.innerHTML = `<div class="text-danger small">Could not load action items: ${esc(err.message)}</div>`;
     }
 }
 window.loadActionItemsPage = loadActionItemsPage;
-
-window._dismissActionItem = function(id) {
-    _actionItemDismiss(id);
-    if (window._lastActionItems) {
-        const dismissed = JSON.parse(localStorage.getItem('pfmDismissedActionItems') || '[]').map(i => i.id);
-        _renderActionItems(mergeActionItems(window._lastActionItems.backendItems, window._lastActionItems.nwResult, dismissed));
-    }
-};
 
 // ---------------------------------------------------------------------------
 // Navigation Manager
@@ -578,6 +674,11 @@ function createNavigationManager() {
                             sinceDate: navLink.dataset.sinceDate || '',
                             portfolioName: navLink.dataset.portfolioName || '',
                         };
+                    }
+                    // Diagnostics items name their tab (price / dq / logs);
+                    // loadDiagnosticsPage restores the last tab from this key.
+                    if (page === 'diagnostics' && navLink.dataset.diagTab) {
+                        try { localStorage.setItem('pfmDiagTab', navLink.dataset.diagTab); } catch (err) { /* ignore */ }
                     }
                     this.showPage(page);
                     // Action Items' research-linked alerts carry the specific
@@ -874,6 +975,7 @@ function setupChatPage() {
                 <button type="button" class="chat-suggestion">Show my top holdings</button>
                 <button type="button" class="chat-suggestion">How diversified am I?</button>
                 <button type="button" class="chat-suggestion">Where should my next euro go?</button>
+                <button type="button" class="chat-suggestion">What needs my attention?</button>
             </div>
             <span class="text-muted small">Or paste a broker statement and click <strong>Extract</strong>.</span>
         </div>`;
