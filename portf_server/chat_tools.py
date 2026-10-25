@@ -8,7 +8,7 @@ used by EnhancedChatEngine.
 
 import json
 import logging
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from portf_manager.database import Database
@@ -373,6 +373,163 @@ def _get_next_euro(db: Database, amount: Optional[float] = None) -> str:
     )
 
 
+@_tool("get_goals")
+def _get_goals(db: Database) -> str:
+    # Same rows as the Goals page: projection, status and pace since set.
+    from portf_manager.services.goals import goals_summary, list_goals_with_progress
+
+    goals = list_goals_with_progress(db)
+    fields = (
+        "id",
+        "name",
+        "notes",
+        "target_amount_eur",
+        "target_date",
+        "monthly_contribution_eur",
+        "expected_return_pct",
+        "current_networth_eur",
+        "progress_pct",
+        "months_left",
+        "projected_value_eur",
+        "shortfall_eur",
+        "required_monthly_eur",
+        "status",
+        "start_date",
+        "start_networth_eur",
+        "months_elapsed",
+        "gained_since_start_eur",
+        "gap_closed_pct",
+        "actual_monthly_eur",
+        "pace",
+    )
+    return _j(
+        {
+            "summary": goals_summary(goals),
+            "goals": [{k: g.get(k) for k in fields} for g in goals],
+            "notes": (
+                "status: achieved | on_track | off_track | overdue. "
+                "projected_value_eur assumes the planned monthly contribution "
+                "and expected return from today's net worth. "
+                "actual_monthly_eur is the net-worth change per month since the "
+                "goal was set (null when no baseline or under a month old); "
+                "pace compares it with required_monthly_eur."
+            ),
+        }
+    )
+
+
+@_tool("get_household_finances")
+def _get_household_finances(db: Database) -> str:
+    # The monthly money picture a goal has to fit into: entered cash flow,
+    # measured income and spending from bank statements, this month's budget,
+    # loans and the planned goal contributions. Each block degrades on its own.
+    from datetime import date
+
+    from portf_manager.services import loans as loan_service
+    from portf_manager.services.goals import goals_summary, list_goals_with_progress
+    from portf_manager.services.progress import savings_and_buffer
+
+    today = date.today()
+    out: dict = {"as_of": today.isoformat()}
+
+    try:
+        from portf_server.routers.networth import get_cashflow
+
+        cf = get_cashflow(db=db, api_key_info={})
+        out["entered_monthly_cashflow"] = {
+            "income_eur": cf["income_eur"],
+            "expenses_eur": cf["expenses_eur"],
+            "net_monthly_eur": cf["net_monthly_eur"],
+            "by_category_eur": cf["by_category"],
+            "entries": len(cf["items"]),
+        }
+    except Exception as e:
+        out["entered_monthly_cashflow"] = {"error": str(e)}
+
+    try:
+        from portf_server.routers.analytics import _cash_eur
+
+        start = date(today.year - 1, today.month, 1).isoformat()
+        rows = [
+            {
+                "date": r["date"],
+                "amount_eur": float(r["amount"]) * _fx(r.get("currency") or "EUR"),
+                "category": r.get("category"),
+            }
+            for r in db.list_spending_transactions(start_date=start, is_transfer=False)
+        ]
+        saved = savings_and_buffer(rows, _cash_eur(db), today)
+        n = len(saved["months_used"])
+        saved["avg_monthly_income_eur"] = (
+            round(saved["income_eur"] / n, 2) if n else None
+        )
+        saved["avg_monthly_net_eur"] = (
+            round((saved["income_eur"] - saved["spent_eur"]) / n, 2) if n else None
+        )
+        out["measured_from_bank_statements"] = saved
+    except Exception as e:
+        out["measured_from_bank_statements"] = {"error": str(e)}
+
+    try:
+        from portf_server.routers.budgets import get_budget_summary
+
+        budget = get_budget_summary(db=db, api_key_info={})
+        if budget is None:
+            out["budget_this_month"] = None
+        else:
+            b = budget.model_dump() if hasattr(budget, "model_dump") else dict(budget)
+            out["budget_this_month"] = {
+                "budget_name": b.get("budget_name"),
+                "sections": [
+                    {
+                        k: sec.get(k)
+                        for k in ("key", "label", "planned_total", "actual_total")
+                    }
+                    for sec in b.get("sections") or []
+                ],
+                "net": b.get("net"),
+            }
+    except Exception as e:
+        out["budget_this_month"] = {"error": str(e)}
+
+    try:
+        loans = []
+        for loan in db.get_loans():
+            loans.append(
+                {
+                    "name": loan.get("name"),
+                    "balance_eur": round(loan_service.balance_on(loan, today), 2),
+                    "monthly_payment_eur": loan_service.payment_of(loan),
+                    "annual_rate_pct": loan.get("annual_rate_pct"),
+                    "ends": loan_service.end_date(loan).isoformat(),
+                }
+            )
+        out["loans"] = loans
+        out["loan_payments_monthly_eur"] = round(
+            sum(ln["monthly_payment_eur"] for ln in loans), 2
+        )
+    except Exception as e:
+        out["loans"] = {"error": str(e)}
+
+    try:
+        summary = goals_summary(list_goals_with_progress(db, today))
+        out["goals_planned_monthly_eur"] = summary["planned_monthly_eur"]
+        out["open_goals"] = summary["total"] - summary["achieved"]
+    except Exception as e:
+        out["goals_planned_monthly_eur"] = {"error": str(e)}
+
+    out["notes"] = (
+        "entered_monthly_cashflow is what the user typed on the Net Worth page "
+        "(rough, may be stale); measured_from_bank_statements is what the "
+        "imported statements show over complete months (transfers excluded, "
+        "loan payments and investments count as spending there). A goal is "
+        "realistic when its contribution fits the measured net after the loan "
+        "payments and the other goals; get_deployable_cash gives the cash "
+        "available today."
+    )
+    return _j(out)
+
+
 @_tool("get_tax_estimate")
 def _get_tax_estimate(db: Database, year: Optional[int] = None) -> str:
     from portf_manager.tax_calculator import TaxCalculator
@@ -520,6 +677,168 @@ def _financial_news(db: Database, query: str) -> str:
         return _j({"query": query, "news": items, "count": len(items)})
     except Exception as e:
         return _j({"query": query, "error": str(e), "news": []})
+
+
+@_tool("get_action_items")
+def _get_action_items(db: Database, include_resolved: bool = False) -> str:
+    """Open action items (what needs attention) with their follow-up state."""
+    from portf_manager.services.action_items import action_items_report
+
+    report = action_items_report(db, status="all" if include_resolved else "open")
+    items = [
+        {
+            "id": i["id"],
+            "severity": i["severity"],
+            "category": i["category"],
+            "status": i["status"],
+            "title": i["title"],
+            "detail": i.get("detail"),
+            "page": i.get("link_page"),
+            "note": (i.get("ack") or {}).get("note"),
+            "snoozed_until": (i.get("ack") or {}).get("until"),
+        }
+        for i in report["items"]
+    ]
+    return _j(
+        {
+            "items": items,
+            "count": len(items),
+            "summary": report["summary"],
+            "how_to_follow_up": (
+                "set_action_item_status marks an item checked or snoozed once "
+                "the user has looked at it; ids are stable per finding."
+            ),
+        }
+    )
+
+
+@_tool("set_action_item_status")
+def _set_action_item_status(
+    db: Database,
+    id: str,
+    status: str,
+    note: Optional[str] = None,
+    days: Optional[int] = None,
+) -> str:
+    """Mark an action item or Data Quality finding checked/snoozed, or reopen it."""
+    from portf_manager.services.action_item_acks import set_ack
+
+    try:
+        ack = set_ack(db, id, status, note=note, days=days)
+    except ValueError as e:
+        return _j({"id": id, "error": str(e)})
+    return _j({"id": id, "status": status, "ack": ack})
+
+
+@_tool("get_diagnostics")
+def _get_diagnostics(db: Database) -> str:
+    """Price-data health, last update runs, open data-quality counts, recent errors."""
+    from portf_server.routers.analytics import (
+        compute_data_freshness,
+        dq_duplicates,
+        dq_suspicious,
+    )
+    from portf_manager.services.action_item_acks import ack_is_active, list_acks
+
+    out: dict = {}
+    try:
+        fresh = compute_data_freshness(db)
+        out["price_data"] = {
+            "last_refresh": fresh.get("last_refresh"),
+            "refresh_age_hours": fresh.get("refresh_age_hours"),
+            "prices_as_of": fresh.get("prices_as_of"),
+            "priced_holdings": fresh.get("checked"),
+            "stale_count": fresh.get("stale_count"),
+            "stale": fresh.get("stale", [])[:15],
+        }
+    except Exception as e:
+        out["price_data"] = {"error": str(e)}
+
+    try:
+        runs = db.get_price_update_runs(limit=5)
+        out["price_update_runs"] = [
+            {
+                "finished_at": r.get("finished_at"),
+                "source": r.get("source"),
+                "duration_seconds": r.get("duration_seconds"),
+                "updated": r.get("updated_count"),
+                "skipped": r.get("skipped_count"),
+                "errors": r.get("error_count"),
+                "error_symbols": r.get("error_symbols") or [],
+                "api_errors": (r.get("api_errors") or [])[:5],
+            }
+            for r in runs
+        ]
+    except Exception as e:
+        out["price_update_runs"] = {"error": str(e)}
+
+    try:
+        acks = list_acks(db)
+        dups = dq_duplicates(db=db, api_key_info={})["duplicates"]
+        issues = dq_suspicious(db=db, api_key_info={})["issues"]
+        open_dups = [d for d in dups if not ack_is_active(acks.get(f"dq:{d['key']}"))]
+        open_issues = [
+            i for i in issues if not ack_is_active(acks.get(f"dq:{i['key']}"))
+        ]
+        out["data_quality"] = {
+            "duplicates_open": len(open_dups),
+            "duplicates_checked": len(dups) - len(open_dups),
+            "suspicious_open": len(open_issues),
+            "suspicious_checked": len(issues) - len(open_issues),
+            "open_duplicates": [
+                {
+                    "finding_id": f"dq:{d['key']}",
+                    "label": d["label"],
+                    "asset": d["tx_a"].get("asset"),
+                    "portfolio": d["tx_a"].get("portfolio"),
+                    "tx_a": {
+                        k: d["tx_a"].get(k)
+                        for k in ("id", "date", "type", "quantity", "price")
+                    },
+                    "tx_b": {
+                        k: d["tx_b"].get(k)
+                        for k in ("id", "date", "type", "quantity", "price")
+                    },
+                }
+                for d in open_dups[:10]
+            ],
+            "open_suspicious": [
+                {
+                    "finding_id": f"dq:{i['key']}",
+                    "severity": i.get("severity"),
+                    "asset": i.get("asset"),
+                    "date": i.get("date"),
+                    "type": i.get("type"),
+                    "description": i.get("description"),
+                    "transaction_id": i.get("transaction_id"),
+                }
+                for i in open_issues[:10]
+            ],
+        }
+    except Exception as e:
+        out["data_quality"] = {"error": str(e)}
+
+    try:
+        if hasattr(db, "list_logs"):
+            problems = db.list_logs(limit=200, min_level="WARNING")
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            recent = [p for p in problems if str(p.get("created_at") or "") >= cutoff]
+            out["log_problems"] = {
+                "last_24h": len(recent),
+                "latest": [
+                    {
+                        "at": p.get("created_at"),
+                        "level": p.get("level"),
+                        "source": p.get("source"),
+                        "message": p.get("message"),
+                    }
+                    for p in problems[:5]
+                ],
+            }
+    except Exception as e:
+        out["log_problems"] = {"error": str(e)}
+
+    return _j(out)
 
 
 # ── public catalog ─────────────────────────────────────────────────────────
@@ -739,6 +1058,16 @@ TOOLS: list[ToolDefinition] = [
         ],
     ),
     ToolDefinition(
+        name="get_goals",
+        description="Return the user's savings goals (the Goals page): target, date, planned monthly contribution, progress, projected value, status (achieved/on_track/off_track/overdue), the monthly amount still required, and the actual saving pace since each goal was set.",
+        parameters=[],
+    ),
+    ToolDefinition(
+        name="get_household_finances",
+        description="Return the monthly money picture: the entered monthly cash flow (income, mortgage, other expenses), the income/spending/savings rate measured from imported bank statements over the last complete months with the emergency-fund cover, this month's budget vs actual, the loans (balance, monthly payment, rate, end date) and the monthly contributions the open goals assume. Use it to judge whether a goal, a contribution or a purchase is realistic.",
+        parameters=[],
+    ),
+    ToolDefinition(
         name="get_tax_estimate",
         description="Return a Spanish IRPF tax estimate for a given year: realised gains, dividend income, and interest income.",
         parameters=[
@@ -790,5 +1119,73 @@ TOOLS: list[ToolDefinition] = [
                 "required": True,
             },
         ],
+    ),
+    ToolDefinition(
+        name="get_action_items",
+        description=(
+            "Return what needs the user's attention: the Action Items checklist "
+            "(stale broker imports, data-quality findings, price-update failures, "
+            "held prices, off-track goals, price alerts, budget overruns, fund "
+            "look-through gaps, balance-sheet staleness, retirement readiness). "
+            "Each item has a stable id, severity, status (open/checked/snoozed) "
+            "and the page it lives on. Call this for 'what needs my attention', "
+            "'anything wrong', 'what should I check'."
+        ),
+        parameters=[
+            {
+                "name": "include_resolved",
+                "type": "boolean",
+                "description": "Also return items already checked or snoozed (default false).",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="set_action_item_status",
+        description=(
+            "Record the follow-up on an action item or Data Quality finding once "
+            "the user has decided: status 'checked' (looked at, fine, optionally "
+            "with a note), 'snoozed' (hide for N days) or 'open' (reopen). Use the "
+            "id from get_action_items or the finding_id from get_diagnostics. Only "
+            "call it when the user asks to mark, dismiss, snooze or reopen something."
+        ),
+        parameters=[
+            {
+                "name": "id",
+                "type": "string",
+                "description": "Action item id or finding id (e.g. dq:dup:12:15).",
+                "required": True,
+            },
+            {
+                "name": "status",
+                "type": "string",
+                "description": "checked, snoozed or open.",
+                "required": True,
+            },
+            {
+                "name": "note",
+                "type": "string",
+                "description": "Why it is fine / what was decided (shown on the item).",
+                "required": False,
+            },
+            {
+                "name": "days",
+                "type": "integer",
+                "description": "For snoozed: hide for this many days from today.",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="get_diagnostics",
+        description=(
+            "Return the Diagnostics page's data: price-data freshness and stale or "
+            "unpriced holdings, the last price-update runs with failed symbols and "
+            "API errors, open vs checked Data Quality findings (possible duplicate "
+            "transactions, suspicious patterns) with their finding ids, and recent "
+            "warnings/errors from the application log. Use it to explain why a "
+            "value looks off or whether the nightly price update worked."
+        ),
+        parameters=[],
     ),
 ]

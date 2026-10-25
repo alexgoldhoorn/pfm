@@ -89,13 +89,31 @@ def check_stale_imports(db, today: date = None) -> list[dict]:
     return items
 
 
-def check_data_quality(db) -> list[dict]:
-    """Summarize non-empty findings from the existing DQ endpoints."""
+def check_data_quality(db, today: date | None = None) -> list[dict]:
+    """Summarize the Data Quality findings nobody has checked yet.
+
+    A duplicate pair or suspicious row marked checked/snoozed on the
+    Diagnostics page (ack id ``dq:{finding_key}``) no longer counts, so the
+    item disappears once every finding has been looked at, and its detail
+    says how many were already checked.
+    """
     from portf_server.routers.analytics import dq_duplicates, dq_suspicious
+    from portf_manager.services.action_item_acks import ack_is_active, list_acks
+
+    acks = list_acks(db)
+
+    def _open(findings: list[dict]) -> tuple[list[dict], int]:
+        kept = [
+            f for f in findings if not ack_is_active(acks.get(f"dq:{f['key']}"), today)
+        ]
+        return kept, len(findings) - len(kept)
+
+    def _checked_note(n: int) -> str:
+        return f" {n} already checked." if n else ""
 
     items = []
 
-    dups = dq_duplicates(db=db, api_key_info={})["duplicates"]
+    dups, dups_checked = _open(dq_duplicates(db=db, api_key_info={})["duplicates"])
     if dups:
         likely = sum(1 for d in dups if d["label"] == "likely")
         items.append(
@@ -103,17 +121,22 @@ def check_data_quality(db) -> list[dict]:
                 "id": "dq:duplicates",
                 "category": "data_quality",
                 "severity": "high" if likely else "medium",
-                "title": f"{len(dups)} possible duplicate transaction(s)",
+                "title": f"{len(dups)} possible duplicate transaction(s) to review",
                 "detail": (
                     f"{likely} likely, {len(dups) - likely} possible — review "
-                    "before they distort cost basis."
+                    "before they distort cost basis." + _checked_note(dups_checked)
                 ),
                 "link_page": "diagnostics",
-                "context": {"count": len(dups)},
+                "context": {
+                    "count": len(dups),
+                    "checked": dups_checked,
+                    "tab": "dq",
+                    "finding_ids": [f"dq:{d['key']}" for d in dups],
+                },
             }
         )
 
-    issues = dq_suspicious(db=db, api_key_info={})["issues"]
+    issues, issues_checked = _open(dq_suspicious(db=db, api_key_info={})["issues"])
     if issues:
         warnings = sum(1 for i in issues if i["severity"] == "warning")
         items.append(
@@ -121,13 +144,18 @@ def check_data_quality(db) -> list[dict]:
                 "id": "dq:suspicious",
                 "category": "data_quality",
                 "severity": "high" if warnings else "medium",
-                "title": f"{len(issues)} suspicious transaction pattern(s)",
+                "title": f"{len(issues)} suspicious transaction pattern(s) to review",
                 "detail": (
                     f"{warnings} warning(s) — zero prices, negative positions, "
-                    "or price outliers."
+                    "or price outliers." + _checked_note(issues_checked)
                 ),
                 "link_page": "diagnostics",
-                "context": {"count": len(issues)},
+                "context": {
+                    "count": len(issues),
+                    "checked": issues_checked,
+                    "tab": "dq",
+                    "finding_ids": [f"dq:{i['key']}" for i in issues],
+                },
             }
         )
 
@@ -158,7 +186,7 @@ def check_price_update_failures(db) -> list[dict]:
                 + (", ".join(labels) if labels else "see Diagnostics for details")
             ),
             "link_page": "diagnostics",
-            "context": {"run_id": run["id"], "symbols": symbols},
+            "context": {"run_id": run["id"], "symbols": symbols, "tab": "price"},
         }
     ]
 
@@ -196,6 +224,7 @@ def check_held_prices(db) -> list[dict]:
                     "symbol": asset["symbol"],
                     "price": held.get("price"),
                     "prev_price": held.get("prev_price"),
+                    "tab": "price",
                 },
             }
         )
@@ -257,26 +286,43 @@ def check_stale_research(db, today: date = None) -> list[dict]:
 
 
 def check_goals_off_track(db) -> list[dict]:
-    """Savings goals whose projected value falls short of their target."""
-    from portf_server.routers.goals import list_goals
+    """Savings goals whose projected value falls short of their target.
+
+    An unmet goal whose target date has passed is reported as overdue (there
+    is no monthly amount that still reaches it), the rest with the monthly
+    contribution now required.
+    """
+    from portf_manager.services.goals import STATUS_OVERDUE, list_goals_with_progress
 
     items = []
-    for g in list_goals(db=db, api_key_info={}):
+    for g in list_goals_with_progress(db):
         # retirement goals are judged by the readiness verdict, not progress
         if g.get("on_track") or re.search(r"retire", g.get("name") or "", re.I):
             continue
+        if g.get("status") == STATUS_OVERDUE:
+            title = f"Goal \"{g['name']}\" is overdue"
+            detail = (
+                f"Target date {str(g['target_date'])[:10]} has passed with "
+                f"{g['current_networth_eur']:,.0f} EUR of the "
+                f"{g['target_amount_eur']:,.0f} EUR target reached. "
+                f"Move the date, lower the target or mark it done by deleting it."
+            )
+        else:
+            title = f"Goal \"{g['name']}\" is off track"
+            detail = (
+                f"Projected {g['projected_value_eur']:,.0f} EUR vs target "
+                f"{g['target_amount_eur']:,.0f} EUR by {str(g['target_date'])[:10]}. "
+                f"Required monthly contribution: "
+                f"{g.get('required_monthly_eur') or 0:,.0f} EUR "
+                f"(planned {g.get('monthly_contribution_eur') or 0:,.0f} EUR)."
+            )
         items.append(
             {
                 "id": f"goals:{g['id']}",
                 "category": "goals",
                 "severity": "medium",
-                "title": f"Goal \"{g['name']}\" is off track",
-                "detail": (
-                    f"Projected {g['projected_value_eur']:,.0f} EUR vs target "
-                    f"{g['target_amount_eur']:,.0f} EUR by {g['target_date']}. "
-                    f"Required monthly contribution: "
-                    f"{g.get('required_monthly_eur')} EUR."
-                ),
+                "title": title,
+                "detail": detail,
                 "link_page": "goals",
                 "context": {"goal_id": g["id"]},
             }
@@ -810,3 +856,33 @@ def get_action_items(db) -> list[dict]:
             logger.exception(f"Action-items check {check.__name__} failed")
     items.sort(key=lambda i: _SEVERITY_ORDER.get(i["severity"], 99))
     return items
+
+
+def action_items_report(db, status: str = "open", today: date | None = None) -> dict:
+    """The items with their follow-up state, plus the counts and stored acks.
+
+    Args:
+        db: Database.
+        status: ``open`` keeps only items nobody has checked or snoozed;
+            ``all`` returns every item annotated with its ``status``/``ack``.
+        today: Injectable clock, decides whether a snooze has expired.
+
+    Returns:
+        ``{"items", "summary", "acks"}`` — ``summary`` counts every item
+        (not just the returned ones), ``acks`` is the whole stored map so a
+        client can also apply it to findings it computes itself.
+    """
+    from portf_manager.services.action_item_acks import (
+        annotate_items,
+        list_acks,
+        summarize_items,
+    )
+
+    if status not in ("open", "all"):
+        raise ValueError("status must be 'open' or 'all'")
+    acks = list_acks(db)
+    items = annotate_items(get_action_items(db), acks, today)
+    summary = summarize_items(items)
+    if status == "open":
+        items = [i for i in items if i["status"] == "open"]
+    return {"items": items, "summary": summary, "acks": acks}

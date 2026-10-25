@@ -16,7 +16,7 @@ from pathlib import Path
 from portf_manager.services.merchant import fold_for_search, normalize_merchant
 
 # Database version for migration tracking
-DATABASE_VERSION = 36
+DATABASE_VERSION = 37
 
 
 # black
@@ -468,6 +468,8 @@ class Database:
                 target_date DATE NOT NULL,
                 monthly_contribution_eur REAL DEFAULT 0,
                 expected_return_pct REAL DEFAULT 7.0,
+                start_networth_eur REAL,
+                notes TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -919,8 +921,28 @@ class Database:
             self._migrate_to_v35(conn)
         if current_version < 36:
             self._migrate_to_v36(conn)
+        if current_version < 37:
+            self._migrate_to_v37(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
+
+    def _migrate_to_v36(self, conn: sqlite3.Connection) -> None:
+        """Migrate from v35 to v36 — goal baseline and notes.
+
+        Adds ``goals.start_networth_eur`` (the net worth when the goal was set,
+        so progress and saving pace can be measured from that point) and
+        ``goals.notes``. Existing goals keep NULL: there is no net-worth
+        history to backfill from, and a guessed baseline would show a fake
+        pace. Guarded so a rerun is harmless.
+        """
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(goals)")}
+        # a hand-built partial test database may lack the table altogether
+        if not cols:
+            return
+        if "start_networth_eur" not in cols:
+            conn.execute("ALTER TABLE goals ADD COLUMN start_networth_eur REAL")
+        if "notes" not in cols:
+            conn.execute("ALTER TABLE goals ADD COLUMN notes TEXT")
 
     def _migrate_to_v2(self, conn: sqlite3.Connection):
         """Migrate database from v1 to v2 - add entities and portfolios support."""
@@ -2014,8 +2036,8 @@ class Database:
         )
         conn.commit()
 
-    def _migrate_to_v36(self, conn: sqlite3.Connection) -> None:
-        """Migrate from v35 to v36 — saved Wealth Simulator scenarios.
+    def _migrate_to_v37(self, conn: sqlite3.Connection) -> None:
+        """Migrate from v36 to v37 — saved Wealth Simulator scenarios.
 
         Adds the ``wealth_scenarios`` table (inputs as JSON plus the baseline
         date and net worth the projection is tracked against). Guarded, so a
@@ -5376,19 +5398,31 @@ class Database:
         target_date: str,
         monthly_contribution_eur: float = 0,
         expected_return_pct: float = 7.0,
+        start_networth_eur: Optional[float] = None,
+        notes: Optional[str] = None,
     ) -> int:
-        """Create a savings goal."""
+        """Create a savings goal.
+
+        Args:
+            start_networth_eur: Net worth when the goal was set; the baseline
+                that progress and saving pace are measured from.
+            notes: Free text — what the goal is for, assumptions.
+        """
         with self.get_connection() as conn:
             cursor = conn.execute(
                 """INSERT INTO goals
-                       (name, target_amount_eur, target_date, monthly_contribution_eur, expected_return_pct)
-                   VALUES (?, ?, ?, ?, ?)""",
+                       (name, target_amount_eur, target_date,
+                        monthly_contribution_eur, expected_return_pct,
+                        start_networth_eur, notes)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
                 (
                     name,
                     target_amount_eur,
                     target_date,
                     monthly_contribution_eur,
                     expected_return_pct,
+                    start_networth_eur,
+                    notes,
                 ),
             )
             conn.commit()
@@ -5402,13 +5436,22 @@ class Database:
         target_date: str,
         monthly_contribution_eur: float,
         expected_return_pct: float,
+        start_networth_eur: Optional[float] = None,
+        notes: Optional[str] = None,
     ) -> bool:
-        """Update an existing savings goal. Returns False if not found."""
+        """Update an existing savings goal. Returns False if not found.
+
+        ``start_networth_eur`` and ``notes`` are left unchanged when None, so
+        a client that only knows the original five fields can't wipe them.
+        """
         with self.get_connection() as conn:
             cursor = conn.execute(
                 """UPDATE goals
                    SET name=?, target_amount_eur=?, target_date=?,
-                       monthly_contribution_eur=?, expected_return_pct=?
+                       monthly_contribution_eur=?, expected_return_pct=?,
+                       start_networth_eur=COALESCE(?, start_networth_eur),
+                       notes=COALESCE(?, notes),
+                       updated_at=CURRENT_TIMESTAMP
                    WHERE id=?""",
                 (
                     name,
@@ -5416,6 +5459,8 @@ class Database:
                     target_date,
                     monthly_contribution_eur,
                     expected_return_pct,
+                    start_networth_eur,
+                    notes,
                     goal_id,
                 ),
             )
