@@ -8,11 +8,14 @@ def cash_by_portfolio(
 ) -> dict[int, dict]:
     """Compute the EUR cash balance and last activity date per portfolio.
 
-    Deposits, sells, dividends and interest add cash; withdrawals and buys
-    remove it. Each amount is converted at the FX rate of its own date, so the
-    figure matches the broker's statement and does not drift with live rates.
-    Transactions on ``cash``-type assets are skipped: such an asset is already
-    a position, so counting its trades as cash would double count.
+    Deposits, sells, dividends and interest add cash (dividends and interest
+    net of their withheld ``tax``); withdrawals and buys remove it. Each amount
+    is converted at the FX rate of its own date, so the figure matches the
+    broker's statement and does not drift with live rates. Buys and sells of
+    ``cash``-type assets are skipped: such an asset is already a position, so
+    counting its trades as cash would double count. Interest and dividends on
+    one (e.g. MyInvestor's synthetic cash-interest asset) still count, since
+    the payout lands in the broker's cash.
 
     Args:
         db: Database instance.
@@ -46,15 +49,19 @@ def cash_by_portfolio(
 
     for tx in transactions:
         currency, is_cash = asset_info(tx["asset_id"])
-        if is_cash:
+        kind = tx["transaction_type"].lower()
+        if is_cash and kind not in ("dividend", "interest"):
             continue
         on_date = tx.get("transaction_date")
-        amt = float(tx["total_amount"] or 0) * fx_on(currency, on_date)
-        kind = tx["transaction_type"].lower()
+        rate = fx_on(currency, on_date)
+        amt = float(tx["total_amount"] or 0) * rate
         if kind == "buy":
             add(tx.get("portfolio_id"), -amt, on_date)
-        elif kind in ("sell", "dividend", "interest"):
+        elif kind == "sell":
             add(tx.get("portfolio_id"), amt, on_date)
+        elif kind in ("dividend", "interest"):
+            tax = float(tx.get("tax") or 0) * rate
+            add(tx.get("portfolio_id"), amt - tax, on_date)
     for bk in db.get_all_bookings():
         amt = float(bk["amount"] or 0) * fx_on(
             bk.get("currency", "EUR") or "EUR", bk.get("date")

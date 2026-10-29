@@ -5,13 +5,22 @@ Columns (semicolon-delimited, European comma decimals):
     Fecha de operación;Fecha de valor;Concepto;Importe;Divisa
 
 The ``Concepto`` encodes the movement; we classify by pattern + amount sign:
-  - ``INVEST``/``MY INVESTOR``       → cash deposit into the account (booking)
+  - ``INVEST``/``INVEST <n>``/``MY INVESTOR``/``AHORRO``/``SALEPROCEEDS``
+    → cash deposit into the account (booking)
     — the latter is MyInvestor's own in-app P2P/instant-transfer feature name
   - ``Sent from <service>`` (e.g. "Sent from Revolut") → deposit booking, an
     external transfer routed in from another provider
+  - ``Transferencia ...`` (e.g. "Transferencia desde MyInvestor", money sent
+    out of the account) → deposit or withdrawal booking by the amount's sign
+  - ``ANUL[.] NAME [@ QTY]`` → reversal of an earlier dividend: a dividend with a
+    negative amount on NAME (never a buy, though it is negative with "@")
   - ``NAME @ QTY`` with Importe < 0  → BUY      (QTY units, cost = |Importe|)
-  - ``NAME @ QTY`` with Importe > 0  → DIVIDEND (QTY = shares held; amount = payout)
-  - ``NAME`` (no @), Importe > 0     → DIVIDEND (lump-sum payout or fund redemption)
+  - ``NAME @ QTY`` with Importe > 0  → DIVIDEND (QTY = shares held; amount =
+    payout), unless it pays >= 15 a unit: then a sale with a truncated
+    quantity, skipped
+  - ``NAME`` (no @), 0 < Importe < 100 → DIVIDEND (lump-sum payout)
+  - ``NAME`` (no @), Importe >= 100, or a name ending in a bare ``@``
+    (quantity truncated away) → skipped as a probable trade
   - platform fee (SUSCRIPCIÓN PREMIUM, comisión, ...)  → cash withdrawal (booking)
   - remunerated-cash interest (``Liq./Liquidación intereses <mes>``,
     ``PERIODO dd/mm/yyyy dd/mm/yyyy``, ``regularización intereses <mes>``)
@@ -53,10 +62,27 @@ _TRADE_RE = re.compile(r"^(.*?)\s*@\s*([0-9]+(?:[.,][0-9]+)?)\s*$")
 # "MY INVESTOR" is MyInvestor's own in-app P2P/instant-transfer feature name
 # (not a person's name — safe to hardcode, it's the same for every user of
 # the product), used as the Concepto for an incoming transfer.
-_DEPOSIT_CONCEPTS = {"INVEST", "INGRESO", "APORTACIÓN", "APORTACION", "MY INVESTOR"}
+_DEPOSIT_CONCEPTS = {
+    "INVEST",
+    "INGRESO",
+    "APORTACIÓN",
+    "APORTACION",
+    "MY INVESTOR",
+    "AHORRO",
+    # Proceeds of a sale at another broker, paid into this account.
+    "SALEPROCEEDS",
+}
+# "INVEST 2" — the user's transfer reference with a counter appended.
+_INVEST_NUMBERED_RE = re.compile(r"^invest\s+\d+$", re.IGNORECASE)
 # An external transfer routed in from another provider, e.g. "Sent from
 # Revolut" — the service name varies, the phrasing doesn't.
 _EXTERNAL_TRANSFER_RE = re.compile(r"^sent from\s+\S+", re.IGNORECASE)
+# A bank transfer in or out ("Transferencia desde MyInvestor" is money sent
+# out of the account); the direction comes from the amount's sign.
+_TRANSFER_RE = re.compile(r"^transferencia\b", re.IGNORECASE)
+# Reversal of an earlier dividend ("ANUL ACME CORP @ 5", negative amount,
+# Fecha de valor = the reversed payout's date).
+_ANUL_RE = re.compile(r"^anul\.?\s+(.+)$", re.IGNORECASE)
 # Platform fees / charges (negative, no security) — recorded as a withdrawal.
 _FEE_KEYWORDS = re.compile(
     r"suscripci[oó]n premium|comisi[oó]n|comision|tarifa|fee|custodia|coste",
@@ -80,6 +106,12 @@ _PERIODO_RE = re.compile(
 # unlike the credit/withholding pair above there's no reliable way to match
 # which negative row corrects which positive one — each imported standalone.
 _REGULARIZACION_RE = re.compile(r"^regularizaci[oó]n\s+intereses", re.IGNORECASE)
+
+# Above this, a positive no-"@" row is treated as a probable sale, not a
+# dividend (see the parse loop).
+_LIKELY_SALE_EUR = 100.0
+# Likewise for a positive "NAME @ QTY" row paying this much per unit.
+_LIKELY_SALE_PER_UNIT_EUR = 15.0
 
 _CASH_INTEREST_SYMBOL = "MYINVESTOR-CASH"
 _CASH_INTEREST_NAME = "MyInvestor Cash Interest"
@@ -143,6 +175,9 @@ def parse_myinvestor_csv(csv_content: str) -> MyInvestorParseResult:
             res.skipped.append((f"Row {i}", f"bad amount '{row[3]}'"))
             continue
         currency = row[4].strip() if len(row) > 4 and row[4].strip() else "EUR"
+        # MyInvestor exports an occasional blank "0" line with no concept.
+        if importe == 0 and not (row[2] or "").strip():
+            continue
         parsed.append((i, date, concepto, importe, currency, ";".join(row)))
 
     # IRPF withholding is always its own CSV line, never combined with the
@@ -159,8 +194,11 @@ def parse_myinvestor_csv(csv_content: str) -> MyInvestorParseResult:
         if _INTEREST_WITHHOLDING_RE.match(concepto):
             continue  # consumed below by its matching credit row, if any
 
-        if concepto.upper() in _DEPOSIT_CONCEPTS or _EXTERNAL_TRANSFER_RE.match(
-            concepto
+        if (
+            concepto.upper() in _DEPOSIT_CONCEPTS
+            or _EXTERNAL_TRANSFER_RE.match(concepto)
+            or _TRANSFER_RE.match(concepto)
+            or _INVEST_NUMBERED_RE.match(concepto)
         ):
             res.bookings.append(
                 {
@@ -200,6 +238,27 @@ def parse_myinvestor_csv(csv_content: str) -> MyInvestorParseResult:
             )
             continue
 
+        anul = _ANUL_RE.match(concepto)
+        if anul:
+            m = _TRADE_RE.match(anul.group(1))
+            name = (m.group(1) if m else anul.group(1)).strip()
+            qty = abs(_num(m.group(2))) if m else 1.0
+            if qty <= 0:
+                qty = 1.0
+            res.transactions.append(
+                LLMTransaction(
+                    tx_type="dividend",
+                    symbol=name,
+                    asset_name=name,
+                    quantity=qty,
+                    price=round(-abs(importe) / qty, 6),
+                    date=date,
+                    currency=currency,
+                    raw_text=raw,
+                )
+            )
+            continue
+
         m = _TRADE_RE.match(concepto)
         if m:
             name = m.group(1).strip()
@@ -208,6 +267,18 @@ def parse_myinvestor_csv(csv_content: str) -> MyInvestorParseResult:
                 res.skipped.append((f"Row {i}", f"zero quantity: {concepto}"))
                 continue
             total = abs(importe)
+            # A per-share payout this high is a sale whose quantity was
+            # truncated ("... ETF @ 30" for 300 units); dividends run cents
+            # to a few euros a share.
+            if importe > 0 and total / qty >= _LIKELY_SALE_PER_UNIT_EUR:
+                res.skipped.append(
+                    (
+                        f"Row {i}",
+                        f"probably a sale ({total / qty:.2f} a unit is no "
+                        f"dividend): {concepto}",
+                    )
+                )
+                continue
             res.transactions.append(
                 LLMTransaction(
                     tx_type="dividend" if importe > 0 else "buy",
@@ -218,6 +289,28 @@ def parse_myinvestor_csv(csv_content: str) -> MyInvestorParseResult:
                     date=date,
                     currency=currency,
                     raw_text=raw,
+                )
+            )
+            continue
+
+        # A name cut off at MyInvestor's ~30-char limit can lose its "@ qty"
+        # ("EXAMPLE WORLD EQUITY ACC @"): a trade, never a dividend.
+        if concepto.endswith("@"):
+            kind = "sale" if importe > 0 else "buy"
+            res.skipped.append(
+                (f"Row {i}", f"{kind} with truncated quantity: {concepto}")
+            )
+            continue
+
+        # A positive no-"@" row this large is almost always a sale whose
+        # quantity was truncated away ("ETF EXAMPLE REAL ESTATE DE",
+        # 1.500,00); real lump-sum payouts on these statements are a few euros.
+        if importe >= _LIKELY_SALE_EUR:
+            res.skipped.append(
+                (
+                    f"Row {i}",
+                    f"probably a sale (no '@ qty'), {importe:.2f}: {concepto}"
+                    " — add it by hand if it really is a dividend",
                 )
             )
             continue

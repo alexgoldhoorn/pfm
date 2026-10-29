@@ -72,3 +72,34 @@ def test_portfolios_values_endpoint_unchanged(tmp_path):
     assert r.status_code == 200
     row = next(p for p in r.json()["portfolios"] if p["portfolio_id"] == pid)
     assert row["cash_eur"] == cash_by_portfolio(db, _fx)[pid]["cash_eur"] == 600.0
+
+
+def test_interest_on_cash_type_asset_counts_net_of_withholding(tmp_path):
+    db = Database(str(tmp_path / "t.db"))
+    pid = db.get_or_create_portfolio("Example Broker")
+    cash_asset = db.create_asset("EX-CASH", "Example Cash", "cash", currency="EUR")
+    db.create_booking("2026-01-02", "Deposit", 1000.0, "EUR", portfolio_id=pid)
+    db.create_transaction(
+        asset_id=cash_asset,
+        transaction_type="interest",
+        quantity=1,
+        price=30.0,
+        total_amount=30.0,
+        tax=5.7,
+        transaction_date="2026-02-01",
+        portfolio_id=pid,
+        currency="EUR",
+    )
+    result = cash_by_portfolio(db, _fx)
+    assert round(result[pid]["cash_eur"], 2) == 1024.3
+    assert result[pid]["as_of"] == "2026-02-01"
+
+
+def test_negative_dividend_reversal_reduces_cash(tmp_path):
+    db = Database(str(tmp_path / "t.db"))
+    pid = db.get_or_create_portfolio("Example Broker")
+    aid = db.create_asset("EXA", "Example Corp", "stock", currency="EUR")
+    db.create_booking("2026-01-02", "Deposit", 1000.0, "EUR", portfolio_id=pid)
+    _tx(db, pid, aid, "dividend", 2.5, "2026-01-05")
+    _tx(db, pid, aid, "dividend", -2.5, "2026-01-06")
+    assert round(cash_by_portfolio(db, _fx)[pid]["cash_eur"], 2) == 1000.0

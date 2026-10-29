@@ -8,7 +8,7 @@ SAMPLE = """Fecha de operación;Fecha de valor;Concepto;Importe;Divisa
 01/06/2026;01/06/2026;INVEST;1200;EUR
 14/03/2024;18/03/2024;WIDGET ETF JAPAN;-1250,00;EUR
 28/05/2026;29/05/2026;FOO INC @ 4;-1462,40;EUR
-28/05/2026;29/05/2026;BAR LTD @ 20;2051,14;EUR
+28/05/2026;29/05/2026;BAR LTD @ 20;20,00;EUR
 """
 
 
@@ -188,3 +188,135 @@ def test_genuine_lump_sum_dividend_still_classified_as_dividend():
     assert len(r.transactions) == 1
     assert r.transactions[0].tx_type == "dividend"
     assert r.transactions[0].symbol == "EXAMPLE PHARMA LABORATORIES"
+
+
+def test_outgoing_transferencia_is_a_withdrawal_booking():
+    csv_text = (
+        "Fecha de operación;Fecha de valor;Concepto;Importe;Divisa\n"
+        "05/03/2024;05/03/2024;Transferencia desde MyInvestor;-1000;EUR\n"
+    )
+    r = parse_myinvestor_csv(csv_text)
+    assert r.transactions == []
+    assert r.skipped == []
+    assert r.bookings == [
+        {
+            "broker": "MyInvestor",
+            "date": "2024-03-05",
+            "action": "Withdrawal",
+            "amount": 1000.0,
+            "currency": "EUR",
+        }
+    ]
+
+
+def test_incoming_transferencia_is_a_deposit_booking():
+    csv_text = (
+        "Fecha de operación;Fecha de valor;Concepto;Importe;Divisa\n"
+        "06/03/2024;06/03/2024;Transferencia a favor de Example;200;EUR\n"
+    )
+    r = parse_myinvestor_csv(csv_text)
+    assert [b["action"] for b in r.bookings] == ["Deposit"]
+    assert r.transactions == []
+
+
+def test_anul_row_is_a_negative_dividend_on_the_underlying_holding():
+    csv_text = (
+        "Fecha de operación;Fecha de valor;Concepto;Importe;Divisa\n"
+        "11/04/2024;11/04/2024;ACME CORP @ 5;2,50;EUR\n"
+        "11/04/2024;08/02/2024;ANUL ACME CORP @ 5;-2,50;EUR\n"
+        "11/04/2024;08/02/2024;ANUL ACME CORP @ 5;-2,50;EUR\n"
+    )
+    r = parse_myinvestor_csv(csv_text)
+    assert not any(t.tx_type == "buy" for t in r.transactions)
+    reversals = [t for t in r.transactions if t.price < 0]
+    assert len(reversals) == 2
+    for t in reversals:
+        assert t.tx_type == "dividend"
+        assert t.symbol == "ACME CORP"
+        assert t.quantity == 5.0
+        assert t.date == "2024-04-11"
+        assert round(t.price * t.quantity, 2) == -2.5
+    assert round(sum(t.price * t.quantity for t in r.transactions), 2) == -2.5
+
+
+def test_anul_row_without_quantity_is_a_negative_dividend():
+    csv_text = (
+        "Fecha de operación;Fecha de valor;Concepto;Importe;Divisa\n"
+        "11/04/2024;08/02/2024;ANUL ACME CORP;-3,00;EUR\n"
+    )
+    r = parse_myinvestor_csv(csv_text)
+    assert len(r.transactions) == 1
+    t = r.transactions[0]
+    assert (t.tx_type, t.symbol, t.quantity, t.price) == (
+        "dividend",
+        "ACME CORP",
+        1.0,
+        -3.0,
+    )
+
+
+def test_ahorro_saleproceeds_and_numbered_invest_are_deposits():
+    csv_text = (
+        "Fecha de operación;Fecha de valor;Concepto;Importe;Divisa\n"
+        "02/05/2024;02/05/2024;AHORRO;100;EUR\n"
+        "03/05/2024;03/05/2024;Ahorro;200;EUR\n"
+        "06/05/2024;06/05/2024;INVEST 2;300;EUR\n"
+        "07/05/2024;07/05/2024;SALEPROCEEDS;400,50;EUR\n"
+    )
+    r = parse_myinvestor_csv(csv_text)
+    assert r.transactions == []
+    assert [(b["action"], b["amount"]) for b in r.bookings] == [
+        ("Deposit", 100.0),
+        ("Deposit", 200.0),
+        ("Deposit", 300.0),
+        ("Deposit", 400.5),
+    ]
+
+
+def test_anul_with_dot_is_a_dividend_reversal():
+    csv_text = (
+        "Fecha de operación;Fecha de valor;Concepto;Importe;Divisa\n"
+        "20/06/2024;19/06/2024;ANUL. ACME NV @ 40;-10,00;EUR\n"
+    )
+    r = parse_myinvestor_csv(csv_text)
+    [t] = r.transactions
+    assert (t.tx_type, t.symbol, t.quantity) == ("dividend", "ACME NV", 40.0)
+    assert round(t.price * t.quantity, 2) == -10.0
+
+
+def test_blank_zero_row_is_ignored():
+    csv_text = (
+        "Fecha de operación;Fecha de valor;Concepto;Importe;Divisa\n"
+        "01/07/2024;01/07/2024;;0;EUR\n"
+    )
+    r = parse_myinvestor_csv(csv_text)
+    assert (r.transactions, r.bookings, r.skipped) == ([], [], [])
+
+
+def test_truncated_trade_and_large_no_qty_credit_are_skipped_not_dividends():
+    csv_text = (
+        "Fecha de operación;Fecha de valor;Concepto;Importe;Divisa\n"
+        "02/09/2024;04/09/2024;EXAMPLE WORLD EQUITY ACC @;2000;EUR\n"
+        "16/09/2024;18/09/2024;ETF EXAMPLE REAL ESTATE DE;1500,00;EUR\n"
+        "01/10/2024;01/10/2024;ETF EXAMPLE REAL ESTATE DE;3,20;EUR\n"
+    )
+    r = parse_myinvestor_csv(csv_text)
+    assert [(t.tx_type, t.price) for t in r.transactions] == [("dividend", 3.2)]
+    reasons = [reason for _, reason in r.skipped]
+    assert len(reasons) == 2
+    assert reasons[0].startswith("sale with truncated quantity")
+    assert reasons[1].startswith("probably a sale")
+
+
+def test_at_qty_positive_with_a_sale_sized_unit_amount_is_skipped():
+    # "EXAMPLE FOOD ETF @ 30" at +1.200,00 is the sale of 300 units with the
+    # quantity truncated: 40,00 a unit is no dividend.
+    csv_text = (
+        "Fecha de operación;Fecha de valor;Concepto;Importe;Divisa\n"
+        "04/11/2024;06/11/2024;EXAMPLE FOOD ETF @ 30;1200,00;EUR\n"
+        "15/11/2024;15/11/2024;ACME NV @ 40;20,00;EUR\n"
+    )
+    r = parse_myinvestor_csv(csv_text)
+    assert [(t.symbol, t.tx_type) for t in r.transactions] == [("ACME NV", "dividend")]
+    [(_, reason)] = r.skipped
+    assert reason.startswith("probably a sale")
