@@ -8,7 +8,10 @@ from portf_manager.services.merchant import fold_for_search, normalize_merchant
 @pytest.mark.parametrize(
     "description, expected",
     [
-        ("123456789012SUPERMERCAT EXEMPLE  \\EXAMPLETOWN\\ES26010112", "SUPERMERCAT EXEMPLE"),
+        (
+            "123456789012SUPERMERCAT EXEMPLE  \\EXAMPLETOWN\\ES26010112",
+            "SUPERMERCAT EXEMPLE",
+        ),
         ("123456789012EXAMPLE SHOP MADRID 010012345", "EXAMPLE SHOP MADRID"),
         ("123456789012AMAZON* AB12CD34E LUXEMBOURG 010012345", "AMAZON LUXEMBOURG"),
         ("123456789012PAYPAL *EXAMPLE STORE BE 12345678901 00000", "EXAMPLE STORE BE"),
