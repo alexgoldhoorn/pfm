@@ -103,3 +103,50 @@ def test_negative_dividend_reversal_reduces_cash(tmp_path):
     _tx(db, pid, aid, "dividend", 2.5, "2026-01-05")
     _tx(db, pid, aid, "dividend", -2.5, "2026-01-06")
     assert round(cash_by_portfolio(db, _fx)[pid]["cash_eur"], 2) == 1000.0
+
+
+def test_amount_converts_from_the_transactions_own_currency(tmp_path):
+    # A UCITS ETF whose base currency is USD, bought in EUR: the EUR amount
+    # must not be converted as if it were dollars.
+    db = Database(str(tmp_path / "t.db"))
+    pid = db.get_or_create_portfolio("Example Broker")
+    aid = db.create_asset("EXETF", "Example World ETF", "etf", currency="USD")
+    db.create_booking("2026-01-02", "Deposit", 1000.0, "EUR", portfolio_id=pid)
+    _tx(db, pid, aid, "buy", 400.0, "2026-01-05")
+
+    def fx(currency, on_date):
+        return 0.5 if currency == "USD" else 1.0
+
+    assert cash_by_portfolio(db, fx)[pid]["cash_eur"] == 600.0
+
+
+def test_values_cost_converts_from_the_transactions_own_currency(tmp_path, monkeypatch):
+    from portf_server.app import app
+    from portf_server.auth_middleware import APIKeyManager
+    from portf_server.dependencies import get_api_key_manager, get_database
+    from portf_server.routers import portfolios
+
+    monkeypatch.setattr(
+        portfolios,
+        "_get_fx_rate_on",
+        lambda db, c, d: 0.5 if c == "USD" else 1.0,
+    )
+    monkeypatch.setattr(
+        portfolios, "_get_fx_rate", lambda c: 0.5 if c == "USD" else 1.0
+    )
+    db = Database(str(tmp_path / "api.db"))
+    km = APIKeyManager(db)
+    km.create_api_key(key_name="test", description="test", raw_key=_TEST_API_KEY)
+    app.dependency_overrides[get_database] = lambda: db
+    app.dependency_overrides[get_api_key_manager] = lambda: km
+    pid = db.get_or_create_portfolio("Example Broker")
+    aid = db.create_asset("EXETF", "Example World ETF", "etf", currency="USD")
+    db.create_booking("2026-01-02", "Deposit", 1000.0, "EUR", portfolio_id=pid)
+    _tx(db, pid, aid, "buy", 400.0, "2026-01-05")
+    try:
+        r = TestClient(app).get("/api/v1/portfolios/values", headers=HEADERS)
+    finally:
+        app.dependency_overrides.clear()
+    row = next(p for p in r.json()["portfolios"] if p["portfolio_id"] == pid)
+    assert row["cost_eur"] == 400.0
+    assert row["cash_eur"] == 600.0

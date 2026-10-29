@@ -310,7 +310,9 @@ def get_portfolio_values(
             **tx,
             "total_amount": float(tx.get("total_amount") or 0)
             * _get_fx_rate_on(
-                database, asset_currency(tx["asset_id"]), tx.get("transaction_date")
+                database,
+                tx.get("currency") or asset_currency(tx["asset_id"]),
+                tx.get("transaction_date"),
             ),
         }
         for tx in transactions

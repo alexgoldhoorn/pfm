@@ -8,7 +8,8 @@ def cash_by_portfolio(
 ) -> dict[int, dict]:
     """Compute the EUR cash balance and last activity date per portfolio.
 
-    Deposits, sells, dividends and interest add cash (dividends and interest
+    Each amount is in the transaction's own currency (falling back to the
+    asset's). Deposits, sells, dividends and interest add cash (dividends and interest
     net of their withheld ``tax``); withdrawals and buys remove it. Each amount
     is converted at the FX rate of its own date, so the figure matches the
     broker's statement and does not drift with live rates. Buys and sells of
@@ -48,7 +49,10 @@ def cash_by_portfolio(
             entry["as_of"] = day
 
     for tx in transactions:
-        currency, is_cash = asset_info(tx["asset_id"])
+        asset_currency, is_cash = asset_info(tx["asset_id"])
+        # The row's own currency: a UCITS ETF with a USD base is often bought
+        # in EUR, and converting that amount as dollars skews the balance.
+        currency = tx.get("currency") or asset_currency
         kind = tx["transaction_type"].lower()
         if is_cash and kind not in ("dividend", "interest"):
             continue
