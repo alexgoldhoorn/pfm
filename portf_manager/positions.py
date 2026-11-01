@@ -9,7 +9,7 @@ at that date, leaving total cost unchanged (so average cost per share scales).
 ``dividend`` and unknown types don't affect positions.
 """
 
-from typing import Callable, Dict, Hashable, List, Optional, Tuple
+from typing import Callable, Dict, Hashable, Iterable, List, Optional, Tuple
 
 
 def _sort_key(tx: dict):
@@ -60,3 +60,29 @@ def compute_positions(
             # Quantity scales by the ratio; cost basis is unchanged.
             pos["quantity"] *= qty
     return positions, realised
+
+
+def self_managed_held_asset_ids(
+    transactions: List[dict], managed_portfolio_ids: Iterable[int]
+) -> set:
+    """Asset ids held (quantity > 0) in at least one *non*-managed portfolio.
+
+    A managed portfolio (robo-advisor) is one where someone else makes the
+    trades, so its holdings are tracked for net worth and exposure but should
+    never raise a buy/sell signal. An asset held both there and in a
+    self-managed account is still actionable and is returned.
+
+    Args:
+        transactions: rows with portfolio_id, asset_id, transaction_type,
+            quantity, total_amount, date.
+        managed_portfolio_ids: ids of the portfolios flagged ``is_managed``.
+    """
+    managed = set(managed_portfolio_ids)
+    by_portfolio, _ = compute_positions(
+        transactions, key=lambda tx: (tx.get("portfolio_id"), tx["asset_id"])
+    )
+    return {
+        aid
+        for (pid, aid), pos in by_portfolio.items()
+        if pos["quantity"] > 0 and pid not in managed
+    }

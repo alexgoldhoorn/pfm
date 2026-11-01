@@ -1332,6 +1332,7 @@ const ACTIONITEM_CATEGORY_NAMES = {
     goals: 'Goals', watchlist: 'Price Alerts', networth: 'Net Worth',
     spending: 'Spending', budget: 'Budget', exposure: 'Fund Exposure',
     retirement: 'Retirement', allocate: 'Allocation', forecast: 'Wealth Plan',
+    decisions: 'Decisions',
 };
 window.ACTIONITEM_CATEGORY_NAMES = ACTIONITEM_CATEGORY_NAMES;
 
@@ -3786,6 +3787,14 @@ function createAPIClient() {
             return resp.json();
         },
 
+        // What drove the return: gain per position, asset type and broker.
+        async getAttribution(period = 'ytd') {
+            const url = this.baseURL + '/api/v1/analytics/attribution?period=' + encodeURIComponent(period || 'ytd');
+            const resp = await fetch(url, { headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
         async getNetworthHistory() {
             const resp = await fetch(this.baseURL + '/api/v1/analytics/networth-history', {
                 headers: { 'X-API-Key': this.apiKey }
@@ -3998,6 +4007,43 @@ function createAPIClient() {
             });
             if (!resp.ok) throw new Error(await resp.text());
             return resp.json();
+        },
+
+        // Decision journal
+        async getDecisions(status = 'open') {
+            const resp = await fetch(this.baseURL + '/api/v1/decisions/?status=' + encodeURIComponent(status || 'open'), {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async createDecision(data) {
+            const resp = await fetch(this.baseURL + '/api/v1/decisions/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(data)
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async reviewDecision(id, data) {
+            const resp = await fetch(this.baseURL + `/api/v1/decisions/${id}/review`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify(data)
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        async deleteDecision(id) {
+            const resp = await fetch(this.baseURL + `/api/v1/decisions/${id}`, {
+                method: 'DELETE',
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(await resp.text());
         },
 
         async deleteGoal(id) {

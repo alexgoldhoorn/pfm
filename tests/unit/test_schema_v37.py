@@ -15,7 +15,7 @@ def test_fresh_db_is_current_and_has_wealth_scenarios(tmp_path):
         version = conn.execute("SELECT MAX(version) FROM database_version").fetchone()[
             0
         ]
-    assert version == DATABASE_VERSION == 37
+    assert version == DATABASE_VERSION >= 37
     assert "wealth_scenarios" in names
 
 
@@ -35,7 +35,7 @@ def test_migration_from_v36_creates_the_table(tmp_path):
         version = conn.execute("SELECT MAX(version) FROM database_version").fetchone()[
             0
         ]
-    assert version == 37
+    assert version == DATABASE_VERSION
     assert db.get_wealth_scenario(sid)["is_primary"] == 1
 
 

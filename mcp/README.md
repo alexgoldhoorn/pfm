@@ -104,6 +104,8 @@ Never print to stdout from a tool: stdout is the protocol channel.
 | `allocation_targets` | Target vs current allocation |
 | `allocation_candidates` | What the next euro could buy |
 | `allocator_settings` | The allocator's configuration |
+| `return_attribution` | What drove the return: gain per holding, type and broker |
+| `decisions` | The decision journal with the price move since each call |
 
 `tests/test_readme.py` fails if this table and the registered tools differ.
 

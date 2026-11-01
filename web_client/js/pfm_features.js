@@ -436,6 +436,220 @@ function setupEditGoalModal() {
     });
 }
 
+// ── Decisions page (decision journal) ───────────────────────────────────────
+const DECISION_ACTIONS = {
+    buy:       { label: 'Buy',       badge: 'bg-success' },
+    dca:       { label: 'DCA',       badge: 'bg-success' },
+    sell:      { label: 'Sell',      badge: 'bg-danger' },
+    hold:      { label: 'Hold',      badge: 'bg-secondary' },
+    rebalance: { label: 'Rebalance', badge: 'bg-info text-dark' },
+    traspaso:  { label: 'Traspaso',  badge: 'bg-info text-dark' },
+    other:     { label: 'Other',     badge: 'bg-light text-dark border' },
+};
+function decisionActionMeta(action) {
+    return DECISION_ACTIONS[action] || { label: action ? String(action) : 'Other', badge: 'bg-light text-dark border' };
+}
+window.decisionActionMeta = decisionActionMeta;
+
+function decisionStatusMeta(d) {
+    const st = d && d.status;
+    if (st === 'reviewed') return { label: 'reviewed', badge: 'bg-success' };
+    if (st === 'due') return { label: 'due', badge: 'bg-warning text-dark' };
+    return { label: 'open', badge: 'bg-primary' };
+}
+window.decisionStatusMeta = decisionStatusMeta;
+
+// "then → now (+x.x%)" with a sign colour; '' without a stored current price.
+function decisionPriceMoveHtml(d) {
+    if (!d || d.price_at_decision == null || d.price_now == null) return '';
+    const cur = d.currency || 'EUR';
+    const then = Fmt.money(d.price_at_decision, cur);
+    const now = Fmt.money(d.price_now, cur);
+    let pct = '';
+    if (d.price_change_pct != null && !isNaN(parseFloat(d.price_change_pct))) {
+        const v = parseFloat(d.price_change_pct);
+        const cls = v > 0 ? 'text-success' : (v < 0 ? 'text-danger' : 'text-muted');
+        pct = ` <span class="${cls}">(${v > 0 ? '+' : ''}${v.toFixed(1)}%)</span>`;
+    }
+    return `${esc(then)} → ${esc(now)}${pct}`;
+}
+window.decisionPriceMoveHtml = decisionPriceMoveHtml;
+
+const _decisionsState = { filter: 'open', items: [] };
+
+function decisionRowHtml(d) {
+    const act = decisionActionMeta(d.action);
+    const st = decisionStatusMeta(d);
+    const move = decisionPriceMoveHtml(d);
+    const sym = d.symbol ? `<span class="badge bg-light text-dark border ms-1">${esc(d.symbol)}</span>` : '';
+    const parts = [];
+    if (d.rationale) parts.push(`<div class="small text-muted"><strong>Why:</strong> ${esc(d.rationale)}</div>`);
+    if (d.expectation) parts.push(`<div class="small text-muted"><strong>Expected:</strong> ${esc(d.expectation)}</div>`);
+    let reviewHtml = '';
+    if (d.status === 'reviewed') {
+        const rb = { good: 'bg-success', bad: 'bg-danger', neutral: 'bg-secondary', unclear: 'bg-light text-dark border' }[d.outcome_rating] || 'bg-light text-dark border';
+        reviewHtml = `<div class="small mt-1"><span class="badge ${rb} me-1">${esc(d.outcome_rating || 'unclear')}</span>${d.outcome ? esc(d.outcome) : '<span class="text-muted">No outcome note</span>'}${d.reviewed_at ? ` <span class="text-muted">(reviewed ${esc(Fmt.date(d.reviewed_at))})</span>` : ''}</div>`;
+    }
+    const reviewOn = d.review_on ? `<span class="text-muted small ms-2">Review ${esc(Fmt.date(d.review_on))}</span>` : '';
+    const buttons = d.status === 'reviewed'
+        ? `<button class="btn btn-sm btn-outline-secondary" data-dec-act="reopen" data-dec-id="${d.id}"><i class="bi bi-arrow-counterclockwise me-1"></i>Reopen</button>`
+        : `<button class="btn btn-sm btn-outline-primary" data-dec-act="review" data-dec-id="${d.id}"><i class="bi bi-check2-square me-1"></i>Review</button>`;
+    return `
+    <div class="card mb-2">
+        <div class="card-body py-2 d-flex flex-wrap justify-content-between align-items-start gap-2">
+            <div class="flex-grow-1" style="min-width:0;">
+                <span class="badge ${act.badge} me-1">${esc(act.label)}</span>
+                <span class="badge ${st.badge} me-1">${esc(st.label)}</span>
+                <span class="fw-semibold">${esc(d.title)}</span>${sym}
+                <div class="small text-muted">Decided ${esc(Fmt.date(d.decided_on))}${reviewOn}${move ? ` <span class="ms-2">${move}</span>` : ''}</div>
+                ${parts.join('')}${reviewHtml}
+            </div>
+            <div class="d-flex flex-wrap gap-1 ms-auto flex-shrink-0">
+                ${buttons}
+                <button class="btn btn-sm btn-outline-danger" data-dec-act="delete" data-dec-id="${d.id}" title="Delete"><i class="bi bi-trash"></i></button>
+            </div>
+        </div>
+    </div>`;
+}
+window.decisionRowHtml = decisionRowHtml;
+
+function _renderDecisions() {
+    const list = document.getElementById('decisionsList');
+    if (!list) return;
+    let items = _decisionsState.items;
+    if (_decisionsState.filter === 'due') items = items.filter(d => d.status === 'due');
+    if (!items.length) {
+        list.innerHTML = '<p class="text-muted text-center py-4 mb-0">No decisions here yet.</p>';
+        return;
+    }
+    list.innerHTML = items.map(decisionRowHtml).join('');
+}
+
+async function loadDecisions() {
+    const list = document.getElementById('decisionsList');
+    if (!list) return;
+    // Due is a client-side view of the open list
+    const f = _decisionsState.filter;
+    const status = f === 'due' ? 'open' : f;
+    try {
+        const data = await window.apiClient.getDecisions(status);
+        _decisionsState.items = Array.isArray(data.items) ? data.items : [];
+        _renderDecisions();
+    } catch (err) {
+        list.innerHTML = `<p class="text-danger small py-3 mb-0">Error loading decisions: ${esc(err.message)}</p>`;
+    }
+}
+window.loadDecisions = loadDecisions;
+
+function setupDecisionsPage() {
+    const page = document.getElementById('decisionsPage');
+    if (!page) return;
+    const refresh = document.getElementById('refreshDecisions');
+    if (refresh) refresh.addEventListener('click', loadDecisions);
+
+    const dateEl = document.getElementById('addDecisionDate');
+    const resetDate = () => {
+        if (dateEl) { dateEl.value = new Date().toISOString().slice(0, 10); updateDateHint(dateEl); }
+    };
+    resetDate();
+
+    document.querySelectorAll('#decisionsFilter [data-dec-filter]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            _decisionsState.filter = btn.dataset.decFilter;
+            document.querySelectorAll('#decisionsFilter [data-dec-filter]').forEach(b => b.classList.toggle('active', b === btn));
+            loadDecisions();
+        });
+    });
+
+    const form = document.getElementById('addDecisionForm');
+    if (form) form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const val = (id) => document.getElementById(id).value.trim();
+        const body = {
+            title: val('addDecisionTitle'),
+            action: document.getElementById('addDecisionAction').value,
+        };
+        if (val('addDecisionDate')) body.decided_on = val('addDecisionDate');
+        if (val('addDecisionSymbol')) body.symbol = val('addDecisionSymbol').toUpperCase();
+        if (val('addDecisionReview')) body.review_on = val('addDecisionReview');
+        if (val('addDecisionRationale')) body.rationale = val('addDecisionRationale');
+        if (val('addDecisionExpectation')) body.expectation = val('addDecisionExpectation');
+        const btn = document.getElementById('addDecisionBtn');
+        const status = document.getElementById('decisionFormStatus');
+        btn.disabled = true;
+        if (status) status.innerHTML = '';
+        try {
+            await window.apiClient.createDecision(body);
+            form.reset();
+            resetDate();
+            notify('Decision added.', 'success');
+            loadDecisions();
+        } catch (err) {
+            if (status) status.innerHTML = `<span class="text-danger">Error: ${esc(err.message)}</span>`;
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    const list = document.getElementById('decisionsList');
+    if (list) list.addEventListener('click', async (e) => {
+        const btn = e.target.closest('[data-dec-act]');
+        if (!btn) return;
+        const id = parseInt(btn.dataset.decId);
+        const d = _decisionsState.items.find(x => x.id === id);
+        const act = btn.dataset.decAct;
+        try {
+            if (act === 'review') {
+                if (!d) return;
+                document.getElementById('decisionReviewId').value = id;
+                document.getElementById('decisionReviewTitle').textContent = d.title;
+                document.getElementById('decisionReviewOutcome').value = d.outcome || '';
+                document.getElementById('decisionReviewRating').value = d.outcome_rating || 'unclear';
+                bootstrap.Modal.getOrCreateInstance(document.getElementById('decisionReviewModal')).show();
+            } else if (act === 'reopen') {
+                await window.apiClient.reviewDecision(id, { outcome_rating: 'unclear', reviewed: false });
+                notify('Decision reopened.', 'success');
+                loadDecisions();
+            } else if (act === 'delete') {
+                const ok = await confirmDialog({
+                    title: 'Delete decision',
+                    message: `Delete "${d ? d.title : 'this decision'}"?`,
+                    confirmLabel: 'Delete', danger: true,
+                });
+                if (!ok) return;
+                await window.apiClient.deleteDecision(id);
+                notify('Decision deleted.', 'success');
+                loadDecisions();
+            }
+        } catch (err) {
+            notify('Error: ' + err.message, 'danger');
+        }
+    });
+
+    const rform = document.getElementById('decisionReviewForm');
+    if (rform) rform.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const id = parseInt(document.getElementById('decisionReviewId').value);
+        const body = {
+            outcome: document.getElementById('decisionReviewOutcome').value.trim() || null,
+            outcome_rating: document.getElementById('decisionReviewRating').value,
+            reviewed: true,
+        };
+        const btn = document.getElementById('decisionReviewSaveBtn');
+        btn.disabled = true;
+        try {
+            await window.apiClient.reviewDecision(id, body);
+            bootstrap.Modal.getInstance(document.getElementById('decisionReviewModal')).hide();
+            notify('Review saved.', 'success');
+            loadDecisions();
+        } catch (err) {
+            notify('Error saving review: ' + err.message, 'danger');
+        } finally {
+            btn.disabled = false;
+        }
+    });
+}
+
 function setupGoalsPage() {
     const form = document.getElementById('addGoalForm');
     const refreshBtn = document.getElementById('refreshGoals');
@@ -832,7 +1046,7 @@ function createNavigationManager() {
     return {
         currentPage: 'dashboard',
         showPage: function(pageName) {
-            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage', 'helpPage', 'versionPage', 'aboutPage', 'resourcesPage', 'networthPage', 'diagnosticsPage', 'actionitemsPage', 'spendingPage', 'budgetPage'];
+            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage', 'helpPage', 'versionPage', 'aboutPage', 'resourcesPage', 'networthPage', 'diagnosticsPage', 'actionitemsPage', 'spendingPage', 'budgetPage', 'decisionsPage'];
             pages.forEach(pageId => {
                 const page = document.getElementById(pageId);
                 if (page) page.style.display = 'none';
@@ -866,7 +1080,7 @@ function createNavigationManager() {
                 version: "What's New", about: 'About', resources: 'Resources',
                 networth: 'Net Worth', diagnostics: 'Diagnostics',
                 actionitems: 'Action Items', spending: 'Spending',
-                budget: 'Budget',
+                budget: 'Budget', decisions: 'Decisions',
             };
             const titleEl = document.getElementById('mobilePageTitle');
             if (titleEl) titleEl.textContent = PAGE_TITLES[pageName] || pageName;
@@ -882,6 +1096,7 @@ function createNavigationManager() {
                 case 'analytics':    window.pageManager.loadAnalyticsPage(); break;
                 case 'watchlist':    window.pageManager.loadWatchlistPage(); break;
                 case 'goals':        window.pageManager.loadGoalsPage(); break;
+                case 'decisions':    window.pageManager.loadDecisionsPage(); break;
                 case 'chat':         if (window.chatPageHandlePendingContext) window.chatPageHandlePendingContext(); break;
                 case 'importexport': if (window.loadImportExportPage) window.loadImportExportPage(); break;
                 case 'portfolios':   window.pageManager.loadPortfoliosPage(); break;
@@ -1840,6 +2055,8 @@ function setupPortfoliosPage() {
         document.getElementById('portfolioCurrency').value = 'EUR';
         document.getElementById('portfolioDescription').value = '';
         document.getElementById('portfolioWebsite').value = '';
+        const managedEl = document.getElementById('portfolioManaged');
+        if (managedEl) managedEl.checked = false;
         const typeSel = document.getElementById('portfolioAccountType');
         if (typeSel) { typeSel.value = 'brokerage'; typeSel.disabled = false; }
         const typeHint = document.getElementById('portfolioAccountTypeHint');
@@ -1856,6 +2073,7 @@ function setupPortfoliosPage() {
             base_currency: document.getElementById('portfolioCurrency').value.trim() || 'EUR',
             description: document.getElementById('portfolioDescription').value.trim() || null,
             website: document.getElementById('portfolioWebsite').value.trim() || null,
+            is_managed: !!(document.getElementById('portfolioManaged') && document.getElementById('portfolioManaged').checked),
         };
         if (!id) {
             const typeSel = document.getElementById('portfolioAccountType');
@@ -1895,12 +2113,14 @@ window.setAssetPrice = async function(id, symbol, currency) {
     }
 };
 
-window.editPortfolio = function(id, name, currency, description, website, accountType) {
+window.editPortfolio = function(id, name, currency, description, website, accountType, isManaged) {
     document.getElementById('portfolioEditId').value           = id;
     document.getElementById('portfolioName').value             = name;
     document.getElementById('portfolioCurrency').value         = currency;
     document.getElementById('portfolioDescription').value      = description === 'null' ? '' : (description || '');
     document.getElementById('portfolioWebsite').value          = website === 'null' ? '' : (website || '');
+    const managedEl = document.getElementById('portfolioManaged');
+    if (managedEl) managedEl.checked = !!Number(isManaged);
     const resolvedType = (accountType === 'null' || !accountType) ? 'brokerage' : accountType;
     const typeSel = document.getElementById('portfolioAccountType');
     if (typeSel) { typeSel.value = resolvedType; typeSel.disabled = true; }
@@ -6304,6 +6524,7 @@ document.addEventListener('DOMContentLoaded', function() {
     setupResearchModal();
     setupWatchlistPage();
     setupGoalsPage();
+    setupDecisionsPage();
     setupEditGoalModal();
 
     const refreshTxPage = document.getElementById('refreshTransactionsPage');

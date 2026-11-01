@@ -37,6 +37,7 @@ from portf_manager.services.performance import (
     to_eur_transactions,
 )
 from portf_manager.services import inflation
+from portf_manager.services.attribution import compute_attribution
 from portf_manager.services.progress import (
     calendar_returns,
     contributions_vs_growth,
@@ -67,6 +68,11 @@ from ..dependencies import get_api_key_manager, get_database
 from .portfolios import _get_fx_rate as _fx
 
 _KNOWN_BENCHMARKS = set(PERFORMANCE_BENCHMARKS)
+
+
+def _d10(value) -> str:
+    return str(value or "")[:10]
+
 
 # Historical rates are immutable — memoise per (currency, date) for the
 # lifetime of the worker so per-lot loops don't re-hit the kv_cache.
@@ -459,6 +465,57 @@ def _cash_eur(db) -> Optional[float]:
     ):
         return None
     return sheet["totals"]["liquid_eur"]
+
+
+@router.get("/attribution")
+def get_attribution(
+    period: str = Query("ytd", description="Window: 1m | 3m | ytd | 1y | all"),
+    start: Optional[date] = Query(None, description="Overrides period"),
+    end: Optional[date] = Query(None, description="Defaults to today"),
+    portfolio_id: Optional[int] = Query(None),
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """What drove the return: flow-adjusted gain per asset, type and broker.
+
+    Positions are valued at the close of ``start`` and ``end`` from stored
+    prices; buys, sells, dividends and interest inside the window convert at
+    transaction-date FX. ``all`` starts the day before the first transaction.
+    Sync (plain ``def``): the FX lookups block.
+    """
+    end = end or date.today()
+    if start is None:
+        p = (period or "ytd").lower()
+        if p == "all":
+            first = min(
+                (
+                    _d10(t.get("transaction_date"))
+                    for t in db.get_all_transactions(portfolio_id=portfolio_id)
+                    if _d10(t.get("transaction_date"))
+                ),
+                default=None,
+            )
+            if first is None:
+                raise HTTPException(status_code=404, detail="No transactions yet")
+            start = date.fromisoformat(first) - timedelta(days=1)
+        elif p == "3m":
+            start = period_start_date("1m", end)
+            start = date(
+                start.year if start.month > 2 else start.year - 1,
+                (start.month - 3) % 12 + 1,
+                start.day,
+            )
+        else:
+            start = period_start_date(p, end)
+            if start is None:
+                raise HTTPException(
+                    status_code=400, detail=f"Unknown period {period!r}"
+                )
+    if end < start:
+        raise HTTPException(status_code=400, detail="end is before start")
+    return compute_attribution(
+        db, start, end, _fx, _fx_on_db(db), portfolio_id=portfolio_id
+    )
 
 
 @router.get("/progress")

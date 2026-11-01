@@ -495,3 +495,73 @@ def data_freshness(stale_days: int = 4) -> str:
             )
         lines.append(f"  {s.get('symbol') or '?':12s} {detail}  {s.get('name') or ''}")
     return "\n".join(lines)
+
+
+@tool
+def return_attribution(
+    period: str = "ytd",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    portfolio_id: Optional[int] = None,
+) -> str:
+    """
+    What drove the portfolio's return: flow-adjusted gain in EUR per holding
+    (top contributors and detractors), per asset type and per broker over a
+    period. gain = end value − start value − buys + sells + dividends/interest,
+    so added money is not counted as a gain and a sold position keeps its
+    profit. Positions are valued from stored prices; a line valued at cost
+    because no price was stored at a boundary is listed under "unpriced".
+
+    Args:
+        period: '1m', '3m', 'ytd' (default), '1y' or 'all'.
+        start: YYYY-MM-DD; overrides period.
+        end: YYYY-MM-DD, default today.
+        portfolio_id: Limit to one broker/portfolio.
+    """
+    params = {
+        "period": period,
+        "start": start,
+        "end": end,
+        "portfolio_id": portfolio_id,
+    }
+    try:
+        data = client._get("/api/v1/analytics/attribution", params)
+    except Exception as e:
+        return f"Error fetching attribution: {e}"
+
+    per = data.get("period", {})
+    t = data.get("totals", {})
+    lines = [f"RETURN ATTRIBUTION {per.get('start')} → {per.get('end')} (EUR):"]
+    ret = t.get("return_pct")
+    lines.append(
+        f"  Gain: {_fmt_currency(t.get('gain_eur', 0))}"
+        + (f"  ({ret:+.2f}%, simple Dietz)" if ret is not None else "")
+    )
+    lines.append(
+        f"  Start {_fmt_currency(t.get('start_value_eur', 0))} → end "
+        f"{_fmt_currency(t.get('end_value_eur', 0))}; bought "
+        f"{_fmt_currency(t.get('bought_eur', 0))}, sold "
+        f"{_fmt_currency(t.get('sold_eur', 0))}, income "
+        f"{_fmt_currency(t.get('income_eur', 0))}"
+    )
+
+    def _rows(title: str, rows: list, label: str) -> None:
+        if not rows:
+            return
+        lines.append(f"  {title}:")
+        for r in rows:
+            share = r.get("contribution_pct")
+            flag = "" if r.get("priced", True) else "  (at cost: no price stored)"
+            lines.append(
+                f"    {r.get(label, '?'):28s} {_fmt_currency(r.get('gain_eur', 0)):>14s}"
+                + (f"  {share:+.2f}% of start" if share is not None else "")
+                + flag
+            )
+
+    _rows("Top contributors", data.get("top_contributors", []), "symbol")
+    _rows("Top detractors", data.get("top_detractors", []), "symbol")
+    _rows("By asset type", data.get("by_type", []), "asset_type")
+    _rows("By portfolio", data.get("by_portfolio", []), "portfolio")
+    if data.get("unpriced"):
+        lines.append(f"  Unpriced at a boundary: {', '.join(data['unpriced'])}")
+    return "\n".join(lines)

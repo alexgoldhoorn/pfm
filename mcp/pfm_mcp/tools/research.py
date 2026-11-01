@@ -1,4 +1,6 @@
-"""Research notes and price targets."""
+"""Research notes, price targets and the decision journal."""
+
+from typing import Optional
 
 from pfm_mcp import client, tool
 from pfm_mcp.client import _fmt_currency
@@ -137,4 +139,54 @@ def research_compare() -> str:
         lines.append(
             f"  {sym:12s}  {_fmt_currency(price, cur):>14s}  fv {fv_str:>14s}  {upside_str:>8s}{extra_str}"
         )
+    return "\n".join(lines)
+
+
+@tool
+def decisions(status: str = "open", symbol: Optional[str] = None) -> str:
+    """
+    The decision journal: what was decided (buy/sell/hold/DCA/rebalance/
+    traspaso), why, what was expected, when to review it, the price at the
+    time and the move since. Read it before advising on a holding the owner
+    already made a call on. Read-only: decisions are recorded in the web app
+    or the pfm chat.
+
+    Args:
+        status: 'open' (default), 'reviewed' or 'all'.
+        symbol: Only decisions about this symbol.
+    """
+    try:
+        data = client._get("/api/v1/decisions/", {"status": status, "symbol": symbol})
+    except Exception as e:
+        return f"Error fetching decisions: {e}"
+
+    items = data.get("items", [])
+    if not items:
+        return f"No {status} decisions in the journal."
+    lines = [
+        f"DECISIONS ({status}, {len(items)}; {data.get('due', 0)} due for review):"
+    ]
+    for d in items:
+        head = f"  #{d.get('id')} {d.get('decided_on')}  {str(d.get('action', '')).upper():9s} {d.get('title')}"
+        if d.get("symbol"):
+            head += f"  [{d['symbol']}]"
+        if d.get("status") == "due":
+            head += "  ⏰ review due"
+        lines.append(head)
+        if d.get("price_at_decision") is not None:
+            move = d.get("price_change_pct")
+            lines.append(
+                f"      price then {d['price_at_decision']}"
+                + (f", now {d['price_now']} ({move:+.1f}%)" if move is not None else "")
+            )
+        if d.get("rationale"):
+            lines.append(f"      why: {d['rationale']}")
+        if d.get("expectation"):
+            lines.append(f"      expected: {d['expectation']}")
+        if d.get("review_on") and d.get("status") != "reviewed":
+            lines.append(f"      review on {d['review_on']}")
+        if d.get("outcome_rating"):
+            lines.append(
+                f"      outcome ({d['outcome_rating']}): {d.get('outcome') or '—'}"
+            )
     return "\n".join(lines)

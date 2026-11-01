@@ -118,6 +118,13 @@ class PortfolioCreate(BaseModel):
         "brokerage",
         description="'brokerage' for investment accounts, 'bank' for checking/savings accounts",
     )
+    is_managed: bool = Field(
+        False,
+        description=(
+            "Someone else makes the trades (robo-advisor): holdings are tracked "
+            "but never raise price signals or research nags"
+        ),
+    )
 
 
 class PortfolioUpdate(BaseModel):
@@ -127,6 +134,7 @@ class PortfolioUpdate(BaseModel):
     base_currency: Optional[str] = None
     description: Optional[str] = None
     website: Optional[str] = None
+    is_managed: Optional[bool] = None
 
 
 class PortfolioResponse(BaseModel):
@@ -139,6 +147,7 @@ class PortfolioResponse(BaseModel):
     entity_name: Optional[str] = None
     description: Optional[str] = None
     is_active: bool = True
+    is_managed: bool = False
 
 
 async def _get_api_key_auth(
@@ -242,6 +251,7 @@ async def list_portfolios(
                 and bool(defaults.get("website")),
                 "is_active": p.get("is_active", True),
                 "account_type": p.get("account_type", "brokerage"),
+                "is_managed": bool(p.get("is_managed")),
                 "first_transaction_date": r.get("first_transaction_date"),
                 "last_transaction_date": r.get("last_transaction_date"),
                 "first_booking_date": r.get("first_booking_date"),
@@ -486,6 +496,7 @@ async def create_portfolio(
             entity_id=portfolio.entity_id,
             description=portfolio.description,
             account_type=portfolio.account_type,
+            is_managed=portfolio.is_managed,
         )
         return {
             "id": portfolio_id,
@@ -494,6 +505,7 @@ async def create_portfolio(
             "entity_id": portfolio.entity_id,
             "description": portfolio.description,
             "account_type": portfolio.account_type,
+            "is_managed": portfolio.is_managed,
         }
     except Exception as e:
         raise HTTPException(

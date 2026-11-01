@@ -8,6 +8,7 @@ window.METRIC_HELP = {
   totalGain: "Total Gain: unrealised gain on what you hold + realised gain on what you sold + dividends and interest received, in EUR. Costs paid on trades are already inside the purchase and sale amounts; ongoing fund fees are inside the fund's price.",
   annualisedTwr: "Time-weighted return per year since your first trade: daily returns chained with deposits and purchases taken out, so it measures the investments rather than when you added money. This is the figure to compare with a benchmark or a fund's published return. Source: CFA Institute, GIPS 2020.",
   periodReturn: "Period Return: time-weighted return over the selected window from daily snapshots — purchases and sales don't count as gains or losses. Source: CFA Institute, GIPS 2020.",
+  attribution: "What drove the return: each position's gain in the window = value at the end − value at the start − purchases + sales + dividends and interest, so money you add is never counted as a gain. The return is a simple Dietz: gain divided by the start value plus half the net money invested. A * marks a position valued at cost at a boundary because no price was stored.",
   hhi: "Herfindahl Index (HHI): concentration score 0–10000. Above 2500 = concentrated, below 1500 = well diversified.",
   sharpe: "Sharpe Ratio: yearly return above the risk-free rate (the euro overnight rate, €STR), divided by volatility — how much extra return each unit of swing earned. The bands are a common rule of thumb, not an official scale. Source: W. F. Sharpe, 'The Sharpe Ratio', Journal of Portfolio Management, 1994.",
   inception:     "Inception Date: date of your first transaction — where lifetime returns start.",
@@ -135,6 +136,18 @@ window.PAGE_HELP = {
         <li>Prices are fetched live from Yahoo Finance when the page loads, so it may take a few seconds.</li>
       </ul>
       <p class="text-muted small mb-0">This is a tracking aid, not a recommendation to buy.</p>`
+  },
+  decisions: {
+    title: "Decisions",
+    body: `
+      <p>A journal for your investment decisions. Write one down when you make it, then look back when the time comes.</p>
+      <ul>
+        <li><strong>Record</strong> the decision with why you made it (rationale) and what you expect to happen. If you give a symbol we know, the latest stored price is saved with it.</li>
+        <li><strong>Review on</strong> sets the date to look back. Once it passes the decision shows as <em>due</em>, and the Action Items page raises a reminder.</li>
+        <li><strong>Review</strong> closes a decision: write what happened and rate it good, neutral, bad or unclear. <strong>Reopen</strong> clears the review.</li>
+        <li>Open decisions show the price then and now, so you can see how it moved since the day you decided.</li>
+      </ul>
+      <p class="text-muted small mb-0">The point is to judge the reasoning, not only the result: a good decision can have a bad outcome and the other way round.</p>`
   },
   goals: {
     title: "Goals",

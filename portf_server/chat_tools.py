@@ -730,6 +730,159 @@ def _set_action_item_status(
     return _j({"id": id, "status": status, "ack": ack})
 
 
+@_tool("get_return_attribution")
+def _get_return_attribution(
+    db: Database,
+    period: str = "ytd",
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    portfolio_id: Optional[str] = None,
+) -> str:
+    """What drove the return: flow-adjusted gain per asset, type and broker."""
+    from portf_manager.services.analytics_service import period_start_date
+    from portf_manager.services.attribution import compute_attribution
+    from portf_server.routers.portfolios import _get_fx_rate_on
+
+    end = date.fromisoformat(end_date) if end_date else date.today()
+    if start_date:
+        start = date.fromisoformat(start_date)
+    elif (period or "").lower() == "all":
+        txns = db.get_all_transactions(
+            portfolio_id=int(portfolio_id) if portfolio_id else None
+        )
+        first = min((str(t["transaction_date"])[:10] for t in txns), default=None)
+        if first is None:
+            return _j({"error": "no transactions yet"})
+        start = date.fromisoformat(first) - timedelta(days=1)
+    else:
+        start = period_start_date(period, end)
+        if start is None:
+            return _j({"error": f"unknown period {period!r}; use 1m, ytd, 1y or all"})
+    out = compute_attribution(
+        db,
+        start,
+        end,
+        _fx,
+        lambda cur, d: _get_fx_rate_on(db, cur, d),
+        portfolio_id=int(portfolio_id) if portfolio_id else None,
+    )
+    slim = lambda rows: [  # noqa: E731
+        {
+            k: r.get(k)
+            for k in (
+                "symbol",
+                "name",
+                "asset_type",
+                "portfolio",
+                "gain_eur",
+                "contribution_pct",
+                "weight_start_pct",
+                "income_eur",
+                "priced",
+            )
+            if k in r
+        }
+        for r in rows
+    ]
+    return _j(
+        {
+            "period": out["period"],
+            "totals": out["totals"],
+            "top_contributors": slim(out["top_contributors"]),
+            "top_detractors": slim(out["top_detractors"]),
+            "by_type": slim(out["by_type"]),
+            "by_portfolio": slim(out["by_portfolio"]),
+            "unpriced": out["unpriced"],
+            "method": (
+                "gain = end value - start value - buys + sells + income, in EUR; "
+                "return_pct is a simple Dietz over the start value plus half "
+                "the net money invested"
+            ),
+        }
+    )
+
+
+@_tool("get_decisions")
+def _get_decisions(
+    db: Database, status: str = "open", symbol: Optional[str] = None
+) -> str:
+    """Journal of past decisions with the price move since each one."""
+    from portf_server.routers.decisions import list_decisions_enriched
+
+    if status not in ("open", "reviewed", "all"):
+        return _j({"error": "status must be open, reviewed or all"})
+    rows = list_decisions_enriched(db, status=status, symbol=symbol)
+    return _j(
+        {
+            "decisions": [
+                {
+                    k: r.get(k)
+                    for k in (
+                        "id",
+                        "decided_on",
+                        "symbol",
+                        "action",
+                        "title",
+                        "rationale",
+                        "expectation",
+                        "review_on",
+                        "status",
+                        "price_at_decision",
+                        "price_now",
+                        "price_change_pct",
+                        "outcome",
+                        "outcome_rating",
+                    )
+                }
+                for r in rows
+            ],
+            "count": len(rows),
+            "how_to_record": (
+                "record_decision writes a new entry once the user has actually "
+                "decided; never record a decision the user has not confirmed."
+            ),
+        }
+    )
+
+
+@_tool("record_decision")
+def _record_decision(
+    db: Database,
+    title: str,
+    action: str,
+    symbol: Optional[str] = None,
+    rationale: Optional[str] = None,
+    expectation: Optional[str] = None,
+    review_on: Optional[str] = None,
+) -> str:
+    """Write a decision the user confirmed into the journal (stores today's price)."""
+    from portf_server.routers.decisions import DecisionCreate, create_decision_entry
+
+    try:
+        data = DecisionCreate(
+            title=title,
+            action=action,
+            symbol=symbol,
+            rationale=rationale,
+            expectation=expectation,
+            review_on=date.fromisoformat(review_on) if review_on else None,
+            source="chat",
+        )
+        row = create_decision_entry(db, data)
+    except (ValueError, TypeError) as e:
+        return _j({"error": str(e)})
+    return _j(
+        {
+            "recorded": True,
+            "id": row["id"],
+            "title": row["title"],
+            "symbol": row.get("symbol"),
+            "price_at_decision": row.get("price_at_decision"),
+            "review_on": row.get("review_on"),
+        }
+    )
+
+
 @_tool("get_diagnostics")
 def _get_diagnostics(db: Database) -> str:
     """Price-data health, last update runs, open data-quality counts, recent errors."""
@@ -1187,5 +1340,107 @@ TOOLS: list[ToolDefinition] = [
             "value looks off or whether the nightly price update worked."
         ),
         parameters=[],
+    ),
+    ToolDefinition(
+        name="get_return_attribution",
+        description=(
+            "What drove the portfolio's return over a period: flow-adjusted gain "
+            "in EUR per holding (top contributors and detractors), per asset type "
+            "and per broker. Use for 'what made/lost money this year/month'."
+        ),
+        parameters=[
+            {
+                "name": "period",
+                "type": "string",
+                "description": "1m, ytd (default), 1y or all. Ignored when start_date is given.",
+                "required": False,
+            },
+            {
+                "name": "start_date",
+                "type": "string",
+                "description": "YYYY-MM-DD; positions are valued at this day's close.",
+                "required": False,
+            },
+            {
+                "name": "end_date",
+                "type": "string",
+                "description": "YYYY-MM-DD, default today.",
+                "required": False,
+            },
+            {
+                "name": "portfolio_id",
+                "type": "string",
+                "description": "Limit to one broker/portfolio by numeric ID.",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="get_decisions",
+        description=(
+            "The user's decision journal: past buy/sell/hold/DCA decisions with "
+            "rationale, expectation, review date and the price move since. Check "
+            "it before advising on a holding the user already decided about."
+        ),
+        parameters=[
+            {
+                "name": "status",
+                "type": "string",
+                "description": "open (default), reviewed or all.",
+                "required": False,
+            },
+            {
+                "name": "symbol",
+                "type": "string",
+                "description": "Only decisions about this symbol.",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="record_decision",
+        description=(
+            "Record a decision the user has explicitly made in this conversation "
+            "(not a suggestion): title, action, symbol, why, what is expected and "
+            "when to review. Stores today's price so the review is honest."
+        ),
+        parameters=[
+            {
+                "name": "title",
+                "type": "string",
+                "description": "One line, e.g. 'Hold AMD below the sell gate'.",
+                "required": True,
+            },
+            {
+                "name": "action",
+                "type": "string",
+                "description": "buy, sell, hold, dca, rebalance, traspaso or other.",
+                "required": True,
+            },
+            {
+                "name": "symbol",
+                "type": "string",
+                "description": "Ticker as stored in pfm, when the decision is about one asset.",
+                "required": False,
+            },
+            {
+                "name": "rationale",
+                "type": "string",
+                "description": "Why, in the user's words.",
+                "required": False,
+            },
+            {
+                "name": "expectation",
+                "type": "string",
+                "description": "What should be true if the decision was right.",
+                "required": False,
+            },
+            {
+                "name": "review_on",
+                "type": "string",
+                "description": "YYYY-MM-DD when to look back at it.",
+                "required": False,
+            },
+        ],
     ),
 ]

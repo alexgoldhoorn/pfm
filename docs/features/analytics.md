@@ -130,6 +130,39 @@ GIPS 2020.
 `metricTile({...})` renders one tile with the word beside the colour and the
 bands in the tooltip. Low-confidence history greys rated tiles out.
 
+### Return attribution (`portf_manager/services/attribution.py`, 2026-11-01)
+
+`GET /analytics/attribution?period=1m|3m|ytd|1y|all&start=&end=&portfolio_id=`
+answers "what drove the return": a flow-adjusted gain in EUR per
+(portfolio, asset) line, aggregated to `by_asset` (one line per symbol even
+when it sits in several brokers, best first, with `top_contributors` and
+`top_detractors` of five), `by_type` and `by_portfolio`.
+
+- Each line is valued at the close of `start` and of `end`: held quantity
+  from the transactions up to and including that day × the last stored price
+  on or before it (`get_price_history(end_date=…)`) × that day's FX (today's
+  rate when the boundary is today or later). Flows inside `(start, end]` —
+  buys, sells, dividends and interest net of `tax` — convert at
+  transaction-date FX from the row's own `currency`.
+- `gain = end − start − bought + sold + income`. Money added is not a gain; a
+  position sold inside the window keeps its profit although it no longer
+  appears in holdings.
+- A line with no stored price on or before a boundary is valued at its EUR
+  cost there and flagged `priced: false`; the symbol is listed in `unpriced`.
+  The Mintos and bond lines pinned at par therefore show only their interest.
+- `totals.return_pct` is a **simple Dietz**: gain over the start value plus
+  half the net money invested during the window (`None` when that is ≤ 0).
+  `weight_start_pct` and `contribution_pct` are shares of the total start
+  value. No benchmark-relative (Brinson) split and no intraperiod time
+  weighting; the portfolio-level TWR lives in `/performance`.
+- `period=all` opens the window the day before the first transaction, so
+  everything is a flow and the start value is 0 (404 with no transactions).
+  An unknown period or `end < start` is a 400.
+- Surfaces: the "What drove the return" card on Analytics → Performance
+  (period buttons, `loadAttributionCard` in `pfm_analytics.js`), chat tool
+  `get_return_attribution`, MCP tool `return_attribution`. Tests:
+  `tests/unit/test_attribution.py`.
+
 ### Progress metrics (`portf_manager/services/progress.py`, `services/inflation.py`)
 
 Numbers a long-term, learning investor needs beyond return and risk.

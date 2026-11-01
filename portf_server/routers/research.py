@@ -20,7 +20,11 @@ from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
 from portf_manager import market
-from portf_manager.positions import _sort_key, compute_positions
+from portf_manager.positions import (
+    _sort_key,
+    compute_positions,
+    self_managed_held_asset_ids,
+)
 from portf_manager.services.price_updater import _CRYPTO_YF_OVERRIDES
 
 from ..auth_middleware import APIKeyManager, require_api_key
@@ -939,6 +943,13 @@ def _run_bulk_research_refresh(db) -> None:
         )
 
 
+def managed_portfolio_ids(db) -> set:
+    """Ids of the portfolios flagged ``is_managed`` (active or not)."""
+    return {
+        p["id"] for p in db.get_all_portfolios(active_only=False) if p.get("is_managed")
+    }
+
+
 def compute_price_target_alerts(db) -> list[dict]:
     """Compare all price targets against latest stored prices.
 
@@ -947,11 +958,19 @@ def compute_price_target_alerts(db) -> list[dict]:
     send on every read. ``check_alerts`` below is the HTTP entry point that
     adds push dispatch on top of this.
     """
-    positions, _ = compute_positions(db.get_all_transactions())
+    transactions = db.get_all_transactions()
+    positions, _ = compute_positions(transactions)
+    # A holding that exists only inside a managed (robo-advisor) portfolio is
+    # not the owner's to trade: no signal, however far the price moved.
+    managed_ids = managed_portfolio_ids(db)
+    actionable = self_managed_held_asset_ids(transactions, managed_ids)
 
     alerts = []
     for pt in db.get_all_price_targets():
         asset_id = pt["asset_id"]
+        held_qty = positions.get(asset_id, {}).get("quantity", 0.0)
+        if managed_ids and held_qty > 0 and asset_id not in actionable:
+            continue
         price_data = db.get_latest_price(asset_id)
         if not price_data:
             continue

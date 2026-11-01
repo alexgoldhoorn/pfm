@@ -238,9 +238,17 @@ def check_stale_research(db, today: date = None) -> list[dict]:
     """Held assets with no research note in the last 90 days."""
     from portf_manager.positions import compute_positions
 
+    from portf_manager.positions import self_managed_held_asset_ids
+    from portf_server.routers.research import managed_portfolio_ids
+
     today = today or date.today()
-    positions, _ = compute_positions(db.get_all_transactions())
+    transactions = db.get_all_transactions()
+    positions, _ = compute_positions(transactions)
     held_asset_ids = {aid for aid, pos in positions.items() if pos["quantity"] > 0}
+    # research on a robo-advisor's picks is not the owner's job to refresh
+    managed = managed_portfolio_ids(db)
+    if managed:
+        held_asset_ids &= self_managed_held_asset_ids(transactions, managed)
     if not held_asset_ids:
         return []
 
@@ -529,29 +537,67 @@ def check_allocation(db, today=None) -> list[dict]:
     return items
 
 
+def check_decision_reviews(db, today: date | None = None) -> list[dict]:
+    """Open journal decisions whose review date has passed."""
+    today = today or date.today()
+    items = []
+    for d in db.get_decisions(status="open"):
+        due = _parse_date(d.get("review_on"))
+        if due is None or due > today:
+            continue
+        where = f" on {d['symbol']}" if d.get("symbol") else ""
+        detail = f"Decided {d['decided_on']}{where}: review what happened"
+        if d.get("price_at_decision") and d.get("asset_id"):
+            latest = db.get_latest_price(d["asset_id"])
+            if latest and float(d["price_at_decision"]):
+                move = (
+                    (float(latest["price"]) - float(d["price_at_decision"]))
+                    / float(d["price_at_decision"])
+                    * 100
+                )
+                detail += f"; price {move:+.1f}% since then"
+        items.append(
+            {
+                "id": f"decision:review:{d['id']}",
+                "category": "decisions",
+                "severity": "medium",
+                "title": f"Review your decision: {d['title']}",
+                "detail": detail + ".",
+                "link_page": "decisions",
+                "context": {"decision_id": d["id"], "symbol": d.get("symbol")},
+            }
+        )
+    return items
+
+
 def check_price_alerts(db) -> list[dict]:
     """Watchlist buy-zone hits and price-target crossings."""
     from portf_server.routers.research import compute_price_target_alerts
     from portf_server.routers.watchlist import check_watchlist_alerts
 
     items = []
+    watch_items: dict[str, dict] = {}
     for a in check_watchlist_alerts(db=db, api_key_info={})["alerts"]:
-        items.append(
-            {
-                "id": f"watchlist:{a['symbol']}",
-                "category": "watchlist",
-                "severity": "medium",
-                "title": f"{_name_code(a.get('name'), a['symbol'])} dropped into its buy zone",
-                "detail": (
-                    f"Price {a['price']} at or below buy-below {a['buy_below']}."
-                ),
-                "link_page": "watchlist",
-                "context": {"symbol": a["symbol"]},
-            }
-        )
+        item = {
+            "id": f"watchlist:{a['symbol']}",
+            "category": "watchlist",
+            "severity": "medium",
+            "title": f"{_name_code(a.get('name'), a['symbol'])} dropped into its buy zone",
+            "detail": (f"Price {a['price']} at or below buy-below {a['buy_below']}."),
+            "link_page": "watchlist",
+            "context": {"symbol": a["symbol"]},
+        }
+        items.append(item)
+        watch_items[a["symbol"].upper()] = item
 
     for a in compute_price_target_alerts(db):
         triggers = ", ".join(t["type"] for t in a["triggers"])
+        # one row per symbol: a watchlist hit that also crossed its research
+        # target is the same signal twice, so fold the target into that row
+        twin = watch_items.get(a["symbol"].upper())
+        if twin is not None:
+            twin["detail"] += f" Also crossed its research target ({triggers})."
+            continue
         items.append(
             {
                 "id": f"research:{a['symbol']}",
@@ -835,6 +881,7 @@ _CHECKS = (
     check_budget_overruns,
     check_fund_exposure,
     check_recurring_charges,
+    check_decision_reviews,
 )
 
 

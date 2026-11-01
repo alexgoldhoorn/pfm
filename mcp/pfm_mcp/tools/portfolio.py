@@ -127,10 +127,11 @@ def list_portfolios() -> str:
 
     lines = ["PORTFOLIOS:"]
     for p in data:
+        managed = "  [managed: no price signals]" if p.get("is_managed") else ""
         lines.append(
             f"  [{p.get('id')}] {p.get('name', 'unnamed'):20s}"
             f"  {p.get('currency', 'EUR'):4s}"
-            f"  {p.get('description', '')}"
+            f"  {p.get('description', '')}{managed}"
         )
     return "\n".join(lines)
 

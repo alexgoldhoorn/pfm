@@ -860,7 +860,7 @@ function createPageManager() {
                             : `${v ? eur(v.value_eur) : '<span class="text-muted">—</span>'}${v && Math.abs(v.cash_eur || 0) >= 1 ? `<div class="small text-muted" title="Cash balance (deposits − withdrawals + sells − buys + dividends)"><i class="bi bi-cash-coin me-1"></i>${eur(v.cash_eur)} cash</div>` : ''}`;
                         return `
                         <tr>
-                            <td class="ps-3"><strong>${esc(p.name)}</strong>${site}</td>
+                            <td class="ps-3"><strong>${esc(p.name)}</strong>${p.is_managed ? ' <span class="badge bg-secondary-subtle text-secondary-emphasis ms-1" title="Managed by the broker: no price signals">managed</span>' : ''}${site}</td>
                             <td>${p.base_currency || ''}</td>
                             <td class="text-end">${valueCell}</td>
                             ${pnlCell(v)}
@@ -868,7 +868,7 @@ function createPageManager() {
                             <td><small class="text-muted">${esc(p.description || '')}</small></td>
                             <td class="pe-3 text-nowrap">
                                 <div class="btn-group btn-group-sm">
-                                    <button class="btn btn-outline-secondary" title="Edit" onclick="editPortfolio(${p.id}, '${esc(p.name)}', '${p.base_currency || 'EUR'}', '${esc(p.description)}', '${esc(p.website)}', '${esc(p.account_type || 'brokerage')}')">
+                                    <button class="btn btn-outline-secondary" title="Edit" onclick="editPortfolio(${p.id}, '${esc(p.name)}', '${p.base_currency || 'EUR'}', '${esc(p.description)}', '${esc(p.website)}', '${esc(p.account_type || 'brokerage')}', ${p.is_managed ? 1 : 0})">
                                         <i class="bi bi-pencil"></i>
                                     </button>
                                     <button class="btn btn-outline-warning" title="Clear all transactions" onclick="clearPortfolioTransactions(${p.id}, '${esc(p.name)}')">
@@ -957,6 +957,10 @@ function createPageManager() {
 
         loadGoalsPage: function() {
             loadGoals();
+        },
+
+        loadDecisionsPage: function() {
+            loadDecisions();
         }
     };
 }

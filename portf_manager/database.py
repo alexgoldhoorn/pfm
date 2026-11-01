@@ -16,7 +16,7 @@ from pathlib import Path
 from portf_manager.services.merchant import fold_for_search, normalize_merchant
 
 # Database version for migration tracking
-DATABASE_VERSION = 37
+DATABASE_VERSION = 38
 
 
 # black
@@ -204,6 +204,7 @@ class Database:
                 is_active BOOLEAN NOT NULL DEFAULT TRUE,
                 account_type TEXT NOT NULL DEFAULT 'brokerage'
                     CHECK (account_type IN ('brokerage', 'bank')),
+                is_managed INTEGER NOT NULL DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (entity_id) REFERENCES entities (id) ON DELETE SET NULL,
@@ -586,6 +587,34 @@ class Database:
 
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS decisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                decided_on TEXT NOT NULL,
+                symbol TEXT,
+                asset_id INTEGER REFERENCES assets(id) ON DELETE SET NULL,
+                action TEXT NOT NULL
+                    CHECK (action IN ('buy', 'sell', 'hold', 'dca', 'rebalance',
+                                      'traspaso', 'other')),
+                title TEXT NOT NULL,
+                rationale TEXT,
+                expectation TEXT,
+                review_on TEXT,
+                price_at_decision REAL,
+                currency TEXT,
+                outcome TEXT,
+                outcome_rating TEXT
+                    CHECK (outcome_rating IS NULL OR outcome_rating IN
+                           ('good', 'bad', 'neutral', 'unclear')),
+                reviewed_at TIMESTAMP,
+                source TEXT NOT NULL DEFAULT 'web',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """
+        )
+
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS fixed_deposits (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -923,6 +952,8 @@ class Database:
             self._migrate_to_v36(conn)
         if current_version < 37:
             self._migrate_to_v37(conn)
+        if current_version < 38:
+            self._migrate_to_v38(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -2057,6 +2088,53 @@ class Database:
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """
+        )
+        conn.commit()
+
+    def _migrate_to_v38(self, conn: sqlite3.Connection) -> None:
+        """Migrate from v37 to v38 — managed portfolios and the decision journal.
+
+        Adds ``portfolios.is_managed`` (someone else makes the trades, e.g. a
+        robo-advisor; price signals and research nags skip those holdings) and
+        the ``decisions`` table (what was decided, why, what was expected, the
+        price at the time, and the outcome once reviewed). Guarded, so a
+        rerun is harmless.
+        """
+        cols = {row[1] for row in conn.execute("PRAGMA table_info(portfolios)")}
+        if cols and "is_managed" not in cols:
+            conn.execute(
+                "ALTER TABLE portfolios ADD COLUMN is_managed INTEGER NOT NULL DEFAULT 0"
+            )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS decisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                decided_on TEXT NOT NULL,
+                symbol TEXT,
+                asset_id INTEGER REFERENCES assets(id) ON DELETE SET NULL,
+                action TEXT NOT NULL
+                    CHECK (action IN ('buy', 'sell', 'hold', 'dca', 'rebalance',
+                                      'traspaso', 'other')),
+                title TEXT NOT NULL,
+                rationale TEXT,
+                expectation TEXT,
+                review_on TEXT,
+                price_at_decision REAL,
+                currency TEXT,
+                outcome TEXT,
+                outcome_rating TEXT
+                    CHECK (outcome_rating IS NULL OR outcome_rating IN
+                           ('good', 'bad', 'neutral', 'unclear')),
+                reviewed_at TIMESTAMP,
+                source TEXT NOT NULL DEFAULT 'web',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_decisions_review "
+            "ON decisions (reviewed_at, review_on)"
         )
         conn.commit()
 
@@ -3238,16 +3316,30 @@ class Database:
         description: str = None,
         user_id: int = None,
         account_type: str = "brokerage",
+        is_managed: bool = False,
     ) -> int:
-        """Create a new portfolio (a portfolio doubles as a broker/bank account)."""
+        """Create a new portfolio (a portfolio doubles as a broker/bank account).
+
+        ``is_managed`` marks an account where someone else makes the trades (a
+        robo-advisor): its holdings are tracked but never raise price signals.
+        """
         with self.get_connection() as conn:
             cursor = conn.execute(
                 """
                 INSERT INTO portfolios
-                    (name, base_currency, entity_id, description, user_id, account_type)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (name, base_currency, entity_id, description, user_id,
+                     account_type, is_managed)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-                (name, base_currency, entity_id, description, user_id, account_type),
+                (
+                    name,
+                    base_currency,
+                    entity_id,
+                    description,
+                    user_id,
+                    account_type,
+                    1 if is_managed else 0,
+                ),
             )
             conn.commit()
             return cursor.lastrowid
@@ -3354,8 +3446,11 @@ class Database:
             "description",
             "website",
             "is_active",
+            "is_managed",
         }
         update_fields = {k: v for k, v in kwargs.items() if k in valid_fields}
+        if "is_managed" in update_fields:
+            update_fields["is_managed"] = 1 if update_fields["is_managed"] else 0
 
         if not update_fields:
             return False
@@ -5471,6 +5566,104 @@ class Database:
         """Delete a goal."""
         with self.get_connection() as conn:
             cursor = conn.execute("DELETE FROM goals WHERE id = ?", (goal_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    # ── Decision journal ─────────────────────────────────────────────────────
+
+    DECISION_ACTIONS = ("buy", "sell", "hold", "dca", "rebalance", "traspaso", "other")
+    DECISION_RATINGS = ("good", "bad", "neutral", "unclear")
+    _DECISION_FIELDS = (
+        "decided_on",
+        "symbol",
+        "asset_id",
+        "action",
+        "title",
+        "rationale",
+        "expectation",
+        "review_on",
+        "price_at_decision",
+        "currency",
+        "outcome",
+        "outcome_rating",
+        "reviewed_at",
+        "source",
+    )
+
+    def create_decision(self, **fields) -> int:
+        """Insert a journal entry; keys outside ``_DECISION_FIELDS`` are ignored."""
+        row = {k: v for k, v in fields.items() if k in self._DECISION_FIELDS}
+        if not row.get("decided_on") or not row.get("action") or not row.get("title"):
+            raise ValueError("decided_on, action and title are required")
+        if row["action"] not in self.DECISION_ACTIONS:
+            raise ValueError(f"unknown action {row['action']!r}")
+        cols = ", ".join(row)
+        marks = ", ".join("?" for _ in row)
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                f"INSERT INTO decisions ({cols}) VALUES ({marks})", list(row.values())
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_decision(self, decision_id: int) -> Optional[Dict]:
+        """One journal entry, or None."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM decisions WHERE id = ?", (decision_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_decisions(
+        self, status: str = "all", symbol: Optional[str] = None
+    ) -> List[Dict]:
+        """Journal entries, newest decision first.
+
+        Args:
+            status: ``open`` (not yet reviewed), ``reviewed`` or ``all``.
+            symbol: limit to one symbol (case-insensitive).
+        """
+        conditions, params = [], []
+        if status == "open":
+            conditions.append("reviewed_at IS NULL")
+        elif status == "reviewed":
+            conditions.append("reviewed_at IS NOT NULL")
+        elif status != "all":
+            raise ValueError(f"unknown status {status!r}")
+        if symbol:
+            conditions.append("UPPER(symbol) = ?")
+            params.append(symbol.upper())
+        query = "SELECT * FROM decisions"
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY decided_on DESC, id DESC"
+        with self.get_connection() as conn:
+            return [dict(r) for r in conn.execute(query, params).fetchall()]
+
+    def update_decision(self, decision_id: int, **fields) -> bool:
+        """Update the given fields of a journal entry (unknown keys ignored)."""
+        row = {k: v for k, v in fields.items() if k in self._DECISION_FIELDS}
+        if not row:
+            return False
+        if "action" in row and row["action"] not in self.DECISION_ACTIONS:
+            raise ValueError(f"unknown action {row['action']!r}")
+        if row.get("outcome_rating") is not None and (
+            row["outcome_rating"] not in self.DECISION_RATINGS
+        ):
+            raise ValueError(f"unknown outcome_rating {row['outcome_rating']!r}")
+        sets = ", ".join(f"{k} = ?" for k in row) + ", updated_at = CURRENT_TIMESTAMP"
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                f"UPDATE decisions SET {sets} WHERE id = ?",
+                list(row.values()) + [decision_id],
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def delete_decision(self, decision_id: int) -> bool:
+        """Delete a journal entry."""
+        with self.get_connection() as conn:
+            cursor = conn.execute("DELETE FROM decisions WHERE id = ?", (decision_id,))
             conn.commit()
             return cursor.rowcount > 0
 

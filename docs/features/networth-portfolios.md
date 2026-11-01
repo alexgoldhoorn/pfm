@@ -96,3 +96,5 @@ Answers one question: if the household keeps living at today's financial level, 
 - A loan that starts mid-year subtracts the pre-start months of its first payment year from the need.
 - The retirement chart does not redraw on window resize.
 - Returns are deterministic real rates, not a Monte Carlo; a bad sequence of early returns is not modelled.
+
+**Managed portfolios (`portfolios.is_managed`, schema v38, 2026-11-01).** A portfolio where someone else makes the trades (Indexa) is flagged managed in the Portfolios form ("Managed by the broker"), on create or update (`PortfolioCreate`/`PortfolioUpdate.is_managed`; list rows carry `is_managed`). Its holdings still count in net worth, exposure and attribution, but raise no price-target alerts and no stale-research nags (`research-rebalance.md`). The MCP `list_portfolios` prints `[managed: no price signals]` on such rows.

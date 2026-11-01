@@ -1834,7 +1834,110 @@ async function loadAnalyticsPerformance() {
         body.innerHTML = `<div class="text-danger small">Error loading performance: ${esc(err.message)}</div>`;
     }
     initTooltips();
+    loadAttributionCard();
 }
+
+// ── What drove the return (attribution card) ────────────────────────────────
+function _attrSignCls(v) {
+    const n = parseFloat(v);
+    if (!(n > 0 || n < 0)) return 'text-muted';
+    return n > 0 ? 'text-success' : 'text-danger';
+}
+
+function _attrGain(v) {
+    const n = parseFloat(v || 0);
+    return (n > 0 ? '+' : '') + Fmt.money(n, 'EUR', 2);
+}
+
+// Compact list rows. labelKey picks the primary label ('symbol', 'asset_type'
+// or 'portfolio'); the muted name shows only for rows that carry one.
+function attributionRowsHtml(rows, labelKey) {
+    const key = labelKey || 'symbol';
+    if (!rows || !rows.length) return '<div class="text-muted small">None</div>';
+    return rows.map(r => {
+        const cls = _attrSignCls(r.gain_eur);
+        const share = r.contribution_pct != null && !isNaN(parseFloat(r.contribution_pct))
+            ? `<div class="small text-muted">${parseFloat(r.contribution_pct).toFixed(2)}% of start</div>` : '';
+        const marker = r.priced === false
+            ? ' <i class="bi bi-asterisk text-warning" title="Valued at cost at a boundary: no stored price"></i>' : '';
+        const name = r.name && key === 'symbol'
+            ? ` <span class="text-muted small">${esc(r.name)}</span>` : '';
+        return `<div class="d-flex justify-content-between align-items-start gap-2 py-1 border-bottom">
+            <div class="text-truncate" style="min-width:0;"><span class="fw-semibold">${esc(r[key] != null ? r[key] : '—')}</span>${name}${marker}</div>
+            <div class="text-end text-nowrap"><div class="${cls}">${Fmt.amt(esc(_attrGain(r.gain_eur)))}</div>${share}</div>
+        </div>`;
+    }).join('');
+}
+window.attributionRowsHtml = attributionRowsHtml;
+
+function attributionHtml(d) {
+    const t = d.totals || {};
+    const p = d.period || {};
+    if (!d.by_asset || !d.by_asset.length) {
+        return '<div class="text-muted text-center py-3">No priced positions in this window.</div>';
+    }
+    const ret = t.return_pct != null && !isNaN(parseFloat(t.return_pct))
+        ? `${parseFloat(t.return_pct) > 0 ? '+' : ''}${parseFloat(t.return_pct).toFixed(2)}%` : 'n/a';
+    const retCls = t.return_pct != null ? _attrSignCls(t.return_pct) : 'text-muted';
+    const unpriced = (d.unpriced || []).length
+        ? `<div class="small text-muted mt-3"><i class="bi bi-asterisk text-warning me-1"></i>${(d.unpriced || []).map(esc).join(', ')}: valued at cost at a boundary: no stored price.</div>` : '';
+    return `
+        <div class="d-flex flex-wrap align-items-baseline gap-x-3 mb-3" style="column-gap:1.5rem;row-gap:.25rem;">
+            <div><span class="fs-4 fw-bold ${_attrSignCls(t.gain_eur)}">${Fmt.amt(esc(_attrGain(t.gain_eur)))}</span>
+                <span class="${retCls} ms-1">${esc(ret)}</span></div>
+            <div class="small text-muted">${Fmt.amt(esc(Fmt.money(t.start_value_eur, 'EUR', 0)))} → ${Fmt.amt(esc(Fmt.money(t.end_value_eur, 'EUR', 0)))}</div>
+            <div class="small text-muted">Income ${Fmt.amt(esc(Fmt.money(t.income_eur, 'EUR', 2)))}</div>
+            <div class="small text-muted">${esc(Fmt.date(p.start))} – ${esc(Fmt.date(p.end))}</div>
+        </div>
+        <div class="row g-3">
+            <div class="col-12 col-md-6"><h6 class="small text-uppercase text-muted">Top contributors</h6>${attributionRowsHtml(d.top_contributors, 'symbol')}</div>
+            <div class="col-12 col-md-6"><h6 class="small text-uppercase text-muted">Top detractors</h6>${attributionRowsHtml(d.top_detractors, 'symbol')}</div>
+        </div>
+        <div class="row g-3 mt-1">
+            <div class="col-12 col-md-6"><h6 class="small text-uppercase text-muted">By asset type</h6>${attributionRowsHtml(d.by_type, 'asset_type')}</div>
+            <div class="col-12 col-md-6"><h6 class="small text-uppercase text-muted">By broker</h6>${attributionRowsHtml(d.by_portfolio, 'portfolio')}</div>
+        </div>${unpriced}`;
+}
+window.attributionHtml = attributionHtml;
+
+function _attributionPeriod() {
+    try {
+        const v = localStorage.getItem('pfm.attributionPeriod');
+        if (['1m', '3m', 'ytd', '1y', 'all'].includes(v)) return v;
+    } catch (e) { /* storage unavailable */ }
+    return 'ytd';
+}
+
+async function loadAttributionCard() {
+    const body = document.getElementById('anAttributionBody');
+    if (!body) return;
+    const period = _attributionPeriod();
+    document.querySelectorAll('#anAttributionPeriods [data-attr-period]').forEach(b =>
+        b.classList.toggle('active', b.dataset.attrPeriod === period));
+    const help = document.getElementById('anAttributionHelp');
+    if (help) help.setAttribute('title', (window.METRIC_HELP || {}).attribution || '');
+    body.innerHTML = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading…</div>';
+    try {
+        const d = await window.apiClient.getAttribution(period);
+        body.innerHTML = attributionHtml(d);
+    } catch (err) {
+        body.innerHTML = `<div class="text-danger small">Error loading attribution: ${esc(err.message)}</div>`;
+    }
+    initTooltips();
+}
+window.loadAttributionCard = loadAttributionCard;
+
+(function wireAttributionPeriods() {
+    const grp = document.getElementById('anAttributionPeriods');
+    if (!grp || grp.dataset.wired) return;
+    grp.dataset.wired = '1';
+    grp.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-attr-period]');
+        if (!b) return;
+        try { localStorage.setItem('pfm.attributionPeriod', b.dataset.attrPeriod); } catch (err) { /* ignore */ }
+        loadAttributionCard();
+    });
+})();
 
 // b) Net worth over time section (SVG line chart)
 // Wire the "Backfill history" button once (reconstruct daily snapshots).
