@@ -86,3 +86,10 @@ def self_managed_held_asset_ids(
         for (pid, aid), pos in by_portfolio.items()
         if pos["quantity"] > 0 and pid not in managed
     }
+
+
+def managed_portfolio_ids(db) -> set:
+    """Ids of the portfolios flagged ``is_managed`` (active or not)."""
+    return {
+        p["id"] for p in db.get_all_portfolios(active_only=False) if p.get("is_managed")
+    }

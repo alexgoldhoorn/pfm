@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from portf_manager import market
-from portf_manager.positions import compute_positions
+from portf_manager.positions import compute_positions, managed_portfolio_ids
 from portf_manager.services import rebalance_planner
 
 from ..auth_middleware import APIKeyManager, require_api_key
@@ -62,6 +62,11 @@ class RebalancePlanRequest(BaseModel):
     target_overrides: Optional[List[AllocationTarget]] = None
 
 
+class RebalancePlanInputs(RebalancePlanRequest):
+    # Symbols held only in managed portfolios: counted, never traded.
+    managed_symbols: List[str] = Field(default_factory=list)
+
+
 class RebalanceTrade(BaseModel):
     symbol: str
     asset_id: int
@@ -101,7 +106,7 @@ class RebalancePlanResponse(BaseModel):
     generated_at: str
     # Echoes the effective request (defaults included) so the UI can show
     # exactly what a plan was generated with.
-    inputs: RebalancePlanRequest
+    inputs: RebalancePlanInputs
     before: RebalanceBeforeState
     plans: List[RebalancePlan]
     warnings: List[str]
@@ -134,6 +139,44 @@ async def set_targets(
     return db.get_allocation_targets()
 
 
+def _managed_block(db, transactions: List[dict]) -> dict:
+    """EUR value, share and portfolio names of holdings in managed portfolios."""
+    empty = {"value_eur": 0.0, "pct": 0.0, "portfolios": []}
+    managed_ids = managed_portfolio_ids(db)
+    if not managed_ids:
+        return empty
+    by_portfolio, _ = compute_positions(
+        transactions, key=lambda tx: (tx.get("portfolio_id"), tx["asset_id"])
+    )
+    total = 0.0
+    managed_value = 0.0
+    pids = set()
+    fx: dict[str, float] = {}
+    for (pid, aid), pos in by_portfolio.items():
+        if pos["quantity"] <= 0:
+            continue
+        asset = db.get_asset(aid)
+        price_data = db.get_latest_price(aid)
+        if not asset or not price_data:
+            continue
+        cur = asset.get("currency", "EUR")
+        if cur != "EUR" and cur not in fx:
+            fx[cur] = market.get_fx_eur(db, cur, max_age=1800)[0]
+        value = pos["quantity"] * float(price_data["price"]) * fx.get(cur, 1.0)
+        total += value
+        if pid in managed_ids:
+            managed_value += value
+            pids.add(pid)
+    names = sorted((db.get_portfolio(p) or {}).get("name") or f"#{p}" for p in pids)
+    if managed_value <= 0:
+        return empty
+    return {
+        "value_eur": round(managed_value, 2),
+        "pct": round(managed_value / total * 100, 1) if total else 0.0,
+        "portfolios": names,
+    }
+
+
 @router.get("/analysis")
 def get_rebalance_analysis(
     db=Depends(get_database), api_key_info: dict = Depends(_auth)
@@ -150,6 +193,7 @@ def get_rebalance_analysis(
     # transactions.
     transactions = db.get_all_transactions()
     positions, _realised = compute_positions(transactions)
+    managed = _managed_block(db, transactions)
 
     # ── 2. Build per-asset-type EUR values ───────────────────────────────────
     _fx: dict[str, float] = {}
@@ -221,6 +265,7 @@ def get_rebalance_analysis(
         "allocations": allocations,
         "actions": actions,
         "targets_sum_pct": round(targets_sum, 1),
+        "managed": managed,
     }
 
 
@@ -267,7 +312,9 @@ def plan_rebalance(
 
     return RebalancePlanResponse(
         generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        inputs=request,
+        inputs=RebalancePlanInputs(
+            **request.model_dump(), managed_symbols=result["managed_symbols"]
+        ),
         before=result["before"],
         plans=result["plans"],
         warnings=result["warnings"],

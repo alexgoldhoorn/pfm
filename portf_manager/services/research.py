@@ -270,6 +270,22 @@ def _num(v):
         return None
 
 
+def _parse_horizon(value: Any) -> int:
+    """Parse the optional ``horizon_months`` key; clamp to 6..36, default 12.
+
+    Args:
+        value: Raw value from the LLM JSON (may be None or junk).
+
+    Returns:
+        Horizon in months between 6 and 36.
+    """
+    try:
+        months = int(float(value))
+    except (TypeError, ValueError):
+        return 12
+    return max(6, min(36, months))
+
+
 def _build_search_prompt(
     symbol: str,
     asset_name: str,
@@ -305,7 +321,8 @@ Return ONLY a valid JSON object with exactly these fields:
   "risks": ["<risk 1>", "<risk 2>", "<risk 3>"],
   "catalysts": ["<catalyst 1>", "<catalyst 2>"],
   "buy_below": <float — price below which the stock is attractive, or null>,
-  "sell_above": <float — price above which you would take profit, or null>
+  "sell_above": <float — price above which you would take profit, or null>,
+  "horizon_months": <int 6-36 — months over which you expect the fair value to be reached; 12 if unsure>
 }}
 
 Be concise and data-driven. If this is a crypto, ETF, or P2P asset where DCF does not apply, base the recommendation on momentum, relative value, and risk/reward instead.
@@ -366,7 +383,8 @@ Return ONLY a valid JSON object with exactly these fields:
   "risks": ["<risk 1>", "<risk 2>", "<risk 3>"],
   "catalysts": ["<catalyst 1>", "<catalyst 2>"],
   "buy_below": <float — price below which the stock is attractive, or null>,
-  "sell_above": <float — price above which you would take profit, or null>
+  "sell_above": <float — price above which you would take profit, or null>,
+  "horizon_months": <int 6-36 — months over which you expect the fair value to be reached; 12 if unsure>
 }}
 
 Be concise and data-driven. If this is a crypto, ETF, or P2P asset where DCF does not apply, base the recommendation on momentum, relative value, and risk/reward instead.
@@ -445,6 +463,7 @@ Be concise and data-driven. If this is a crypto, ETF, or P2P asset where DCF doe
         for key in ("recommendation", "confidence", "summary"):
             if key not in report:
                 raise ValueError(f"Missing key: {key}")
+        report["horizon_months"] = _parse_horizon(report.get("horizon_months"))
         report["sources"] = grounding_sources
         return report
     except Exception as e:

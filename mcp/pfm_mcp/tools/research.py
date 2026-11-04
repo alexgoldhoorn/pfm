@@ -190,3 +190,82 @@ def decisions(status: str = "open", symbol: Optional[str] = None) -> str:
                 f"      outcome ({d['outcome_rating']}): {d.get('outcome') or '—'}"
             )
     return "\n".join(lines)
+
+
+def _point_text(point: Optional[dict]) -> str:
+    """One comparison point as 'date price ret% err% hit' text."""
+    if not point:
+        return "n/a"
+    mark = {True: "hit", False: "miss", None: "-"}[point.get("direction_hit")]
+    ret = point.get("realised_return_pct")
+    err = point.get("target_error_pct")
+    return (
+        f"{point.get('date')} @ {point.get('price')}"
+        + (f" {ret:+.1f}%" if ret is not None else "")
+        + (f" (vs target {err:+.1f}%)" if err is not None else "")
+        + f" {mark}"
+    )
+
+
+def _agg_text(label: str, agg: dict) -> str:
+    """One aggregate as a single line."""
+
+    def pct(key: str) -> str:
+        v = agg.get(key)
+        return "n/a" if v is None else f"{v:.1f}%"
+
+    return (
+        f"  {label}: n={agg.get('n', 0)}, direction hit {pct('direction_hit_rate_pct')}, "
+        f"median |target error| {pct('median_abs_target_error_pct')}, "
+        f"implied {pct('mean_implied_return_pct')} vs realised "
+        f"{pct('mean_realised_return_pct')}, target reached "
+        f"{pct('reached_target_rate_pct')}"
+    )
+
+
+@tool
+def research_scorecard(symbol: Optional[str] = None) -> str:
+    """
+    Track record of the stored research reports (LLM reports and the owner's
+    manual notes): how often BUY/SELL/HOLD pointed the right way and how far
+    the fair value was from the price, at each report's horizon and at the
+    next report for the same symbol. Pure arithmetic, no verdicts.
+
+    Args:
+        symbol: Only this symbol.
+    """
+    try:
+        data = client._get("/api/v1/research/scorecard", {"symbol": symbol})
+    except Exception as e:
+        return f"Error fetching the research scorecard: {e}"
+
+    if not data.get("total"):
+        return "No research history stored yet."
+    lines = [
+        f"RESEARCH SCORECARD as of {data.get('as_of')}"
+        f" ({data.get('total')} reports, {data.get('pending')} pending)",
+        _agg_text("at horizon", data["totals"]["at_horizon"]),
+        _agg_text("at next report", data["totals"]["at_next"]),
+    ]
+    for title, key in (
+        ("By recommendation", "by_recommendation"),
+        ("By confidence", "by_confidence"),
+        ("By source", "by_source"),
+    ):
+        group = data.get(key) or {}
+        if group:
+            lines.append(f"{title}:")
+            for name, agg in group.items():
+                lines.append(_agg_text(f"{name} (horizon)", agg["at_horizon"]))
+    for title, key in (("Best", "best"), ("Worst", "worst")):
+        rows = data.get(key) or []
+        if rows:
+            lines.append(f"{title}:")
+            for e in rows:
+                lines.append(
+                    f"  {e.get('symbol')} {e.get('date')} {e.get('recommendation') or '?'}"
+                    f" ({e.get('source')}): horizon {_point_text(e.get('at_horizon'))};"
+                    f" next {_point_text(e.get('at_next'))}"
+                )
+    lines.append(data.get("method", ""))
+    return "\n".join(lines)

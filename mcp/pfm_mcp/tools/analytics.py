@@ -432,6 +432,14 @@ def rebalance_analysis() -> str:
             f" ({float(a.get('drift_eur') or 0):+,.2f} EUR)"
         )
 
+    managed = data.get("managed") or {}
+    if float(managed.get("value_eur") or 0) > 0:
+        lines.append(
+            f"Managed (not tradable): {_fmt_currency(float(managed['value_eur']))}"
+            f" ({float(managed.get('pct') or 0):.1f}%)"
+            f" in {', '.join(managed.get('portfolios') or ['?'])}"
+        )
+
     actions = data.get("actions") or []
     if actions:
         lines.append("\nSuggested moves:")

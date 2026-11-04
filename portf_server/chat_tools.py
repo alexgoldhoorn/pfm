@@ -802,6 +802,42 @@ def _get_return_attribution(
     )
 
 
+@_tool("get_research_scorecard")
+def _get_research_scorecard(db: Database, symbol: Optional[str] = None) -> str:
+    """How good past research targets were: hit rates and errors per report."""
+    from portf_manager.services.research_scorecard import compute_scorecard
+
+    out = compute_scorecard(db, symbol=symbol.upper() if symbol else None)
+    keep = (
+        "symbol",
+        "date",
+        "source",
+        "recommendation",
+        "confidence",
+        "fair_value",
+        "price_at_report",
+        "implied_return_pct",
+        "at_horizon",
+        "at_next",
+        "now",
+    )
+    return _j(
+        {
+            "as_of": out["as_of"],
+            "totals": out["totals"],
+            "by_recommendation": out["by_recommendation"],
+            "by_confidence": out["by_confidence"],
+            "by_source": out["by_source"],
+            "best": [{k: e.get(k) for k in keep} for e in out["best"]],
+            "worst": [{k: e.get(k) for k in keep} for e in out["worst"]],
+            "recent": [{k: e.get(k) for k in keep} for e in out["entries"][:10]],
+            "total": out["total"],
+            "pending": out["pending"],
+            "method": out["method"],
+        }
+    )
+
+
 @_tool("get_decisions")
 def _get_decisions(
     db: Database, status: str = "open", symbol: Optional[str] = None
@@ -1371,6 +1407,23 @@ TOOLS: list[ToolDefinition] = [
                 "name": "portfolio_id",
                 "type": "string",
                 "description": "Limit to one broker/portfolio by numeric ID.",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="get_research_scorecard",
+        description=(
+            "Track record of the stored research reports (LLM and the user's "
+            "manual notes): direction hit rate, target error and return at each "
+            "report's horizon and at the next report. Use for 'how reliable are "
+            "the fair values / BUY calls'."
+        ),
+        parameters=[
+            {
+                "name": "symbol",
+                "type": "string",
+                "description": "Limit to one symbol.",
                 "required": False,
             },
         ],

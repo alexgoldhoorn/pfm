@@ -1138,6 +1138,7 @@ function createNavigationManager() {
                     if (page === 'diagnostics' && navLink.dataset.diagTab) {
                         try { localStorage.setItem('pfmDiagTab', navLink.dataset.diagTab); } catch (err) { /* ignore */ }
                     }
+                    if (page === 'research' && window.resetResearchScorecard) window.resetResearchScorecard();
                     this.showPage(page);
                     // Action Items' research-linked alerts carry the specific
                     // symbol (data-symbol) — load it straight into the Workbench
@@ -4724,6 +4725,195 @@ async function loadDashboardNextEuro() {
 }
 window.loadDashboardNextEuro = loadDashboardNextEuro;
 
+// ── Research scorecard (Research page, Scorecard tab) ───────────────────────
+// A "point" is one scoring of a report: {date, price, realised_return_pct,
+// target_error_pct, direction_hit, reached_target}, or null while pending.
+function _scSigned(v, digits = 1) {
+    const n = parseFloat(v);
+    if (v == null || isNaN(n)) return null;
+    return (n > 0 ? '+' : n < 0 ? '−' : '') + Math.abs(n).toFixed(digits) + '%';
+}
+
+// "+12.3% (err −4.1%)" for a scored point, "pending" for null.
+function scorecardPointText(point) {
+    if (!point) return 'pending';
+    const ret = _scSigned(point.realised_return_pct);
+    const err = _scSigned(point.target_error_pct);
+    if (ret == null) return err != null ? `err ${err}` : 'n/a';
+    return err != null ? `${ret} (err ${err})` : ret;
+}
+window.scorecardPointText = scorecardPointText;
+
+// Hit marks for a point: direction (green/red) and reached-target.
+function scorecardHitBadge(point) {
+    if (!point) return '';
+    const out = [];
+    if (point.direction_hit != null) {
+        out.push(point.direction_hit
+            ? '<span class="badge bg-success me-1" title="Direction was right">hit</span>'
+            : '<span class="badge bg-danger me-1" title="Direction was wrong">miss</span>');
+    }
+    if (point.reached_target != null) {
+        out.push(point.reached_target
+            ? '<span class="badge bg-success" title="Price reached the fair value">target</span>'
+            : '<span class="badge bg-secondary" title="Price never reached the fair value">no target</span>');
+    }
+    return out.join('');
+}
+window.scorecardHitBadge = scorecardHitBadge;
+
+function _scRetCls(v) {
+    const n = parseFloat(v);
+    return v == null || isNaN(n) ? 'text-muted' : n >= 0 ? 'text-success' : 'text-danger';
+}
+
+function _scPointCell(point) {
+    if (!point) return '<span class="text-muted">pending</span>';
+    return `<span class="${_scRetCls(point.realised_return_pct)}">${esc(scorecardPointText(point))}</span><div>${scorecardHitBadge(point)}</div>`;
+}
+
+// One <tr> of the all-entries table.
+function scorecardRowHtml(entry) {
+    const e = entry || {};
+    const cur = e.currency || '';
+    const money = v => (v == null ? '—' : esc(cur ? Fmt.money(v, cur, 2) : Fmt.num(v, 2, 2)));
+    const implied = _scSigned(e.implied_return_pct);
+    const rec = e.recommendation;
+    const recCls = rec === 'BUY' ? 'bg-success' : rec === 'SELL' ? 'bg-danger' : 'bg-secondary';
+    const now = e.now
+        ? `<span class="${_scRetCls(e.now.realised_return_pct)}">${esc(_scSigned(e.now.realised_return_pct) || 'n/a')}</span>`
+        : '<span class="text-muted">—</span>';
+    return `<tr>
+        <td class="ps-3"><strong>${esc(e.symbol || '')}</strong></td>
+        <td class="text-nowrap">${esc(e.date ? Fmt.date(e.date) : '')}</td>
+        <td><span class="badge bg-secondary">${esc(e.source || '')}</span></td>
+        <td>${rec ? `<span class="badge ${recCls}">${esc(rec)}</span>` : '<span class="text-muted">—</span>'}</td>
+        <td>${e.confidence ? esc(e.confidence) : '<span class="text-muted">—</span>'}</td>
+        <td class="text-end text-nowrap">${money(e.fair_value)} vs ${money(e.price_at_report)}${implied ? `<div class="small ${_scRetCls(e.implied_return_pct)}">${esc(implied)} implied</div>` : ''}</td>
+        <td>${_scPointCell(e.at_horizon)}</td>
+        <td>${_scPointCell(e.at_next)}</td>
+        <td class="text-end">${now}</td>
+    </tr>`;
+}
+window.scorecardRowHtml = scorecardRowHtml;
+
+// A tile for one comparison point's aggregate.
+function scorecardTileHtml(title, agg) {
+    agg = agg || {};
+    if (!agg.n) {
+        return `<div class="card h-100"><div class="card-body"><div class="small text-uppercase text-muted">${esc(title)}</div><div class="text-muted mt-2">Nothing scored yet.</div></div></div>`;
+    }
+    const pct = v => (v == null ? '—' : esc(Fmt.num(v, 0, 0)) + '%');
+    const sg = v => esc(_scSigned(v) || '—');
+    return `<div class="card h-100"><div class="card-body">
+        <div class="small text-uppercase text-muted">${esc(title)}</div>
+        <div class="fs-4 fw-bold">${pct(agg.direction_hit_rate_pct)} <span class="fs-6 fw-normal text-muted">direction hit rate, ${esc(String(agg.n))} scored</span></div>
+        <dl class="row small mb-0 mt-2">
+            <dt class="col-7 fw-normal text-muted">Median |target error|</dt><dd class="col-5 text-end mb-1">${agg.median_abs_target_error_pct == null ? '—' : esc(Fmt.num(agg.median_abs_target_error_pct, 1, 1)) + '%'}</dd>
+            <dt class="col-7 fw-normal text-muted">Mean implied return</dt><dd class="col-5 text-end mb-1">${sg(agg.mean_implied_return_pct)}</dd>
+            <dt class="col-7 fw-normal text-muted">Mean realised return</dt><dd class="col-5 text-end mb-1">${sg(agg.mean_realised_return_pct)}</dd>
+            <dt class="col-7 fw-normal text-muted">Reached target</dt><dd class="col-5 text-end mb-0">${pct(agg.reached_target_rate_pct)}</dd>
+        </dl></div></div>`;
+}
+window.scorecardTileHtml = scorecardTileHtml;
+
+function scorecardBreakdownHtml(title, groups) {
+    const names = Object.keys(groups || {});
+    if (!names.length) return '';
+    const pct = v => (v == null ? '—' : esc(Fmt.num(v, 0, 0)) + '%');
+    const cell = a => (a && a.n ? `${pct(a.direction_hit_rate_pct)} <span class="text-muted">(${esc(String(a.n))})</span>` : '<span class="text-muted">—</span>');
+    const err = a => (a && a.n && a.median_abs_target_error_pct != null ? esc(Fmt.num(a.median_abs_target_error_pct, 1, 1)) + '%' : '—');
+    return `<h6 class="small text-uppercase text-muted mt-3">${esc(title)}</h6>
+        <div class="table-responsive"><table class="table table-sm mb-0">
+        <thead><tr><th></th><th class="text-end">Hit rate at horizon</th><th class="text-end">Hit rate at next</th><th class="text-end">Median err at horizon</th></tr></thead>
+        <tbody>${names.map(n => `<tr><td>${esc(n)}</td><td class="text-end">${cell(groups[n].at_horizon)}</td><td class="text-end">${cell(groups[n].at_next)}</td><td class="text-end">${err(groups[n].at_horizon)}</td></tr>`).join('')}</tbody></table></div>`;
+}
+window.scorecardBreakdownHtml = scorecardBreakdownHtml;
+
+function scorecardRankHtml(title, entries) {
+    if (!entries || !entries.length) return '';
+    const items = entries.map(e => {
+        const pt = e.at_horizon || e.at_next;
+        return `<li class="list-group-item px-0 py-1 d-flex justify-content-between small"><span><strong>${esc(e.symbol)}</strong> <span class="text-muted">${esc(e.recommendation || '')} ${esc(e.date ? Fmt.date(e.date) : '')}</span></span><span class="${_scRetCls(pt && pt.realised_return_pct)}">${esc(scorecardPointText(pt))}</span></li>`;
+    }).join('');
+    return `<h6 class="small text-uppercase text-muted">${esc(title)}</h6><ul class="list-group list-group-flush">${items}</ul>`;
+}
+
+function scorecardHtml(d) {
+    d = d || {};
+    const t = d.totals || {};
+    const entries = d.entries || [];
+    if (!entries.length) {
+        return '<p class="text-muted text-center py-4 mb-0">No stored research to score yet.</p>';
+    }
+    return `<div class="row g-3 mb-3">
+            <div class="col-12 col-md-6">${scorecardTileHtml('At horizon', t.at_horizon)}</div>
+            <div class="col-12 col-md-6">${scorecardTileHtml('At next report', t.at_next)}</div>
+        </div>
+        <div class="card mb-3"><div class="card-body">
+            ${scorecardBreakdownHtml('By recommendation', d.by_recommendation)}
+            ${scorecardBreakdownHtml('By confidence', d.by_confidence)}
+        </div></div>
+        <div class="row g-3 mb-3">
+            <div class="col-12 col-md-6">${scorecardRankHtml('Best five', d.best)}</div>
+            <div class="col-12 col-md-6">${scorecardRankHtml('Worst five', d.worst)}</div>
+        </div>
+        <div class="card"><div class="card-header fw-semibold">All entries</div>
+        <div class="table-responsive"><table class="table table-sm table-hover mb-0">
+            <thead><tr><th class="ps-3">Symbol</th><th>Date</th><th>Source</th><th>Rec.</th><th>Conf.</th><th class="text-end">Fair vs price then</th><th>At horizon</th><th>At next report</th><th class="text-end">Now</th></tr></thead>
+            <tbody>${entries.map(scorecardRowHtml).join('')}</tbody>
+        </table></div></div>`;
+}
+window.scorecardHtml = scorecardHtml;
+
+const _scorecardState = { loaded: false };
+// Forget the loaded flag so the next tab click re-queries (once per page visit).
+function resetResearchScorecard() { _scorecardState.loaded = false; }
+window.resetResearchScorecard = resetResearchScorecard;
+
+async function loadResearchScorecard(force) {
+    const body = document.getElementById('scorecardBody');
+    if (!body) return;
+    if (_scorecardState.loaded && !force) return;
+    _scorecardState.loaded = true;
+    const symInput = document.getElementById('scorecardSymbol');
+    const symbol = symInput ? symInput.value.trim() : '';
+    const help = document.getElementById('scorecardHelp');
+    if (help) help.setAttribute('title', (window.METRIC_HELP || {}).researchScorecard || '');
+    body.innerHTML = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading…</div>';
+    try {
+        const d = await window.apiClient.getResearchScorecard(symbol);
+        body.innerHTML = scorecardHtml(d);
+        const pend = document.getElementById('scorecardPending');
+        if (pend) pend.textContent = `${d.total || 0} entries · ${d.pending || 0} pending`;
+    } catch (err) {
+        _scorecardState.loaded = false;
+        body.innerHTML = `<p class="text-danger small py-3 mb-0">Error loading scorecard: ${esc(err.message)}</p>`;
+    }
+    initTooltips();
+}
+window.loadResearchScorecard = loadResearchScorecard;
+
+(function wireScorecard() {
+    document.addEventListener('DOMContentLoaded', () => {
+        const input = document.getElementById('scorecardSymbol');
+        if (input) input.addEventListener('keydown', e => { if (e.key === 'Enter') loadResearchScorecard(true); });
+        const btn = document.getElementById('scorecardRefresh');
+        if (btn) btn.addEventListener('click', () => loadResearchScorecard(true));
+    });
+})();
+
+// One muted line naming what a robo-advisor manages (never traded), or ''.
+function rebalanceManagedLineHtml(managed) {
+    const m = managed || {};
+    const value = parseFloat(m.value_eur);
+    if (!(value > 0)) return '';
+    const names = (m.portfolios || []).map(p => (p && typeof p === 'object' ? (p.name || p.portfolio) : p)).filter(Boolean);
+    const pct = m.pct != null && !isNaN(parseFloat(m.pct)) ? ` (${esc(Fmt.num(m.pct, 1, 1))}%)` : '';
+    return `<i class="bi bi-robot me-1"></i>Managed by a robo-advisor, never traded: ${Fmt.amt(esc(Fmt.money(value, 'EUR', 0)))}${pct}${names.length ? ' in ' + names.map(esc).join(', ') : ''}`;
+}
+window.rebalanceManagedLineHtml = rebalanceManagedLineHtml;
+
 // Fetch and render the rebalance analysis table + action list
 async function loadRebalanceAnalysis() {
     const tbody = document.querySelector('#rebalanceAnalysisTable tbody');
@@ -4764,6 +4954,13 @@ async function loadRebalanceAnalysis() {
                     <td class="text-end">${action}</td>
                 </tr>`;
             }).join('');
+        }
+
+        const managedEl = document.getElementById('rebalanceManaged');
+        if (managedEl) {
+            const line = rebalanceManagedLineHtml(data.managed);
+            managedEl.innerHTML = line;
+            managedEl.style.display = line ? '' : 'none';
         }
 
         // Actions to rebalance list
@@ -5014,6 +5211,7 @@ function rebalancePlanHeaderHtml(data) {
     if (data.generated_at) parts.push(`Generated ${esc(Fmt.date(data.generated_at))}`);
     parts.push(esc(rebalanceStrategyLabel(inputs.strategy)));
     if (inputs.max_trades != null) parts.push(`max ${esc(String(inputs.max_trades))} trades`);
+    if ((inputs.managed_symbols || []).length) parts.push(`Kept at weight: ${inputs.managed_symbols.map(esc).join(', ')}`);
     if (parts.length === 0) return '';
     return `<p class="text-muted small mb-2">${parts.join(' &middot; ')}</p>`;
 }
@@ -5635,7 +5833,9 @@ function setupResearchPage() {
             const t = a.dataset.rtab;
             $('researchWorkbench').style.display = t === 'workbench' ? '' : 'none';
             $('researchCompare').style.display = t === 'compare' ? '' : 'none';
+            $('researchScorecard').style.display = t === 'scorecard' ? '' : 'none';
             if (t === 'compare') loadCompare();
+            if (t === 'scorecard') loadResearchScorecard();
         });
     });
 

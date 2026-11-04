@@ -27,7 +27,7 @@ understating its own asset type and inflating everyone else's drift.
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from portf_manager import market
-from portf_manager.positions import compute_positions
+from portf_manager.positions import compute_positions, managed_portfolio_ids
 from portf_manager.services.analytics_service import (
     current_year_savings_base,
     irpf_savings_tax,
@@ -947,6 +947,59 @@ def build_strategy_plan(
     }
 
 
+def managed_symbol_split(db, transactions: List[dict]) -> Tuple[set, set, List[str]]:
+    """Split the symbols held in managed (robo-advisor) portfolios.
+
+    Args:
+        db: Database handle.
+        transactions: raw transaction rows (``portfolio_id``, ``asset_id``,
+            ``symbol`` ...).
+
+    Returns:
+        ``(managed_only, mixed, names)``: upper-cased symbols whose open
+        quantity sits only in managed portfolios, symbols held in a managed
+        and a self-managed portfolio at once, and the sorted names of the
+        managed portfolios that hold anything.
+    """
+    managed_ids = managed_portfolio_ids(db)
+    if not managed_ids:
+        return set(), set(), []
+    by_portfolio, _ = compute_positions(
+        transactions, key=lambda tx: (tx.get("portfolio_id"), tx["asset_id"])
+    )
+    symbol_of = {
+        tx["asset_id"]: (tx.get("symbol") or "").upper() for tx in transactions
+    }
+    held_managed = {
+        aid: pid
+        for (pid, aid), pos in by_portfolio.items()
+        if pos["quantity"] > 0 and pid in managed_ids
+    }
+    held_self = {
+        aid
+        for (pid, aid), pos in by_portfolio.items()
+        if pos["quantity"] > 0 and pid not in managed_ids
+    }
+    only = {symbol_of[a] for a in held_managed if a not in held_self and symbol_of[a]}
+    mixed = {symbol_of[a] for a in held_managed if a in held_self and symbol_of[a]}
+    names = sorted(
+        {
+            (db.get_portfolio(pid) or {}).get("name") or f"#{pid}"
+            for pid in set(held_managed.values())
+        }
+    )
+    return only, mixed, names
+
+
+def managed_only_symbols(db, transactions: List[dict]) -> Tuple[set, List[str]]:
+    """Symbols held only in managed portfolios, plus those portfolios' names.
+
+    Such a holding counts in the allocation but can never be traded.
+    """
+    only, _mixed, names = managed_symbol_split(db, transactions)
+    return only, names
+
+
 def build_plan(
     db,
     *,
@@ -972,7 +1025,17 @@ def build_plan(
     warnings** (per §11/§13 of the plan doc), never an exception and never an
     all-or-nothing result.
 
-    Returns ``{"before": ..., "plans": [...], "warnings": [...]}``; the
+    **Managed portfolios** (``is_managed``, robo-advisors): a symbol held only
+    there is unioned into the effective ``excluded_symbols`` so it keeps its
+    weight in ``before`` but is never sold or bought. A symbol held in both a
+    managed and a self-managed portfolio stays tradable at its *total*
+    quantity (the planner has no per-portfolio cap, which would need
+    per-portfolio lots through scoring) and gets a warning that part of it is
+    managed. A ``portfolio_id`` naming a managed portfolio yields no trades
+    and a warning. ``managed_symbols`` in the result lists the excluded ones.
+
+    Returns ``{"before": ..., "plans": [...], "warnings": [...],
+    "managed_symbols": [...]}``; the
     top-level ``warnings`` carries the data-quality issues (missing price,
     stale FX, a position with no FIFO lots) behind every plan, which each
     plan repeats so a client rendering one strategy's card in isolation still
@@ -986,6 +1049,32 @@ def build_plan(
         db, portfolio_id, target_overrides
     )
     gaps = compute_gaps(before["allocations"], min_trade_eur)
+
+    managed_warnings: List[str] = []
+    managed_only, managed_mixed, managed_names = managed_symbol_split(db, transactions)
+    if portfolio_id is not None and portfolio_id in managed_portfolio_ids(db):
+        # Nothing here can be executed by the owner: no sells, no funding.
+        allow_sells = False
+        cash_budget_eur = None
+        managed_warnings.append(
+            "This portfolio is managed by a robo-advisor — no trades are proposed."
+        )
+    elif managed_only:
+        managed_warnings.append(
+            f"{len(managed_only)} holdings in managed portfolios "
+            f"({', '.join(managed_names)}) are kept at their current weight and "
+            f"never traded: {', '.join(sorted(managed_only))}"
+        )
+    if managed_mixed and portfolio_id is None:
+        managed_warnings.append(
+            f"Part of {', '.join(sorted(managed_mixed))} sits in a managed "
+            "portfolio; trades may use the total quantity, so check the "
+            "self-managed share before selling."
+        )
+    excluded_symbols = sorted(
+        {s.strip().upper() for s in (excluded_symbols or []) if s and s.strip()}
+        | managed_only
+    )
 
     drift_by_type = {a["asset_type"]: a["drift_pct"] for a in before["allocations"]}
 
@@ -1002,7 +1091,7 @@ def build_plan(
             drift_by_type=drift_by_type,
         )
 
-    shared_warnings = data_warnings + candidate_warnings
+    shared_warnings = managed_warnings + data_warnings + candidate_warnings
 
     baseline: List[Optional[float]] = [None]
 
@@ -1045,4 +1134,5 @@ def build_plan(
         "before": before,
         "plans": plans,
         "warnings": shared_warnings,
+        "managed_symbols": sorted(managed_only),
     }

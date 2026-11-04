@@ -3795,6 +3795,25 @@ function createAPIClient() {
             return resp.json();
         },
 
+        // Research scorecard: every stored report scored against the price.
+        async getResearchScorecard(symbol) {
+            const q = symbol ? '?symbol=' + encodeURIComponent(symbol) : '';
+            const resp = await fetch(this.baseURL + '/api/v1/research/scorecard' + q, {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
+        // Raw report + manual-note entries for one symbol, newest first.
+        async getResearchHistory(symbol) {
+            const resp = await fetch(this.baseURL + '/api/v1/research/history/' + encodeURIComponent(symbol), {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+
         async getNetworthHistory() {
             const resp = await fetch(this.baseURL + '/api/v1/analytics/networth-history', {
                 headers: { 'X-API-Key': this.apiKey }

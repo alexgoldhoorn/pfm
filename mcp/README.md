@@ -106,6 +106,7 @@ Never print to stdout from a tool: stdout is the protocol channel.
 | `allocator_settings` | The allocator's configuration |
 | `return_attribution` | What drove the return: gain per holding, type and broker |
 | `decisions` | The decision journal with the price move since each call |
+| `research_scorecard` | How good past research targets were, per report and in total |
 
 `tests/test_readme.py` fails if this table and the registered tools differ.
 

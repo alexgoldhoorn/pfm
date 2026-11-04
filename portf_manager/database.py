@@ -16,7 +16,7 @@ from pathlib import Path
 from portf_manager.services.merchant import fold_for_search, normalize_merchant
 
 # Database version for migration tracking
-DATABASE_VERSION = 38
+DATABASE_VERSION = 39
 
 
 # black
@@ -433,6 +433,31 @@ class Database:
                 FOREIGN KEY (asset_id) REFERENCES assets (id) ON DELETE CASCADE
             )
         """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS research_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                asset_id INTEGER NOT NULL
+                    REFERENCES assets(id) ON DELETE CASCADE,
+                symbol TEXT NOT NULL,
+                generated_at TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'llm',
+                recommendation TEXT,
+                confidence TEXT,
+                fair_value REAL,
+                buy_below REAL,
+                sell_above REAL,
+                currency TEXT,
+                price_at_report REAL,
+                horizon_months INTEGER NOT NULL DEFAULT 12
+            )
+        """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_research_history_symbol "
+            "ON research_history (asset_id, generated_at)"
         )
 
         conn.execute(
@@ -954,6 +979,8 @@ class Database:
             self._migrate_to_v37(conn)
         if current_version < 38:
             self._migrate_to_v38(conn)
+        if current_version < 39:
+            self._migrate_to_v39(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -2136,6 +2163,88 @@ class Database:
             "CREATE INDEX IF NOT EXISTS idx_decisions_review "
             "ON decisions (reviewed_at, review_on)"
         )
+        conn.commit()
+
+    def _migrate_to_v39(self, conn: sqlite3.Connection) -> None:
+        """Migrate from v38 to v39 — append-only research history.
+
+        Creates ``research_history`` and backfills one row per existing
+        ``research_reports`` row (source ``backfill``). The backfill is skipped
+        when the table already has rows, so a rerun is harmless.
+        """
+        import json
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS research_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                asset_id INTEGER NOT NULL
+                    REFERENCES assets(id) ON DELETE CASCADE,
+                symbol TEXT NOT NULL,
+                generated_at TEXT NOT NULL,
+                source TEXT NOT NULL DEFAULT 'llm',
+                recommendation TEXT,
+                confidence TEXT,
+                fair_value REAL,
+                buy_below REAL,
+                sell_above REAL,
+                currency TEXT,
+                price_at_report REAL,
+                horizon_months INTEGER NOT NULL DEFAULT 12
+            )
+        """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_research_history_symbol "
+            "ON research_history (asset_id, generated_at)"
+        )
+        has_reports = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' "
+            "AND name IN ('research_reports', 'prices')"
+        ).fetchall()
+        if (
+            len(has_reports) < 2
+            or conn.execute("SELECT 1 FROM research_history LIMIT 1").fetchone()
+        ):
+            conn.commit()
+            return
+        reports = conn.execute(
+            "SELECT r.asset_id, r.symbol, r.fair_value, r.recommendation, "
+            "r.confidence, r.report_json, r.generated_at, a.currency "
+            "FROM research_reports r JOIN assets a ON a.id = r.asset_id"
+        ).fetchall()
+        for r in reports:
+            generated = str(r[6] or "")
+            try:
+                extra = json.loads(r[5]) if r[5] else {}
+            except (TypeError, ValueError):
+                extra = {}
+            if not isinstance(extra, dict):
+                extra = {}
+            price = conn.execute(
+                "SELECT price FROM prices WHERE asset_id = ? "
+                "AND price_type = 'close' AND price_date <= ? "
+                "ORDER BY price_date DESC LIMIT 1",
+                (r[0], generated[:10]),
+            ).fetchone()
+            conn.execute(
+                "INSERT INTO research_history (asset_id, symbol, generated_at, "
+                "source, recommendation, confidence, fair_value, buy_below, "
+                "sell_above, currency, price_at_report, horizon_months) "
+                "VALUES (?, ?, ?, 'backfill', ?, ?, ?, ?, ?, ?, ?, 12)",
+                (
+                    r[0],
+                    r[1],
+                    generated,
+                    r[3],
+                    r[4],
+                    r[2],
+                    extra.get("buy_below"),
+                    extra.get("sell_above"),
+                    r[7],
+                    price[0] if price else None,
+                ),
+            )
         conn.commit()
 
     # ── Application log ──────────────────────────────────────────────────────
@@ -5346,6 +5455,17 @@ class Database:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def get_all_research_notes(self, symbol: Optional[str] = None) -> List[Dict]:
+        """Every saved research note, oldest first, optionally for one symbol."""
+        query = "SELECT * FROM research_notes"
+        params: list = []
+        if symbol:
+            query += " WHERE symbol = ?"
+            params.append(symbol.upper())
+        query += " ORDER BY created_at, id"
+        with self.get_connection() as conn:
+            return [dict(r) for r in conn.execute(query, params).fetchall()]
+
     def get_latest_research_notes(self) -> List[Dict]:
         """The most recent research note per symbol (for the compare table)."""
         with self.get_connection() as conn:
@@ -5367,8 +5487,31 @@ class Database:
         confidence: str,
         summary: str,
         report_json: str,
+        source: str = "llm",
+        buy_below: Optional[float] = None,
+        sell_above: Optional[float] = None,
+        horizon_months: int = 12,
     ) -> None:
-        """Store or refresh a research report."""
+        """Store or refresh a research report and append a history row.
+
+        Args:
+            asset_id: Asset the report belongs to.
+            symbol: Upper-case symbol.
+            fair_value: Fair value estimate, or None.
+            recommendation: BUY, HOLD, SELL or None.
+            confidence: high, medium, low or None.
+            summary: Plain-English summary.
+            report_json: The full report as JSON text.
+            source: ``llm`` (single research) or ``bulk`` (bulk refresh).
+            buy_below: Buy band stored in the history only.
+            sell_above: Sell band stored in the history only.
+            horizon_months: Horizon the report is scored at.
+        """
+        from datetime import datetime, timezone
+
+        asset = self.get_asset(asset_id)
+        latest = self.get_latest_price(asset_id)
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
         with self.get_connection() as conn:
             conn.execute(
                 """INSERT INTO research_reports
@@ -5392,7 +5535,59 @@ class Database:
                     report_json,
                 ),
             )
+            conn.execute(
+                """INSERT INTO research_history
+                       (asset_id, symbol, generated_at, source, recommendation,
+                        confidence, fair_value, buy_below, sell_above, currency,
+                        price_at_report, horizon_months)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    asset_id,
+                    symbol,
+                    now,
+                    source,
+                    recommendation,
+                    confidence,
+                    fair_value,
+                    buy_below,
+                    sell_above,
+                    asset.get("currency") if asset else None,
+                    latest["price"] if latest else None,
+                    horizon_months,
+                ),
+            )
             conn.commit()
+
+    def get_research_history(
+        self, asset_id: Optional[int] = None, symbol: Optional[str] = None
+    ) -> List[Dict]:
+        """Append-only research history rows, oldest first.
+
+        Args:
+            asset_id: Restrict to one asset.
+            symbol: Restrict to one (case-insensitive) symbol.
+
+        Returns:
+            Rows with ``asset_type`` joined from assets.
+        """
+        query = (
+            "SELECT h.*, a.asset_type FROM research_history h "
+            "JOIN assets a ON a.id = h.asset_id WHERE 1=1"
+        )
+        params: list = []
+        if asset_id is not None:
+            query += " AND h.asset_id = ?"
+            params.append(asset_id)
+        if symbol:
+            query += " AND h.symbol = ?"
+            params.append(symbol.upper())
+        query += " ORDER BY h.generated_at, h.id"
+        with self.get_connection() as conn:
+            return [dict(r) for r in conn.execute(query, params).fetchall()]
+
+    def get_all_research_history(self) -> List[Dict]:
+        """Every research history row, oldest first, with asset_type."""
+        return self.get_research_history()
 
     # ── Portfolio Snapshots ───────────────────────────────────────────────────
 

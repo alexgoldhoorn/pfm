@@ -174,6 +174,10 @@ class _PlannerDB:
             self.add_holding(symbol, atype, price)
             self.add_buy(symbol, qty, buy_price, "2024-03-01")
 
+    def get_all_portfolios(self, active_only=True):
+        """No managed portfolios in this fake."""
+        return []
+
     # ── fixture builders ──
     def add_holding(self, symbol, asset_type, latest_price, currency="EUR"):
         """Register an asset with a latest price but no transactions yet."""

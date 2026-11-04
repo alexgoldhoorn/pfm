@@ -16,7 +16,7 @@ def test_fresh_db_is_current_and_has_v38_objects(tmp_path):
         version = conn.execute("SELECT MAX(version) FROM database_version").fetchone()[
             0
         ]
-    assert version == DATABASE_VERSION == 38
+    assert version == DATABASE_VERSION == 39
     assert "decisions" in names
     assert "is_managed" in cols
 
@@ -40,7 +40,7 @@ def test_migration_from_v37_adds_column_and_table(tmp_path):
         version = conn.execute("SELECT MAX(version) FROM database_version").fetchone()[
             0
         ]
-    assert version == 38
+    assert version == DATABASE_VERSION
     assert db.get_portfolio(pid)["is_managed"] == 1
     assert db.get_decision(did)["title"] == "Hold"
 

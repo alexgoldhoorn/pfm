@@ -1,6 +1,8 @@
 """
 Research & Valuation Router
 
+GET    /api/v1/research/scorecard           — score stored reports vs price
+GET    /api/v1/research/history/{symbol}    — report + manual-note entries
 GET    /api/v1/research/{symbol}            — get cached report (or 404)
 POST   /api/v1/research/{symbol}/generate   — run LLM analysis, cache result
 GET    /api/v1/research/{symbol}/targets    — get price targets
@@ -23,6 +25,7 @@ from portf_manager import market
 from portf_manager.positions import (
     _sort_key,
     compute_positions,
+    managed_portfolio_ids,
     self_managed_held_asset_ids,
 )
 from portf_manager.services.price_updater import _CRYPTO_YF_OVERRIDES
@@ -379,6 +382,30 @@ async def bulk_refresh_status(api_key_info: dict = Depends(_auth)):
     return _BULK_RESEARCH
 
 
+@router.get("/scorecard")
+def get_scorecard(
+    symbol: Optional[str] = None,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Score every stored research report against what the price did."""
+    from portf_manager.services.research_scorecard import compute_scorecard
+
+    return compute_scorecard(db, symbol=symbol.upper() if symbol else None)
+
+
+@router.get("/history/{symbol}")
+def get_research_entries(
+    symbol: str, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+):
+    """Raw research entries for one symbol (reports + manual notes), newest first."""
+    from portf_manager.services.research_scorecard import collect_entries
+
+    entries = collect_entries(db, symbol=symbol.upper())
+    entries.sort(key=lambda e: (e["generated_at"], e["id"]), reverse=True)
+    return entries
+
+
 @router.get("/{symbol}")
 async def get_report(
     symbol: str, db=Depends(get_database), api_key_info: dict = Depends(_auth)
@@ -438,6 +465,10 @@ def generate_report(
             confidence=result.get("confidence", "low"),
             summary=result.get("summary", ""),
             report_json=json.dumps(result),
+            source="llm",
+            buy_below=result.get("buy_below"),
+            sell_above=result.get("sell_above"),
+            horizon_months=result.get("horizon_months") or 12,
         )
 
     result["symbol"] = sym
@@ -919,6 +950,10 @@ def _run_bulk_research_refresh(db) -> None:
                         confidence=result.get("confidence", "low"),
                         summary=result.get("summary", ""),
                         report_json=json.dumps(result),
+                        source="bulk",
+                        buy_below=result.get("buy_below"),
+                        sell_above=result.get("sell_above"),
+                        horizon_months=result.get("horizon_months") or 12,
                     )
                 if sym in watchlist_symbols and result.get("buy_below"):
                     db.add_watchlist(symbol=sym, buy_below=result.get("buy_below"))
@@ -941,13 +976,6 @@ def _run_bulk_research_refresh(db) -> None:
             current_symbol=None,
             finished_at=datetime.now().isoformat(),
         )
-
-
-def managed_portfolio_ids(db) -> set:
-    """Ids of the portfolios flagged ``is_managed`` (active or not)."""
-    return {
-        p["id"] for p in db.get_all_portfolios(active_only=False) if p.get("is_managed")
-    }
 
 
 def compute_price_target_alerts(db) -> list[dict]:
