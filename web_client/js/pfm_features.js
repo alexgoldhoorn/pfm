@@ -3044,55 +3044,39 @@ function setupGoogleSheetsPage() {
 // Forecast page
 // ---------------------------------------------------------------------------
 
-// Pure: map Net Worth manual-asset items to the forecast's modelled inputs.
-// Cash = savings/current/cash; Bonds = external investment; Mortgage = the
-// mortgage liability. Everything else (property/vehicle/pension, other debts)
-// is collected into `skipped` (the simulator has no field for them). Amounts
-// are EUR (prefers amount_eur). Unit-tested in web_client/js/tests/.
-function mapNetworthToForecast(items) {
-    const CASH = new Set(['savings_account', 'current_account', 'cash']);
-    const BONDS = new Set(['investment_external']);
-    let cash = 0, bonds = 0, mortgage = 0;
-    const skipped = [];
-    for (const it of (items || [])) {
-        const eur = parseFloat(it.amount_eur != null ? it.amount_eur : it.amount) || 0;
-        if (it.is_liability) {
-            if (it.category === 'mortgage') mortgage += eur;
-            else skipped.push(it.name || it.category);
-        } else if (CASH.has(it.category)) {
-            cash += eur;
-        } else if (BONDS.has(it.category)) {
-            bonds += eur;
-        } else {
-            skipped.push(it.name || it.category);
-        }
+// Simulator field ids filled by GET /wealth-scenarios/prefill, keyed by the
+// API's params name. Rates, volatility, horizon and confidence are
+// assumptions and are never filled.
+const FORECAST_PREFILL_FIELDS = {
+    cash_amount: ['fcCashAmount', 'Cash'],
+    stocks_amount: ['fcStocksAmount', 'Stocks'],
+    bonds_amount: ['fcBondsAmount', 'Bonds'],
+    stocks_contribution_monthly: ['fcStocksContribution', 'Monthly contribution'],
+    mortgage_principal: ['fcMortgagePrincipal', 'Mortgage'],
+    mortgage_rate_pct: ['fcMortgageRate', 'Mortgage rate'],
+    mortgage_payment_monthly: ['fcMonthlyPayment', 'Mortgage payment'],
+};
+
+// Pure: the prefill response -> { values: {fieldId: string}, lines: [text] }.
+// A null param leaves its field alone and is not mentioned. Each line names
+// the value and where it came from; the server's notes follow.
+// Unit-tested in web_client/js/tests/.
+function forecastFromPrefill(prefill) {
+    const params = (prefill && prefill.params) || {};
+    const sources = (prefill && prefill.sources) || {};
+    const values = {};
+    const lines = [];
+    for (const [key, [id, label]] of Object.entries(FORECAST_PREFILL_FIELDS)) {
+        const v = params[key];
+        if (v === null || v === undefined || !Number.isFinite(Number(v))) continue;
+        const n = Number(v);
+        values[id] = key === 'mortgage_rate_pct' ? String(n) : String(Math.round(n));
+        const shown = key === 'mortgage_rate_pct' ? `${n}%` : Fmt.money(Math.round(n), 'EUR', 0);
+        lines.push(`${label} ${shown}${sources[key] ? ` — ${sources[key]}` : ''}`);
     }
-    return { cash, bonds, mortgage, skipped };
+    return { values, lines: lines.concat((prefill && prefill.notes) || []) };
 }
-window.mapNetworthToForecast = mapNetworthToForecast;
-
-// Pure: mortgage inputs of the simulator from a loan row of
-// GET /networth/loans (balance_eur, annual_rate_pct, monthly_payment_eur).
-// Missing or non-numeric fields become 0. Unit-tested in web_client/js/tests/.
-function forecastPrefillFromLoan(loan) {
-    const num = (v) => {
-        const n = parseFloat(v);
-        return Number.isFinite(n) ? n : 0;
-    };
-    const l = loan || {};
-    return {
-        principal: num(l.balance_eur),
-        rate: num(l.annual_rate_pct),
-        payment: num(l.monthly_payment_eur),
-    };
-}
-window.forecastPrefillFromLoan = forecastPrefillFromLoan;
-
-// Pure: the first loan that still has a balance (a repaid loan is skipped).
-function firstActiveLoan(loans) {
-    return (loans || []).find(l => Number(l && l.balance_eur) > 0) || null;
-}
-window.firstActiveLoan = firstActiveLoan;
+window.forecastFromPrefill = forecastFromPrefill;
 
 // Inflation assumed when turning a nominal return into the real return the
 // simulator's inputs expect: the ECB's 2% medium-term target.
@@ -3871,48 +3855,31 @@ function setupForecastPage() {
     refreshBtn.addEventListener('click', loadStartValue);
     runBtn.addEventListener('click', runForecast);
 
-    // Opt-in: pre-fill Cash / Bonds / Mortgage from the Net Worth page, and
-    // monthly contribution / mortgage payment from Monthly Cash Flow.
+    // Opt-in: fill the amounts from the user's own data (balance sheet,
+    // loans, bank imports) — GET /wealth-scenarios/prefill.
     const loadNwBtn = document.getElementById('fcLoadNetworth');
     const nwNote = document.getElementById('fcNetworthNote');
     if (loadNwBtn) {
         loadNwBtn.addEventListener('click', async () => {
-            if (nwNote) nwNote.textContent = 'Loading from Net Worth…';
+            if (nwNote) nwNote.textContent = 'Reading your data…';
             try {
-                const [d, cf, loans] = await Promise.all([
-                    window.apiClient.getNetworth(),
-                    window.apiClient.getCashflow().catch(() => null),
-                    // a failed call falls back to the manual mortgage line
-                    window.apiClient.getLoans().catch(() => null),
-                ]);
-                const m = mapNetworthToForecast(d.items || []);
-                // A loan row, when there is one, is the mortgage source.
-                const active = firstActiveLoan(loans);
-                const loan = active ? forecastPrefillFromLoan(active) : null;
-                if (loan) m.mortgage = loan.principal;
-                cashAmountInput.value = Math.round(m.cash);
-                bondsAmountInput.value = Math.round(m.bonds);
-                mortgagePrincipalInput.value = Math.round(m.mortgage);
-                if (loan) mortgageRateInput.value = loan.rate;
+                const f = forecastFromPrefill(await window.apiClient.getWealthPrefill());
+                for (const [id, value] of Object.entries(f.values)) {
+                    const el = document.getElementById(id);
+                    if (el) el.value = value;
+                }
+                if ('fcStocksAmount' in f.values && startNote) {
+                    startNote.textContent = 'From your data — the refresh icon puts back the holdings total.';
+                }
                 updateTotalLiquidBadge();
-
-                let msg = `Loaded Cash ${fmtEur(m.cash)} · Bonds ${fmtEur(m.bonds)} · Mortgage ${fmtEur(m.mortgage)} from Net Worth.`;
-                if (m.skipped.length) msg += ` Skipped (not modelled): ${m.skipped.join(', ')}.`;
-                if (cf) {
-                    const net = Math.round(Math.max(0, cf.net_monthly_eur || 0));
-                    if (stocksContributionInput) stocksContributionInput.value = net;
-                    const mortPayment = Math.round((cf.by_category && cf.by_category.mortgage) || 0);
-                    if (!loan && mortPayment > 0) monthlyPaymentInput.value = mortPayment;
-                    msg += ` Monthly contribution ${fmtEur(net)}${!loan && mortPayment > 0 ? ` · Mortgage payment ${fmtEur(mortPayment)}` : ''} from Cash Flow.`;
-                }
-                if (loan) {
-                    monthlyPaymentInput.value = Math.round(loan.payment);
-                    msg += ` Mortgage from loan: balance ${fmtEur(loan.principal)} at ${loan.rate}%, payment ${fmtEur(loan.payment)}.`;
-                }
                 updateMortgageNote();
-                if (nwNote) nwNote.textContent = msg;
+                if (nwNote) {
+                    nwNote.innerHTML = f.lines.length
+                        ? '<ul class="mb-0 ps-3">' + f.lines.map(l => `<li>${esc(l)}</li>`).join('') + '</ul>'
+                        : 'Nothing to fill in yet.';
+                }
             } catch (e) {
-                if (nwNote) nwNote.textContent = 'Could not load Net Worth: ' + e.message;
+                if (nwNote) nwNote.textContent = 'Could not read your data: ' + e.message;
             }
         });
     }

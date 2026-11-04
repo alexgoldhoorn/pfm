@@ -182,56 +182,32 @@ test("no curly quotes opening HTML attributes in the JS files", () => {
     );
 });
 
-test("mapNetworthToForecast: maps cash/bonds/mortgage, skips the rest", () => {
-    const { mapNetworthToForecast } = loadAppIntoContext();
-    const items = [
-        { category: "savings_account", is_liability: false, amount_eur: 5000 },
-        { category: "current_account", is_liability: false, amount_eur: 2000 },
-        { category: "cash", is_liability: false, amount_eur: 500 },
-        { category: "investment_external", is_liability: false, amount_eur: 8000 },
-        { category: "mortgage", is_liability: true, amount_eur: 180000 },
-        { category: "property", is_liability: false, amount_eur: 250000, name: "Flat" },
-        { category: "pension", is_liability: false, amount_eur: 30000 },
-        { category: "credit_card", is_liability: true, amount_eur: 1200, name: "Visa" },
-    ];
-    const m = mapNetworthToForecast(items);
-    assert.equal(m.cash, 7500);       // 5000+2000+500
-    assert.equal(m.bonds, 8000);
-    assert.equal(m.mortgage, 180000);
-    // spread the vm-realm array into the test realm before comparing
-    assert.deepEqual([...m.skipped], ["Flat", "pension", "Visa"]); // name||category
+test("forecastFromPrefill: fills known fields, skips nulls, names sources", () => {
+    const { forecastFromPrefill } = loadAppIntoContext();
+    const f = forecastFromPrefill({
+        params: {
+            cash_amount: 7000.4, stocks_amount: 80000, bonds_amount: null,
+            stocks_contribution_monthly: 1500, mortgage_principal: 150000,
+            mortgage_rate_pct: 3.25, mortgage_payment_monthly: 800,
+        },
+        sources: { cash_amount: "Balance sheet: cash and fixed deposits" },
+        notes: ["Property is not modelled."],
+    });
+    assert.equal(f.values.fcCashAmount, "7000");
+    assert.equal(f.values.fcStocksAmount, "80000");
+    assert.equal(f.values.fcMortgageRate, "3.25");
+    assert.equal(f.values.fcMonthlyPayment, "800");
+    assert.ok(!("fcBondsAmount" in f.values));
+    assert.ok(f.lines[0].startsWith("Cash "));
+    assert.ok(f.lines[0].endsWith("Balance sheet: cash and fixed deposits"));
+    assert.equal(f.lines[f.lines.length - 1], "Property is not modelled.");
+    assert.ok(f.lines.some(l => l.startsWith("Mortgage rate 3.25%")));
 });
 
-test("mapNetworthToForecast: empty/undefined → zeros, prefers amount_eur", () => {
-    const { mapNetworthToForecast } = loadAppIntoContext();
-    const e = mapNetworthToForecast();
-    assert.equal(e.cash, 0);
-    assert.equal(e.bonds, 0);
-    assert.equal(e.mortgage, 0);
-    assert.equal(e.skipped.length, 0);
-    const m = mapNetworthToForecast([{ category: "cash", is_liability: false, amount_eur: 10, amount: 999 }]);
-    assert.equal(m.cash, 10); // amount_eur wins over amount
-});
-
-test("forecastPrefillFromLoan: reads balance, rate and payment; missing -> 0", () => {
-    const { forecastPrefillFromLoan } = loadAppIntoContext();
-    const p = forecastPrefillFromLoan({ balance_eur: 150000, annual_rate_pct: 2.5, monthly_payment_eur: 800 });
-    assert.equal(p.principal, 150000);
-    assert.equal(p.rate, 2.5);
-    assert.equal(p.payment, 800);
-    const e = forecastPrefillFromLoan({ balance_eur: "abc" });
-    assert.equal(e.principal, 0);
-    assert.equal(e.rate, 0);
-    assert.equal(e.payment, 0);
-    assert.equal(forecastPrefillFromLoan().payment, 0);
-});
-
-test("firstActiveLoan: skips repaid loans", () => {
-    const { firstActiveLoan } = loadAppIntoContext();
-    const got = firstActiveLoan([{ id: 1, balance_eur: 0 }, { id: 2, balance_eur: 500 }]);
-    assert.equal(got.id, 2);
-    assert.equal(firstActiveLoan([{ id: 1, balance_eur: 0 }]), null);
-    assert.equal(firstActiveLoan(undefined), null);
+test("forecastFromPrefill: empty or missing response fills nothing", () => {
+    const { forecastFromPrefill } = loadAppIntoContext();
+    assert.deepEqual(Object.keys(forecastFromPrefill(undefined).values), []);
+    assert.deepEqual(Object.keys(forecastFromPrefill({ params: { cash_amount: "x" } }).values), []);
 });
 
 test("historyToForecast: returns rate+vol from IRR/volatility with enough snapshots", () => {

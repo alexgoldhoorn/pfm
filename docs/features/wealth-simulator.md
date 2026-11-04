@@ -38,6 +38,33 @@ volatility — a quirk of the page kept so both charts agree at the origin;
 tracking passes `exact_origin=True` so that on the baseline day the expected
 range is exactly zero.
 
+## Filling the inputs from the user's data
+
+Three opt-in helpers on the page; the page's own load only puts the holdings
+total into Stocks (`loadStartValue`, and the refresh icon re-runs it).
+
+- **Fill from my data** (`#fcLoadNetworth`) → `GET /wealth-scenarios/prefill`
+  (`gather_prefill` → pure `prefill_params` in `services/wealth_scenarios.py`).
+  Fills only `PREFILL_KEYS`: cash = balance-sheet `cash` + `deposits` groups;
+  stocks/bonds = the `investments` group (brokers, valuations, pensions,
+  external lines) split by `compute_exposure` `by_asset_class["bond"]` — the
+  held portfolio's share applied to the whole group, all to stocks when the
+  exposure is unavailable; mortgage = every open loan combined (balance and
+  payment summed, rate weighted by balance), or with no open loan the manual
+  `mortgage` liability lines (payment from the Monthly Cash Flow `mortgage`
+  entries, rate untouched); contribution = average net
+  savings over the complete months of bank imports (`savings_and_buffer`, last
+  12), else the Monthly Cash Flow table's income − expenses. Negative savings
+  become 0 with a note. Each source is read on its own: a failure leaves its
+  keys `null` and adds a note, never a 5xx. Response `{params, sources, notes,
+  as_of}`; the page lists each value with its source (`forecastFromPrefill`).
+  Before 2026-11-04 the button read only manual net-worth lines, the first
+  loan and the cash-flow table.
+- **Use my history** (`#fcUseHistory`, `historyToForecast`): stocks return =
+  lifetime money-weighted IRR minus 2 % assumed inflation, volatility from the
+  last year's snapshots.
+- Rates, horizon and confidence are assumptions and are never filled.
+
 ## Schema (v37)
 
 `wealth_scenarios`: `id`, `name` (UNIQUE), `description`, `is_primary` (0/1, at

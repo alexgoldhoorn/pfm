@@ -189,3 +189,140 @@ def test_scenario_view_decodes_row(tmp_path):
     assert v["summary"]["final_net_worth_eur"] == 586425.31
     assert v["tracking"]["status"] == "on_track"
     assert len(v["projection"]) == 21 and v["projection"][20]["net_worth"] == 586425.31
+
+
+# ── prefill ────────────────────────────────────────────────────────────────
+
+
+def _sheet(cash=0, deposits=0, investments=0, property=0):
+    return {
+        "groups": [
+            {"key": "cash", "total_eur": cash},
+            {"key": "deposits", "total_eur": deposits},
+            {"key": "investments", "total_eur": investments},
+            {"key": "property", "total_eur": property},
+            {"key": "other_assets", "total_eur": 0},
+            {"key": "liabilities", "total_eur": 0},
+        ]
+    }
+
+
+def test_prefill_splits_investments_by_bond_share():
+    out = ws.prefill_params(
+        _sheet(cash=5000.4, deposits=2000, investments=100000), 0.2, [], None
+    )
+    p = out["params"]
+    assert p["cash_amount"] == 7000
+    assert p["bonds_amount"] == 20000
+    assert p["stocks_amount"] == 80000
+    assert "20%" in out["sources"]["bonds_amount"]
+
+
+def test_prefill_without_bond_share_puts_everything_in_stocks():
+    out = ws.prefill_params(_sheet(investments=50000), None, None, None)
+    assert out["params"]["stocks_amount"] == 50000
+    assert out["params"]["bonds_amount"] is None
+    assert "unavailable" in out["sources"]["stocks_amount"]
+
+
+def test_prefill_combines_loans_with_balance_weighted_rate():
+    loans = [
+        {"name": "Mortgage", "balance_eur": 150000, "payment_eur": 800, "rate_pct": 3},
+        {"name": "Car", "balance_eur": 10000, "payment_eur": 300, "rate_pct": 7},
+        {"name": "Paid off", "balance_eur": 0, "payment_eur": 0, "rate_pct": 9},
+    ]
+    out = ws.prefill_params(None, None, loans, None)
+    p = out["params"]
+    assert p["mortgage_principal"] == 160000
+    assert p["mortgage_payment_monthly"] == 1100
+    assert p["mortgage_rate_pct"] == 3.25
+    assert "Paid off" not in out["sources"]["mortgage_principal"]
+    assert any("2 loans" in n for n in out["notes"])
+
+
+def test_prefill_no_open_loans_zeroes_mortgage_but_keeps_rate():
+    out = ws.prefill_params(None, None, [], None)
+    assert out["params"]["mortgage_principal"] == 0
+    assert out["params"]["mortgage_payment_monthly"] == 0
+    assert out["params"]["mortgage_rate_pct"] is None
+
+
+def test_prefill_contribution_is_average_net_savings():
+    savings = {
+        "months_used": ["2026-09", "2026-10"],
+        "income_eur": 8000,
+        "spent_eur": 5000,
+    }
+    out = ws.prefill_params(None, None, None, savings)
+    assert out["params"]["stocks_contribution_monthly"] == 1500
+    assert "2 complete months" in out["sources"]["stocks_contribution_monthly"]
+
+
+def test_prefill_negative_savings_becomes_zero_with_note():
+    savings = {"months_used": ["2026-10"], "income_eur": 1000, "spent_eur": 3000}
+    out = ws.prefill_params(None, None, None, savings)
+    assert out["params"]["stocks_contribution_monthly"] == 0
+    assert any("exceeded" in n for n in out["notes"])
+
+
+def test_prefill_no_bank_months_leaves_contribution_alone():
+    savings = {"months_used": [], "income_eur": 0, "spent_eur": 0}
+    out = ws.prefill_params(None, None, None, savings)
+    assert out["params"]["stocks_contribution_monthly"] is None
+
+
+def test_prefill_nothing_known_fills_nothing():
+    out = ws.prefill_params(None, None, None, None)
+    assert out["params"] == {k: None for k in ws.PREFILL_KEYS}
+    assert out["sources"] == {}
+
+
+def test_prefill_values_pass_normalize_params():
+    out = ws.prefill_params(
+        _sheet(cash=-50, investments=1000, property=300000), 0.5, [], None
+    )
+    filled = {k: v for k, v in out["params"].items() if v is not None}
+    ws.normalize_params(filled)
+    assert out["params"]["cash_amount"] == 0
+    assert any("Property" in n for n in out["notes"])
+
+
+def test_prefill_falls_back_to_monthly_cash_flow():
+    no_months = {"months_used": [], "income_eur": 0, "spent_eur": 0}
+    out = ws.prefill_params(None, None, None, no_months, cashflow_net=900.4)
+    assert out["params"]["stocks_contribution_monthly"] == 900
+    assert "Monthly Cash Flow" in out["sources"]["stocks_contribution_monthly"]
+    out = ws.prefill_params(None, None, None, None, cashflow_net=-100)
+    assert out["params"]["stocks_contribution_monthly"] == 0
+
+
+def test_prefill_bank_months_beat_monthly_cash_flow():
+    savings = {"months_used": ["2026-10"], "income_eur": 3000, "spent_eur": 2000}
+    out = ws.prefill_params(None, None, None, savings, cashflow_net=5000)
+    assert out["params"]["stocks_contribution_monthly"] == 1000
+
+
+def test_prefill_manual_mortgage_line_when_no_loan():
+    manual = {"names": "House", "balance_eur": 120000.6, "payment_eur": 700}
+    out = ws.prefill_params(None, None, [], None, manual_mortgage=manual)
+    p = out["params"]
+    assert p["mortgage_principal"] == 120001
+    assert p["mortgage_payment_monthly"] == 700
+    assert p["mortgage_rate_pct"] is None
+    assert out["sources"]["mortgage_principal"] == "Net Worth: manual line House"
+    assert any("add it as a loan" in n for n in out["notes"])
+
+
+def test_prefill_manual_mortgage_without_payment_leaves_payment_alone():
+    manual = {"names": "House", "balance_eur": 1000, "payment_eur": None}
+    out = ws.prefill_params(None, None, None, None, manual_mortgage=manual)
+    assert out["params"]["mortgage_principal"] == 1000
+    assert out["params"]["mortgage_payment_monthly"] is None
+
+
+def test_prefill_open_loan_beats_manual_mortgage():
+    loans = [{"name": "Home", "balance_eur": 90000, "payment_eur": 600, "rate_pct": 2}]
+    manual = {"names": "Old line", "balance_eur": 120000, "payment_eur": 700}
+    out = ws.prefill_params(None, None, loans, None, manual_mortgage=manual)
+    assert out["params"]["mortgage_principal"] == 90000
+    assert out["sources"]["mortgage_principal"] == "Loans: Home"

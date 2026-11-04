@@ -394,3 +394,283 @@ def list_views(db, today: Optional[date] = None) -> list[dict]:
     rows = db.get_wealth_scenarios()
     actual = current_net_worth(db) if rows else None
     return [scenario_view(r, actual, today) for r in rows]
+
+
+# ── prefill from the user's own data ───────────────────────────────────────
+
+# The simulator inputs a prefill can fill; rates, volatility, horizon and
+# confidence are assumptions, not data, and are never touched.
+# Monthly Cash Flow categories that are income; keep in step with
+# _CF_INCOME_CATS in portf_server/routers/networth.py.
+CASHFLOW_INCOME = frozenset({"salary", "other_income"})
+
+PREFILL_KEYS = (
+    "cash_amount",
+    "stocks_amount",
+    "bonds_amount",
+    "stocks_contribution_monthly",
+    "mortgage_principal",
+    "mortgage_rate_pct",
+    "mortgage_payment_monthly",
+)
+
+
+def _group_total(sheet: dict, key: str) -> float:
+    for group in sheet.get("groups") or []:
+        if group.get("key") == key:
+            return float(group.get("total_eur") or 0.0)
+    return 0.0
+
+
+def prefill_params(
+    sheet: Optional[dict],
+    bond_share: Optional[float],
+    loans: Optional[list[dict]],
+    savings: Optional[dict],
+    cashflow_net: Optional[float] = None,
+    manual_mortgage: Optional[dict] = None,
+) -> dict:
+    """Simulator inputs derived from the balance sheet, loans and bank data.
+
+    Pure: the caller gathers the inputs (see ``gather_prefill``). Any input
+    may be None when it could not be read; the keys it would fill stay None
+    so the page leaves those fields alone.
+
+    Args:
+        sheet: ``build_balance_sheet`` output.
+        bond_share: fraction (0–1) of the held portfolio that is bonds after
+            fund look-through (``compute_exposure`` ``by_asset_class``).
+        loans: ``{name, balance_eur, payment_eur, rate_pct}`` per open loan.
+        savings: ``progress.savings_and_buffer`` output.
+        cashflow_net: monthly income minus expenses from the hand-kept
+            Monthly Cash Flow table; the contribution when no complete month
+            of bank imports exists.
+        manual_mortgage: ``{names, balance_eur, payment_eur}`` from manual
+            net-worth lines in category ``mortgage`` (payment from the
+            Monthly Cash Flow ``mortgage`` entries, None when there are
+            none); used only when no loan is open.
+
+    Returns:
+        ``{"params": {key: value or None}, "sources": {key: str},
+        "notes": [str]}`` with amounts rounded to whole euros.
+    """
+    params: dict[str, Optional[float]] = {k: None for k in PREFILL_KEYS}
+    sources: dict[str, str] = {}
+    notes: list[str] = []
+
+    if sheet is not None:
+        cash = _group_total(sheet, "cash") + _group_total(sheet, "deposits")
+        params["cash_amount"] = round(max(cash, 0.0))
+        sources["cash_amount"] = "Balance sheet: cash and fixed deposits"
+        invest = max(_group_total(sheet, "investments"), 0.0)
+        if bond_share is None:
+            params["stocks_amount"] = round(invest)
+            sources["stocks_amount"] = (
+                "Balance sheet: all investments (bond split unavailable)"
+            )
+        else:
+            share = min(max(bond_share, 0.0), 1.0)
+            params["bonds_amount"] = round(invest * share)
+            params["stocks_amount"] = round(invest) - params["bonds_amount"]
+            pct = f"{share * 100:.0f}%"
+            sources["stocks_amount"] = (
+                f"Balance sheet: investments minus the {pct} that is bonds"
+            )
+            sources["bonds_amount"] = (
+                f"Balance sheet: investments × {pct} bonds (fund look-through)"
+            )
+        if _group_total(sheet, "property") or _group_total(sheet, "other_assets"):
+            notes.append(
+                "Property and other assets are not in the simulator; "
+                "tracking compares changes, so they do not skew it."
+            )
+
+    open_loans = [ln for ln in (loans or []) if float(ln.get("balance_eur") or 0) > 0]
+    manual_balance = float((manual_mortgage or {}).get("balance_eur") or 0)
+    if not open_loans and manual_balance > 0:
+        label = f"Net Worth: manual line {manual_mortgage.get('names') or 'mortgage'}"
+        params["mortgage_principal"] = round(manual_balance)
+        sources["mortgage_principal"] = label
+        payment = manual_mortgage.get("payment_eur")
+        if payment:
+            params["mortgage_payment_monthly"] = round(float(payment))
+            sources["mortgage_payment_monthly"] = "Monthly Cash Flow: mortgage"
+        notes.append(
+            "The mortgage is a manual line: add it as a loan on the Net Worth "
+            "page to get its rate and exact payment here."
+        )
+    elif loans is not None:
+        balance = sum(float(ln["balance_eur"]) for ln in open_loans)
+        params["mortgage_principal"] = round(balance)
+        params["mortgage_payment_monthly"] = round(
+            sum(float(ln.get("payment_eur") or 0) for ln in open_loans)
+        )
+        if open_loans:
+            # balance-weighted, so a small car loan does not set the rate
+            rate = (
+                sum(
+                    float(ln["balance_eur"]) * float(ln.get("rate_pct") or 0)
+                    for ln in open_loans
+                )
+                / balance
+            )
+            params["mortgage_rate_pct"] = round(rate, 2)
+            names = ", ".join(str(ln.get("name") or "loan") for ln in open_loans)
+            for key in (
+                "mortgage_principal",
+                "mortgage_rate_pct",
+                "mortgage_payment_monthly",
+            ):
+                sources[key] = f"Loans: {names}"
+            if len(open_loans) > 1:
+                notes.append(
+                    f"{len(open_loans)} loans are combined into one; "
+                    "the rate is weighted by balance."
+                )
+        else:
+            sources["mortgage_principal"] = "Loans: none open"
+            sources["mortgage_payment_monthly"] = "Loans: none open"
+
+    months = len((savings or {}).get("months_used") or [])
+    if savings is not None or cashflow_net is not None:
+        if months:
+            net = (
+                float(savings.get("income_eur") or 0)
+                - float(savings.get("spent_eur") or 0)
+            ) / months
+            params["stocks_contribution_monthly"] = round(max(net, 0.0))
+            sources["stocks_contribution_monthly"] = (
+                f"Bank imports: average net savings over {months} complete "
+                f"month{'s' if months != 1 else ''}"
+            )
+            if net < 0:
+                notes.append(
+                    "Spending exceeded income over those months; "
+                    "the contribution is set to 0."
+                )
+        elif cashflow_net is not None:
+            params["stocks_contribution_monthly"] = round(max(cashflow_net, 0.0))
+            sources["stocks_contribution_monthly"] = (
+                "Monthly Cash Flow: income minus expenses (no bank imports yet)"
+            )
+        else:
+            notes.append(
+                "No complete month of bank imports; the monthly contribution "
+                "is left as it is."
+            )
+
+    return {"params": params, "sources": sources, "notes": notes}
+
+
+def gather_prefill(db, today: Optional[date] = None) -> dict:
+    """Read the balance sheet, exposure, loans and bank rows; see ``prefill_params``.
+
+    Each source is read on its own: one that fails is reported in ``notes``
+    and leaves its fields None, never a 5xx.
+    """
+    from portf_manager.services import loans as loan_math
+    from portf_manager.services.balance_sheet import build_balance_sheet
+    from portf_manager.services.exposure import compute_exposure
+    from portf_manager.services.progress import savings_and_buffer
+    from portf_server.routers.portfolios import _get_fx_rate
+
+    today = today or date.today()
+    failed: list[str] = []
+
+    sheet = None
+    try:
+        sheet = build_balance_sheet(db, today=today)
+    except Exception as e:
+        logger.warning("wealth prefill: balance sheet failed (%s)", e)
+        failed.append("balance sheet")
+
+    bond_share = None
+    try:
+        by_class = compute_exposure(db, today=today).get("by_asset_class") or {}
+        if by_class:
+            bond_share = float(by_class.get("bond", 0.0)) / 100
+    except Exception as e:
+        logger.warning("wealth prefill: exposure failed (%s)", e)
+
+    loans = None
+    try:
+        loans = []
+        for loan in db.get_loans():
+            fx = _get_fx_rate(loan.get("currency") or "EUR")
+            loans.append(
+                {
+                    "name": loan.get("name"),
+                    "balance_eur": loan_math.balance_on(loan, today) * fx,
+                    "payment_eur": loan_math.payment_of(loan) * fx,
+                    "rate_pct": float(loan.get("annual_rate_pct") or 0),
+                }
+            )
+    except Exception as e:
+        logger.warning("wealth prefill: loans failed (%s)", e)
+        failed.append("loans")
+        loans = None
+
+    savings = None
+    try:
+        start = date(today.year - 1, today.month, 1).isoformat()
+        rows = [
+            {
+                "date": r["date"],
+                "amount_eur": float(r["amount"])
+                * _get_fx_rate(r.get("currency") or "EUR"),
+                "category": r.get("category"),
+            }
+            for r in db.list_spending_transactions(start_date=start, is_transfer=False)
+        ]
+        savings = savings_and_buffer(rows, None, today)
+    except Exception as e:
+        logger.warning("wealth prefill: bank rows failed (%s)", e)
+        failed.append("bank imports")
+
+    cashflow_net = None
+    try:
+        items = db.get_monthly_cashflow()
+        if items:
+            cashflow_net = sum(
+                float(it["amount"] or 0)
+                * _get_fx_rate(it.get("currency") or "EUR")
+                * (1 if it.get("category") in CASHFLOW_INCOME else -1)
+                for it in items
+            )
+    except Exception as e:
+        logger.warning("wealth prefill: monthly cash flow failed (%s)", e)
+
+    manual_mortgage = None
+    try:
+        lines = [
+            m
+            for m in db.get_manual_assets()
+            if m.get("is_liability") and (m.get("category") or "") == "mortgage"
+        ]
+        if lines:
+            payment = None
+            try:
+                payment = sum(
+                    float(it["amount"] or 0) * _get_fx_rate(it.get("currency") or "EUR")
+                    for it in db.get_monthly_cashflow()
+                    if it.get("category") == "mortgage"
+                )
+            except Exception as e:
+                logger.warning("wealth prefill: cash flow mortgage failed (%s)", e)
+            manual_mortgage = {
+                "names": ", ".join(str(m.get("name") or "mortgage") for m in lines),
+                "balance_eur": sum(
+                    float(m["amount"] or 0) * _get_fx_rate(m.get("currency") or "EUR")
+                    for m in lines
+                ),
+                "payment_eur": payment or None,
+            }
+    except Exception as e:
+        logger.warning("wealth prefill: manual mortgage failed (%s)", e)
+
+    out = prefill_params(
+        sheet, bond_share, loans, savings, cashflow_net, manual_mortgage
+    )
+    out["notes"] += [f"Could not read the {name}." for name in failed]
+    out["as_of"] = today.isoformat()
+    return out

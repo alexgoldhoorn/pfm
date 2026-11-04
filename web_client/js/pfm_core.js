@@ -3184,6 +3184,11 @@ function createAPIClient() {
             if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to load scenarios');
             return resp.json();
         },
+        async getWealthPrefill() {
+            const resp = await fetch(this.baseURL + '/api/v1/wealth-scenarios/prefill', { headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to read your data');
+            return resp.json();
+        },
         async getWealthScenario(id) {
             const resp = await fetch(this.baseURL + '/api/v1/wealth-scenarios/' + id, { headers: { 'X-API-Key': this.apiKey } });
             if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to load scenario');

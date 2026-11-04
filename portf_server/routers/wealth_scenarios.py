@@ -65,6 +65,16 @@ def list_scenarios(db=Depends(get_database), api_key_info: dict = Depends(_auth)
     return ws.list_views(db)
 
 
+@router.get("/prefill")
+def prefill(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+    """Simulator inputs from the balance sheet, loans and bank imports.
+
+    Registered before ``/{scenario_id}``. Keys that could not be derived are
+    None; rates, volatility, horizon and confidence are never filled.
+    """
+    return ws.gather_prefill(db)
+
+
 @router.post("/", status_code=201)
 def create_scenario(
     body: ScenarioCreate,

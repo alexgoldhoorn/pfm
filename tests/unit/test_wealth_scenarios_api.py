@@ -186,3 +186,67 @@ def test_net_worth_failure_gives_no_baseline_not_500(tmp_path):
         assert r.status_code == 201
         assert r.json()["baseline_net_worth_eur"] is None
         assert r.json()["tracking"]["status"] == "no_baseline"
+
+
+def test_prefill_empty_db_fills_zeroes_and_leaves_contribution(tmp_path):
+    client, _ = _make_client(tmp_path)
+    r = client.get(BASE + "prefill", headers=HEADERS)
+    assert r.status_code == 200
+    body = r.json()
+    p = body["params"]
+    assert p["cash_amount"] == 0
+    assert p["stocks_amount"] == 0
+    assert p["mortgage_principal"] == 0
+    assert p["mortgage_rate_pct"] is None
+    assert p["stocks_contribution_monthly"] is None
+    assert body["as_of"] == date.today().isoformat()
+    assert "stocks_rate_pct" not in p
+
+
+def test_prefill_reads_open_loans(tmp_path):
+    client, db = _make_client(tmp_path)
+    db.create_loan(
+        name="Home",
+        principal=120000,
+        annual_rate_pct=2.5,
+        start_date=date(date.today().year - 1, 1, 1).isoformat(),
+        term_months=300,
+    )
+    body = client.get(BASE + "prefill", headers=HEADERS).json()
+    p = body["params"]
+    assert 100000 < p["mortgage_principal"] < 120000
+    assert p["mortgage_rate_pct"] == 2.5
+    assert p["mortgage_payment_monthly"] > 0
+    assert body["sources"]["mortgage_principal"] == "Loans: Home"
+
+
+def test_prefill_balance_sheet_failure_is_a_note_not_500(tmp_path):
+    client, _ = _make_client(tmp_path)
+    with patch(
+        "portf_manager.services.balance_sheet.build_balance_sheet",
+        side_effect=RuntimeError("boom"),
+    ):
+        r = client.get(BASE + "prefill", headers=HEADERS)
+    assert r.status_code == 200
+    assert r.json()["params"]["cash_amount"] is None
+    assert "Could not read the balance sheet." in r.json()["notes"]
+
+
+def test_prefill_uses_monthly_cash_flow_without_bank_imports(tmp_path):
+    client, db = _make_client(tmp_path)
+    db.create_monthly_cashflow(label="Pay", category="salary", amount=3000)
+    db.create_monthly_cashflow(label="Rest", category="rest", amount=2200)
+    p = client.get(BASE + "prefill", headers=HEADERS).json()["params"]
+    assert p["stocks_contribution_monthly"] == 800
+
+
+def test_prefill_reads_manual_mortgage_line(tmp_path):
+    client, db = _make_client(tmp_path)
+    db.create_manual_asset(
+        name="House loan", category="mortgage", amount=100000, is_liability=True
+    )
+    db.create_monthly_cashflow(label="Mortgage", category="mortgage", amount=650)
+    body = client.get(BASE + "prefill", headers=HEADERS).json()
+    assert body["params"]["mortgage_principal"] == 100000
+    assert body["params"]["mortgage_payment_monthly"] == 650
+    assert body["sources"]["mortgage_principal"] == "Net Worth: manual line House loan"
