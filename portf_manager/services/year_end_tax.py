@@ -9,6 +9,11 @@ import logging
 from datetime import date, datetime
 from typing import Optional
 
+from portf_manager.positions import (
+    managed_portfolio_ids,
+    self_managed_held_asset_ids,
+)
+
 logger = logging.getLogger(__name__)
 
 # Spain lets a capital loss be carried forward for four tax years.
@@ -177,10 +182,22 @@ def compute_year_end_tax(
     income = div_this_year + interest_this_year
 
     positions, _ = _compute_positions(db)
+    # A holding that sits only in a managed (robo-advisor) portfolio is not
+    # the owner's to sell, so it is never a harvest candidate.
+    managed_ids = managed_portfolio_ids(db)
+    actionable = (
+        self_managed_held_asset_ids(db.get_all_transactions(), managed_ids)
+        if managed_ids
+        else None
+    )
+    managed_skipped = 0
     candidates = []
     harvestable = 0.0
     for aid, pos in positions.items():
         if pos["quantity"] <= 0:
+            continue
+        if actionable is not None and aid not in actionable:
+            managed_skipped += 1
             continue
         asset = db.get_asset(aid)
         if not asset:
@@ -244,6 +261,12 @@ def compute_year_end_tax(
         "carry-forward assumes the losses were declared; income offsets already "
         "used in earlier years are not modelled"
     )
+
+    if managed_skipped:
+        notes.append(
+            f"{managed_skipped} losing holding(s) in managed portfolios skipped: "
+            "not the owner's to sell"
+        )
 
     year_end = date(yr, 12, 31)
     return {

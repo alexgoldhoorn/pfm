@@ -142,3 +142,29 @@ def test_chat_tool(test_database):
     out = json.loads(execute_tool("get_year_end_tax", {"year": 2026}, test_database))
     assert out["year"] == 2026
     assert out["carry_forward"]["total_eur"] == 200.0
+
+
+def test_managed_only_holding_is_never_a_candidate(test_database):
+    """A losing fund held only at the robo-advisor cannot be harvested."""
+    from datetime import timedelta
+
+    robo = test_database.create_portfolio("Robo", "EUR", is_managed=True)
+    own = test_database.get_or_create_portfolio("Broker", base_currency="EUR")
+    for sym, pid in (("ROBOFUND", robo), ("OWNFUND", own)):
+        aid = test_database.create_asset(sym, f"{sym} fund", "etf", currency="EUR")
+        test_database.create_transaction(
+            asset_id=aid,
+            transaction_type="buy",
+            quantity=10.0,
+            price=100.0,
+            total_amount=1000.0,
+            transaction_date=(date.today() - timedelta(days=120)).isoformat(),
+            portfolio_id=pid,
+            currency="EUR",
+        )
+        test_database.create_price(aid, 60.0, date.today().isoformat())
+    out = compute_year_end_tax(test_database)
+    symbols = {c["symbol"] for c in out["candidates"]}
+    assert "OWNFUND" in symbols
+    assert "ROBOFUND" not in symbols
+    assert any("managed portfolios skipped" in n for n in out["notes"])
