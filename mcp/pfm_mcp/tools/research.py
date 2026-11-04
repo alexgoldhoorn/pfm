@@ -223,6 +223,27 @@ def _agg_text(label: str, agg: dict) -> str:
     )
 
 
+def _calibration_lines(cal: dict) -> list[str]:
+    """Lines for the calibration block of the scorecard."""
+
+    def one(label: str, b: dict) -> str:
+        hit, err = b.get("direction_hit_rate_pct"), b.get("median_abs_target_error_pct")
+        shrink = b.get("shrink_factor")
+        return (
+            f"  {label}: n={b.get('n', 0)} ({b.get('basis')}), hit rate "
+            f"{'n/a' if hit is None else f'{hit:.1f}%'}, median |target error| "
+            f"{'n/a' if err is None else f'{err:.1f}%'}, shrink factor "
+            f"{'n/a' if shrink is None else f'{shrink:.2f}'}"
+        )
+
+    lines = ["Calibration (all symbols):"]
+    if cal.get("overall"):
+        lines.append(one("overall", cal["overall"]))
+    for name, block in (cal.get("by_confidence") or {}).items():
+        lines.append(one(f"{name} confidence", block))
+    return lines
+
+
 @tool
 def research_scorecard(symbol: Optional[str] = None) -> str:
     """
@@ -247,6 +268,9 @@ def research_scorecard(symbol: Optional[str] = None) -> str:
         _agg_text("at horizon", data["totals"]["at_horizon"]),
         _agg_text("at next report", data["totals"]["at_next"]),
     ]
+    cal = data.get("calibration")
+    if cal:
+        lines.extend(_calibration_lines(cal))
     for title, key in (
         ("By recommendation", "by_recommendation"),
         ("By confidence", "by_confidence"),

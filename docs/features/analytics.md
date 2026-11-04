@@ -11,6 +11,7 @@
 - `GET /api/v1/analytics/dividends` — every amount in EUR at the payment date's rate; yield-on-cost over the EUR cost basis.
 - `GET /api/v1/analytics/tax-estimate?year=` — IRPF savings base (realised gains + dividends + interest); `irpf_savings_tax()` progressive brackets (19/21/23/27/28%)
 - `GET /api/v1/analytics/tax-optimizer?year=` — year-end view: realised gains + income so far, losses still harvestable (flagging recent buys that trip the 2-month rule) and the estimated tax saved. Informational only.
+  Logic lives in `services/year_end_tax.py::compute_year_end_tax` (endpoint, chat `get_year_end_tax(year)`, MCP `year_end_tax(year)` and the Action Item all call it). Added keys, existing ones unchanged: per candidate `tax_saved_eur` (marginal saving of harvesting that position alone, `progress.savings_tax` with and without its loss, so the 25%-of-income rule for a net loss applies) and `can_harvest_until` (31 Dec); `carry_forward` `{total_eur, by_year}` (net result of each of the four previous tax years via `TaxCalculator`; walked oldest first, a gain consumes the oldest valid loss, a loss expires after four years); `base_after_carry_forward_eur` (carried losses offset a positive capital result first, against income only what is left of the 25% allowance); `deadline` `{date, days_left}`; `wash_blocked` (candidates in `wash_sale.analyse`'s `recent_buys` that are at a loss, with `last_buy`/`until`; empty with a note when the wash-sale analysis fails); `notes` ("carry-forward assumes the losses were declared"; income offsets used in earlier years and losses older than the window are not modelled). Action Item `tax:year-end:{year}` (`check_year_end_tax`, category `tax`, medium, `link_page: analytics`) from 1 Nov to 31 Dec when harvestable loss > €100, or realised gains > 0 with carried losses available; silent otherwise.
 - `GET /api/v1/analytics/diversification` — sector/country/currency/type + Herfindahl HHI (slow, fetches yfinance), plus fund look-through: `by_region_equity`, `by_currency_exposure`, and a `coverage` block (`classified_pct`, `sector_classified_pct`, `unprofiled`, `stale_profiles`). See "Fund look-through" section below.
 - `GET /api/v1/analytics/fund-overlap` — held funds grouped by one of three `kind`s (`portf_manager/services/exposure.py::find_fund_overlaps`, evaluated in this order; the response is sorted `consolidation_candidate`, then `similar`, then `informational`, each by combined value): shared index family (`"consolidation_candidate"` — two-plus held funds on the same `benchmark_key` family, worth merging), nesting (`"informational"` — a narrower fund's index sits inside a broader held fund's, e.g. a China Tech fund inside a World fund; a deliberate tilt, not a problem), and, only for the subset of held funds with **no** `benchmark_key` on either side, cosine similarity of their region+sector weight maps above `SIMILARITY_THRESHOLD` (`"similar"`) — the fallback for funds a benchmark can't identify. Each group carries `members`, `combined_pct`/`combined_value_eur`, `reason`, and `transferable` (both funds, so a Spanish `traspaso` avoids realising a gain). Plain `def`, same `compute_exposure()` call as `/diversification`.
 - `GET /api/v1/analytics/risk?benchmark=VWCE.DE&window=all|1y` — `max_drawdown_pct`, `current_drawdown_pct`, `volatility_pct`, `sharpe_ratio`, `sortino_ratio`, `calmar_ratio`, `risk_free_rate_pct`/`risk_free_source`, `annualised_return_pct`, `period_return_pct`, `benchmark_return_pct`/`benchmark_annualised_return_pct` (same days, EUR), `benchmark_label`, `benchmark_total_return`, `beta`, `alpha_pct`, `beta_observations` (weeks), `start_date`/`end_date`, `history_days`, `periods_per_year`, `low_confidence`, `snapshots_used`. Plain `def` (threadpool). See "Risk metrics" below.
@@ -266,6 +267,41 @@ count toward the totals.
   `find_fund_overlaps()` (same module) groups the per-fund list from
   `compute_exposure()` by shared `benchmark_key`/index family for
   `/analytics/fund-overlap` and the `check_fund_exposure` Action Items check.
+
+### Stress test (`portf_manager/services/stress.py`, 2026-11-04)
+
+What a shock costs the held portfolio, funds looked through. Not the historical
+replay in `GET /analytics/stress-test` (2008, 2020, ...): this one applies
+hypothetical moves.
+
+- Shocks are percent moves by dimension: `{"asset_class": {"equity": -30},
+  "sector": {"Technology": -50}, "currency": {"USD": -10},
+  "asset_type": {"crypto": -60}}` (each -100..200). Presets in `SCENARIOS`:
+  `equity_bear`, `semis_crash`, `usd_down`, `rates_up`, `crypto_winter`,
+  `stagflation`.
+- Each position is split into (asset class, sector, currency) slices the way
+  `compute_exposure` looks a fund through: class weights, sector weights for the
+  equity part, currency from region weights (`_CURRENCY_BY_REGION`) or the hedge
+  currency of a hedged fund. A slice moves by the most specific market shock
+  (sector, else asset class, else asset type); a currency shock then compounds
+  multiplicatively. A stock uses `assets.sector` via `_resolve_sector_country`
+  and its trading currency. Crypto has no currency slice. A fund without a
+  profile is assumed all equity and listed in `assumed_equity`.
+- Only held positions move: cash, deposits, property and loans do not, so net
+  worth after = balance-sheet net worth minus the loss.
+- `GET /analytics/stress/scenarios`; `GET /analytics/stress?scenario=` (default
+  `equity_bear`, 404 on an unknown name); `POST /analytics/stress` with
+  `{"shocks": {...}}` (422 on bad shocks). Response: `scenario`, `label`,
+  `shocks`, `portfolio_value_eur`, `loss_eur` (positive = money lost),
+  `loss_pct_of_portfolio`, `by_asset_type` and `by_portfolio` (`value_eur`,
+  `loss_eur`, `loss_pct`), `top_losers` (5, loss > 0), `net_worth_before_eur`,
+  `net_worth_after_eur`, `retirement_after`, `assumed_equity`.
+- `retirement_after` is `null` unless the plan is `ok`; otherwise
+  `investments_before_eur`/`investments_after_eur` and per-scenario brief
+  (`verdict`, `lasts_until_age`, `pot_at_retirement_eur`, sustainable spend,
+  gap) before and after. It comes from `retirement.readiness(...,
+  investable_override_eur=)`, which replaces only the investments part of the pot.
+- Chat tool `get_stress_test(scenario)`, MCP tool `stress_test(scenario)`.
 
 ### Reports API (`portf_server/routers/reports.py` + `services/pdf_reports.py`)
 - `GET /api/v1/reports/portfolio?sections=networth,performance,diversification,health` — general portfolio-report PDF, `sections` a comma-separated subset (default: all four; unknown value → 400). Gathers data by calling other routers' endpoint functions **directly, in-process**, the same `api_key_info={}` reuse pattern `action_items.py` uses for its checks — `networth.get_networth` + `portfolios.get_holdings` (net worth), `analytics.get_performance`/`get_risk` (performance & risk), `analytics.get_diversification` (fund look-through) — so the PDF can never disagree with the page/endpoint each section summarises.

@@ -330,3 +330,124 @@ def compute_scorecard(
         "pending": sum(1 for e in entries if e["at_horizon"] is None),
         "method": METHOD,
     }
+
+
+# Minimum scored reports before a basis or a track-record paragraph is trusted.
+_MIN_N = 10
+# A confidence bucket needs this many scored reports to calibrate one report.
+_MIN_BUCKET_N = 5
+_CACHE_KEY = "research:calibration"
+_CACHE_TTL = 3600
+
+
+def _calibration_block(both: dict) -> dict:
+    """One calibration block from an ``{at_horizon, at_next}`` aggregate pair."""
+    horizon, nxt = both["at_horizon"], both["at_next"]
+    basis = "at_horizon" if horizon["n"] >= _MIN_N else "at_next"
+    agg = horizon if basis == "at_horizon" else nxt
+    implied = agg.get("mean_implied_return_pct")
+    realised = agg.get("mean_realised_return_pct")
+    shrink = None
+    ratio = None
+    if implied is not None and implied > 0:
+        if realised is not None and realised > 0:
+            shrink = round(min(1.0, max(0.1, realised / implied)), 3)
+            ratio = round(implied / realised, 2)
+    return {
+        "n": agg["n"],
+        "basis": basis,
+        "direction_hit_rate_pct": agg.get("direction_hit_rate_pct"),
+        "median_abs_target_error_pct": agg.get("median_abs_target_error_pct"),
+        "mean_implied_return_pct": implied,
+        "mean_realised_return_pct": realised,
+        "implied_vs_realised": ratio,
+        "shrink_factor": shrink,
+    }
+
+
+def calibration(db, today: Optional[date] = None) -> dict:
+    """How far the stored research can be trusted, from the scorecard.
+
+    Cached for one hour. Always covers all symbols.
+
+    Args:
+        db: The Database.
+        today: Reference date; defaults to today.
+
+    Returns:
+        ``as_of``, ``overall`` and ``by_confidence`` (high / medium / low /
+        unknown buckets present in the history). Each block has ``n``,
+        ``basis`` (``at_horizon`` when at least 10 reports are scored there,
+        else ``at_next``), ``direction_hit_rate_pct``,
+        ``median_abs_target_error_pct``, the mean implied and realised
+        returns, ``implied_vs_realised`` (None unless realised return is
+        positive) and ``shrink_factor`` (realised / implied clamped to
+        0.1..1.0 when both are positive, else None).
+    """
+    from portf_manager.cache import cached
+
+    def produce() -> dict:
+        sc = compute_scorecard(db, today=today)
+        buckets = {
+            name: _calibration_block(both) for name, both in sc["by_confidence"].items()
+        }
+        return {
+            "as_of": sc["as_of"],
+            "overall": _calibration_block(sc["totals"]),
+            "by_confidence": buckets,
+        }
+
+    return cached(db, _CACHE_KEY, _CACHE_TTL, produce)
+
+
+def calibrate_report(
+    cal: Optional[dict], confidence: Optional[str], price: float, fair_value: float
+) -> Optional[dict]:
+    """Shrink one report's fair value by the track record.
+
+    Uses the report's confidence bucket when it has at least 5 scored
+    reports and a shrink factor, else the overall block.
+
+    Args:
+        cal: Result of ``calibration``.
+        confidence: The report's confidence label.
+        price: Current price.
+        fair_value: The report's fair value.
+
+    Returns:
+        ``confidence``, ``hit_rate_pct``, ``n``, ``shrink_factor``,
+        ``adjusted_fair_value`` and ``basis``; None without calibration data.
+    """
+    if not cal or fair_value is None or not price:
+        return None
+    block = (cal.get("by_confidence") or {}).get(str(confidence or "").lower())
+    if not block or block["n"] < _MIN_BUCKET_N or block["shrink_factor"] is None:
+        block = cal.get("overall")
+    if not block or not block["n"] or block["shrink_factor"] is None:
+        return None
+    factor = block["shrink_factor"]
+    return {
+        "confidence": confidence,
+        "hit_rate_pct": block["direction_hit_rate_pct"],
+        "n": block["n"],
+        "shrink_factor": factor,
+        "adjusted_fair_value": round(price + (fair_value - price) * factor, 4),
+        "basis": block["basis"],
+    }
+
+
+def track_record_text(cal: Optional[dict]) -> Optional[str]:
+    """The "Your track record" prompt paragraph, or None below 10 reports."""
+    block = (cal or {}).get("overall")
+    if not block or block["n"] < _MIN_N:
+        return None
+    hit = block["direction_hit_rate_pct"]
+    err = block["median_abs_target_error_pct"]
+    if hit is None or err is None:
+        return None
+    return (
+        f"Your calls over the last {block['n']} scored reports were right "
+        f"{hit:.0f}% of the time and your fair values were off by a median "
+        f"{err:.0f}% from where the price went; be correspondingly "
+        "conservative with fair values and confidence."
+    )

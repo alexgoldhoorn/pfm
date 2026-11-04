@@ -4846,7 +4846,7 @@ function scorecardHtml(d) {
     if (!entries.length) {
         return '<p class="text-muted text-center py-4 mb-0">No stored research to score yet.</p>';
     }
-    return `<div class="row g-3 mb-3">
+    return `${calibrationTableHtml(d.calibration)}<div class="row g-3 mb-3">
             <div class="col-12 col-md-6">${scorecardTileHtml('At horizon', t.at_horizon)}</div>
             <div class="col-12 col-md-6">${scorecardTileHtml('At next report', t.at_next)}</div>
         </div>
@@ -4903,6 +4903,183 @@ window.loadResearchScorecard = loadResearchScorecard;
     });
 })();
 
+// ── Position caps (Rebalance page + Research workbench) ─────────────────────
+function capStatusBadge(status) {
+    const cls = { ok: 'bg-success', near: 'bg-warning text-dark', breached: 'bg-danger' }[status] || 'bg-secondary';
+    return `<span class="badge ${cls}">${esc(status || 'n/a')}</span>`;
+}
+window.capStatusBadge = capStatusBadge;
+
+function _capPp(v) {
+    const n = parseFloat(v);
+    if (v == null || isNaN(n)) return '—';
+    return (n > 0 ? '+' : n < 0 ? '−' : '') + Fmt.num(Math.abs(n), 1, 1) + ' pp';
+}
+
+// One table row of the Caps card. Implicit rows (the allocator's default
+// stock cap) are muted and have no edit or delete buttons.
+function capRowHtml(row) {
+    row = row || {};
+    const implicit = !!row.implicit;
+    const head = parseFloat(row.headroom_pct);
+    const headCls = !isNaN(head) && head < 0 ? 'text-danger' : '';
+    const label = implicit ? '<div class="small">default stock cap</div>' : (row.note ? `<div class="small text-muted">${esc(row.note)}</div>` : '');
+    const actions = implicit || row.id == null ? '' :
+        `<button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 me-1" data-cap-edit="${Number(row.id)}" title="Edit"><i class="bi bi-pencil"></i></button>` +
+        `<button type="button" class="btn btn-sm btn-outline-danger py-0 px-1" data-cap-del="${Number(row.id)}" title="Delete"><i class="bi bi-trash"></i></button>`;
+    return `<tr class="${implicit ? 'text-muted' : ''}">
+        <td><span class="badge bg-secondary me-1">${esc(row.scope || '')}</span><strong>${esc(row.key || '')}</strong>${label}</td>
+        <td class="text-end">${esc(Fmt.num(row.current_pct, 1, 1))}%</td>
+        <td class="text-end">${esc(Fmt.num(row.max_pct, 1, 1))}%</td>
+        <td class="text-end ${headCls}">${Fmt.amt(esc(Fmt.money(row.headroom_eur, 'EUR', 0)))}<div class="small">${esc(_capPp(row.headroom_pct))}</div></td>
+        <td>${capStatusBadge(row.status)}</td>
+        <td class="text-end text-nowrap">${actions}</td>
+    </tr>`;
+}
+window.capRowHtml = capRowHtml;
+
+function capsTableHtml(status) {
+    const caps = (status && status.caps) || [];
+    if (!caps.length) return '<p class="text-muted small mb-0">No caps yet.</p>';
+    return `<div class="table-responsive"><table class="table table-sm mb-2">
+        <thead><tr><th>Cap</th><th class="text-end">Now</th><th class="text-end">Max</th><th class="text-end">Headroom</th><th>Status</th><th></th></tr></thead>
+        <tbody>${caps.map(capRowHtml).join('')}</tbody></table></div>`;
+}
+window.capsTableHtml = capsTableHtml;
+
+// The cap row for a symbol (explicit wins over the implicit default), or null.
+function capForSymbol(status, symbol) {
+    const sym = String(symbol || '').toUpperCase();
+    const rows = ((status && status.caps) || []).filter(r => r.scope === 'symbol' && String(r.key || '').toUpperCase() === sym);
+    return rows.find(r => !r.implicit) || rows[0] || null;
+}
+window.capForSymbol = capForSymbol;
+
+// Muted workbench line "Cap 5%: headroom €X", or ''.
+function capHeadroomLineHtml(row) {
+    if (!row) return '';
+    const over = parseFloat(row.headroom_eur) < 0;
+    return `<i class="bi bi-rulers me-1"></i>Cap ${esc(Fmt.num(row.max_pct, 1, 1))}%${row.implicit ? ' (default)' : ''}: ${over ? 'over by' : 'headroom'} ${Fmt.amt(esc(Fmt.money(Math.abs(parseFloat(row.headroom_eur)), 'EUR', 0)))} ${capStatusBadge(row.status)}`;
+}
+window.capHeadroomLineHtml = capHeadroomLineHtml;
+
+const _capState = { editId: null };
+
+function _capResetForm() {
+    _capState.editId = null;
+    const f = document.getElementById('capForm');
+    if (f && f.reset) f.reset();
+    const sub = document.getElementById('capSubmit');
+    if (sub) sub.innerHTML = '<i class="bi bi-plus-lg me-1"></i>Add cap';
+    const can = document.getElementById('capCancel');
+    if (can) can.style.display = 'none';
+}
+
+async function loadCapsCard() {
+    const body = document.getElementById('capsBody');
+    if (!body) return;
+    const help = document.getElementById('capsHelp');
+    if (help) help.setAttribute('title', (window.METRIC_HELP || {}).positionCaps || '');
+    try {
+        const st = await window.apiClient.getCapStatus();
+        body.innerHTML = capsTableHtml(st);
+        const asOf = document.getElementById('capsAsOf');
+        if (asOf) asOf.textContent = st.as_of ? 'as of ' + Fmt.date(st.as_of) : '';
+        body.querySelectorAll('[data-cap-edit]').forEach(b => b.addEventListener('click', () => {
+            const row = (st.caps || []).find(r => String(r.id) === b.dataset.capEdit);
+            if (!row) return;
+            _capState.editId = row.id;
+            document.getElementById('capScope').value = row.scope;
+            document.getElementById('capKey').value = row.key;
+            document.getElementById('capMax').value = row.max_pct;
+            document.getElementById('capNote').value = row.note || '';
+            document.getElementById('capSubmit').innerHTML = '<i class="bi bi-check-lg me-1"></i>Save cap';
+            document.getElementById('capCancel').style.display = '';
+        }));
+        body.querySelectorAll('[data-cap-del]').forEach(b => b.addEventListener('click', async () => {
+            const row = (st.caps || []).find(r => String(r.id) === b.dataset.capDel);
+            if (!(await confirmDialog({ title: 'Delete cap', message: `Delete the cap on ${row ? row.key : 'this item'}?`, confirmLabel: 'Delete', danger: true }))) return;
+            try {
+                await window.apiClient.deleteCap(b.dataset.capDel);
+                notify('Cap deleted', 'success');
+                loadCapsCard();
+            } catch (err) { notify(err.message, 'danger'); }
+        }));
+    } catch (err) {
+        body.innerHTML = `<p class="text-danger small mb-0">Error loading caps: ${esc(err.message)}</p>`;
+    }
+    initTooltips();
+}
+window.loadCapsCard = loadCapsCard;
+
+(function wireCapsForm() {
+    document.addEventListener('DOMContentLoaded', () => {
+        const f = document.getElementById('capForm');
+        if (!f) return;
+        f.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const body = {
+                scope: document.getElementById('capScope').value,
+                key: document.getElementById('capKey').value.trim(),
+                max_pct: parseFloat(document.getElementById('capMax').value),
+                note: document.getElementById('capNote').value.trim() || null,
+            };
+            if (!body.key || !(body.max_pct > 0 && body.max_pct <= 100)) {
+                notify('Enter a key and a max % between 0 and 100', 'warning');
+                return;
+            }
+            try {
+                if (_capState.editId != null) {
+                    await window.apiClient.updateCap(_capState.editId, { key: body.key, max_pct: body.max_pct, note: body.note });
+                    notify('Cap updated', 'success');
+                } else {
+                    await window.apiClient.createCap(body);
+                    notify('Cap added', 'success');
+                }
+                _capResetForm();
+                loadCapsCard();
+            } catch (err) { notify(err.message, 'danger'); }
+        });
+        const can = document.getElementById('capCancel');
+        if (can) can.addEventListener('click', _capResetForm);
+    });
+})();
+
+// ── Research calibration ────────────────────────────────────────────────────
+// Muted line under the stored targets, or '' without calibration data.
+function calibrationLineHtml(cal, currency) {
+    if (!cal) return '';
+    const hit = cal.hit_rate_pct != null ? `, hit rate ${esc(Fmt.num(cal.hit_rate_pct, 0, 0))}% on ${esc(Fmt.num(cal.n, 0, 0))}` : `, n ${esc(Fmt.num(cal.n, 0, 0))}`;
+    const basis = cal.basis === 'at_horizon' ? 'at horizon' : cal.basis === 'at_next' ? 'at next report' : (cal.basis || '');
+    return `<i class="bi bi-sliders me-1"></i>Calibrated fair value ${esc(Fmt.money(cal.adjusted_fair_value, currency))} (shrink ${esc(Fmt.num(cal.shrink_factor, 2, 2))}${hit}, ${esc(basis)})`;
+}
+window.calibrationLineHtml = calibrationLineHtml;
+
+function _calRowHtml(label, b) {
+    if (!b) return '';
+    const pct = v => (v == null || isNaN(parseFloat(v))) ? '—' : esc(Fmt.num(v, 1, 1)) + '%';
+    const ratio = b.implied_vs_realised != null ? esc(Fmt.num(b.implied_vs_realised, 2, 2)) + '×' : '—';
+    const basis = b.basis === 'at_horizon' ? 'horizon' : b.basis === 'at_next' ? 'next report' : (b.basis || '—');
+    return `<tr><td class="ps-3">${esc(label)}</td><td class="text-end">${esc(Fmt.num(b.n, 0, 0))}</td><td>${esc(basis)}</td>
+        <td class="text-end">${pct(b.direction_hit_rate_pct)}</td><td class="text-end">${pct(b.median_abs_target_error_pct)}</td>
+        <td class="text-end">${pct(b.mean_implied_return_pct)} → ${pct(b.mean_realised_return_pct)} <span class="text-muted">(${ratio})</span></td>
+        <td class="text-end">${b.shrink_factor != null ? esc(Fmt.num(b.shrink_factor, 2, 2)) : '—'}</td></tr>`;
+}
+
+// Calibration table for the Scorecard tab: overall plus each confidence bucket.
+function calibrationTableHtml(cal) {
+    if (!cal || !cal.overall || !cal.overall.n) return '';
+    const rows = [_calRowHtml('Overall', cal.overall)]
+        .concat(Object.keys(cal.by_confidence || {}).map(k => _calRowHtml(k, cal.by_confidence[k])));
+    return `<div class="card mb-3"><div class="card-header fw-semibold">Calibration
+            <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" title="${esc((window.METRIC_HELP || {}).researchCalibration || '')}"></i>
+            ${cal.as_of ? `<span class="small text-muted fw-normal ms-2">as of ${esc(Fmt.date(cal.as_of))}</span>` : ''}</div>
+        <div class="table-responsive"><table class="table table-sm mb-0">
+            <thead><tr><th class="ps-3">Bucket</th><th class="text-end">n</th><th>Basis</th><th class="text-end">Hit rate</th><th class="text-end">Median error</th><th class="text-end">Implied → realised</th><th class="text-end">Shrink</th></tr></thead>
+            <tbody>${rows.join('')}</tbody></table></div></div>`;
+}
+window.calibrationTableHtml = calibrationTableHtml;
+
 // One muted line naming what a robo-advisor manages (never traded), or ''.
 function rebalanceManagedLineHtml(managed) {
     const m = managed || {};
@@ -4920,6 +5097,7 @@ async function loadRebalanceAnalysis() {
     const actionsEl = document.getElementById('rebalanceActions');
     if (!tbody) return;
 
+    loadCapsCard();
     tbody.innerHTML = '<tr><td colspan="5" class="text-center"><div class="spinner-border spinner-border-sm me-2"></div>Loading…</td></tr>';
     if (actionsEl) actionsEl.innerHTML = '';
 
@@ -6220,6 +6398,22 @@ function setupResearchPage() {
             const t = d.targets || {};
             if (d.latest_note && d.latest_note.thesis) $('rvThesis').value = d.latest_note.thesis;
             renderActiveTarget(t, d.latest_note);
+            const calEl = $('rvCalibration');
+            if (calEl) {
+                const line = calibrationLineHtml(d.calibration, d.currency);
+                calEl.innerHTML = line;
+                calEl.style.display = line ? '' : 'none';
+            }
+            const capEl = $('rvCapLine');
+            if (capEl) {
+                capEl.style.display = 'none';
+                window.apiClient.getCapStatus().then(st => {
+                    const line = capHeadroomLineHtml(capForSymbol(st, sym));
+                    capEl.innerHTML = line;
+                    capEl.style.display = line ? '' : 'none';
+                    if (line && window.initTooltips) initTooltips();
+                }).catch(() => { /* caps are optional here */ });
+            }
             recompute();
             $('rvLlmBody').innerHTML = '<span class="text-muted small">Click “Research with web” for an LLM read.</span>';
             $('rvSaveMsg').textContent = '';

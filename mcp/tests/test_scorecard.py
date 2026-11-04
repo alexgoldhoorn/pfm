@@ -66,3 +66,27 @@ def test_scorecard_empty_and_error():
         assert "No research history" in research.research_scorecard()
     with patch("pfm_mcp.client._get", side_effect=urllib.error.URLError("boom")):
         assert "Error fetching the research scorecard:" in research.research_scorecard()
+
+
+def test_scorecard_prints_calibration_block():
+    block = {
+        "n": 12,
+        "basis": "at_horizon",
+        "direction_hit_rate_pct": 58.3,
+        "median_abs_target_error_pct": 14.2,
+        "shrink_factor": 0.5,
+    }
+    payload = _payload()
+    payload["calibration"] = {
+        "overall": block,
+        "by_confidence": {"high": {**block, "shrink_factor": None}},
+    }
+    with patch("pfm_mcp.client._get", return_value=reply(payload)):
+        result = research.research_scorecard()
+    assert "Calibration (all symbols):" in result
+    assert "overall: n=12 (at_horizon), hit rate 58.3%" in result
+    assert "shrink factor 0.50" in result
+    assert "high confidence: n=12" in result and "shrink factor n/a" in result
+    # absent block: nothing printed
+    with patch("pfm_mcp.client._get", return_value=reply(_payload())):
+        assert "Calibration" not in research.research_scorecard()

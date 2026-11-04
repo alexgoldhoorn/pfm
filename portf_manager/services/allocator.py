@@ -11,6 +11,7 @@ from itertools import zip_longest
 from typing import Callable, Dict, List, Optional, Tuple
 
 from portf_manager.services import deployable as deployable_service
+from portf_manager.services import exposure as exposure_service
 from portf_manager.services.exposure import compute_exposure, find_fund_overlaps
 from portf_manager.services.rebalance_planner import (
     build_sell_candidates,
@@ -288,8 +289,41 @@ def build_candidates(
             }
         )
 
+    _annotate_caps(db, candidates, exposure)
     candidates.sort(key=lambda c: (c["bucket"], -c["value_eur"], c["symbol"]))
     return candidates, warnings
+
+
+def _annotate_caps(db, candidates: List[dict], exposure: dict) -> None:
+    """Attach the explicit symbol and sector caps to each stock candidate.
+
+    Adds ``symbol_cap_pct``, ``sector``, ``sector_cap_pct`` and
+    ``sector_value_eur`` (what the sector holds today) so the stock ranking
+    and clamping need no database access. Does nothing without caps.
+    """
+    caps = db.get_position_caps()
+    if not caps:
+        return
+    symbol_caps = {
+        c["key"].upper(): c["max_pct"] for c in caps if c["scope"] == "symbol"
+    }
+    sector_caps = {
+        c["key"].lower(): c["max_pct"] for c in caps if c["scope"] == "sector"
+    }
+    total = exposure.get("total_value_eur") or 0.0
+    sector_pct = {k.lower(): v for k, v in exposure.get("by_sector", {}).items()}
+    for cand in candidates:
+        if cand.get("managed") or not cand.get("asset_id"):
+            continue
+        cand["symbol_cap_pct"] = symbol_caps.get(cand["symbol"].upper())
+        asset = db.get_asset(cand["asset_id"]) or {}
+        # the same lookup compute_exposure uses, so the keys match by_sector
+        sector = exposure_service._resolve_sector_country(db, asset)[0]
+        cand["sector"] = sector
+        cand["sector_cap_pct"] = sector_caps.get(str(sector).lower())
+        cand["sector_value_eur"] = (
+            sector_pct.get(str(sector).lower(), 0.0) * total / 100
+        )
 
 
 def check_targets(targets: Dict[str, float], before: dict) -> List[str]:
@@ -697,9 +731,22 @@ def rank_stock_candidates(
                 excluded.append((c, "HOLD and above your buy-below"))
                 continue
         after = (c["value_eur"] + buy_eur) / total_after * 100 if total_after else 0.0
-        if after > max_single_stock_pct:
+        own = c.get("symbol_cap_pct")
+        if own and own < max_single_stock_pct:
+            if after > own:
+                excluded.append((c, f"would exceed the {own:g} % cap on {c['symbol']}"))
+                continue
+        elif after > max_single_stock_pct:
             excluded.append((c, f"would exceed the {cap} % single-stock cap"))
             continue
+        sector_cap = c.get("sector_cap_pct")
+        if sector_cap and total_after:
+            sector_after = (
+                (c.get("sector_value_eur", 0.0) + buy_eur) / total_after * 100
+            )
+            if sector_after > sector_cap:
+                excluded.append((c, f"would exceed the {c['sector']} cap"))
+                continue
         if (
             c.get("buy_below") is None
             and not c.get("recommendation")
@@ -945,23 +992,59 @@ def _clamp_stock_lines(
     Returns:
         Money that found no room.
     """
-    cap_eur = settings["max_single_stock_pct"] / 100 * ctx["total_after"]
-    room = {c["asset_id"]: max(0.0, cap_eur - c["value_eur"]) for c, _ in ranked}
+    total_after = ctx["total_after"]
+    default_pct = settings["max_single_stock_pct"]
+    room = {}
+    for c, _ in ranked:
+        own = c.get("symbol_cap_pct")
+        pct = min(default_pct, own) if own else default_pct
+        room[c["asset_id"]] = max(0.0, pct / 100 * total_after - c["value_eur"])
+    # a sector cap is shared by every stock of that sector
+    by_id = {c["asset_id"]: c for c, _ in ranked}
+    sector_room: dict = {}
+    for c, _ in ranked:
+        if c.get("sector_cap_pct"):
+            sector_room.setdefault(
+                c["sector"],
+                max(
+                    0.0,
+                    c["sector_cap_pct"] / 100 * total_after
+                    - c.get("sector_value_eur", 0.0),
+                ),
+            )
+
+    def sector_left(asset_id: int) -> float:
+        sector = by_id[asset_id].get("sector")
+        return sector_room.get(sector, float("inf")) if sector else float("inf")
+
+    def use_sector(asset_id: int, amount: float) -> None:
+        sector = by_id[asset_id].get("sector")
+        if sector in sector_room:
+            sector_room[sector] = max(0.0, sector_room[sector] - amount)
+
     excess = 0.0
     for ln in lines:
         # fund-style lines carry no single-stock cap
         if ln["asset_id"] not in room:
             continue
-        if ln["amount_eur"] > room[ln["asset_id"]]:
-            clipped = round(room[ln["asset_id"]], 2)
+        allowed = min(room[ln["asset_id"]], sector_left(ln["asset_id"]))
+        if ln["amount_eur"] > allowed:
+            clipped = round(allowed, 2)
             excess += ln["amount_eur"] - clipped
             ln["amount_eur"] = clipped
+        use_sector(ln["asset_id"], ln["amount_eur"])
     excess = round(excess, 2)
     for c, reasons in ranked:
         if excess <= 0:
             break
         have = next((ln for ln in lines if ln["asset_id"] == c["asset_id"]), None)
-        free = round(room[c["asset_id"]] - (have["amount_eur"] if have else 0), 2)
+        free = round(
+            min(
+                room[c["asset_id"]] - (have["amount_eur"] if have else 0),
+                sector_left(c["asset_id"]),
+            ),
+            2,
+        )
         give = round(min(excess, free), 2)
         if give <= 0:
             continue
@@ -983,6 +1066,7 @@ def _clamp_stock_lines(
             )
         else:
             continue
+        use_sector(c["asset_id"], give)
         excess = round(excess - give, 2)
     lines[:] = [ln for ln in lines if ln["amount_eur"] > 0]
     return excess

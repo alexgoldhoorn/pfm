@@ -404,3 +404,37 @@ def bookings(portfolio_id: Optional[int] = None, limit: int = 50) -> str:
     lines.append(f"Total withdrawn:   {_fmt_currency(total_wit)}")
     lines.append(f"Net cash in:       {_fmt_currency(total_dep - total_wit)}")
     return "\n".join(lines)
+
+
+@tool
+def position_caps() -> str:
+    """
+    The owner's concentration limits (per symbol, sector or asset type) with
+    each one's current weight, headroom and status (ok / near / breached).
+    Held stocks without their own cap show the default single-stock limit
+    (marked 'default'). Read-only: caps are set in the web app (Rebalance
+    page) or through the API.
+    """
+    try:
+        data = client._get("/api/v1/caps/status")
+    except Exception as e:
+        return f"Error fetching position caps: {e}"
+
+    caps = data.get("caps", [])
+    if not caps:
+        return "No position caps set and no held stocks."
+    lines = [
+        f"POSITION CAPS ({data.get('breached', 0)} breached, "
+        f"{data.get('near', 0)} near; portfolio {data.get('total_value_eur', 0):,.0f} EUR):"
+    ]
+    for c in caps:
+        tag = " (default)" if c.get("implicit") else ""
+        lines.append(
+            f"  [{str(c.get('status', '')).upper():8s}] {c.get('scope')} "
+            f"{c.get('key')}{tag}: {c.get('current_pct', 0):.1f}% of "
+            f"{c.get('max_pct', 0):g}%  headroom {c.get('headroom_pct', 0):+.1f} pts "
+            f"({c.get('headroom_eur', 0):+,.0f} EUR)"
+        )
+        if c.get("note"):
+            lines.append(f"      {c['note']}")
+    return "\n".join(lines)

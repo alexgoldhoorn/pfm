@@ -514,7 +514,10 @@ def _loan_summary(loans: list[dict], today: date) -> list[dict]:
 
 
 def readiness(
-    db, today: Optional[date] = None, fx: Optional[Callable[[str], float]] = None
+    db,
+    today: Optional[date] = None,
+    fx: Optional[Callable[[str], float]] = None,
+    investable_override_eur: Optional[float] = None,
 ) -> dict:
     """The retirement readiness response (spec 6.4).
 
@@ -522,6 +525,8 @@ def readiness(
         db: Database instance.
         today: reference date; defaults to today.
         fx: ``fx(currency)`` EUR rate; defaults to the live rate.
+        investable_override_eur: replaces the investments part of the pot (a
+            what-if, e.g. the stress test); cash and deposits are unchanged.
 
     Returns:
         ``status`` (``ok`` | ``needs_setup`` | ``insufficient_data``), the plan,
@@ -555,6 +560,8 @@ def readiness(
 
     sheet = build_balance_sheet(db, today=today, fx=fx)
     pot = _pot_from_sheet(db, sheet, fx)
+    if investable_override_eur is not None:
+        pot["investments_eur"] = max(0.0, float(investable_override_eur))
     loans = _loan_tables(db.get_loans())
     incomes = [
         {**i, "indexed": bool(i["indexed"])} for i in db.get_retirement_incomes()

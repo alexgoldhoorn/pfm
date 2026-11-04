@@ -3795,6 +3795,53 @@ function createAPIClient() {
             return resp.json();
         },
 
+        // Position / sector / asset-type caps.
+        async getCaps() {
+            const resp = await fetch(this.baseURL + '/api/v1/caps/', { headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+        async getCapStatus() {
+            const resp = await fetch(this.baseURL + '/api/v1/caps/status', { headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+        async createCap(body) {
+            const resp = await fetch(this.baseURL + '/api/v1/caps/', {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey }, body: JSON.stringify(body)
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Could not create cap');
+            return resp.json();
+        },
+        async updateCap(id, body) {
+            const resp = await fetch(this.baseURL + `/api/v1/caps/${encodeURIComponent(id)}`, {
+                method: 'PUT', headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey }, body: JSON.stringify(body)
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Could not update cap');
+            return resp.json();
+        },
+        async deleteCap(id) {
+            const resp = await fetch(this.baseURL + `/api/v1/caps/${encodeURIComponent(id)}`, {
+                method: 'DELETE', headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Could not delete cap');
+            return true;
+        },
+
+        // Shock stress test: presets and one run.
+        async getStressScenarios() {
+            const resp = await fetch(this.baseURL + '/api/v1/analytics/stress/scenarios', { headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error(await resp.text());
+            return resp.json();
+        },
+        async getStressTest(scenario) {
+            const resp = await fetch(this.baseURL + '/api/v1/analytics/stress?scenario=' + encodeURIComponent(scenario || 'equity_bear'), {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Stress test failed');
+            return resp.json();
+        },
+
         // Research scorecard: every stored report scored against the price.
         async getResearchScorecard(symbol) {
             const q = symbol ? '?symbol=' + encodeURIComponent(symbol) : '';

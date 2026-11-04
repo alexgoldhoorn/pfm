@@ -573,3 +573,131 @@ def return_attribution(
     if data.get("unpriced"):
         lines.append(f"  Unpriced at a boundary: {', '.join(data['unpriced'])}")
     return "\n".join(lines)
+
+
+@tool
+def stress_test(scenario: str = "equity_bear") -> str:
+    """
+    What a market shock would cost the held portfolio, funds looked through:
+    loss in EUR and % of the portfolio, by asset type and broker, the five
+    biggest losers, net worth before/after, and (when the retirement plan is
+    set up) the retirement verdicts before and after. Read-only.
+
+    Args:
+        scenario: 'equity_bear' (default), 'semis_crash', 'usd_down',
+            'rates_up', 'crypto_winter' or 'stagflation'.
+    """
+    try:
+        data = client._get("/api/v1/analytics/stress", {"scenario": scenario})
+    except Exception as e:
+        return f"Error running stress test: {e}"
+
+    lines = [f"STRESS TEST — {data.get('label', scenario)} ({scenario}):"]
+    lines.append(
+        f"  Loss: {_fmt_currency(data.get('loss_eur', 0))} "
+        f"({data.get('loss_pct_of_portfolio', 0):.1f}% of "
+        f"{_fmt_currency(data.get('portfolio_value_eur', 0))})"
+    )
+    lines.append(
+        f"  Net worth: {_fmt_currency(data.get('net_worth_before_eur', 0))} → "
+        f"{_fmt_currency(data.get('net_worth_after_eur', 0))}"
+    )
+    if data.get("by_asset_type"):
+        lines.append("  By asset type:")
+        for r in data["by_asset_type"]:
+            lines.append(
+                f"    {r.get('asset_type', '?'):14s} "
+                f"{_fmt_currency(r.get('loss_eur', 0)):>14s}  "
+                f"({r.get('loss_pct', 0):.1f}%)"
+            )
+    if data.get("by_portfolio"):
+        lines.append("  By broker:")
+        for r in data["by_portfolio"]:
+            lines.append(
+                f"    {r.get('portfolio', '?'):14s} "
+                f"{_fmt_currency(r.get('loss_eur', 0)):>14s}  "
+                f"({r.get('loss_pct', 0):.1f}%)"
+            )
+    if data.get("top_losers"):
+        lines.append("  Top losers:")
+        for r in data["top_losers"]:
+            lines.append(
+                f"    {r.get('symbol', '?'):14s} "
+                f"{_fmt_currency(r.get('loss_eur', 0)):>14s}  "
+                f"({r.get('loss_pct', 0):.1f}%)"
+            )
+    if data.get("assumed_equity"):
+        lines.append(
+            "  Funds without a profile, assumed all equity: "
+            + ", ".join(data["assumed_equity"])
+        )
+    ret = data.get("retirement_after")
+    if ret:
+        lines.append("  Retirement (verdict before → after):")
+        for b, a in zip(
+            ret.get("scenarios_before", []), ret.get("scenarios_after", [])
+        ):
+            lines.append(
+                f"    age {a.get('retirement_age')} {a.get('case')}: "
+                f"{b.get('verdict')} → {a.get('verdict')}"
+            )
+    else:
+        lines.append("  Retirement: plan not set up, not assessed.")
+    return "\n".join(lines)
+
+
+@tool
+def year_end_tax(year: Optional[int] = None) -> str:
+    """
+    Year-end tax planner (Spanish IRPF savings base): realised result and income
+    so far, losses still harvestable per position with the tax each would save,
+    losses carried forward from the previous four years, the 31 December
+    deadline and positions a recent buy would block. Estimate, not tax advice.
+
+    Args:
+        year: Tax year, default the current one.
+    """
+    try:
+        data = client._get(
+            "/api/v1/analytics/tax-optimizer", {"year": year} if year else None
+        )
+    except Exception as e:
+        return f"Error fetching year-end tax: {e}"
+
+    dl = data.get("deadline") or {}
+    cf = data.get("carry_forward") or {}
+    lines = [
+        f"YEAR-END TAX {data.get('year', year or '?')} "
+        f"(deadline {dl.get('date', '?')}, {dl.get('days_left', '?')} days left):",
+        f"  Realised gain:        {_fmt_currency(data.get('realised_gain_eur', 0))}",
+        f"  Dividends + interest: {_fmt_currency(data.get('income_eur', 0))}",
+        f"  Harvestable loss:     {_fmt_currency(data.get('harvestable_loss_eur', 0))}",
+        f"  Tax now:              {_fmt_currency(data.get('estimated_tax_now_eur', 0))}",
+        f"  Tax after harvest:    "
+        f"{_fmt_currency(data.get('estimated_tax_after_harvest_eur', 0))}",
+        f"  Estimated saving:     "
+        f"{_fmt_currency(data.get('estimated_tax_saved_eur', 0))}",
+        f"  Carried-forward loss: {_fmt_currency(cf.get('total_eur', 0))}",
+        f"  Base after carry-forward: "
+        f"{_fmt_currency(data.get('base_after_carry_forward_eur', 0))}",
+    ]
+    for y, v in sorted((cf.get("by_year") or {}).items()):
+        lines.append(f"    from {y}: {_fmt_currency(v)}")
+    cands = data.get("candidates") or []
+    if cands:
+        lines.append("  Candidates:")
+    for c in cands:
+        flag = " [recent buy: 2-month rule]" if c.get("wash_sale_risk") else ""
+        lines.append(
+            f"    {c.get('symbol')}: loss "
+            f"{_fmt_currency(c.get('unrealised_loss_eur', 0))}, saves "
+            f"{_fmt_currency(c.get('tax_saved_eur', 0))}{flag}"
+        )
+    for w in data.get("wash_blocked") or []:
+        lines.append(
+            f"  Blocked: {w.get('symbol')} (bought {w.get('last_buy')}, "
+            f"free from {w.get('until')})"
+        )
+    for n in data.get("notes") or []:
+        lines.append(f"  Note: {n}")
+    return "\n".join(lines)

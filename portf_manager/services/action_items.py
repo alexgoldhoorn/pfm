@@ -16,6 +16,9 @@ same displayed list. See docs/superpowers/specs/2026-07-16-action-items-design.m
 import re
 from datetime import date, datetime, timedelta
 
+from portf_manager.services.caps import check_position_caps
+from portf_manager.services.year_end_tax import check_year_end_tax
+
 STALE_IMPORT_DAYS = 60
 
 
@@ -598,6 +601,8 @@ def check_price_alerts(db) -> list[dict]:
         if twin is not None:
             twin["detail"] += f" Also crossed its research target ({triggers})."
             continue
+        since = min(t["first_seen"] for t in a["triggers"])
+        since_tag = f" Since {since}." if since < date.today().isoformat() else ""
         items.append(
             {
                 "id": f"research:{a['symbol']}",
@@ -610,6 +615,7 @@ def check_price_alerts(db) -> list[dict]:
                 "detail": (
                     f"Currently held: {a['quantity']} units, unrealised P&L "
                     f"{a['unrealized_pnl']} ({a['unrealized_pnl_pct']}%)."
+                    f"{since_tag}"
                 ),
                 "link_page": "research",
                 "context": {"symbol": a["symbol"]},
@@ -882,6 +888,8 @@ _CHECKS = (
     check_fund_exposure,
     check_recurring_charges,
     check_decision_reviews,
+    check_year_end_tax,
+    check_position_caps,
 )
 
 

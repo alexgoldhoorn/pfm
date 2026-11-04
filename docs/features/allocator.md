@@ -133,6 +133,20 @@ when `fx`/`fx_on` are passed explicitly (tests).
 An `amount` above deployable is allowed with a warning; `nothing_to_deploy` only
 applies when no amount was given and deployable is 0.
 
+**Position caps (schema v40).** `build_candidates` tags each non-managed candidate
+from `position_caps` (`symbol_cap_pct`, `sector`, `sector_cap_pct`,
+`sector_value_eur`; nothing is added without stored caps). A stock whose own
+symbol cap is tighter than `max_single_stock_pct` is ranked, excluded and clamped
+at the tighter figure (reason "would exceed the N % cap on SYM"); a looser symbol
+cap never raises the default. A sector cap excludes a stock whose sector is
+already over it (reason "would exceed the {sector} cap") and `_clamp_stock_lines`
+shares the sector's remaining room across its stocks, spilling the excess to
+stocks outside it. The sector name is resolved with the same lookup
+`compute_exposure` uses (`exposure._resolve_sector_country`), so it matches the
+`by_sector` key; `assets.sector` is not read. Asset-type caps are reported by
+`/caps/status` and the Action Items but are not enforced by the allocator, whose
+bucket targets already steer them.
+
 ## Endpoints (`portf_server/routers/allocate.py`, API key)
 
 - `GET /api/v1/allocate/deployable`: `status` (`ok`, `insufficient_data`),

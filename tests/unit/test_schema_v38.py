@@ -16,7 +16,7 @@ def test_fresh_db_is_current_and_has_v38_objects(tmp_path):
         version = conn.execute("SELECT MAX(version) FROM database_version").fetchone()[
             0
         ]
-    assert version == DATABASE_VERSION == 39
+    assert version == DATABASE_VERSION
     assert "decisions" in names
     assert "is_managed" in cols
 

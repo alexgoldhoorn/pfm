@@ -2409,7 +2409,7 @@ async function loadAnalyticsTax() {
                     <tbody>${candRows}</tbody>
                 </table>
             </div>
-            ${d.note ? `<p class="text-muted small mb-0"><em>${d.note}</em></p>` : ''}`;
+            ${d.note ? `<p class="text-muted small mb-0"><em>${esc(d.note)}</em></p>` : ''}`;
         initTooltips();
     } catch (err) {
         body.innerHTML = `<div class="text-danger small">Error loading tax estimate: ${esc(err.message)}</div>`;
@@ -2422,7 +2422,7 @@ const _AN_TAB_MAP = {
     anTabDividends:   { key: 'dividends',   loader: () => { loadAnalyticsDividends(); } },
     anTabGainLoss:    { key: 'gainloss',    loader: () => { loadAnalyticsGainLoss(); } },
     anTabTax:         { key: 'tax',         loader: () => { loadAnalyticsTax(); loadAnalyticsTaxReport(); loadTaxOptimizer(); } },
-    anTabRisk:        { key: 'risk',        loader: () => { loadAnalyticsRisk(); _wireDiversificationButtons(); } },
+    anTabRisk:        { key: 'risk',        loader: () => { loadAnalyticsRisk(); _wireDiversificationButtons(); loadStressCard(); } },
     anTabFees:        { key: 'fees',        loader: () => { loadAnalyticsFees(); } },
     anTabStress:      { key: 'stress',      loader: () => { loadAnalyticsStress('2008'); } },
     anTabPortfolios:  { key: 'portfolios',  loader: () => { loadPortfolioComparison(); } },
@@ -2618,6 +2618,127 @@ function downloadTaxReportCsv() {
     URL.revokeObjectURL(url);
 }
 
+// ── Stress test (Analytics → Risk) ──────────────────────────────────────────
+// First scenario row of each side of retirement_after, as "verdict → verdict".
+function _stressVerdict(v) { return String(v || 'n/a').replace(/_/g, ' '); }
+
+function stressSummaryHtml(r) {
+    r = r || {};
+    const eur = (v) => Fmt.amt(esc(Fmt.money(v, 'EUR', 0)));
+    const pct = r.loss_pct_of_portfolio != null ? `${esc(Fmt.num(r.loss_pct_of_portfolio, 1, 1))}%` : '';
+    const types = (r.by_asset_type || []).map(t => `<tr>
+        <td>${esc(t.asset_type)}</td><td class="text-end">${eur(t.value_eur)}</td>
+        <td class="text-end text-danger">${eur(t.loss_eur)}</td><td class="text-end">${esc(Fmt.num(t.loss_pct, 1, 1))}%</td></tr>`).join('');
+    const losers = (r.top_losers || []).map(l => `<li class="d-flex justify-content-between gap-2">
+        <span class="text-truncate"><strong>${esc(l.symbol)}</strong> <span class="text-muted">${esc(l.name || '')}</span></span>
+        <span class="text-danger text-nowrap">${eur(l.loss_eur)} <span class="text-muted">(${esc(Fmt.num(l.loss_pct, 1, 1))}%)</span></span></li>`).join('');
+    const assumed = (r.assumed_equity || []).length
+        ? `<p class="small text-muted mt-2 mb-0"><i class="bi bi-exclamation-circle me-1"></i>Assumed to be all equity (no fund profile): ${(r.assumed_equity || []).map(esc).join(', ')}.</p>` : '';
+    const ra = r.retirement_after;
+    let retire = '';
+    if (ra && (ra.scenarios_before || []).length && (ra.scenarios_after || []).length) {
+        const b = ra.scenarios_before[0], a = ra.scenarios_after[0];
+        retire = `<p class="small mb-2"><i class="bi bi-hourglass-split me-1"></i>Retirement${b.retirement_age != null ? ' at ' + esc(String(b.retirement_age)) : ''}: <strong>${esc(_stressVerdict(b.verdict))}</strong> → <strong class="${a.verdict !== b.verdict ? 'text-danger' : ''}">${esc(_stressVerdict(a.verdict))}</strong>${a.lasts_until_age != null ? ` <span class="text-muted">(lasts until ${esc(String(a.lasts_until_age))})</span>` : ''}</p>`;
+    }
+    return `<div class="d-flex flex-wrap align-items-baseline mb-3" style="column-gap:1.5rem;row-gap:.25rem;">
+            <div><span class="fs-4 fw-bold text-danger">−${eur(Math.abs(parseFloat(r.loss_eur) || 0))}</span> <span class="text-danger">${pct ? '−' + pct : ''}</span></div>
+            <div class="small text-muted">Net worth ${eur(r.net_worth_before_eur)} → <strong class="text-body">${eur(r.net_worth_after_eur)}</strong></div>
+        </div>
+        ${retire}
+        <div class="row g-3">
+            <div class="col-12 col-md-7"><h6 class="small text-uppercase text-muted">By asset type</h6>
+                <div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>Type</th><th class="text-end">Value</th><th class="text-end">Loss</th><th class="text-end">%</th></tr></thead><tbody>${types || '<tr><td colspan="4" class="text-muted">Nothing held.</td></tr>'}</tbody></table></div></div>
+            <div class="col-12 col-md-5"><h6 class="small text-uppercase text-muted">Top losers</h6>
+                <ul class="list-unstyled small mb-0">${losers || '<li class="text-muted">None.</li>'}</ul></div>
+        </div>${assumed}`;
+}
+window.stressSummaryHtml = stressSummaryHtml;
+
+function _stressChosen() {
+    try { return localStorage.getItem('pfm.stressScenario') || ''; } catch (e) { return ''; }
+}
+
+async function runShockStress() {
+    const body = document.getElementById('anShockBody');
+    const sel = document.getElementById('anShockSelect');
+    if (!body || !sel || !sel.value) return;
+    try { localStorage.setItem('pfm.stressScenario', sel.value); } catch (e) { /* storage unavailable */ }
+    body.innerHTML = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading…</div>';
+    try {
+        const r = await window.apiClient.getStressTest(sel.value);
+        const desc = (sel._scen || {})[sel.value];
+        body.innerHTML = (desc ? `<p class="small text-muted">${esc(desc)}</p>` : '') + stressSummaryHtml(r);
+    } catch (err) {
+        body.innerHTML = `<div class="text-danger small">Error running stress test: ${esc(err.message)}</div>`;
+    }
+}
+
+async function loadStressCard() {
+    const sel = document.getElementById('anShockSelect');
+    const body = document.getElementById('anShockBody');
+    if (!sel || !body) return;
+    const help = document.getElementById('anShockHelp');
+    if (help) help.setAttribute('title', (window.METRIC_HELP || {}).stressTest || '');
+    try {
+        if (!sel.options.length) {
+            const d = await window.apiClient.getStressScenarios();
+            const list = d.scenarios || [];
+            sel._scen = {};
+            sel.innerHTML = list.map(s => { sel._scen[s.name] = s.description || ''; return `<option value="${esc(s.name)}">${esc(s.label || s.name)}</option>`; }).join('');
+            const chosen = _stressChosen();
+            if (chosen && list.some(s => s.name === chosen)) sel.value = chosen;
+            sel.addEventListener('change', runShockStress);
+        }
+        await runShockStress();
+    } catch (err) {
+        body.innerHTML = `<div class="text-danger small">Error loading stress scenarios: ${esc(err.message)}</div>`;
+    }
+    initTooltips();
+}
+window.loadStressCard = loadStressCard;
+
+// Year-end tax planner extras: deadline, carry-forward and base lines.
+function taxDeadlineHtml(opt) {
+    opt = opt || {};
+    const out = [];
+    const dl = opt.deadline;
+    if (dl && dl.days_left != null) {
+        const d = parseInt(dl.days_left, 10);
+        const cls = d <= 30 ? 'text-danger' : 'text-body';
+        out.push(`<p class="small mb-1"><i class="bi bi-calendar-event me-1"></i><strong class="${cls}">${esc(String(d))} ${d === 1 ? 'day' : 'days'}</strong> to ${esc(Fmt.date(dl.date) || 'year end')} to realise losses.</p>`);
+    }
+    const cf = opt.carry_forward;
+    if (cf && parseFloat(cf.total_eur)) {
+        const years = Object.keys(cf.by_year || {}).sort().map(y => `${esc(y)}: ${anFmtEur2(cf.by_year[y])}`).join(', ');
+        out.push(`<p class="small mb-1"><i class="bi bi-arrow-return-right me-1"></i>Loss carry-forward: <strong>${anFmtEur2(cf.total_eur)}</strong>${years ? ` <span class="text-muted">(${years})</span>` : ''}.</p>`);
+    }
+    if (opt.base_after_carry_forward_eur != null) {
+        out.push(`<p class="small mb-1">Taxable base after carry-forward: <strong>${anFmtEur2(opt.base_after_carry_forward_eur)}</strong>.</p>`);
+    }
+    return out.join('');
+}
+window.taxDeadlineHtml = taxDeadlineHtml;
+
+// Candidate row: loss, last buy, tax saved, status (2-month rule marker).
+function taxCandidateRowHtml(c, blockedMap) {
+    const blocked = (blockedMap || {})[String(c.symbol).toUpperCase()];
+    let status;
+    if (blocked) {
+        status = `<span class="badge bg-warning text-dark">blocked by the 2-month rule${blocked.until ? ' until ' + esc(Fmt.date(blocked.until)) : ''}</span>`;
+    } else if (c.wash_sale_risk) {
+        status = '<span class="badge bg-warning text-dark" title="Bought in the last 60 days: Spain disallows the loss within 2 months">2-month rule</span>';
+    } else {
+        status = `<span class="badge bg-success">harvestable</span>${c.can_harvest_until ? ` <span class="small text-muted">until ${esc(Fmt.date(c.can_harvest_until))}</span>` : ''}`;
+    }
+    return `<tr class="${blocked || c.wash_sale_risk ? 'text-muted' : ''}">
+        <td><strong>${esc(c.symbol)}</strong> <span class="small text-muted">${esc(c.name || '')}</span></td>
+        <td class="text-end text-danger">${anFmtEur2(c.unrealised_loss_eur)}</td>
+        <td class="text-end ${blocked || c.wash_sale_risk ? '' : 'text-success'}">${c.tax_saved_eur != null ? anFmtEur2(c.tax_saved_eur) : '—'}</td>
+        <td>${c.last_buy ? esc(Fmt.date(c.last_buy)) : '—'}</td>
+        <td>${status}</td></tr>`;
+}
+window.taxCandidateRowHtml = taxCandidateRowHtml;
+
 // Year-end tax optimizer: current vs after-harvest tax + candidate list.
 async function loadTaxOptimizer() {
     const body = document.getElementById('anTaxOptimizerBody');
@@ -2628,16 +2749,10 @@ async function loadTaxOptimizer() {
         const d = await window.apiClient.getTaxOptimizer(year);
         const saved = d.estimated_tax_saved_eur || 0;
         const cands = d.candidates || [];
-        const rows = cands.length ? cands.map(c => `
-            <tr class="${c.wash_sale_risk ? 'text-muted' : ''}">
-                <td><strong>${esc(c.symbol)}</strong> <span class="small text-muted">${esc(c.name || '')}</span></td>
-                <td class="text-end text-danger">${anFmtEur2(c.unrealised_loss_eur)}</td>
-                <td>${c.last_buy ? Fmt.date(c.last_buy) : '—'}</td>
-                <td>${c.wash_sale_risk
-                    ? '<span class="badge bg-warning text-dark" title="Bought in the last 60 days — Spain disallows the loss within 2 months">2-month rule</span>'
-                    : '<span class="badge bg-success">harvestable</span>'}</td>
-            </tr>`).join('')
-            : '<tr><td colspan="4" class="text-center text-muted small">No positions at a loss to harvest.</td></tr>';
+        const blockedMap = {};
+        (d.wash_blocked || []).forEach(w => { blockedMap[String(w.symbol).toUpperCase()] = w; });
+        const rows = cands.length ? cands.map(c => taxCandidateRowHtml(c, blockedMap)).join('')
+            : '<tr><td colspan="5" class="text-center text-muted small">No positions at a loss to harvest.</td></tr>';
         body.innerHTML = `
             <div class="row g-3 mb-3">
                 <div class="col-6 col-md-3"><div class="border rounded p-3 h-100"><div class="small text-muted mb-1">Realised gains ${year}</div><div class="fw-bold ${d.realised_gain_eur >= 0 ? 'text-success' : 'text-danger'}">${anFmtEur2(d.realised_gain_eur)}</div></div></div>
@@ -2645,14 +2760,16 @@ async function loadTaxOptimizer() {
                 <div class="col-6 col-md-3"><div class="border rounded p-3 h-100"><div class="small text-muted mb-1" data-bs-toggle="tooltip" title="Sum of losses you can still harvest this year (excludes positions bought in the last 60 days).">Harvestable losses</div><div class="fw-bold text-danger">${anFmtEur2(d.harvestable_loss_eur)}</div></div></div>
                 <div class="col-6 col-md-3"><div class="border rounded p-3 h-100 ${saved > 0 ? 'bg-success-subtle' : ''}"><div class="small text-muted mb-1">Est. tax saved</div><div class="fw-bold ${saved > 0 ? 'text-success' : ''}">${anFmtEur2(saved)}</div></div></div>
             </div>
+            ${taxDeadlineHtml(d)}
             <p class="small mb-3">Estimated IRPF now: <strong>${anFmtEur2(d.estimated_tax_now_eur)}</strong> → after harvesting eligible losses: <strong>${anFmtEur2(d.estimated_tax_after_harvest_eur)}</strong>.</p>
             <div class="table-responsive">
                 <table class="table table-sm table-hover mb-2">
-                    <thead><tr><th>Position</th><th class="text-end">Unrealised loss</th><th>Last buy</th><th>Status</th></tr></thead>
+                    <thead><tr><th>Position</th><th class="text-end">Unrealised loss</th><th class="text-end" data-bs-toggle="tooltip" title="Marginal IRPF saved by selling this position at a loss">Tax saved</th><th>Last buy</th><th>Status</th></tr></thead>
                     <tbody>${rows}</tbody>
                 </table>
             </div>
-            ${d.note ? `<p class="text-muted small mb-0"><em>${d.note}</em></p>` : ''}`;
+            ${d.note ? `<p class="text-muted small mb-0"><em>${esc(d.note)}</em></p>` : ''}
+            ${(d.notes || []).map(n => `<p class="text-muted small mb-0">${esc(n)}</p>`).join('')}`;
         initTooltips();
     } catch (err) {
         body.innerHTML = `<div class="text-danger small">Error loading tax optimizer: ${esc(err.message)}</div>`;

@@ -389,9 +389,29 @@ def get_scorecard(
     api_key_info: dict = Depends(_auth),
 ):
     """Score every stored research report against what the price did."""
-    from portf_manager.services.research_scorecard import compute_scorecard
+    from portf_manager.services.research_scorecard import (
+        calibration,
+        compute_scorecard,
+    )
 
-    return compute_scorecard(db, symbol=symbol.upper() if symbol else None)
+    result = compute_scorecard(db, symbol=symbol.upper() if symbol else None)
+    # Calibration always covers every symbol, whatever the filter.
+    result["calibration"] = calibration(db)
+    return result
+
+
+def _track_record(db) -> Optional[str]:
+    """The prompt paragraph on how earlier reports scored (None if too few)."""
+    from portf_manager.services.research_scorecard import (
+        calibration,
+        track_record_text,
+    )
+
+    try:
+        return track_record_text(calibration(db))
+    except Exception as e:
+        logger.warning(f"track record unavailable: {e}")
+        return None
 
 
 @router.get("/history/{symbol}")
@@ -448,6 +468,7 @@ def generate_report(
         currency=currency,
         fundamentals=fundamentals,
         news=news,
+        track_record=_track_record(db),
     )
 
     if result.get("error"):
@@ -506,6 +527,22 @@ def lookup(symbol: str, db=Depends(get_database), api_key_info: dict = Depends(_
     unrealised = market_value - cost_basis if qty > 0 else 0.0
     unrealised_pct = (unrealised / cost_basis * 100) if cost_basis > 0 else None
 
+    # Shrink the stored LLM report's fair value by the scorecard track record.
+    calibrated = None
+    stored = db.get_research_report(asset["id"]) if asset else None
+    if stored and stored.get("fair_value") is not None:
+        from portf_manager.services.research_scorecard import (
+            calibrate_report,
+            calibration,
+        )
+
+        try:
+            calibrated = calibrate_report(
+                calibration(db), stored.get("confidence"), price, stored["fair_value"]
+            )
+        except Exception as e:
+            logger.warning(f"calibration unavailable for {sym}: {e}")
+
     return {
         "symbol": sym,
         "name": asset.get("name") if asset else sym,
@@ -529,6 +566,7 @@ def lookup(symbol: str, db=Depends(get_database), api_key_info: dict = Depends(_
         "transactions": transactions,
         "cost_evolution": cost_evolution,
         "latest_note": notes[0] if notes else None,
+        "calibration": calibrated,
     }
 
 
@@ -864,6 +902,8 @@ def _run_bulk_research_refresh(db) -> None:
     )
     try:
         candidates = get_symbols_needing_refresh(db)
+        # Built once per run, not per symbol.
+        track_record = _track_record(db)
         _BULK_RESEARCH["total"] = len(candidates)
         watchlist_symbols = {
             (w.get("symbol") or "").upper() for w in db.get_watchlist()
@@ -887,6 +927,7 @@ def _run_bulk_research_refresh(db) -> None:
                     currency=currency,
                     fundamentals=fundamentals,
                     news=news,
+                    track_record=track_record,
                 )
                 usable = any(
                     result.get(k) is not None
@@ -978,8 +1019,15 @@ def _run_bulk_research_refresh(db) -> None:
         )
 
 
-def compute_price_target_alerts(db) -> list[dict]:
+def compute_price_target_alerts(
+    db, today: Optional[date] = None, record: bool = False
+) -> list[dict]:
     """Compare all price targets against latest stored prices.
+
+    Each trigger carries ``first_seen`` and ``is_new`` from the
+    ``price_alert_state`` setting. With ``record=True`` the state is written
+    (current crossings upserted, cleared ones dropped so a re-crossing is new
+    again); otherwise nothing is written.
 
     Pure computation (no push-notification side effect) so other call sites
     (the Action Items aggregator) can reuse it without re-triggering a push
@@ -992,6 +1040,15 @@ def compute_price_target_alerts(db) -> list[dict]:
     # not the owner's to trade: no signal, however far the price moved.
     managed_ids = managed_portfolio_ids(db)
     actionable = self_managed_held_asset_ids(transactions, managed_ids)
+
+    today_s = (today or date.today()).isoformat()
+    try:
+        state = json.loads(db.get_setting("price_alert_state") or "{}")
+        if not isinstance(state, dict):
+            state = {}
+    except ValueError:
+        state = {}
+    active: dict[str, dict] = {}
 
     alerts = []
     for pt in db.get_all_price_targets():
@@ -1013,6 +1070,17 @@ def compute_price_target_alerts(db) -> list[dict]:
             triggered.append(
                 {"type": "SELL", "threshold": pt["sell_above"], "price": price}
             )
+        for t in triggered:
+            key = f"{asset_id}:{t['type']}"
+            prev = state.get(key) if isinstance(state.get(key), dict) else {}
+            first_seen = prev.get("first_seen") or today_s
+            t["first_seen"] = first_seen
+            t["is_new"] = first_seen == today_s
+            active[key] = {
+                "first_seen": first_seen,
+                "last_seen": today_s,
+                "notified": prev.get("notified"),
+            }
         if triggered:
             asset = db.get_asset(asset_id) or {}
             pos = positions.get(asset_id, {"quantity": 0.0, "cost": 0.0})
@@ -1040,16 +1108,24 @@ def compute_price_target_alerts(db) -> list[dict]:
                     "triggers": triggered,
                 }
             )
+    if record and active != state:
+        db.set_setting("price_alert_state", json.dumps(active, sort_keys=True))
     return alerts
 
 
 @router.get("/alerts/check")
-async def check_alerts(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+async def check_alerts(
+    record: bool = False,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
     """
     Compare all price targets against latest stored prices.
     Returns triggered alerts (does NOT send Telegram — use the cron for that).
+    ``record=true`` (the cron) stores the crossings so tomorrow's run sees them
+    as standing; the default reads without writing.
     """
-    alerts = compute_price_target_alerts(db)
+    alerts = compute_price_target_alerts(db, record=record)
     # Dispatch push notifications for triggered alerts
     if alerts:
         try:
@@ -1058,4 +1134,10 @@ async def check_alerts(db=Depends(get_database), api_key_info: dict = Depends(_a
             send_alerts_push(db, alerts)
         except Exception as e:
             logger.warning(f"Push notification dispatch failed: {e}")
-    return {"alerts": alerts, "total": len(alerts)}
+    flags = [t["is_new"] for a in alerts for t in a["triggers"]]
+    return {
+        "alerts": alerts,
+        "total": len(alerts),
+        "new": sum(flags),
+        "standing": len(flags) - sum(flags),
+    }

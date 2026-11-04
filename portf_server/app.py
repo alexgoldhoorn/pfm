@@ -51,6 +51,7 @@ from .routers import (
     allocate,
     retirement,
     wealth_scenarios,
+    caps,
     decisions,
     market,
     system,
@@ -449,6 +450,13 @@ app.include_router(
     wealth_scenarios.router,
     prefix="/api/v1/wealth-scenarios",
     tags=["Wealth Scenarios"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    caps.router,
+    prefix="/api/v1/caps",
+    tags=["Caps"],
     dependencies=_PROTECTED,
 )
 

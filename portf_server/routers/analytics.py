@@ -44,7 +44,6 @@ from portf_manager.services.progress import (
     is_fund_like,
     latent_tax,
     savings_and_buffer,
-    savings_tax,
     window_return,
 )
 from portf_manager.services.risk_metrics import (
@@ -932,95 +931,9 @@ def get_tax_optimizer(
     """Year-end tax optimisation: realised gains + income this year, the losses
     you could still harvest (flagging recent buys that trip Spain's 2-month
     rule), and the estimated tax saved by harvesting them. Informational only."""
-    yr = year or date.today().year
-    today = date.today()
-    start, end = date(yr, 1, 1), date(yr, 12, 31)
+    from portf_manager.services.year_end_tax import compute_year_end_tax
 
-    # Realised gains (FIFO) this year
-    realised_gain = 0.0
-    calc = TaxCalculator(db)
-    try:
-        report = calc.calculate_tax_report(user_id=1, start_date=start, end_date=end)
-        for sym, txns in report.items():
-            a = db.get_asset_by_symbol(sym)
-            currency = ((a or {}).get("currency") or "EUR").upper()
-            for t in txns:
-                proceeds_eur, cost_eur = _lot_eur_amounts(db, currency, t)
-                realised_gain += proceeds_eur - cost_eur
-    except Exception as e:
-        logger.warning(f"Tax optimizer realised calc failed: {e}")
-
-    # Income this year (dividends + interest) at transaction-date FX
-    all_txns = db.get_all_transactions()
-    div_this_year, interest_this_year = _savings_income_eur(db, all_txns, yr)
-    income = div_this_year + interest_this_year
-
-    # Harvest candidates: held positions at an unrealised loss, with the most
-    # recent buy date so we can flag Spain's 2-month anti-application rule.
-    positions, _ = _compute_positions(db)
-    candidates = []
-    harvestable = 0.0  # sum of clean (non-wash) losses, negative
-    for aid, pos in positions.items():
-        if pos["quantity"] <= 0:
-            continue
-        asset = db.get_asset(aid)
-        if not asset:
-            continue
-        cur = asset.get("currency", "EUR")
-        pd_ = db.get_latest_price(aid)
-        price = float(pd_["price"]) if pd_ else 0.0
-        gain = (pos["quantity"] * price - pos["cost"]) * _fx(cur)
-        if gain >= -1:
-            continue
-        last_buy = None
-        for tx in db.get_transactions_by_asset(aid):
-            if (tx.get("transaction_type") or "").lower() == "buy":
-                d = str(tx.get("transaction_date", ""))[:10]
-                if d and (last_buy is None or d > last_buy):
-                    last_buy = d
-        wash = False
-        if last_buy:
-            try:
-                wash = (
-                    today - datetime.strptime(last_buy, "%Y-%m-%d").date()
-                ).days < 60
-            except ValueError:
-                wash = False
-        if not wash:
-            harvestable += gain
-        candidates.append(
-            {
-                "symbol": asset["symbol"],
-                "name": asset.get("name", asset["symbol"]),
-                "quantity": round(pos["quantity"], 4),
-                "unrealised_loss_eur": round(gain, 2),
-                "last_buy": last_buy,
-                "wash_sale_risk": wash,
-            }
-        )
-    candidates.sort(key=lambda x: x["unrealised_loss_eur"])
-
-    # Current vs after-harvest tax (see progress.savings_tax for the rules).
-    tax_current = savings_tax(realised_gain, income)
-    tax_after = savings_tax(realised_gain + harvestable, income)
-
-    return {
-        "year": yr,
-        "realised_gain_eur": round(realised_gain, 2),
-        "dividend_income_eur": round(div_this_year, 2),
-        "interest_income_eur": round(interest_this_year, 2),
-        "income_eur": round(income, 2),
-        "harvestable_loss_eur": round(harvestable, 2),
-        "estimated_tax_now_eur": tax_current,
-        "estimated_tax_after_harvest_eur": tax_after,
-        "estimated_tax_saved_eur": round(tax_current - tax_after, 2),
-        "candidates": candidates,
-        "note": (
-            "Estimate, not tax advice. Spain disallows a loss if you hold/rebuy "
-            "the same security within 2 months — candidates bought in the last "
-            "60 days are flagged; avoid rebuying harvested positions for 2 months."
-        ),
-    }
+    return compute_year_end_tax(db, year)
 
 
 # ── Diversification & Risk ─────────────────────────────────────────────────────
@@ -2210,3 +2123,55 @@ def get_portfolio_comparison(
 
     results.sort(key=lambda x: -x["current_value_eur"])
     return results
+
+
+# ── Shock stress test ─────────────────────────────────────────────────────────
+
+
+class StressRequest(BaseModel):
+    """Custom stress shocks: ``{dimension: {key: percent}}``."""
+
+    shocks: dict
+
+
+@router.get("/stress/scenarios")
+def get_stress_scenarios(api_key_info: dict = Depends(_auth)):
+    """The preset shock scenarios and their shocks."""
+    from portf_manager.services.stress import list_scenarios
+
+    return {"scenarios": list_scenarios()}
+
+
+@router.get("/stress")
+def get_stress(
+    scenario: str = Query("equity_bear"),
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Loss from a preset shock, with the retirement verdict recomputed."""
+    from portf_manager.services.stress import SCENARIOS, run_stress
+
+    preset = SCENARIOS.get(scenario)
+    if preset is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Unknown scenario {scenario!r}; use one of {list(SCENARIOS)}",
+        )
+    result = run_stress(db, preset["shocks"], fx=_fx)
+    return {"scenario": scenario, "label": preset["label"], **result}
+
+
+@router.post("/stress")
+def post_stress(
+    body: StressRequest,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Loss from a custom shock body."""
+    from portf_manager.services.stress import run_stress
+
+    try:
+        result = run_stress(db, body.shocks, fx=_fx)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return {"scenario": "custom", "label": "Custom", **result}

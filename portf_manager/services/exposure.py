@@ -292,6 +292,8 @@ def compute_exposure(
     return {
         "total_value_eur": round(total, 2),
         "by_asset_type": pct_map(by_type),
+        "by_position": pct_map(by_position),
+        "position_value_eur": {k: round(v, 2) for k, v in by_position.items()},
         "by_asset_class": pct_map(by_class),
         "by_currency": pct_map(by_currency),
         "by_currency_exposure": pct_map(by_currency_exposure),

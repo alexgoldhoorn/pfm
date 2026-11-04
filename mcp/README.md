@@ -105,6 +105,9 @@ Never print to stdout from a tool: stdout is the protocol channel.
 | `allocation_candidates` | What the next euro could buy |
 | `allocator_settings` | The allocator's configuration |
 | `return_attribution` | What drove the return: gain per holding, type and broker |
+| `position_caps` | Position, sector and asset-type caps vs current weights: headroom in € and pp, ok/near/breached, plus the implicit single-stock cap |
+| `stress_test` | Shock the held portfolio through the fund look-through (presets: equity_bear, semis_crash, usd_down, rates_up, crypto_winter, stagflation): loss, top losers, net worth before/after, retirement verdict after |
+| `year_end_tax` | Year-end IRPF planner: realised gains and income, harvestable losses with the tax each would save, 2-month-rule blocks, loss carry-forward from prior years, days to 31 December |
 | `decisions` | The decision journal with the price move since each call |
 | `research_scorecard` | How good past research targets were, per report and in total |
 

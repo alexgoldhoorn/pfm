@@ -17,7 +17,7 @@ def test_fresh_db_has_research_history(tmp_path):
         version = conn.execute("SELECT MAX(version) FROM database_version").fetchone()[
             0
         ]
-    assert version == DATABASE_VERSION == 39
+    assert version == DATABASE_VERSION
     assert "research_history" in names
     assert "idx_research_history_symbol" in idx
 

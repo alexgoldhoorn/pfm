@@ -210,3 +210,94 @@ class TestScorecardApi:
             "2025-01-10",
         ]
         assert {r["source"] for r in rows} == {"llm", "bulk", "manual"}
+
+
+class TestCalibration:
+    def test_small_history_uses_next_basis(self, seeded):
+        from portf_manager.services.research_scorecard import calibration
+
+        cal = calibration(seeded, today=TODAY)
+        overall = cal["overall"]
+        assert overall["basis"] == "at_next"
+        assert (
+            overall["n"]
+            == compute_scorecard(seeded, today=TODAY)["totals"]["at_next"]["n"]
+        )
+        assert set(cal["by_confidence"]) == {"high", "low"}
+
+    def test_shrink_factor_is_clamped_ratio(self):
+        from portf_manager.services.research_scorecard import _calibration_block
+
+        def both(n, implied, realised):
+            agg = {
+                "n": n,
+                "direction_hit_rate_pct": 60.0,
+                "median_abs_target_error_pct": 12.0,
+                "mean_implied_return_pct": implied,
+                "mean_realised_return_pct": realised,
+            }
+            return {"at_horizon": agg, "at_next": agg}
+
+        assert _calibration_block(both(12, 20.0, 10.0))["shrink_factor"] == 0.5
+        assert _calibration_block(both(12, 20.0, 10.0))["implied_vs_realised"] == 2.0
+        # realised beyond implied is capped at 1.0, a tiny one floored at 0.1
+        assert _calibration_block(both(12, 10.0, 30.0))["shrink_factor"] == 1.0
+        assert _calibration_block(both(12, 50.0, 1.0))["shrink_factor"] == 0.1
+        # no positive realised return: no factor and no ratio
+        blank = _calibration_block(both(12, 20.0, -5.0))
+        assert blank["shrink_factor"] is None
+        assert blank["implied_vs_realised"] is None
+        assert _calibration_block(both(12, None, 5.0))["shrink_factor"] is None
+
+    def test_horizon_basis_from_ten_scored_reports(self, test_database):
+        from portf_manager.services.research_scorecard import calibration
+
+        db = test_database
+        aid = db.create_asset("EXM", "Example Corp", "stock", currency="EUR")
+        db.create_price(aid, 100.0, "2024-01-02")
+        db.create_price(aid, 110.0, "2025-01-02")
+        for i in range(10):
+            _hist(db, aid, f"2024-01-{i + 2:02d}", "BUY", 130.0, 100.0)
+            db.create_price(aid, 110.0, f"2025-01-{i + 2:02d}")
+        overall = calibration(db, today=TODAY)["overall"]
+        assert overall["basis"] == "at_horizon" and overall["n"] == 10
+        assert overall["direction_hit_rate_pct"] == 100.0
+        assert overall["shrink_factor"] == pytest.approx(0.333, abs=0.001)
+
+    def test_result_is_cached(self, seeded):
+        from portf_manager.services.research_scorecard import calibration
+
+        first = calibration(seeded, today=TODAY)
+        with seeded.get_connection() as conn:
+            conn.execute("DELETE FROM research_history")
+            conn.commit()
+        assert calibration(seeded, today=TODAY) == first
+
+    def test_track_record_text_needs_ten_reports(self):
+        from portf_manager.services.research_scorecard import track_record_text
+
+        block = {
+            "n": 12,
+            "direction_hit_rate_pct": 58.3,
+            "median_abs_target_error_pct": 14.2,
+        }
+        text = track_record_text({"overall": block})
+        assert "last 12 scored reports" in text and "58%" in text and "14%" in text
+        assert track_record_text({"overall": {**block, "n": 9}}) is None
+        assert track_record_text(None) is None
+        assert (
+            track_record_text(
+                {"overall": {**block, "n": 11, "direction_hit_rate_pct": None}}
+            )
+            is None
+        )
+
+    @pytest.mark.asyncio
+    async def test_scorecard_endpoint_carries_calibration(
+        self, async_test_client: AsyncClient, auth_headers, seeded
+    ):
+        resp = await async_test_client.get(
+            "/api/v1/research/scorecard?symbol=exm", headers=auth_headers
+        )
+        cal = resp.json()["calibration"]
+        assert set(cal) == {"as_of", "overall", "by_confidence"}

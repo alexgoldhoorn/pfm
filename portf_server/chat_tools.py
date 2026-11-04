@@ -919,6 +919,16 @@ def _record_decision(
     )
 
 
+@_tool("get_year_end_tax")
+def _get_year_end_tax(db: Database, year: Optional[int] = None) -> str:
+    """Year-end tax planner: realised result, harvestable losses, carry-forward."""
+    from portf_manager.services.year_end_tax import compute_year_end_tax
+
+    out = compute_year_end_tax(db, int(year) if year else None)
+    out["candidates"] = out["candidates"][:10]
+    return _j(out)
+
+
 @_tool("get_diagnostics")
 def _get_diagnostics(db: Database) -> str:
     """Price-data health, last update runs, open data-quality counts, recent errors."""
@@ -1496,4 +1506,73 @@ TOOLS: list[ToolDefinition] = [
             },
         ],
     ),
+    ToolDefinition(
+        name="get_stress_test",
+        description=(
+            "What a market shock would cost the held portfolio, funds looked "
+            "through: loss in EUR and %, by asset type and broker, the five "
+            "biggest losers, net worth before/after and the retirement verdict "
+            "recomputed. Scenarios: equity_bear, semis_crash, usd_down, "
+            "rates_up, crypto_winter, stagflation. Use for 'what if stocks "
+            "drop 30%' or 'how exposed am I to the dollar'."
+        ),
+        parameters=[
+            {
+                "name": "scenario",
+                "type": "string",
+                "description": "Preset name; default equity_bear.",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="get_year_end_tax",
+        description=(
+            "Year-end tax planner (Spanish IRPF savings base): realised gains and "
+            "income so far, losses still harvestable per position with the tax "
+            "each would save, losses carried forward from the last four years, "
+            "the 31 December deadline and positions a recent buy would block. "
+            "Use for 'what can I do about taxes before year end'."
+        ),
+        parameters=[
+            {
+                "name": "year",
+                "type": "integer",
+                "description": "Tax year, default the current one.",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="get_position_caps",
+        description=(
+            "The user's concentration limits (per symbol, sector or asset type) "
+            "with current weight, headroom in points and EUR, and whether each is "
+            "ok, near or breached. Held stocks without their own cap show the "
+            "default single-stock limit. Check before proposing a purchase."
+        ),
+        parameters=[],
+    ),
 ]
+
+
+@_tool("get_stress_test")
+def _get_stress_test(db: Database, scenario: str = "equity_bear") -> str:
+    """Loss from a preset shock scenario applied to the held portfolio."""
+    from portf_manager.services.stress import SCENARIOS, run_stress
+
+    preset = SCENARIOS.get(scenario or "equity_bear")
+    if preset is None:
+        return _j(
+            {"error": f"unknown scenario {scenario!r}", "scenarios": list(SCENARIOS)}
+        )
+    result = run_stress(db, preset["shocks"], fx=_fx)
+    return _j({"scenario": scenario, "label": preset["label"], **result})
+
+
+@_tool("get_position_caps")
+def _get_position_caps(db: Database) -> str:
+    """Every concentration cap with its headroom and status."""
+    from portf_manager.services.caps import cap_status
+
+    return _j(cap_status(db, fx=_fx))

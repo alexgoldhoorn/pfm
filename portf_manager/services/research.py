@@ -295,7 +295,9 @@ def _build_search_prompt(
     currency: str,
     fund_str: str,
     pnl_str: str,
+    track_record: str | None = None,
 ) -> str:
+    record = f"\nYOUR TRACK RECORD:\n{track_record}\n" if track_record else ""
     return f"""You are a professional equity analyst with access to web search.
 
 POSITION:
@@ -308,7 +310,7 @@ POSITION:
 
 FUNDAMENTALS (from Yahoo Finance):
 {fund_str}
-
+{record}
 Use your web search to look up current news, recent earnings results, and analyst price targets for {symbol}. Base your analysis on what you find.
 
 Return ONLY a valid JSON object with exactly these fields:
@@ -338,9 +340,13 @@ def generate_valuation_report(
     currency: str,
     fundamentals: dict[str, Any],
     news: list[dict] | None = None,
+    track_record: str | None = None,
 ) -> dict[str, Any]:
     """
     Call the LLM to produce a valuation report.
+
+    ``track_record`` is an optional paragraph on how earlier reports scored
+    (``research_scorecard.track_record_text``); it is added to the prompt.
 
     Returns a dict with keys:
       fair_value, recommendation (BUY/HOLD/SELL), confidence (high/medium/low),
@@ -357,6 +363,7 @@ def generate_valuation_report(
     else:
         pnl_str = "n/a (not currently held)"
 
+    record = f"\nYOUR TRACK RECORD:\n{track_record}\n" if track_record else ""
     prompt = f"""You are a professional equity analyst. Analyse the following position and produce a structured valuation report.
 
 POSITION:
@@ -372,7 +379,7 @@ FUNDAMENTALS (from Yahoo Finance):
 
 RECENT NEWS HEADLINES (consider these for catalysts/risks; do not invent others):
 {chr(10).join(f"- {n['title']} ({n.get('publisher', '')})" for n in (news or [])) or "- (none available)"}
-
+{record}
 Return ONLY a valid JSON object with exactly these fields:
 {{
   "fair_value": <float — your intrinsic/fair value estimate in {currency}, or null if insufficient data>,
@@ -404,6 +411,7 @@ Be concise and data-driven. If this is a crypto, ETF, or P2P asset where DCF doe
                 currency,
                 fund_str,
                 pnl_str,
+                track_record,
             )
             try:
                 envelope_str = llm.generate_with_search(search_prompt, symbol)

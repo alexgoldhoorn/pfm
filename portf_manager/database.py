@@ -16,7 +16,7 @@ from pathlib import Path
 from portf_manager.services.merchant import fold_for_search, normalize_merchant
 
 # Database version for migration tracking
-DATABASE_VERSION = 39
+DATABASE_VERSION = 40
 
 
 # black
@@ -640,6 +640,22 @@ class Database:
 
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS position_caps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scope TEXT NOT NULL
+                    CHECK (scope IN ('symbol', 'sector', 'asset_type')),
+                key TEXT NOT NULL,
+                max_pct REAL NOT NULL CHECK (max_pct > 0 AND max_pct <= 100),
+                note TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (scope, key)
+            )
+        """
+        )
+
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS fixed_deposits (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
@@ -981,6 +997,8 @@ class Database:
             self._migrate_to_v38(conn)
         if current_version < 39:
             self._migrate_to_v39(conn)
+        if current_version < 40:
+            self._migrate_to_v40(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -2162,6 +2180,25 @@ class Database:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_decisions_review "
             "ON decisions (reviewed_at, review_on)"
+        )
+        conn.commit()
+
+    def _migrate_to_v40(self, conn: sqlite3.Connection) -> None:
+        """Migrate from v39 to v40 — position, sector and asset-type caps."""
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS position_caps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scope TEXT NOT NULL
+                    CHECK (scope IN ('symbol', 'sector', 'asset_type')),
+                key TEXT NOT NULL,
+                max_pct REAL NOT NULL CHECK (max_pct > 0 AND max_pct <= 100),
+                note TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (scope, key)
+            )
+        """
         )
         conn.commit()
 
@@ -5859,6 +5896,108 @@ class Database:
         """Delete a journal entry."""
         with self.get_connection() as conn:
             cursor = conn.execute("DELETE FROM decisions WHERE id = ?", (decision_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+
+    # ── Position caps ─────────────────────────────────────────────────────────
+
+    CAP_SCOPES = ("symbol", "sector", "asset_type")
+
+    @staticmethod
+    def _cap_key(scope: str, key: str) -> str:
+        """Normalise a cap key: symbols are upper-cased, the rest trimmed."""
+        key = (key or "").strip()
+        return key.upper() if scope == "symbol" else key
+
+    def create_position_cap(
+        self, scope: str, key: str, max_pct: float, note: Optional[str] = None
+    ) -> int:
+        """Insert a cap; raises ValueError on a bad scope/key/percentage."""
+        if scope not in self.CAP_SCOPES:
+            raise ValueError(f"unknown scope {scope!r}")
+        key = self._cap_key(scope, key)
+        if not key:
+            raise ValueError("key is required")
+        if not 0 < float(max_pct) <= 100:
+            raise ValueError("max_pct must be above 0 and at most 100")
+        # checked first: get_connection() turns any exception inside it,
+        # IntegrityError and ValueError alike, into DatabaseError
+        if any(c["key"] == key for c in self.get_position_caps(scope)):
+            raise ValueError(f"a {scope} cap for {key!r} already exists")
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "INSERT INTO position_caps (scope, key, max_pct, note) "
+                "VALUES (?, ?, ?, ?)",
+                (scope, key, float(max_pct), note),
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_position_caps(self, scope: Optional[str] = None) -> List[Dict]:
+        """All caps (optionally one scope), ordered by scope then key."""
+        query = "SELECT * FROM position_caps"
+        params: list = []
+        if scope:
+            query += " WHERE scope = ?"
+            params.append(scope)
+        query += " ORDER BY scope, key"
+        with self.get_connection() as conn:
+            return [dict(r) for r in conn.execute(query, params).fetchall()]
+
+    def get_position_cap(self, cap_id: int) -> Optional[Dict]:
+        """One cap, or None."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM position_caps WHERE id = ?", (cap_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def update_position_cap(
+        self,
+        cap_id: int,
+        max_pct: Optional[float] = None,
+        note: Optional[str] = None,
+        key: Optional[str] = None,
+    ) -> bool:
+        """Change a cap's percentage, note or key (None leaves a field alone)."""
+        current = self.get_position_cap(cap_id)
+        if not current:
+            return False
+        sets, params = [], []
+        if max_pct is not None:
+            if not 0 < float(max_pct) <= 100:
+                raise ValueError("max_pct must be above 0 and at most 100")
+            sets.append("max_pct = ?")
+            params.append(float(max_pct))
+        if note is not None:
+            sets.append("note = ?")
+            params.append(note)
+        if key is not None:
+            key = self._cap_key(current["scope"], key)
+            if not key:
+                raise ValueError("key is required")
+            if any(
+                c["key"] == key and c["id"] != cap_id
+                for c in self.get_position_caps(current["scope"])
+            ):
+                raise ValueError("a cap for that key already exists")
+            sets.append("key = ?")
+            params.append(key)
+        if not sets:
+            return False
+        sets.append("updated_at = CURRENT_TIMESTAMP")
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                f"UPDATE position_caps SET {', '.join(sets)} WHERE id = ?",
+                params + [cap_id],
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def delete_position_cap(self, cap_id: int) -> bool:
+        """Delete a cap."""
+        with self.get_connection() as conn:
+            cursor = conn.execute("DELETE FROM position_caps WHERE id = ?", (cap_id,))
             conn.commit()
             return cursor.rowcount > 0
 
