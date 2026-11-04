@@ -3834,7 +3834,7 @@ function createAPIClient() {
             if (!resp.ok) throw new Error(await resp.text());
             return resp.json();
         },
-        async getStressTest(scenario) {
+        async getStressShock(scenario) {
             const resp = await fetch(this.baseURL + '/api/v1/analytics/stress?scenario=' + encodeURIComponent(scenario || 'equity_bear'), {
                 headers: { 'X-API-Key': this.apiKey }
             });

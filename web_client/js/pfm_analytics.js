@@ -2665,7 +2665,7 @@ async function runShockStress() {
     try { localStorage.setItem('pfm.stressScenario', sel.value); } catch (e) { /* storage unavailable */ }
     body.innerHTML = '<div class="text-center text-muted py-4"><div class="spinner-border spinner-border-sm me-2" role="status"></div>Loading…</div>';
     try {
-        const r = await window.apiClient.getStressTest(sel.value);
+        const r = await window.apiClient.getStressShock(sel.value);
         const desc = (sel._scen || {})[sel.value];
         body.innerHTML = (desc ? `<p class="small text-muted">${esc(desc)}</p>` : '') + stressSummaryHtml(r);
     } catch (err) {
