@@ -9708,6 +9708,24 @@ function _renderBgTrendChart() {
         _bgTrendChartInstance.destroy();
         _bgTrendChartInstance = null;
     }
+    // A chart built inside a hidden pane (another Budget tab, or the page not
+    // shown yet) measures a 0-wide canvas: the bars get squeezed at the left
+    // edge and then animate/stick there once the pane is revealed. Wait until
+    // the container has a width, then draw once.
+    if (!canvas.parentElement || canvas.parentElement.clientWidth === 0) {
+        if (!window._bgTrendWaiter && window.ResizeObserver) {
+            window._bgTrendWaiter = new ResizeObserver(() => {
+                const el = document.getElementById('bgTrendChartCanvas');
+                if (el && el.parentElement && el.parentElement.clientWidth > 0) {
+                    window._bgTrendWaiter.disconnect();
+                    window._bgTrendWaiter = null;
+                    _renderBgTrendChart();
+                }
+            });
+            window._bgTrendWaiter.observe(canvas.parentElement);
+        }
+        return;
+    }
     try {
         const months = variance.months;
         // Costs only — spending plus debt. Investment contributions are

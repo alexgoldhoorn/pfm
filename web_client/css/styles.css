@@ -37,7 +37,7 @@ body {
     transition: color 0.2s ease;
 }
 
-.nav-link:hover {
+.navbar .nav-link:hover {
     color: rgba(255, 255, 255, 0.8) !important;
 }
 
