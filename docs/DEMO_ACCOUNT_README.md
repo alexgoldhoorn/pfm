@@ -43,11 +43,17 @@ stack or the real `portfolio.db`.
 | **Portfolios**  | Degiro, Trade Republic, Indexa Capital, Coinbase (EUR base) |
 | **Assets (10)** | AAPL, MSFT, NVDA, GOOGL, JNJ (US), LLOY.L (UK/GBX), IWDA.AS, VWCE.DE (EUR ETFs), BTC-EUR, ETH-EUR |
 | **Transactions**| 18 buys (spread over ~2 yrs), 2 sells (realised gains for the FIFO tax report), 8 cash dividends |
-| **Bookings**    | 6 deposits funding the brokers over time |
+| **Bookings**    | 8 deposits funding the brokers over time |
 | **Snapshots**   | ~366 daily net-worth points → the chart, drawdown / volatility / Sharpe |
 | **Watchlist**   | AMZN, TSLA with buy-below targets |
 | **Goal**        | A FIRE target (€500k) with monthly contribution + projection |
 | **Rebalancing** | Allocation targets: ETF 45% / Stock 40% / Crypto 15% |
+| **Bank account**| "Demo Bank" with ~12 months of categorised spending (invented merchants), merchant rules and a running balance |
+| **Budget**      | "Household plan" with planned amounts per category (budget-vs-actual) |
+| **Balance sheet**| Home, pension plan, savings account, car, a mortgage (loan schedule) and a 12-month fixed deposit |
+| **Cash flow**   | Monthly salary, mortgage payment and household expenses |
+| **Retirement**  | A plan for a fictional 41-year-old (retire at 62) with an estimated state pension |
+| **Decisions**   | Three journal entries (DCA, a trim, a hold) and two position caps |
 
 The asset symbols are real tickers, so the daily price fetch and EUR/FX
 conversion populate live current value and P&L. All quantities, prices, dates,
