@@ -108,7 +108,7 @@ migrate-test: ## Test database migrations
 up: ## Start all services with docker-compose
 	@echo "$(GREEN)Starting services...$(NC)"
 	@$(COMPOSE) up -d
-	@echo "$(GREEN)Services started. API at :8000, Web at :8080, PostgreSQL at :5432$(NC)"
+	@echo "$(GREEN)Services started. API at :8000, Web at :8080$(NC)"
 	@echo "$(YELLOW)Use 'make down' to stop services$(NC)"
 
 up-build: ## Start services and rebuild containers
@@ -185,11 +185,11 @@ check: lint type-check ## Run all code quality checks
 # Database utilities
 db-shell: ## Open database shell (requires running PostgreSQL)
 	@echo "$(GREEN)Opening database shell...$(NC)"
-	@$(COMPOSE) exec postgres psql -U portf_user -d portf_db
+	@$(COMPOSE) --profile postgres exec postgres psql -U portf_user -d portf_db
 
 db-backup: ## Create database backup
 	@echo "$(GREEN)Creating database backup...$(NC)"
-	@$(COMPOSE) exec postgres pg_dump -U portf_user portf_db > backup_$$(date +%Y%m%d_%H%M%S).sql
+	@$(COMPOSE) --profile postgres exec postgres pg_dump -U portf_user portf_db > backup_$$(date +%Y%m%d_%H%M%S).sql
 
 # Cleanup
 clean: ## Clean up temporary files and caches

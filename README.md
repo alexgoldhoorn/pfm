@@ -533,7 +533,8 @@ python -m portf_manager extract-tax-report \
 
 ```bash
 # Every service has a profile, so plain `docker compose up` starts nothing.
-WEB_PORT=8080 docker compose --profile dev up -d --build   # backend (uvicorn --reload) + PostgreSQL + web (`make up`)
+WEB_PORT=8080 docker compose --profile dev up -d --build   # backend (uvicorn --reload, SQLite) + web (`make up`)
+# add `--profile postgres` to also start PostgreSQL (opt-in; dev does not need it)
 docker compose --profile prod up -d                        # production images
 ```
 

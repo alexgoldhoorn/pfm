@@ -1,9 +1,13 @@
 services:
+  # Postgres is opt-in for dev: the dev backend runs on SQLite (portfolio.db,
+  # DATABASE_URL empty), so `--profile dev` no longer starts it. Use
+  # `--profile dev --profile postgres` to bring it up. The prod backend
+  # depends on it, so prod keeps pulling it in.
   postgres:
     image: postgres:16
     container_name: portf_postgres
     profiles:
-      - dev
+      - postgres
       - prod
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-portf_user}
@@ -66,9 +70,6 @@ services:
       - .:/app
       - backend_venv:/app/.venv
       - playwright_cache:/home/appuser/.cache/ms-playwright
-    depends_on:
-      postgres:
-        condition: service_healthy
     networks:
       - portf_net
     healthcheck:

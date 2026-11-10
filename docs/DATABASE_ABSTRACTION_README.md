@@ -115,12 +115,12 @@ The repo's `docker-compose.yml` has a `postgres` service (`postgres:16`,
 container `portf_postgres`, user/db from `POSTGRES_USER` / `POSTGRES_PASSWORD`
 / `POSTGRES_DB` with `portf_user` / `portf_password` / `portf_db` defaults,
 port published on `127.0.0.1:${POSTGRES_PORT:-5432}`). It sits behind the
-`dev` and `prod` profiles and uses the external network `portf_net`.
+`postgres` and `prod` profiles (not `dev`) and uses the external network `portf_net`.
 
 Start PostgreSQL:
 ```bash
 docker network create portf_net 2>/dev/null || true
-docker compose --profile dev up -d postgres
+docker compose --profile postgres up -d postgres
 ```
 
 Set environment variable:
