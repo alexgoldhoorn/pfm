@@ -28,10 +28,10 @@ def db(tmp_path):
     return d
 
 
-def test_tools_list_has_31_entries():
+def test_tools_list_has_36_entries():
     from portf_server.chat_tools import TOOLS
 
-    assert len(TOOLS) == 31
+    assert len(TOOLS) == 36
 
 
 def test_every_tool_definition_has_a_handler():
@@ -390,3 +390,77 @@ def test_get_wealth_scenarios_returns_saved_plans(db):
     assert s["summary"]["milestones"][-1]["year"] == 10
     assert s["tracking"]["status"] in {"on_track", "ahead", "behind", "too_early"}
     assert out["notes"]
+
+
+@pytest.fixture
+def bank_db(db):
+    """The base db plus a bank account with a few example rows."""
+    from datetime import date
+
+    bank = db.get_or_create_portfolio("Example Bank")
+    today = date.today().isoformat()
+    for desc, amt, cat in [
+        ("Example Supermarket", -80.0, "Groceries"),
+        ("Example Supermarket", -40.0, "Groceries"),
+        ("Example Streaming", -12.0, "Entertainment"),
+        ("Example Employer", 2000.0, "Salary"),
+    ]:
+        db.create_spending_transaction(bank, today, desc, amt, category=cat)
+    return db
+
+
+def test_spending_summary_tool(bank_db):
+    from portf_server.chat_tools import execute_tool
+
+    with patch("portf_server.routers.spending._fx", return_value=1.0):
+        data = json.loads(execute_tool("get_spending_summary", {"days": 30}, bank_db))
+    assert data["spent_eur"] == 132.0 and data["income_eur"] == 2000.0
+    assert list(data["by_category_eur"])[0] == "Groceries"
+
+
+def test_spending_trend_tool_is_zero_filled(bank_db):
+    from portf_server.chat_tools import execute_tool
+
+    with patch("portf_server.routers.spending._fx", return_value=1.0):
+        data = json.loads(execute_tool("get_spending_trend", {"months": 3}, bank_db))
+    assert len(data["months"]) == 3
+    assert data["months"][-1]["spent_eur"] == 132.0
+    assert data["months"][0]["spent_eur"] == 0.0
+
+
+def test_spending_breakdown_tool_unknown_parent_is_error(bank_db):
+    from portf_server.chat_tools import execute_tool
+
+    out = execute_tool("get_spending_breakdown", {"parent": "No Such Node"}, bank_db)
+    assert out.startswith("Error:")
+
+
+def test_recurring_spending_tool_returns_totals(bank_db):
+    from portf_server.chat_tools import execute_tool
+
+    with patch("portf_server.routers.spending._fx", return_value=1.0):
+        data = json.loads(execute_tool("get_recurring_spending", {}, bank_db))
+    assert {"items", "monthly_total_eur", "annual_total_eur"} <= set(data)
+
+
+def test_search_spending_transactions_filters_and_caps(bank_db):
+    from portf_server.chat_tools import execute_tool
+
+    with patch("portf_server.chat_tools._fx", return_value=1.0):
+        data = json.loads(
+            execute_tool(
+                "search_spending_transactions",
+                {"query": "supermarket", "amount_sign": "negative", "limit": 1},
+                bank_db,
+            )
+        )
+    assert data["count"] == 1 and data["limit"] == 1
+    assert data["transactions"][0]["category"] == "Groceries"
+    assert data["transactions"][0]["amount_eur"] < 0
+
+
+def test_search_spending_transactions_rejects_bad_sign(bank_db):
+    from portf_server.chat_tools import execute_tool
+
+    out = execute_tool("search_spending_transactions", {"amount_sign": "up"}, bank_db)
+    assert out.startswith("Error:")

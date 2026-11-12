@@ -5,7 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-11-04
+Last updated: 2026-11-12
+
+**Recent (v2.5.94):** **AI chat analyses spending and draws charts.** Five read-only chat tools over the bank-statement data (`get_spending_summary`, `get_spending_trend`, `get_spending_breakdown`, `get_recurring_spending`, `search_spending_transactions`; 36 chat tools) and a fenced ```chart``` block in answers that renders as a Chart.js bar/line/donut chart. No schema change. Docs `llm.md`, `web-client.md`.
 
 **Recent (v2.5.93):** **Wealth Simulator fills from your data.** `GET /api/v1/wealth-scenarios/prefill` derives cash (bank balances + deposits), stocks/bonds (all investments split by the look-through bond share), the mortgage (all open loans, balance-weighted rate) and the monthly contribution (net savings from bank imports, else Monthly Cash Flow), each with its source; the "Load from Net Worth" button became "Fill from my data" on top of it. Docs `wealth-simulator.md`.
 

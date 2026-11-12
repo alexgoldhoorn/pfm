@@ -786,7 +786,19 @@ class EnhancedChatEngine:
             "finding is fine or wants it snoozed, call set_action_item_status "
             "with its id and summarise what you recorded. For wealth plans, "
             "projections or 'am I on track with my plan' call "
-            "get_wealth_scenarios.\n"
+            "get_wealth_scenarios. For questions about spending, income, "
+            "categories, subscriptions or merchants in the bank accounts use "
+            "get_spending_summary, get_spending_trend, get_spending_breakdown, "
+            "get_recurring_spending or search_spending_transactions; never "
+            "guess spending figures.\n"
+            "When a chart would help (category shares, monthly trends, "
+            "comparisons) after fetching the numbers add ONE fenced block "
+            "with language chart containing a single JSON object: "
+            '{"type":"bar"|"line"|"pie","title":str,"labels":[str],'
+            '"series":[{"name":str,"data":[number]}],"currency":"EUR",'
+            '"stacked":bool}. Max 60 labels and 6 series, one number per '
+            "label, pie uses only the first series, numbers only from tool "
+            "results. Keep the written answer too.\n"
             "All monetary values are in EUR unless stated otherwise.\n"
             "This is informational — not regulated financial advice.\n\n"
             f"Portfolio summary (top 5 holdings shown; call get_holdings for full list):\n{compact}"

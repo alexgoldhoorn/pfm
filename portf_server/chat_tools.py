@@ -530,6 +530,111 @@ def _get_household_finances(db: Database) -> str:
     return _j(out)
 
 
+@_tool("get_spending_summary")
+def _get_spending_summary(db: Database, days: int = 30) -> str:
+    # Same figures as the Spending page cards: EUR, transfers apart.
+    from portf_server.routers.spending import get_spending_summary
+
+    days = max(1, min(int(days), 730))
+    res = get_spending_summary(days=days, db=db, api_key_info={})
+    out = res.model_dump()
+    out["days"] = days
+    # Largest categories first so a truncated read still has the useful part.
+    out["by_category_eur"] = dict(
+        sorted(out["by_category_eur"].items(), key=lambda kv: -kv[1])
+    )
+    return _j(out)
+
+
+@_tool("get_spending_trend")
+def _get_spending_trend(db: Database, months: int = 12) -> str:
+    from portf_server.routers.spending import get_spending_trend
+
+    months = max(1, min(int(months), 36))
+    rows = get_spending_trend(months=months, db=db, api_key_info={})
+    return _j({"months": [r.model_dump() for r in rows]})
+
+
+@_tool("get_spending_breakdown")
+def _get_spending_breakdown(db: Database, parent: str = "Spend", days: int = 30) -> str:
+    from fastapi import HTTPException
+
+    from portf_server.routers.spending import get_spending_category_breakdown
+
+    days = max(1, min(int(days), 730))
+    try:
+        res = get_spending_category_breakdown(
+            parent=parent, days=days, db=db, api_key_info={}
+        )
+    except HTTPException as e:
+        return f"Error: {e.detail}"
+    out = res.model_dump()
+    out["days"] = days
+    return _j(out)
+
+
+@_tool("get_recurring_spending")
+def _get_recurring_spending(db: Database, include_ended: bool = False) -> str:
+    from portf_server.routers.spending import list_recurring
+
+    res = list_recurring(
+        portfolio_id=None,
+        include_ended=include_ended is True or str(include_ended).lower() == "true",
+        db=db,
+        api_key_info={},
+    )
+    out = res.model_dump()
+    # Cap the list: a long tail of tiny charges adds tokens, not insight.
+    out["items"] = sorted(out["items"], key=lambda i: -i["annual_amount_eur"])[:40]
+    return _j(out)
+
+
+@_tool("search_spending_transactions")
+def _search_spending_transactions(
+    db: Database,
+    query: str = None,
+    category: str = None,
+    start_date: str = None,
+    end_date: str = None,
+    amount_sign: str = None,
+    min_abs_amount: float = None,
+    limit: int = 25,
+) -> str:
+    # Raw bank rows hold sensitive text (tax ids, names): cap the count and
+    # return only the fields needed to answer a merchant-level question.
+    limit = max(1, min(int(limit), 50))
+    if amount_sign not in (None, "negative", "positive"):
+        return "Error: amount_sign must be 'negative' or 'positive'"
+    rows = db.list_spending_transactions(
+        category=category,
+        start_date=start_date,
+        end_date=end_date,
+        is_transfer=False,
+        amount_sign=amount_sign,
+        min_abs_amount=(float(min_abs_amount) if min_abs_amount is not None else None),
+        q=query,
+        limit=limit,
+    )
+    return _j(
+        {
+            "count": len(rows),
+            "limit": limit,
+            "transactions": [
+                {
+                    "date": r["date"],
+                    "description": (r.get("description") or "")[:80],
+                    "merchant": r.get("merchant"),
+                    "category": r.get("category"),
+                    "amount_eur": round(
+                        float(r["amount"]) * _fx(r.get("currency") or "EUR"), 2
+                    ),
+                }
+                for r in rows
+            ],
+        }
+    )
+
+
 @_tool("get_tax_estimate")
 def _get_tax_estimate(db: Database, year: Optional[int] = None) -> str:
     from portf_manager.tax_calculator import TaxCalculator
@@ -1265,6 +1370,108 @@ TOOLS: list[ToolDefinition] = [
         name="get_household_finances",
         description="Return the monthly money picture: the entered monthly cash flow (income, mortgage, other expenses), the income/spending/savings rate measured from imported bank statements over the last complete months with the emergency-fund cover, this month's budget vs actual, the loans (balance, monthly payment, rate, end date) and the monthly contributions the open goals assume. Use it to judge whether a goal, a contribution or a purchase is realistic.",
         parameters=[],
+    ),
+    ToolDefinition(
+        name="get_spending_summary",
+        description="Spending, income and transfers from the imported bank statements over the last N days (EUR, transfers excluded from both), with spending by top-level category, largest first. Use it for 'what did I spend on X lately', category shares and income vs spending.",
+        parameters=[
+            {
+                "name": "days",
+                "type": "integer",
+                "description": "Look-back window in days (default 30, max 730).",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="get_spending_trend",
+        description="Monthly spent / income / net from the bank statements for the last N calendar months, oldest first, zero-filled (EUR, transfers excluded). Use it to compare months, spot trends and as the data for a trend chart.",
+        parameters=[
+            {
+                "name": "months",
+                "type": "integer",
+                "description": "Number of calendar months (default 12, max 36).",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="get_spending_breakdown",
+        description="Drill into the spending category tree: the immediate children of one category with each subtree's total for the last N days (EUR) and whether it has children to drill into. Start from parent 'Spend' and go deeper for the biggest category.",
+        parameters=[
+            {
+                "name": "parent",
+                "type": "string",
+                "description": "Category to expand (default 'Spend', the root).",
+                "required": False,
+            },
+            {
+                "name": "days",
+                "type": "integer",
+                "description": "Look-back window in days (default 30, max 730).",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="get_recurring_spending",
+        description="Recurring charges (subscriptions, bills) detected from bank outflows, with the monthly and annual totals in EUR, biggest annual cost first. Use it to find subscriptions to cancel or fixed costs.",
+        parameters=[
+            {
+                "name": "include_ended",
+                "type": "boolean",
+                "description": "True to also list series that have stopped.",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="search_spending_transactions",
+        description="Search individual bank transactions (transfers excluded), newest first, max 50 rows. Use it for merchant-level questions ('how much at Mercadona in October', 'the biggest purchases this year'). Rows are raw bank text: quote only what the user asked for and never repeat account numbers or tax ids.",
+        parameters=[
+            {
+                "name": "query",
+                "type": "string",
+                "description": "Case-insensitive text matched against description, merchant or category.",
+                "required": False,
+            },
+            {
+                "name": "category",
+                "type": "string",
+                "description": "Exact category name.",
+                "required": False,
+            },
+            {
+                "name": "start_date",
+                "type": "string",
+                "description": "YYYY-MM-DD, inclusive.",
+                "required": False,
+            },
+            {
+                "name": "end_date",
+                "type": "string",
+                "description": "YYYY-MM-DD, inclusive.",
+                "required": False,
+            },
+            {
+                "name": "amount_sign",
+                "type": "string",
+                "description": "'negative' for spending only, 'positive' for income only.",
+                "required": False,
+            },
+            {
+                "name": "min_abs_amount",
+                "type": "number",
+                "description": "Only rows with at least this absolute amount (original currency).",
+                "required": False,
+            },
+            {
+                "name": "limit",
+                "type": "integer",
+                "description": "Rows to return (default 25, max 50).",
+                "required": False,
+            },
+        ],
     ),
     ToolDefinition(
         name="get_tax_estimate",
