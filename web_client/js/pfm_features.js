@@ -1391,6 +1391,88 @@ ${turns}
 </body></html>`;
 }
 
+// ── Charts in chat ─────────────────────────────────────────────────────
+// The model may answer with a fenced ```chart block holding JSON:
+// {type: bar|line|pie, labels[], series[{name,data[]}], title?, currency?, stacked?}.
+// chatChartSpec returns a validated, colour-free spec or null (never throws).
+const CHAT_CHART_MAX_LABELS = 60;
+const CHAT_CHART_MAX_SERIES = 6;
+
+function chatChartSpec(raw) {
+    let o = raw;
+    if (typeof raw === 'string') {
+        try { o = JSON.parse(raw); } catch (e) { return null; }
+    }
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
+    if (!['bar', 'line', 'pie'].includes(o.type)) return null;
+    if (!Array.isArray(o.labels) || !o.labels.length || o.labels.length > CHAT_CHART_MAX_LABELS) return null;
+    if (!Array.isArray(o.series) || !o.series.length || o.series.length > CHAT_CHART_MAX_SERIES) return null;
+    const labels = o.labels.map(l => String(l));
+    const series = [];
+    for (const s of o.series) {
+        if (!s || typeof s !== 'object' || !Array.isArray(s.data) || s.data.length !== labels.length) return null;
+        if (!s.data.every(v => typeof v === 'number' && Number.isFinite(v))) return null;
+        series.push({ name: String(s.name == null ? '' : s.name), data: s.data.slice() });
+    }
+    const currency = typeof o.currency === 'string' && /^[A-Za-z]{3}$/.test(o.currency) ? o.currency.toUpperCase() : 'EUR';
+    return {
+        type: o.type,
+        title: o.title == null ? '' : String(o.title).slice(0, 120),
+        labels,
+        // A pie shows the first series only.
+        series: o.type === 'pie' ? series.slice(0, 1) : series,
+        currency,
+        stacked: o.type === 'bar' && o.stacked === true,
+    };
+}
+
+// Chart.js config for a spec; colour(i) gives the i-th series/slice colour.
+function chatChartConfig(spec, colour, fmtMoney) {
+    const money = fmtMoney || ((v, c) => Fmt.money(v, c, 2));
+    const cur = spec.currency;
+    const pie = spec.type === 'pie';
+    const datasets = spec.series.map((s, i) => {
+        if (pie) {
+            return { label: s.name, data: s.data, backgroundColor: spec.labels.map((_, j) => colour(j)),
+                     borderColor: 'transparent', borderWidth: 0 };
+        }
+        const c = colour(i);
+        return spec.type === 'line'
+            ? { label: s.name, data: s.data, borderColor: c, backgroundColor: 'transparent', borderWidth: 2, pointRadius: 2, tension: 0.2 }
+            : { label: s.name, data: s.data, backgroundColor: c, borderColor: c, borderWidth: 0 };
+    });
+    const options = {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { display: pie || spec.series.length > 1, position: 'bottom' },
+            title: { display: !!spec.title, text: spec.title },
+            tooltip: { callbacks: { label: item => ` ${item.dataset.label ? item.dataset.label + ': ' : (pie ? item.label + ': ' : '')}${money(item.raw, cur)}` } },
+        },
+    };
+    if (!pie) {
+        options.scales = {
+            x: { stacked: spec.stacked },
+            y: { stacked: spec.stacked, ticks: { callback: v => money(v, cur) } },
+        };
+    }
+    return { type: pie ? 'doughnut' : spec.type, data: { labels: spec.labels, datasets }, options };
+}
+
+// Replace each valid ```chart fence with a placeholder <div> (JSON kept,
+// escaped, in data-chart); an invalid one stays a normal code block.
+function chatPrepareCharts(text) {
+    return String(text || '').replace(/(^|\n)```chart[ \t]*\n([\s\S]*?)\n?```[ \t]*(?=\n|$)/g, (m, lead, body) => {
+        const spec = chatChartSpec(body);
+        if (!spec) return m;
+        return `${lead}\n<div class="chat-chart" data-chart="${esc(JSON.stringify(spec))}"></div>\n`;
+    });
+}
+
+window.chatChartSpec = chatChartSpec;
+window.chatChartConfig = chatChartConfig;
+window.chatPrepareCharts = chatPrepareCharts;
+
 // A file name for an exported thread: the name, slugified, plus the date.
 function chatExportFilename(name, ext) {
     const slug = String(name || 'chat').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'chat';
@@ -1454,7 +1536,31 @@ function setupChatPage() {
     }
 
     function renderMarkdown(text) {
-        return window.marked ? marked.parse(String(text || ''), { breaks: true }) : escapeHtml(text);
+        return window.marked ? marked.parse(chatPrepareCharts(text), { breaks: true }) : escapeHtml(text);
+    }
+
+    // Charts drawn in this thread; destroyed whenever the messages are cleared.
+    let chatCharts = [];
+    function destroyCharts() {
+        chatCharts.forEach(c => { try { c.destroy(); } catch (e) { /* already gone */ } });
+        chatCharts = [];
+    }
+
+    // Draw the chart placeholders inside an element that is now in the DOM.
+    function hydrateCharts(root) {
+        root.querySelectorAll('.chat-chart[data-chart]').forEach(el => {
+            try {
+                const spec = chatChartSpec(el.getAttribute('data-chart'));
+                if (!spec || typeof Chart === 'undefined') throw new Error('no chart');
+                el.removeAttribute('data-chart');
+                el.innerHTML = '<canvas></canvas>';
+                const canvas = el.firstChild;
+                chatCharts.push(new Chart(canvas, chatChartConfig(spec, i => cssVar(`--viz-${(i % 8) + 1}`))));
+            } catch (e) {
+                // Chart.js missing or a bad spec: show the data instead.
+                el.innerHTML = `<pre class="mb-0"><code>${esc(el.getAttribute('data-chart') || '')}</code></pre>`;
+            }
+        });
     }
 
     // Suggestion chips fill the composer and send.
@@ -1490,6 +1596,7 @@ function setupChatPage() {
                 ${isUser ? '' : chatToolsHtml(meta.tools_used)}
             </div>`;
         messagesEl.appendChild(div);
+        if (!isUser && !isError) hydrateCharts(div);
         if (!isError) {
             currentMessages.push({ role, content: text, ts, model: meta.model || null, tier: meta.tier || null, tools_used: meta.tools_used || [] });
             if (exportBtn) exportBtn.disabled = false;
@@ -1698,11 +1805,13 @@ function setupChatPage() {
         if (exportBtn) exportBtn.disabled = true;
         const s = sessions.find(x => x.id === id);
         if (threadNameEl) threadNameEl.textContent = s ? s.name : '';
+        destroyCharts();
         messagesEl.innerHTML = EMPTY_HTML;
         renderSessionsList();
         try {
             const { messages } = await window.apiClient.getChatSessionMessages(id);
             if (messages && messages.length) {
+                destroyCharts();
                 messagesEl.innerHTML = '';
                 messages.forEach(m => appendMessage(m.role, m.content, m.ts || null,
                     { model: m.model, tier: m.tier, tools_used: m.tools_used }));

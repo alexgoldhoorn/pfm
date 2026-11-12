@@ -376,6 +376,13 @@ body {
     padding: 0.1rem 0.3rem;
     border-radius: 0.25rem;
 }
+.chat-chart {
+    position: relative;
+    height: 260px;
+    width: min(36rem, 70vw);
+    max-width: 100%;
+    margin: 0.4rem 0;
+}
 .chat-bubble pre code {
     background: none;
     padding: 0;

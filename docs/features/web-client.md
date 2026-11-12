@@ -83,3 +83,24 @@ docker compose build web && docker stop portf_web && WEB_PORT=8080 docker compos
 ### Caps, stress test, year-end tax and calibration (2026-11-04)
 
 The Rebalance page has a **Caps** card (`#rebalanceCaps`, `loadCapsCard`): one table from `GET /caps/status` (implicit "default stock cap" rows muted, no buttons), an inline add form that doubles as the edit form (the pencil fills it, `PUT` sends key, max % and note only) and a `confirmDialog` before delete. The Research workbench shows a muted `#rvCapLine` ("Cap 5%: headroom €X") from the same status call, and `#rvCalibration` from the `calibration` block of `/research/{symbol}/lookup`; the Scorecard tab prepends `calibrationTableHtml`. Analytics → Risk has a **Stress test** card (`#anShockSelect`/`#anShockBody`; the `anStress*` ids belong to the older historical-crash tab) that remembers the preset in `localStorage` `pfm.stressScenario`. The tax-optimizer card adds `taxDeadlineHtml` (days to 31 Dec, carry-forward, base) and a per-candidate tax-saved column; a symbol in `wash_blocked` gets the "blocked by the 2-month rule until …" badge. Pure helpers are tested in `caps`, `stress`, `yearend` and `calibration` `.test.mjs`.
+
+## Charts in chat
+
+The AI chat draws a chart when an assistant answer contains a fenced code block
+with language `chart` holding JSON:
+
+    {"type":"bar","title":"Spending by category","labels":["Food","Rent"],
+     "series":[{"name":"Oct","data":[320.5,900]}],"currency":"EUR"}
+
+- `type`: `bar`, `line` or `pie` (a pie/donut uses the first series only).
+- `labels`: 1-60 strings. `series`: 1-6 objects `{name, data}`; `data` has one
+  finite number per label. Optional: `title`, `currency` (3 letters, default
+  `EUR`, used with `Fmt.money` for tooltips and the axis), `stacked` (bar only).
+- `chatChartSpec` validates (pure, `window.`-exported, tested in
+  `js/tests/chat_charts.test.mjs`); an invalid or unparseable block stays an
+  ordinary code block. `chatPrepareCharts` swaps valid fences for a placeholder
+  before `marked`, and `hydrateCharts` draws them with Chart.js after the
+  message is in the DOM. Charts are destroyed when the thread is cleared or
+  another session is opened. Colours are the `--viz-1..8` tokens.
+- The Markdown export keeps the block as is; the HTML export shows it as a
+  `<pre>` (it does not load Chart.js).
