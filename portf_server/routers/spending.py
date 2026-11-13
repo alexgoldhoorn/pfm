@@ -458,9 +458,13 @@ async def save_spending_transactions(
                     duplicates_skipped += 1
                     continue
                 if body.duplicate_action == "overwrite":
-                    db.update_spending_transaction(
-                        existing["id"], category=_resolve_row_category(row)
-                    )
+                    # A transfer keeps its category and transfer fields: the
+                    # "Transfer" category and the flag must stay in agreement.
+                    current = db.get_spending_transaction(existing["id"]) or {}
+                    if not current.get("is_transfer"):
+                        db.update_spending_transaction(
+                            existing["id"], category=_resolve_row_category(row)
+                        )
                     overwritten += 1
                     saved_ids.append(existing["id"])
                     continue
@@ -477,6 +481,11 @@ async def save_spending_transactions(
                 source="generic",
                 balance=row.balance,
             )
+            if category == TRANSFER_CATEGORY:
+                # Chosen at import: a transfer marked by hand, with no link.
+                db.update_spending_transaction(
+                    new_id, is_transfer=True, transfer_source="manual"
+                )
             saved += 1
             saved_ids.append(new_id)
             saved_dates.append(str(row.date)[:10])
@@ -721,7 +730,9 @@ async def update_spending_category(
     )
     if mark:
         update_kwargs["is_transfer"] = True
-        update_kwargs["transfer_source"] = "manual"
+        if not was_transfer:
+            # An existing transfer keeps how it became one (match, pattern...).
+            update_kwargs["transfer_source"] = "manual"
         # The category always follows the flag, whatever was sent with it.
         update_kwargs["category"] = TRANSFER_CATEGORY
         if not was_transfer:
@@ -1057,6 +1068,14 @@ async def rename_category(
         raise HTTPException(
             status_code=400, detail="New name is the same as the current name"
         )
+    if TRANSFER_CATEGORY in (old_name.strip(), new_name):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f'"{TRANSFER_CATEGORY}" is reserved for moves between your own '
+                "accounts and can't be renamed or merged into."
+            ),
+        )
     result = db.rename_spending_category(old_name, new_name)
     return {"old_name": old_name, "new_name": new_name, **result}
 
@@ -1379,6 +1398,9 @@ def _parse_suggestions(data: object) -> List[CategorySuggestion]:
             continue
         desc = str(item.get("description") or "").strip()
         category = str(item.get("category") or "").strip() or "Other"
+        # Rules can't file rows as "Transfer", so never suggest it.
+        if category.lower() == TRANSFER_CATEGORY.lower():
+            category = "uncategorized"
         pattern = str(item.get("suggested_pattern") or "").strip() or desc[:20]
         if not desc:
             continue

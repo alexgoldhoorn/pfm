@@ -62,7 +62,14 @@ def load_patterns(db) -> List[str]:
     if not isinstance(data, list) or not all(isinstance(p, str) for p in data):
         logger.warning("Setting %s is not a list of strings; ignoring", SETTING_KEY)
         return []
-    return data
+    kept: List[str] = []
+    for item in data:
+        text = item.strip()
+        if len(text) < MIN_PATTERN_LENGTH:
+            logger.warning("Dropping stored own-account pattern %r (too short)", item)
+            continue
+        kept.append(text)
+    return kept
 
 
 def save_patterns(db, patterns: Iterable[str]) -> List[str]:
