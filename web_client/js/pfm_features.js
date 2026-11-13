@@ -1046,7 +1046,7 @@ function createNavigationManager() {
     return {
         currentPage: 'dashboard',
         showPage: function(pageName) {
-            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage', 'helpPage', 'versionPage', 'aboutPage', 'resourcesPage', 'networthPage', 'diagnosticsPage', 'actionitemsPage', 'spendingPage', 'budgetPage', 'decisionsPage'];
+            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage', 'helpPage', 'versionPage', 'aboutPage', 'resourcesPage', 'networthPage', 'diagnosticsPage', 'actionitemsPage', 'spendingPage', 'budgetPage', 'decisionsPage', 'reportsPage'];
             pages.forEach(pageId => {
                 const page = document.getElementById(pageId);
                 if (page) page.style.display = 'none';
@@ -1080,7 +1080,7 @@ function createNavigationManager() {
                 version: "What's New", about: 'About', resources: 'Resources',
                 networth: 'Net Worth', diagnostics: 'Diagnostics',
                 actionitems: 'Action Items', spending: 'Spending',
-                budget: 'Budget', decisions: 'Decisions',
+                budget: 'Budget', decisions: 'Decisions', reports: 'Reports',
             };
             const titleEl = document.getElementById('mobilePageTitle');
             if (titleEl) titleEl.textContent = PAGE_TITLES[pageName] || pageName;
@@ -1111,6 +1111,7 @@ function createNavigationManager() {
                 case 'actionitems':  if (window.loadActionItemsPage) window.loadActionItemsPage(); break;
                 case 'spending':     if (window.loadSpendingPage) window.loadSpendingPage(); break;
                 case 'budget':       if (window.loadBudgetPage) window.loadBudgetPage(); break;
+                case 'reports':      if (window.loadReportsPage) window.loadReportsPage(); break;
             }
         },
 
@@ -1346,6 +1347,8 @@ function chatSessionToMarkdown(name, messages) {
         const when = m.ts ? ` — ${Fmt.date(m.ts)}` : '';
         const model = m.role !== 'user' && m.model ? ` (${m.model})` : '';
         lines.push(`## ${who}${model}${when}`, '', String(m.content || '').trim(), '');
+        const sources = chatSourcesMarkdown(m.sources);
+        if (sources) lines.push(sources);
         const tools = Array.isArray(m.tools_used) ? m.tools_used : [];
         if (tools.length) {
             lines.push(`_Tools used: ${tools.map(t => t.name).join(', ')}_`, '');
@@ -1354,25 +1357,32 @@ function chatSessionToMarkdown(name, messages) {
     return lines.join('\n');
 }
 
-// Thread as a self-contained web page (also what the print/PDF export shows).
-function chatSessionToHtml(name, messages) {
-    const render = (m) => {
-        if (m.role === 'user') return `<p style="white-space:pre-wrap;margin:0">${esc(m.content || '')}</p>`;
-        return (typeof marked !== 'undefined' && marked && marked.parse)
-            ? marked.parse(String(m.content || ''), { breaks: true })
-            : `<p style="white-space:pre-wrap;margin:0">${esc(m.content || '')}</p>`;
+// Markdown to HTML for an export, with each ```chart block embedded as a PNG
+// <img> when one is known, else as a <pre> of its JSON. images is an array
+// (charts in document order, which is how a thread is exported) or an object
+// keyed by the chart's JSON (how a single report is exported); counter, when
+// given, carries the array position across several calls.
+function chatMarkdownToExportHtml(text, images, counter) {
+    const pos = counter || { i: 0 };
+    const render = (spec, json) => {
+        const idx = pos.i++;
+        const src = Array.isArray(images) ? images[idx] : (images ? images[json] : '');
+        if (typeof src === 'string' && /^data:image\/png;base64,[A-Za-z0-9+/=]+$/.test(src)) {
+            return `<figure class="chart"><img src="${src}" alt="${esc(spec.title || 'Chart')}"></figure>`;
+        }
+        return `<pre><code>${esc(json)}</code></pre>`;
     };
-    const turns = (messages || []).map(m => {
-        const user = m.role === 'user';
-        const meta = [user ? 'You' : 'Assistant', !user && m.model ? m.model : '', m.ts ? Fmt.date(m.ts) : '']
-            .filter(Boolean).map(esc).join(' · ');
-        const tools = Array.isArray(m.tools_used) && m.tools_used.length
-            ? `<div class="tools">Tools used: ${esc(m.tools_used.map(t => t.name).join(', '))}</div>` : '';
-        return `<section class="turn ${user ? 'user' : 'assistant'}"><div class="meta">${meta}</div><div class="bubble">${render(m)}</div>${tools}</section>`;
-    }).join('\n');
+    if (typeof marked !== 'undefined' && marked && marked.parse) {
+        return marked.parse(chatPrepareCharts(text, render), { breaks: true });
+    }
+    return `<p style="white-space:pre-wrap;margin:0">${esc(text || '')}</p>`;
+}
+
+// A self-contained page around some body HTML (chat export, report export).
+function chatExportPage(title, bodyHtml) {
     return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(name || 'Chat')}</title>
+<title>${esc(title || 'Chat')}</title>
 <style>
 body{font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:52rem;margin:2rem auto;padding:0 1rem;color:#1e293b;line-height:1.5}
 h1{font-size:1.4rem;margin-bottom:1.5rem}
@@ -1382,21 +1392,54 @@ h1{font-size:1.4rem;margin-bottom:1.5rem}
 .bubble{padding:.6rem .9rem;border-radius:1rem;max-width:85%;border:1px solid #e2e8f0;background:#fff}
 .turn.user .bubble{background:#0d6efd;color:#fff;border-color:#0d6efd}
 .tools{font-size:.72rem;color:#64748b;margin-top:.2rem}
+.chat-sources{font-size:.8rem;margin-top:.4rem}.chat-sources ol{margin:.2rem 0 0;padding-left:1.2rem}.chat-sources-label{font-weight:600}
 table{border-collapse:collapse;width:100%}th,td{border:1px solid #e2e8f0;padding:.2rem .4rem}
+figure.chart{margin:.6rem 0}figure.chart img{max-width:100%;height:auto}
 pre{background:#f1f5f9;padding:.5rem;border-radius:.4rem;overflow-x:auto}code{background:#f1f5f9;padding:0 .25rem;border-radius:.25rem}
-@media print{body{margin:0}.bubble{max-width:100%}}
+@media print{body{margin:0}.bubble{max-width:100%}figure.chart{break-inside:avoid}}
 </style></head><body>
-<h1>${esc(name || 'Chat')}</h1>
-${turns}
+<h1>${esc(title || 'Chat')}</h1>
+${bodyHtml}
 </body></html>`;
 }
 
+// Thread as a self-contained web page (also what the print/PDF export shows).
+// chartImages: optional PNG data URLs of the thread's charts in order.
+function chatSessionToHtml(name, messages, chartImages) {
+    const counter = { i: 0 };
+    const render = (m) => {
+        if (m.role === 'user') return `<p style="white-space:pre-wrap;margin:0">${esc(m.content || '')}</p>`;
+        return chatMarkdownToExportHtml(String(m.content || ''), chartImages, counter) + chatSourcesHtml(m.sources);
+    };
+    const turns = (messages || []).map(m => {
+        const user = m.role === 'user';
+        const meta = [user ? 'You' : 'Assistant', !user && m.model ? m.model : '', m.ts ? Fmt.date(m.ts) : '']
+            .filter(Boolean).map(esc).join(' · ');
+        const tools = Array.isArray(m.tools_used) && m.tools_used.length
+            ? `<div class="tools">Tools used: ${esc(m.tools_used.map(t => t.name).join(', '))}</div>` : '';
+        return `<section class="turn ${user ? 'user' : 'assistant'}"><div class="meta">${meta}</div><div class="bubble">${render(m)}</div>${tools}</section>`;
+    }).join('\n');
+    return chatExportPage(name, turns);
+}
+
+window.chatMarkdownToExportHtml = chatMarkdownToExportHtml;
+window.chatExportPage = chatExportPage;
+
 // ── Charts in chat ─────────────────────────────────────────────────────
 // The model may answer with a fenced ```chart block holding JSON:
-// {type: bar|line|pie, labels[], series[{name,data[]}], title?, currency?, stacked?}.
+// {type: bar|hbar|line|area|pie|combo|waterfall, labels[], series[{name,data[],
+// kind?,axis?}], title?, currency?, stacked?, unit?, x_title?, y_title?,
+// right_unit?, totals?}.
 // chatChartSpec returns a validated, colour-free spec or null (never throws).
 const CHAT_CHART_MAX_LABELS = 60;
 const CHAT_CHART_MAX_SERIES = 6;
+const CHAT_CHART_TYPES = ['bar', 'hbar', 'line', 'area', 'pie', 'combo', 'waterfall'];
+const CHAT_CHART_STACKABLE = ['bar', 'hbar', 'area'];
+
+// A short plain string option ('' when absent or not a string).
+function _chatChartText(v, max) {
+    return typeof v === 'string' ? v.trim().slice(0, max) : '';
+}
 
 function chatChartSpec(raw) {
     let o = raw;
@@ -1404,7 +1447,7 @@ function chatChartSpec(raw) {
         try { o = JSON.parse(raw); } catch (e) { return null; }
     }
     if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
-    if (!['bar', 'line', 'pie'].includes(o.type)) return null;
+    if (!CHAT_CHART_TYPES.includes(o.type)) return null;
     if (!Array.isArray(o.labels) || !o.labels.length || o.labels.length > CHAT_CHART_MAX_LABELS) return null;
     if (!Array.isArray(o.series) || !o.series.length || o.series.length > CHAT_CHART_MAX_SERIES) return null;
     const labels = o.labels.map(l => String(l));
@@ -1412,66 +1455,315 @@ function chatChartSpec(raw) {
     for (const s of o.series) {
         if (!s || typeof s !== 'object' || !Array.isArray(s.data) || s.data.length !== labels.length) return null;
         if (!s.data.every(v => typeof v === 'number' && Number.isFinite(v))) return null;
-        series.push({ name: String(s.name == null ? '' : s.name), data: s.data.slice() });
+        const item = { name: String(s.name == null ? '' : s.name), data: s.data.slice() };
+        if (o.type === 'combo') {
+            // An unknown kind or axis falls back to the default (bar, left).
+            item.kind = s.kind === 'line' ? 'line' : 'bar';
+            item.axis = s.axis === 'right' ? 'right' : 'left';
+        }
+        series.push(item);
     }
     const currency = typeof o.currency === 'string' && /^[A-Za-z]{3}$/.test(o.currency) ? o.currency.toUpperCase() : 'EUR';
+    // A pie and a waterfall show the first series only.
+    const single = o.type === 'pie' || o.type === 'waterfall';
+    let totals = [];
+    if (o.type === 'waterfall' && Array.isArray(o.totals)) {
+        totals = [...new Set(o.totals.filter(i => Number.isInteger(i) && i >= 0 && i < labels.length))].sort((a, b) => a - b);
+    }
     return {
         type: o.type,
         title: o.title == null ? '' : String(o.title).slice(0, 120),
         labels,
-        // A pie shows the first series only.
-        series: o.type === 'pie' ? series.slice(0, 1) : series,
+        series: single ? series.slice(0, 1) : series,
         currency,
-        stacked: o.type === 'bar' && o.stacked === true,
+        stacked: CHAT_CHART_STACKABLE.includes(o.type) && o.stacked === true,
+        unit: _chatChartText(o.unit, 24),
+        x_title: _chatChartText(o.x_title, 80),
+        y_title: _chatChartText(o.y_title, 80),
+        right_unit: _chatChartText(o.right_unit, 24),
+        totals,
     };
 }
 
-// Chart.js config for a spec; colour(i) gives the i-th series/slice colour.
-function chatChartConfig(spec, colour, fmtMoney) {
-    const money = fmtMoney || ((v, c) => Fmt.money(v, c, 2));
-    const cur = spec.currency;
-    const pie = spec.type === 'pie';
-    const datasets = spec.series.map((s, i) => {
-        if (pie) {
-            return { label: s.name, data: s.data, backgroundColor: spec.labels.map((_, j) => colour(j)),
-                     borderColor: 'transparent', borderWidth: 0 };
+// Bars of a waterfall: deltas float from the running sum; a total bar is drawn
+// from zero and shows the running sum (its own value only seeds index 0).
+function chatWaterfallPoints(spec) {
+    const data = spec.series[0].data;
+    const totals = new Set(spec.totals || []);
+    let running = 0;
+    return data.map((v, i) => {
+        if (totals.has(i)) {
+            if (i === 0) running = v;
+            return { start: 0, end: running, value: running, total: true };
         }
-        const c = colour(i);
-        return spec.type === 'line'
-            ? { label: s.name, data: s.data, borderColor: c, backgroundColor: 'transparent', borderWidth: 2, pointRadius: 2, tension: 0.2 }
-            : { label: s.name, data: s.data, backgroundColor: c, borderColor: c, borderWidth: 0 };
+        const start = running;
+        running += v;
+        return { start, end: running, value: v, total: false };
     });
+}
+
+// "#rrggbb" or "rgb(r, g, b)" with an alpha; anything else is returned as is.
+function chatColourAlpha(c, alpha) {
+    const s = String(c || '').trim();
+    let m = /^#([0-9a-f]{6})$/i.exec(s);
+    if (m) {
+        const n = parseInt(m[1], 16);
+        return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
+    }
+    m = /^rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)$/i.exec(s);
+    return m ? `rgba(${m[1]}, ${m[2]}, ${m[3]}, ${alpha})` : s;
+}
+
+// How a value is written: money by default, a plain number plus the unit when
+// the spec has one ("%" sticks to the number, other units follow a space).
+// right axis values of a combo chart use right_unit and are never money.
+function chatChartFormatter(spec, fmtMoney, right) {
+    const money = fmtMoney || ((v, c) => Fmt.money(v, c, 2));
+    const unit = right ? spec.right_unit : spec.unit;
+    if (!unit && !right) return v => money(v, spec.currency);
+    const num = v => (Math.round(v * 100) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 });
+    return v => `${num(v)}${unit === '%' ? '%' : (unit ? ' ' + unit : '')}`;
+}
+
+// Chart.js config for a spec; colour(i) gives the i-th series/slice colour.
+// extras: {fmtTokens: {good, bad, neutral}, onPick(labelIndex, seriesIndex)}.
+function chatChartConfig(spec, colour, fmtMoney, extras) {
+    const ex = extras || {};
+    const tokens = ex.tokens || {};
+    const fmtLeft = chatChartFormatter(spec, fmtMoney, false);
+    const fmtRight = chatChartFormatter(spec, fmtMoney, true);
+    const pie = spec.type === 'pie';
+    const hbar = spec.type === 'hbar';
+    const waterfall = spec.type === 'waterfall';
+    const combo = spec.type === 'combo';
+    const area = spec.type === 'area';
+    const usesRight = combo && spec.series.some(s => s.axis === 'right');
+    const fmtFor = s => (combo && s.axis === 'right') ? fmtRight : fmtLeft;
+
+    let datasets;
+    let points = null;
+    if (waterfall) {
+        points = chatWaterfallPoints(spec);
+        const colours = points.map(p => p.total ? (tokens.neutral || colour(2)) : (p.value >= 0 ? (tokens.good || colour(0)) : (tokens.bad || colour(1))));
+        datasets = [{ label: spec.series[0].name, data: points.map(p => [p.start, p.end]),
+                      backgroundColor: colours, borderColor: colours, borderWidth: 0 }];
+    } else {
+        datasets = spec.series.map((s, i) => {
+            if (pie) {
+                return { label: s.name, data: s.data, backgroundColor: spec.labels.map((_, j) => colour(j)),
+                         borderColor: 'transparent', borderWidth: 0 };
+            }
+            const c = colour(i);
+            const asLine = spec.type === 'line' || area || (combo && s.kind === 'line');
+            const base = asLine
+                ? { label: s.name, data: s.data, borderColor: c, borderWidth: 2, pointRadius: 2, tension: 0.2,
+                    backgroundColor: area ? chatColourAlpha(c, 0.35) : 'transparent', fill: area }
+                : { label: s.name, data: s.data, backgroundColor: c, borderColor: c, borderWidth: 0 };
+            if (combo) {
+                base.type = asLine ? 'line' : 'bar';
+                base.yAxisID = s.axis === 'right' ? 'y1' : 'y';
+                // Lines are drawn on top of the bars.
+                base.order = asLine ? 0 : 1;
+            }
+            return base;
+        });
+    }
+
     const options = {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-            legend: { display: pie || spec.series.length > 1, position: 'bottom' },
+            legend: { display: !waterfall && (pie || spec.series.length > 1), position: 'bottom' },
             title: { display: !!spec.title, text: spec.title },
-            tooltip: { callbacks: { label: item => ` ${item.dataset.label ? item.dataset.label + ': ' : (pie ? item.label + ': ' : '')}${money(item.raw, cur)}` } },
+            tooltip: { callbacks: { label: item => {
+                if (waterfall) {
+                    const p = points[item.dataIndex];
+                    return ` ${p.total ? '' : (p.value > 0 ? '+' : '')}${fmtLeft(p.value)}`;
+                }
+                const s = spec.series[item.datasetIndex];
+                const v = item.raw;
+                return ` ${item.dataset.label ? item.dataset.label + ': ' : (pie ? item.label + ': ' : '')}${(s ? fmtFor(s) : fmtLeft)(v)}`;
+            } } },
         },
     };
     if (!pie) {
-        options.scales = {
-            x: { stacked: spec.stacked },
-            y: { stacked: spec.stacked, ticks: { callback: v => money(v, cur) } },
+        const valueAxis = (fmt, extra) => Object.assign({ stacked: spec.stacked, ticks: { callback: v => fmt(v) } }, extra || {});
+        const titled = (axis, text) => (text ? Object.assign(axis, { title: { display: true, text } }) : axis);
+        const category = { stacked: spec.stacked };
+        const value = valueAxis(fmtLeft);
+        if (hbar) {
+            options.indexAxis = 'y';
+            options.scales = { x: titled(value, spec.x_title), y: titled(category, spec.y_title) };
+        } else {
+            options.scales = { x: titled(category, spec.x_title), y: titled(value, spec.y_title) };
+            if (usesRight) {
+                options.scales.y1 = valueAxis(fmtRight, { position: 'right', grid: { drawOnChartArea: false } });
+            }
+        }
+        if (spec.type === 'line' || area || combo) {
+            options.interaction = { mode: 'nearest', intersect: false, axis: 'x' };
+        }
+    }
+    if (ex.onPick) {
+        options.onClick = (evt, els) => {
+            if (els && els.length) ex.onPick(els[0].index, els[0].datasetIndex);
+        };
+        options.onHover = (evt, els) => {
+            const t = evt && evt.native && evt.native.target;
+            if (t && t.style) t.style.cursor = els && els.length ? 'pointer' : 'default';
         };
     }
-    return { type: pie ? 'doughnut' : spec.type, data: { labels: spec.labels, datasets }, options };
+    return { type: pie ? 'doughnut' : (hbar || waterfall || combo ? 'bar' : (area ? 'line' : spec.type)),
+             data: { labels: spec.labels, datasets }, options };
+}
+
+// The question a click on a bar, slice or point sends.
+function chatChartDrillPrompt(spec, labelIndex, seriesIndex) {
+    if (!spec || !Array.isArray(spec.labels) || !(labelIndex >= 0) || labelIndex >= spec.labels.length) return '';
+    let text = spec.title
+        ? `Break down "${spec.labels[labelIndex]}" from the chart "${spec.title}" in more detail.`
+        : `Break down "${spec.labels[labelIndex]}" from the chart above in more detail.`;
+    const s = spec.series && spec.series.length > 1 ? spec.series[seriesIndex] : null;
+    if (s && s.name) text += ` Focus on the series "${s.name}".`;
+    return text;
 }
 
 // Replace each valid ```chart fence with a placeholder <div> (JSON kept,
-// escaped, in data-chart); an invalid one stays a normal code block.
-function chatPrepareCharts(text) {
+// escaped, in data-chart); an invalid one stays a normal code block. render
+// (optional) builds the replacement HTML from (spec, json) instead.
+function chatPrepareCharts(text, render) {
     return String(text || '').replace(/(^|\n)```chart[ \t]*\n([\s\S]*?)\n?```[ \t]*(?=\n|$)/g, (m, lead, body) => {
         const spec = chatChartSpec(body);
         if (!spec) return m;
-        return `${lead}\n<div class="chat-chart" data-chart="${esc(JSON.stringify(spec))}"></div>\n`;
+        const json = JSON.stringify(spec);
+        if (render) return `${lead}\n${render(spec, json)}\n`;
+        return `${lead}\n<div class="chat-chart" data-chart="${esc(json)}"></div>\n`;
     });
 }
 
 window.chatChartSpec = chatChartSpec;
 window.chatChartConfig = chatChartConfig;
 window.chatPrepareCharts = chatPrepareCharts;
+window.chatWaterfallPoints = chatWaterfallPoints;
+window.chatChartDrillPrompt = chatChartDrillPrompt;
+window.chatColourAlpha = chatColourAlpha;
+
+// ── Tables in chat: CSV and click-to-sort ──────────────────────────────
+// Rows are arrays of strings (header row first).
+function tableToCsv(rows) {
+    const cell = v => {
+        const s = String(v == null ? '' : v);
+        return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    return (rows || []).map(r => (r || []).map(cell).join(',')).join('\r\n');
+}
+
+// Best-effort number from a table cell: "1,234.50 €", "€1.234,50", "(250)",
+// "-12.5%", "3 months". NaN when the cell is not a number.
+function chatParseNumber(text) {
+    const s = String(text == null ? '' : text).replace(/[  ]/g, ' ').trim();
+    const m = /^([-+−(]?)\s*(?:[€$£¥]\s*)?(\d[\d.,\s]*)\s*(?:[€$£¥]|%|[A-Za-z]{1,12}\.?)?\s*(\)?)\s*$/.exec(s);
+    if (!m) return NaN;
+    const neg = m[1] === '-' || m[1] === '−' || (m[1] === '(' && m[3] === ')');
+    let core = m[2].replace(/\s+/g, '').replace(/[.,]+$/, '');
+    if (!/\d/.test(core)) return NaN;
+    const dots = (core.match(/\./g) || []).length;
+    const commas = (core.match(/,/g) || []).length;
+    let normal;
+    if (dots && commas) {
+        const dec = core.lastIndexOf('.') > core.lastIndexOf(',') ? '.' : ',';
+        const thou = dec === '.' ? ',' : '.';
+        normal = core.split(thou).join('').replace(dec, '.');
+    } else if (dots + commas > 1) {
+        // The same separator repeated is thousands ("1.234.567").
+        normal = core.replace(/[.,]/g, '');
+    } else if (dots + commas === 1) {
+        const sep = dots ? '.' : ',';
+        const [head, tail] = core.split(sep);
+        // One separator then exactly three digits reads as thousands, as in
+        // the import parsers ("10.000" is 10000), unless the head is 0.
+        normal = tail.length === 3 && head !== '0' && head.length <= 3 ? head + tail : head + '.' + tail;
+    } else {
+        normal = core;
+    }
+    const n = parseFloat(normal);
+    return Number.isFinite(n) ? (neg ? -n : n) : NaN;
+}
+
+// Comparator for two cell strings: numbers numerically, text naturally,
+// empty cells last; dir is 'asc' or 'desc' (empties stay last either way).
+function chatSortCompare(a, b, dir) {
+    const sa = String(a == null ? '' : a).trim();
+    const sb = String(b == null ? '' : b).trim();
+    if (!sa || !sb) return sa === sb ? 0 : (sa ? -1 : 1);
+    const na = chatParseNumber(sa);
+    const nb = chatParseNumber(sb);
+    let cmp;
+    if (!Number.isNaN(na) && !Number.isNaN(nb)) cmp = na - nb;
+    else cmp = sa.localeCompare(sb, undefined, { numeric: true, sensitivity: 'base' });
+    return dir === 'desc' ? -cmp : cmp;
+}
+
+window.tableToCsv = tableToCsv;
+window.chatParseNumber = chatParseNumber;
+window.chatSortCompare = chatSortCompare;
+
+// ── Sources, follow-ups and report titles ──────────────────────────────
+// Only http(s) links are shown; the model's text must never become a
+// javascript: URL.
+function chatSafeSources(sources) {
+    if (!Array.isArray(sources)) return [];
+    const out = [];
+    sources.forEach(s => {
+        if (!s || typeof s.url !== 'string') return;
+        const url = s.url.trim();
+        const m = /^https?:\/\/(?:[^\s/?#@]*@)?([^\s/?#:]+)\S*$/i.exec(url);
+        if (!m) return;
+        out.push({ title: String(s.title || '').trim() || m[1], url, host: m[1] });
+    });
+    return out;
+}
+
+function chatSourcesHtml(sources) {
+    const list = chatSafeSources(sources);
+    if (!list.length) return '';
+    const items = list.map(s =>
+        `<li><a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title)}</a> <span class="text-muted">${esc(s.host)}</span></li>`).join('');
+    return `<div class="chat-sources"><span class="chat-sources-label"><i class="bi bi-globe2"></i> Sources</span><ol>${items}</ol></div>`;
+}
+
+function chatSourcesMarkdown(sources) {
+    const list = chatSafeSources(sources);
+    if (!list.length) return '';
+    return ['**Sources**', '', ...list.map(s => `- [${s.title.replace(/[\[\]]/g, '')}](${s.url})`), ''].join('\n');
+}
+
+// Up to four short follow-up questions as chips.
+function chatFollowupsClean(followups) {
+    if (!Array.isArray(followups)) return [];
+    return followups.filter(f => typeof f === 'string' && f.trim()).map(f => f.trim().slice(0, 200)).slice(0, 4);
+}
+
+function chatFollowupsHtml(followups) {
+    const list = chatFollowupsClean(followups);
+    if (!list.length) return '';
+    return `<div class="chat-followups">${list.map(f => `<button type="button" class="chat-suggestion chat-followup">${esc(f)}</button>`).join('')}</div>`;
+}
+
+// A default report title from an answer: its first heading or line.
+function chatReportDefaultTitle(markdown) {
+    const lines = String(markdown || '').replace(/```[\s\S]*?```/g, '').split('\n').map(l => l.trim()).filter(Boolean);
+    const line = lines.find(l => /^#{1,6}\s/.test(l)) || lines.find(l => !l.startsWith('<')) || '';
+    const t = line.replace(/^#{1,6}\s+/, '').replace(/[*_`>#|]/g, '').trim();
+    return (t || 'Chat report').slice(0, 80);
+}
+
+window.chatSafeSources = chatSafeSources;
+window.chatSourcesHtml = chatSourcesHtml;
+window.chatSourcesMarkdown = chatSourcesMarkdown;
+window.chatFollowupsClean = chatFollowupsClean;
+window.chatFollowupsHtml = chatFollowupsHtml;
+window.chatReportDefaultTitle = chatReportDefaultTitle;
 
 // A file name for an exported thread: the name, slugified, plus the date.
 function chatExportFilename(name, ext) {
@@ -1485,7 +1777,181 @@ window.chatSessionToMarkdown = chatSessionToMarkdown;
 window.chatSessionToHtml = chatSessionToHtml;
 window.chatExportFilename = chatExportFilename;
 
+// ── Charts and tables on the page (shared by the chat and the reports) ──
+function chatChartColour(i) { return cssVar(`--viz-${(i % 8) + 1}`); }
+function chatChartTokens() {
+    return { good: cssVar('--viz-good'), bad: cssVar('--viz-bad'), neutral: cssVar('--viz-neutral') };
+}
+
+function chatDownloadHref(filename, href) {
+    const a = document.createElement('a');
+    a.href = href; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+}
+
+function chatDownloadText(filename, text, mime) {
+    const url = URL.createObjectURL(new Blob([text], { type: mime }));
+    chatDownloadHref(filename, url);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// A canvas as a PNG data URL on a white page (the canvas itself is transparent).
+function chatCanvasPng(canvas) {
+    try {
+        const out = document.createElement('canvas');
+        out.width = canvas.width; out.height = canvas.height;
+        const ctx = out.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, out.width, out.height);
+        ctx.drawImage(canvas, 0, 0);
+        return out.toDataURL('image/png');
+    } catch (e) { return ''; }
+}
+
+// One PNG per chart block in root, in document order ('' when a block is not
+// drawn), the shape chatSessionToHtml takes.
+function chatCollectChartImages(root) {
+    return Array.from(root.querySelectorAll('.chat-chart')).map(el => {
+        const canvas = el.querySelector('canvas');
+        return canvas ? chatCanvasPng(canvas) : '';
+    });
+}
+
+let _chatExpanded = null;
+// Show a chart's spec large in the shared modal.
+function chatExpandChart(spec, onPick) {
+    const modalEl = document.getElementById('pfmChartModal');
+    if (!modalEl || typeof bootstrap === 'undefined' || !bootstrap.Modal || typeof Chart === 'undefined') {
+        notify('The large view is not available.', 'warning');
+        return;
+    }
+    const titleEl = modalEl.querySelector('.modal-title');
+    if (titleEl) titleEl.textContent = spec.title || 'Chart';
+    const holder = modalEl.querySelector('.pfm-chart-modal-canvas');
+    const modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    const draw = () => {
+        if (_chatExpanded) { try { _chatExpanded.destroy(); } catch (e) { /* gone */ } }
+        holder.innerHTML = '<canvas></canvas>';
+        const pick = onPick ? (li, si) => { modal.hide(); onPick(li, si); } : null;
+        _chatExpanded = new Chart(holder.firstChild, chatChartConfig(spec, chatChartColour, null, { tokens: chatChartTokens(), onPick: pick }));
+    };
+    modalEl.addEventListener('shown.bs.modal', draw, { once: true });
+    modalEl.addEventListener('hidden.bs.modal', () => {
+        if (_chatExpanded) { try { _chatExpanded.destroy(); } catch (e) { /* gone */ } }
+        _chatExpanded = null;
+        holder.innerHTML = '';
+    }, { once: true });
+    modal.show();
+}
+
+// Draw the chart placeholders inside root (already in the DOM). opts:
+// {onPick(spec, labelIndex, seriesIndex), register(chart)}. Each chart gets a
+// small toolbar: PNG download and a large view.
+function chatHydrateCharts(root, opts) {
+    const o = opts || {};
+    root.querySelectorAll('.chat-chart[data-chart]').forEach(el => {
+        const raw = el.getAttribute('data-chart') || '';
+        try {
+            const spec = chatChartSpec(raw);
+            if (!spec || typeof Chart === 'undefined') throw new Error('no chart');
+            el.removeAttribute('data-chart');
+            el.innerHTML = `<div class="chat-chart-bar">
+                <button type="button" class="chat-chart-btn" data-chart-act="png" title="Download PNG" aria-label="Download chart as PNG"><i class="bi bi-image"></i></button>
+                <button type="button" class="chat-chart-btn" data-chart-act="expand" title="Expand" aria-label="Expand chart"><i class="bi bi-arrows-fullscreen"></i></button>
+            </div><div class="chat-chart-canvas"><canvas></canvas></div>`;
+            const canvas = el.querySelector('canvas');
+            const pick = o.onPick ? (li, si) => o.onPick(spec, li, si) : null;
+            const chart = new Chart(canvas, chatChartConfig(spec, chatChartColour, null, { tokens: chatChartTokens(), onPick: pick }));
+            if (o.register) o.register(chart);
+            el.addEventListener('click', (e) => {
+                const btn = e.target.closest('[data-chart-act]');
+                if (!btn) return;
+                if (btn.dataset.chartAct === 'png') {
+                    const png = chatCanvasPng(canvas);
+                    if (png) chatDownloadHref(chatExportFilename(spec.title || 'chart', 'png'), png);
+                    else notify('Could not export the chart.', 'warning');
+                } else {
+                    chatExpandChart(spec, pick ? (li, si) => o.onPick(spec, li, si) : null);
+                }
+            });
+        } catch (e) {
+            // Chart.js missing or a bad spec: show the data instead.
+            el.innerHTML = `<pre class="mb-0"><code>${esc(raw)}</code></pre>`;
+        }
+    });
+}
+
+// Give every table in root a CSV button and click-to-sort headers.
+function chatEnhanceTables(root) {
+    root.querySelectorAll('table').forEach(table => {
+        if (table.dataset.enhanced || !table.tHead || !table.tBodies.length) return;
+        table.dataset.enhanced = '1';
+        const wrap = document.createElement('div');
+        wrap.className = 'chat-table-wrap';
+        table.parentNode.insertBefore(wrap, table);
+        const bar = document.createElement('div');
+        bar.className = 'chat-table-bar';
+        bar.innerHTML = '<button type="button" class="chat-chart-btn" title="Download as CSV" aria-label="Download table as CSV"><i class="bi bi-filetype-csv"></i> CSV</button>';
+        const scroll = document.createElement('div');
+        scroll.className = 'chat-table-scroll';
+        scroll.appendChild(table);
+        wrap.appendChild(bar);
+        wrap.appendChild(scroll);
+        bar.querySelector('button').addEventListener('click', () => {
+            const rows = Array.from(table.rows).map(r => Array.from(r.cells).map(c => c.textContent.trim()));
+            // A BOM so Excel reads the UTF-8 (euro signs) correctly.
+            chatDownloadText(chatExportFilename('table', 'csv'), '﻿' + tableToCsv(rows), 'text/csv;charset=utf-8');
+        });
+        const sortBy = (th) => {
+            const col = th.cellIndex;
+            const dir = th.getAttribute('aria-sort') === 'ascending' ? 'desc' : 'asc';
+            table.querySelectorAll('th').forEach(h => h.removeAttribute('aria-sort'));
+            th.setAttribute('aria-sort', dir === 'asc' ? 'ascending' : 'descending');
+            const body = table.tBodies[0];
+            const rows = Array.from(body.rows).map((row, i) => ({ row, i, text: row.cells[col] ? row.cells[col].textContent : '' }));
+            rows.sort((a, b) => chatSortCompare(a.text, b.text, dir) || a.i - b.i);
+            rows.forEach(r => body.appendChild(r.row));
+        };
+        table.tHead.querySelectorAll('th').forEach(th => {
+            th.classList.add('chat-sortable');
+            th.tabIndex = 0;
+            th.setAttribute('role', 'button');
+            th.title = 'Sort';
+            th.addEventListener('click', () => sortBy(th));
+            th.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); sortBy(th); }
+            });
+        });
+    });
+}
+
+// Markdown (with chart blocks) as page HTML; the same for chat and reports.
+function chatRenderMarkdown(text) {
+    return window.marked ? marked.parse(chatPrepareCharts(text), { breaks: true }) : esc(text);
+}
+
+window.chatHydrateCharts = chatHydrateCharts;
+window.chatEnhanceTables = chatEnhanceTables;
+window.chatRenderMarkdown = chatRenderMarkdown;
+window.chatCollectChartImages = chatCollectChartImages;
+window.chatDownloadText = chatDownloadText;
+
+// Starter questions of the empty chat, in three small groups.
+const CHAT_STARTERS = [
+    { label: 'Portfolio', items: ['What is my total P&L?', 'How diversified am I?', 'Where should my next euro go?'] },
+    { label: 'Spending', items: ['Where did my money go last month?', 'Which subscriptions could I cancel?', 'What changed in my spending vs. last year?'] },
+    { label: 'What if', items: ['What if I lose my job?', 'What if my income drops 30%?', 'What if I buy a house?', 'What if stocks fall 40%: how long to recover?'] },
+];
+function chatStartersHtml() {
+    return `<div class="chat-starter-groups">${CHAT_STARTERS.map(g => `
+        <div class="chat-starter-group"><span class="chat-starter-label">${esc(g.label)}</span>
+            <div class="chat-suggestions">${g.items.map(q => `<button type="button" class="chat-suggestion">${esc(q)}</button>`).join('')}</div>
+        </div>`).join('')}</div>`;
+}
+window.chatStartersHtml = chatStartersHtml;
+
 const CHAT_TIER_KEY = 'pfmChatTier';
+const CHAT_WEB_KEY = 'pfmChatWebSearch';
 
 function setupChatPage() {
     const messagesEl = document.getElementById('chatMessages');
@@ -1499,6 +1965,8 @@ function setupChatPage() {
     const modelSelect  = document.getElementById('chatModelSelect');
     const exportBtn    = document.getElementById('chatExportBtn');
     const exportMenu   = document.getElementById('chatExportMenu');
+    const webSearchWrap = document.getElementById('chatWebSearchWrap');
+    const webSearchEl  = document.getElementById('chatWebSearch');
     if (!messagesEl || !inputEl) return;
 
     let sessionId = null;
@@ -1511,14 +1979,7 @@ function setupChatPage() {
         <div class="chat-empty" id="chatEmpty">
             <i class="bi bi-robot"></i>
             <strong>What can I help you with?</strong>
-            <div class="chat-suggestions">
-                <button type="button" class="chat-suggestion">What is my total P&amp;L?</button>
-                <button type="button" class="chat-suggestion">Show my top holdings</button>
-                <button type="button" class="chat-suggestion">How diversified am I?</button>
-                <button type="button" class="chat-suggestion">Where should my next euro go?</button>
-                <button type="button" class="chat-suggestion">Am I on track for my goals?</button>
-                <button type="button" class="chat-suggestion">What needs my attention?</button>
-            </div>
+            ${chatStartersHtml()}
             <span class="text-muted small">Or paste a broker statement and click <strong>Extract</strong>.</span>
         </div>`;
 
@@ -1536,7 +1997,7 @@ function setupChatPage() {
     }
 
     function renderMarkdown(text) {
-        return window.marked ? marked.parse(chatPrepareCharts(text), { breaks: true }) : escapeHtml(text);
+        return window.marked ? chatRenderMarkdown(text) : escapeHtml(text);
     }
 
     // Charts drawn in this thread; destroyed whenever the messages are cleared.
@@ -1546,27 +2007,28 @@ function setupChatPage() {
         chatCharts = [];
     }
 
-    // Draw the chart placeholders inside an element that is now in the DOM.
+    // A click on a bar, slice or point asks for that item in more detail.
+    function pickChart(spec, labelIndex, seriesIndex) {
+        if (sendBtn.disabled) { notify('Wait for the current answer first.', 'info'); return; }
+        const q = chatChartDrillPrompt(spec, labelIndex, seriesIndex);
+        if (!q) return;
+        inputEl.value = q;
+        autoGrow();
+        doSend();
+    }
+
+    // Draw the chart placeholders and enhance the tables of a message in the DOM.
     function hydrateCharts(root) {
-        root.querySelectorAll('.chat-chart[data-chart]').forEach(el => {
-            try {
-                const spec = chatChartSpec(el.getAttribute('data-chart'));
-                if (!spec || typeof Chart === 'undefined') throw new Error('no chart');
-                el.removeAttribute('data-chart');
-                el.innerHTML = '<canvas></canvas>';
-                const canvas = el.firstChild;
-                chatCharts.push(new Chart(canvas, chatChartConfig(spec, i => cssVar(`--viz-${(i % 8) + 1}`))));
-            } catch (e) {
-                // Chart.js missing or a bad spec: show the data instead.
-                el.innerHTML = `<pre class="mb-0"><code>${esc(el.getAttribute('data-chart') || '')}</code></pre>`;
-            }
-        });
+        chatHydrateCharts(root, { onPick: pickChart, register: c => chatCharts.push(c) });
+        chatEnhanceTables(root);
     }
 
     // Suggestion chips fill the composer and send.
     messagesEl.addEventListener('click', (e) => {
         const chip = e.target.closest('.chat-suggestion');
         if (chip) { inputEl.value = chip.textContent; autoGrow(); doSend(); }
+        const save = e.target.closest('.chat-save-report');
+        if (save) saveAnswerAsReport(save);
         const copy = e.target.closest('.chat-copy');
         if (copy) {
             const text = copy.dataset.text || '';
@@ -1575,9 +2037,11 @@ function setupChatPage() {
         }
     });
 
-    // meta: {model, tier, tools_used, error}
+    // meta: {model, tier, tools_used, sources, followups, error}
     function appendMessage(role, text, ts = null, meta = {}) {
         removeEmpty();
+        // Only the latest answer offers follow-ups.
+        messagesEl.querySelectorAll('.chat-followups').forEach(el => el.remove());
         const isUser = role === 'user';
         const isError = !!meta.error;
         const bubbleClass = isUser ? 'chat-bubble-user' : (isError ? 'chat-bubble-error' : 'chat-bubble-assistant');
@@ -1585,7 +2049,11 @@ function setupChatPage() {
         const metaBits = [];
         if (ts) metaBits.push(`<span>${esc(Fmt.date(ts))}</span>`);
         if (!isUser && meta.model) metaBits.push(`<span title="Model${meta.tier ? ' (' + esc(meta.tier) + ' tier)' : ''}"><i class="bi bi-cpu me-1"></i>${esc(meta.model)}</span>`);
-        if (!isUser && !isError && text) metaBits.push(`<button type="button" class="chat-copy" title="Copy answer" data-text="${escapeForAttr(text)}"><i class="bi bi-clipboard"></i></button>`);
+        if (!isUser && !isError && text) {
+            metaBits.push(`<button type="button" class="chat-copy" title="Copy answer" aria-label="Copy answer" data-text="${escapeForAttr(text)}"><i class="bi bi-clipboard"></i></button>`);
+            metaBits.push(`<button type="button" class="chat-copy chat-save-report" title="Save as report" aria-label="Save as report"><i class="bi bi-bookmark-plus"></i></button>`);
+        }
+        const extras = isUser || isError ? '' : chatToolsHtml(meta.tools_used) + chatSourcesHtml(meta.sources) + chatFollowupsHtml(meta.followups);
         const div = document.createElement('div');
         div.className = `chat-row ${isUser ? 'chat-user' : 'chat-assistant'}`;
         div.innerHTML = `
@@ -1593,12 +2061,12 @@ function setupChatPage() {
             <div class="chat-body">
                 <div class="chat-bubble ${bubbleClass}">${body}</div>
                 ${metaBits.length ? `<div class="chat-meta">${metaBits.join('')}</div>` : ''}
-                ${isUser ? '' : chatToolsHtml(meta.tools_used)}
+                ${extras}
             </div>`;
         messagesEl.appendChild(div);
         if (!isUser && !isError) hydrateCharts(div);
         if (!isError) {
-            currentMessages.push({ role, content: text, ts, model: meta.model || null, tier: meta.tier || null, tools_used: meta.tools_used || [] });
+            currentMessages.push({ role, content: text, ts, model: meta.model || null, tier: meta.tier || null, tools_used: meta.tools_used || [], sources: meta.sources || [] });
             if (exportBtn) exportBtn.disabled = false;
         }
         scrollBottom();
@@ -1814,7 +2282,7 @@ function setupChatPage() {
                 destroyCharts();
                 messagesEl.innerHTML = '';
                 messages.forEach(m => appendMessage(m.role, m.content, m.ts || null,
-                    { model: m.model, tier: m.tier, tools_used: m.tools_used }));
+                    { model: m.model, tier: m.tier, tools_used: m.tools_used, sources: m.sources, followups: m.followups }));
             }
         } catch (e) { /* leave empty state */ }
     }
@@ -1838,6 +2306,11 @@ function setupChatPage() {
         return modelSelect && modelSelect.style.display !== 'none' && modelSelect.value ? modelSelect.value : null;
     }
 
+    // The web search switch: shown only when the server offers it.
+    function webSearchOn() {
+        return !!(webSearchWrap && webSearchEl && webSearchWrap.style.display !== 'none' && webSearchEl.checked);
+    }
+
     // One turn: show the question, the typing dots, then the answer with its
     // model and tools (or the error in its own bubble).
     async function sendMessage(text) {
@@ -1845,10 +2318,10 @@ function setupChatPage() {
         setBusy(true);
         showTyping();
         try {
-            const data = await window.apiClient.sendChat(text, sessionId, selectedTier());
+            const data = await window.apiClient.sendChat(text, sessionId, selectedTier(), webSearchOn());
             hideTyping();
             appendMessage('assistant', data.answer || '(no response)', new Date().toISOString(),
-                { model: data.model, tier: data.tier, tools_used: data.tools_used });
+                { model: data.model, tier: data.tier, tools_used: data.tools_used, sources: data.sources, followups: data.followups });
             const s = sessions.find(x => x.id === sessionId);
             if (s) {
                 s.message_count = (s.message_count || 0) + 2;
@@ -1903,14 +2376,7 @@ function setupChatPage() {
         inputEl.focus();
     }
 
-    function downloadText(filename, text, mime) {
-        const blob = new Blob([text], { type: mime });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.download = filename;
-        document.body.appendChild(a); a.click(); a.remove();
-        setTimeout(() => URL.revokeObjectURL(url), 1000);
-    }
+    const downloadText = chatDownloadText;
 
     function doExport(format) {
         if (!currentMessages.length) { notify('Nothing to export yet.'); return; }
@@ -1919,15 +2385,71 @@ function setupChatPage() {
         if (format === 'md') {
             downloadText(chatExportFilename(name, 'md'), chatSessionToMarkdown(name, currentMessages), 'text/markdown;charset=utf-8');
         } else if (format === 'html') {
-            downloadText(chatExportFilename(name, 'html'), chatSessionToHtml(name, currentMessages), 'text/html;charset=utf-8');
+            downloadText(chatExportFilename(name, 'html'), chatSessionToHtml(name, currentMessages, chatCollectChartImages(messagesEl)), 'text/html;charset=utf-8');
+        } else if (format === 'report') {
+            writeReport(s, name);
         } else if (format === 'print') {
             const w = window.open('', '_blank');
             if (!w) { notify('Allow pop-ups to print this thread.', 'warning'); return; }
             w.document.open();
-            w.document.write(chatSessionToHtml(name, currentMessages));
+            w.document.write(chatSessionToHtml(name, currentMessages, chatCollectChartImages(messagesEl)));
             w.document.close();
             w.focus();
             setTimeout(() => w.print(), 300);
+        }
+    }
+
+    // Save one answer (its Markdown, charts included) as a report.
+    async function saveAnswerAsReport(btn) {
+        const copy = btn.closest('.chat-meta') && btn.closest('.chat-meta').querySelector('.chat-copy');
+        const md = copy ? (copy.dataset.text || '') : '';
+        if (!md.trim()) return;
+        const title = await noteDialog({
+            title: 'Save as report',
+            message: 'Title of the report',
+            value: chatReportDefaultTitle(md),
+            confirmLabel: 'Save',
+        });
+        if (title === null) return;
+        try {
+            await window.apiClient.createReport({
+                title: (title || chatReportDefaultTitle(md)).replace(/\s+/g, ' '),
+                content_md: md,
+                source_session_id: sessionId,
+            });
+            notify('Saved to Reports.', 'success');
+        } catch (err) {
+            notify('Could not save the report: ' + err.message, 'danger');
+        }
+    }
+
+    // Ask the server to write a structured report from the whole thread (the
+    // model call can take a minute), then open it on the Reports page.
+    let writingReport = false;
+    async function writeReport(session, name) {
+        if (writingReport || !sessionId) return;
+        writingReport = true;
+        const label = exportBtn ? exportBtn.innerHTML : '';
+        if (exportBtn) {
+            exportBtn.disabled = true;
+            exportBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span><span class="d-none d-sm-inline ms-1">Writing…</span>';
+        }
+        notify('Writing the report from this thread. This can take up to a minute.', 'info');
+        try {
+            const report = await window.apiClient.writeReportFromSession(sessionId, (name && !/^New Chat/.test(name)) ? { title: name } : {});
+            notify('Report saved.', 'success');
+            if (report && report.id != null && window.navigationManager) {
+                window._reportsOpenId = report.id;
+                window.navigationManager.showPage('reports');
+            }
+        } catch (err) {
+            notify('Could not write the report: ' + err.message, 'danger');
+        } finally {
+            writingReport = false;
+            if (exportBtn) {
+                exportBtn.innerHTML = label;
+                exportBtn.disabled = !currentMessages.length;
+            }
         }
     }
 
@@ -1936,6 +2458,12 @@ function setupChatPage() {
         if (!modelSelect) return;
         try {
             const data = await window.apiClient.getChatModels();
+            if (webSearchWrap) {
+                webSearchWrap.style.display = data.web_search_available === true ? '' : 'none';
+                let on = false;
+                try { on = localStorage.getItem(CHAT_WEB_KEY) === '1'; } catch (e) { /* no storage */ }
+                if (webSearchEl) webSearchEl.checked = on;
+            }
             const tiers = data.tiers || [];
             if (!tiers.length) return;
             let saved = null;
@@ -1959,6 +2487,9 @@ function setupChatPage() {
     inputEl.addEventListener('input', autoGrow);
     if (newBtn) newBtn.addEventListener('click', doNewChat);
     if (newBtnMob) newBtnMob.addEventListener('click', doNewChat);
+    if (webSearchEl) webSearchEl.addEventListener('change', () => {
+        try { localStorage.setItem(CHAT_WEB_KEY, webSearchEl.checked ? '1' : '0'); } catch (e) { /* no storage */ }
+    });
     if (modelSelect) modelSelect.addEventListener('change', () => {
         try { localStorage.setItem(CHAT_TIER_KEY, modelSelect.value); } catch (e) { /* no storage */ }
     });
@@ -2004,6 +2535,154 @@ function setupChatPage() {
         window._chatPendingContext = null;
         await openPendingContext(pending);
     };
+}
+
+// ── Reports page: answers and write-ups saved from the chat ───────────────
+const _reportsState = { items: [], currentId: null, charts: [] };
+
+function _reportsDestroyCharts() {
+    _reportsState.charts.forEach(c => { try { c.destroy(); } catch (e) { /* gone */ } });
+    _reportsState.charts = [];
+}
+
+function _reportsShowEmpty(text) {
+    const empty = document.getElementById('reportEmpty');
+    const viewer = document.getElementById('reportViewer');
+    const label = document.getElementById('reportEmptyText');
+    if (viewer) viewer.style.display = 'none';
+    if (empty) empty.style.display = '';
+    if (label) label.textContent = text || 'No reports yet.';
+}
+
+function _renderReportsList() {
+    const list = document.getElementById('reportsList');
+    if (!list) return;
+    if (!_reportsState.items.length) {
+        list.innerHTML = '<div class="list-group-item text-muted small py-2">No reports yet.</div>';
+        return;
+    }
+    list.innerHTML = _reportsState.items.map(r => `
+        <button type="button" class="list-group-item list-group-item-action py-2 ${r.id === _reportsState.currentId ? 'active' : ''}" data-report-id="${esc(r.id)}">
+            <span class="d-block text-truncate">${esc(r.title || 'Untitled')}</span>
+            <span class="d-block small opacity-75">${esc(Fmt.date(r.updated_at || r.created_at) || '')}</span>
+        </button>`).join('');
+}
+
+function _reportsShow(report) {
+    _reportsDestroyCharts();
+    _reportsState.currentId = report.id;
+    _reportsState.current = report;
+    const empty = document.getElementById('reportEmpty');
+    const viewer = document.getElementById('reportViewer');
+    if (empty) empty.style.display = 'none';
+    if (viewer) viewer.style.display = '';
+    document.getElementById('reportTitle').textContent = report.title || 'Untitled';
+    document.getElementById('reportMeta').textContent = `Saved ${Fmt.date(report.created_at) || ''}`;
+    const body = document.getElementById('reportBody');
+    body.innerHTML = chatRenderMarkdown(report.content_md || '');
+    chatHydrateCharts(body, { register: c => _reportsState.charts.push(c) });
+    chatEnhanceTables(body);
+    _renderReportsList();
+}
+
+async function _reportsOpen(id) {
+    try {
+        _reportsShow(await window.apiClient.getReport(id));
+    } catch (err) {
+        notify('Could not open the report: ' + err.message, 'danger');
+    }
+}
+
+async function loadReportsPage() {
+    const list = document.getElementById('reportsList');
+    if (!list) return;
+    try {
+        const data = await window.apiClient.listReports();
+        _reportsState.items = Array.isArray(data && data.items) ? data.items : [];
+        _reportsState.error = '';
+    } catch (err) {
+        // An older server has no /reports (404): the same empty state.
+        _reportsState.items = [];
+        _reportsState.error = err && err.status === 404 ? '' : (err && err.message) || 'Could not load reports.';
+    }
+    // A report just written from the chat opens first; else keep the current
+    // one when it is still listed; else the newest.
+    const fromChat = window._reportsOpenId;
+    window._reportsOpenId = null;
+    const listed = id => _reportsState.items.some(r => String(r.id) === String(id));
+    let openId = null;
+    if (fromChat != null) openId = fromChat;
+    else if (_reportsState.currentId != null && listed(_reportsState.currentId)) openId = _reportsState.currentId;
+    else if (_reportsState.items.length) openId = _reportsState.items[0].id;
+    _reportsState.currentId = openId;
+    _renderReportsList();
+    if (openId != null) {
+        await _reportsOpen(openId);
+    } else {
+        _reportsDestroyCharts();
+        _reportsState.current = null;
+        _reportsShowEmpty(_reportsState.error ? `Could not load reports: ${_reportsState.error}` : 'No reports yet.');
+    }
+}
+window.loadReportsPage = loadReportsPage;
+
+function setupReportsPage() {
+    const page = document.getElementById('reportsPage');
+    if (!page) return;
+    const byId = id => document.getElementById(id);
+    byId('refreshReports').addEventListener('click', loadReportsPage);
+    byId('reportsList').addEventListener('click', (e) => {
+        const item = e.target.closest('[data-report-id]');
+        if (item) _reportsOpen(item.dataset.reportId);
+    });
+    const current = () => _reportsState.current;
+    byId('reportRename').addEventListener('click', async () => {
+        const r = current();
+        if (!r) return;
+        const title = await noteDialog({ title: 'Rename report', message: 'Title of the report', value: r.title || '', confirmLabel: 'Rename' });
+        if (!title) return;
+        try {
+            await window.apiClient.updateReport(r.id, { title: title.replace(/\s+/g, ' ') });
+            await loadReportsPage();
+        } catch (err) {
+            notify('Could not rename the report: ' + err.message, 'danger');
+        }
+    });
+    byId('reportDelete').addEventListener('click', async () => {
+        const r = current();
+        if (!r) return;
+        if (!(await confirmDialog({ title: 'Delete report', message: `Delete "${r.title || 'Untitled'}"? This cannot be undone.`, confirmLabel: 'Delete', danger: true }))) return;
+        try {
+            await window.apiClient.deleteReport(r.id);
+            _reportsState.currentId = null;
+            _reportsState.current = null;
+            await loadReportsPage();
+        } catch (err) {
+            notify('Could not delete the report: ' + err.message, 'danger');
+        }
+    });
+    byId('reportMd').addEventListener('click', () => {
+        const r = current();
+        if (r) chatDownloadText(chatExportFilename(r.title, 'md'), String(r.content_md || ''), 'text/markdown;charset=utf-8');
+    });
+    const pageHtml = () => {
+        const r = current();
+        return r ? chatExportPage(r.title, chatMarkdownToExportHtml(String(r.content_md || ''), chatCollectChartImages(byId('reportBody')))) : '';
+    };
+    byId('reportHtml').addEventListener('click', () => {
+        const r = current();
+        if (r) chatDownloadText(chatExportFilename(r.title, 'html'), pageHtml(), 'text/html;charset=utf-8');
+    });
+    byId('reportPrint').addEventListener('click', () => {
+        if (!current()) return;
+        const w = window.open('', '_blank');
+        if (!w) { notify('Allow pop-ups to print this report.', 'warning'); return; }
+        w.document.open();
+        w.document.write(pageHtml());
+        w.document.close();
+        w.focus();
+        setTimeout(() => w.print(), 300);
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -6995,6 +7674,7 @@ document.addEventListener('DOMContentLoaded', function() {
     setupWatchlistPage();
     setupGoalsPage();
     setupDecisionsPage();
+    setupReportsPage();
     setupEditGoalModal();
 
     const refreshTxPage = document.getElementById('refreshTransactionsPage');
@@ -8797,6 +9477,149 @@ function _isDescendant(tree, ancestorId, candidateId) {
 }
 window._isDescendant = _isDescendant;
 
+// ── Spending categories: essentiality (fixed / flexible / optional) ─────────
+const SPENDING_ESSENTIALITY = [
+    { value: 'fixed', label: 'Fixed' },
+    { value: 'flexible', label: 'Flexible' },
+    { value: 'optional', label: 'Optional' },
+];
+
+// <option>s for the selector: a blank first, the current level selected.
+function spendingEssentialityOptions(current) {
+    return `<option value="">—</option>` + SPENDING_ESSENTIALITY.map(o =>
+        `<option value="${o.value}" ${o.value === current ? 'selected' : ''}>${o.label}</option>`).join('');
+}
+
+// True for a category below the fixed "Spend" root (walks the parent chain;
+// a cycle or a missing parent ends the walk).
+function spendingCategoryIsSpend(tree, cat) {
+    const byName = new Map((tree || []).map(c => [c.name, c]));
+    let cur = cat;
+    for (let i = 0; cur && i < 50; i++) {
+        if (cur.is_root) return cur.name === 'Spend' && cur !== cat;
+        cur = byName.get(cur.parent_name);
+    }
+    return false;
+}
+
+// Keep only suggestions for known Spend categories with a valid level.
+function spendingEssentialitySuggestions(suggestions, tree) {
+    const levels = new Set(SPENDING_ESSENTIALITY.map(o => o.value));
+    const byName = new Map((tree || []).map(c => [c.name, c]));
+    const seen = new Set();
+    const out = [];
+    (Array.isArray(suggestions) ? suggestions : []).forEach(s => {
+        const cat = s && byName.get(s.name);
+        if (!cat || seen.has(s.name) || !levels.has(s.essentiality) || !spendingCategoryIsSpend(tree, cat)) return;
+        seen.add(s.name);
+        out.push({ name: s.name, essentiality: s.essentiality, reason: String(s.reason || '').slice(0, 300) });
+    });
+    return out;
+}
+window.spendingEssentialityOptions = spendingEssentialityOptions;
+window.spendingCategoryIsSpend = spendingCategoryIsSpend;
+window.spendingEssentialitySuggestions = spendingEssentialitySuggestions;
+
+async function _saveEssentiality(name, value) {
+    await window.apiClient.setCategoryEssentiality(name, value || null);
+    const cat = (window._spCategoriesListData || []).find(c => c.name === name);
+    if (cat) cat.essentiality = value || null;
+}
+
+// Wire the per-row selectors and the "Suggest with AI" panel once.
+function _wireEssentiality() {
+    const list = document.getElementById('spCategoriesList');
+    if (list && !list.dataset.essWired) {
+        list.dataset.essWired = '1';
+        list.addEventListener('change', async (e) => {
+            const sel = e.target.closest('.sp-essential');
+            if (!sel) return;
+            try {
+                await _saveEssentiality(sel.dataset.catName, sel.value);
+            } catch (err) {
+                notify('Could not save: ' + err.message, 'danger');
+                _renderCategoriesList(window._spCategoriesListData || []);
+            }
+        });
+    }
+    const btn = document.getElementById('spEssentialSuggestBtn');
+    if (btn && !btn.dataset.wired) {
+        btn.dataset.wired = '1';
+        btn.addEventListener('click', _suggestEssentiality);
+    }
+}
+
+async function _suggestEssentiality() {
+    const btn = document.getElementById('spEssentialSuggestBtn');
+    const panel = document.getElementById('spEssentialPanel');
+    if (!btn || !panel) return;
+    const label = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span>Thinking…';
+    try {
+        const data = await window.apiClient.suggestCategoryEssentiality();
+        const tree = window._spCategoriesListData || [];
+        const items = spendingEssentialitySuggestions(data && data.suggestions, tree);
+        if (!items.length) {
+            panel.style.display = 'none';
+            notify('No new suggestions: every spending category already has a level.', 'info');
+            return;
+        }
+        _renderEssentialPanel(panel, items);
+    } catch (err) {
+        notify('Could not get suggestions: ' + err.message, 'danger');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = label;
+    }
+}
+
+function _renderEssentialPanel(panel, items) {
+    panel.style.display = '';
+    panel.innerHTML = `
+        <div class="card-header d-flex align-items-center justify-content-between flex-wrap gap-2">
+            <span class="fw-semibold">Suggested levels</span>
+            <span class="d-flex gap-1">
+                <button type="button" class="btn btn-sm btn-primary" data-ess-act="accept">Accept selected</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-ess-act="all">Select all</button>
+                <button type="button" class="btn btn-sm btn-outline-secondary" data-ess-act="close">Dismiss</button>
+            </span>
+        </div>
+        <div class="list-group list-group-flush">${items.map((s, i) => `
+            <label class="list-group-item d-flex align-items-start gap-2">
+                <input class="form-check-input mt-1 flex-shrink-0" type="checkbox" data-ess-idx="${i}" checked>
+                <span class="flex-grow-1" style="min-width:0;">
+                    <span class="fw-semibold">${esc(s.name)}</span>
+                    <select class="form-select form-select-sm d-inline-block w-auto ms-1 align-baseline" data-ess-level="${i}" aria-label="Level for ${escapeForAttr(s.name)}">${spendingEssentialityOptions(s.essentiality).replace('<option value="">—</option>', '')}</select>
+                    ${s.reason ? `<span class="d-block small text-muted">${esc(s.reason)}</span>` : ''}
+                </span>
+            </label>`).join('')}</div>`;
+    panel.onclick = async (e) => {
+        const act = e.target.closest('[data-ess-act]');
+        if (!act) return;
+        if (act.dataset.essAct === 'close') { panel.style.display = 'none'; return; }
+        if (act.dataset.essAct === 'all') {
+            panel.querySelectorAll('[data-ess-idx]').forEach(cb => { cb.checked = true; });
+            return;
+        }
+        const chosen = Array.from(panel.querySelectorAll('[data-ess-idx]:checked')).map(cb => {
+            const i = Number(cb.dataset.essIdx);
+            return { name: items[i].name, value: panel.querySelector(`[data-ess-level="${i}"]`).value };
+        });
+        if (!chosen.length) { notify('Nothing selected.'); return; }
+        act.disabled = true;
+        let saved = 0;
+        for (const c of chosen) {
+            try { await _saveEssentiality(c.name, c.value); saved++; } catch (err) {
+                notify(`Could not save "${c.name}": ${err.message}`, 'danger');
+            }
+        }
+        panel.style.display = 'none';
+        if (saved) notify(`Saved ${saved} ${saved === 1 ? 'level' : 'levels'}.`, 'success');
+        _renderCategoriesList(window._spCategoriesListData || []);
+    };
+}
+
 function _renderCategoriesList(tree) {
     window._spCategoriesListData = tree;
     if (!tree.length) {
@@ -8820,10 +9643,13 @@ function _renderCategoriesList(tree) {
         const editControl = c.is_root
             ? ''
             : `<button class="btn btn-sm btn-outline-secondary" onclick="window.editSpendingCategory(${c.id})" title="Edit"><i class="bi bi-pencil"></i></button>`;
+        const essential = !c.is_root && spendingCategoryIsSpend(tree, c)
+            ? `<select class="form-select form-select-sm sp-essential" data-cat-name="${escapeForAttr(c.name)}" aria-label="Essentiality of ${escapeForAttr(c.name)}" title="How hard is it to cut? Fixed, flexible or optional.">${spendingEssentialityOptions(c.essentiality)}</select>`
+            : '';
         return `
-        <div class="list-group-item d-flex align-items-center justify-content-between ${indent}" data-cat-id="${c.id}">
-            <span id="spCategoryNameCell${c.id}" data-value="${escapeForAttr(c.name)}" data-parent="${escapeForAttr(c.parent_name || '')}">${esc(c.name)}</span>
-            ${editControl}
+        <div class="list-group-item d-flex align-items-center justify-content-between gap-2 ${indent}" data-cat-id="${c.id}">
+            <span class="flex-grow-1" id="spCategoryNameCell${c.id}" data-value="${escapeForAttr(c.name)}" data-parent="${escapeForAttr(c.parent_name || '')}">${esc(c.name)}</span>
+            <span class="d-flex align-items-center gap-1 flex-shrink-0">${essential}${editControl}</span>
         </div>`;
     };
     const renderChildren = (parentName, depth) =>
@@ -8831,6 +9657,7 @@ function _renderCategoriesList(tree) {
     const wrap = document.getElementById('spCategoriesList');
     if (!wrap) return;
     wrap.innerHTML = renderChildren(null, 0);
+    _wireEssentiality();
 }
 
 function _renderPossibleDuplicates(categories) {

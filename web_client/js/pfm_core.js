@@ -2968,9 +2968,10 @@ function createAPIClient() {
             return this._budgetFetch('/summary', {}, 'Failed to load budget summary');
         },
 
-        async sendChat(message, sessionId, tier) {
+        async sendChat(message, sessionId, tier, webSearch) {
             const body = { message, session_id: sessionId, live: false };
             if (tier) body.tier = tier;
+            if (webSearch) body.web_search = true;
             const response = await fetch(this.baseURL + '/api/v1/llm/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
@@ -3045,6 +3046,54 @@ function createAPIClient() {
             });
             if (!response.ok) throw new Error('Failed to load messages');
             return response.json();
+        },
+
+        // Saved reports (/saved-reports) and the thread-to-report writer. Errors
+        // carry .status so a page can tell "not there" (404) from a failure.
+        async _reportFetch(path, opts = {}, fallback = 'Request failed') {
+            const headers = { 'X-API-Key': this.apiKey };
+            if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
+            const response = await fetch(this.baseURL + path, {
+                method: opts.method || 'GET',
+                headers,
+                body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+            });
+            if (!response.ok) {
+                const err = new Error(errorDetailFromBody(await response.text(), fallback));
+                err.status = response.status;
+                throw err;
+            }
+            if (response.status === 204) return null;
+            return response.json();
+        },
+        async listReports() {
+            return this._reportFetch('/api/v1/saved-reports/', {}, 'Failed to load reports');
+        },
+        async getReport(id) {
+            return this._reportFetch('/api/v1/saved-reports/' + encodeURIComponent(id), {}, 'Failed to load report');
+        },
+        async createReport(data) {
+            return this._reportFetch('/api/v1/saved-reports/', { method: 'POST', body: data }, 'Failed to save report');
+        },
+        async updateReport(id, data) {
+            return this._reportFetch('/api/v1/saved-reports/' + encodeURIComponent(id), { method: 'PUT', body: data }, 'Failed to update report');
+        },
+        async deleteReport(id) {
+            return this._reportFetch('/api/v1/saved-reports/' + encodeURIComponent(id), { method: 'DELETE' }, 'Failed to delete report');
+        },
+        async writeReportFromSession(sessionId, data = {}) {
+            return this._reportFetch('/api/v1/llm/chat/sessions/' + encodeURIComponent(sessionId) + '/report',
+                { method: 'POST', body: data }, 'Failed to write report');
+        },
+
+        // Spending category essentiality (fixed / flexible / optional)
+        async setCategoryEssentiality(name, essentiality) {
+            return this._reportFetch('/api/v1/spending/categories/' + encodeURIComponent(name) + '/essentiality',
+                { method: 'PUT', body: { essentiality } }, 'Failed to save essentiality');
+        },
+        async suggestCategoryEssentiality() {
+            return this._reportFetch('/api/v1/spending/categories/suggest-essentiality',
+                { method: 'POST' }, 'Failed to get suggestions');
         },
 
         exportUrl(format) {

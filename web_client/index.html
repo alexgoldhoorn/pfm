@@ -161,6 +161,7 @@
                     <a class="sidebar-nav-link" href="#" data-page="analytics"><i class="bi bi-bar-chart-line me-2"></i>Analytics</a>
                     <a class="sidebar-nav-link" href="#" data-page="research"><i class="bi bi-search-heart me-2"></i>Research</a>
                     <a class="sidebar-nav-link" href="#" data-page="decisions"><i class="bi bi-journal-check me-2"></i>Decisions</a>
+                    <a class="sidebar-nav-link" href="#" data-page="reports"><i class="bi bi-file-earmark-text me-2"></i>Reports</a>
                     <a class="sidebar-nav-link" href="#" data-page="watchlist"><i class="bi bi-eye me-2"></i>Watchlist</a>
                 </div>
 
@@ -231,6 +232,7 @@
                     <a class="sidebar-nav-link" href="#" data-page="analytics"><i class="bi bi-bar-chart-line me-2"></i>Analytics</a>
                     <a class="sidebar-nav-link" href="#" data-page="research"><i class="bi bi-search-heart me-2"></i>Research</a>
                     <a class="sidebar-nav-link" href="#" data-page="decisions"><i class="bi bi-journal-check me-2"></i>Decisions</a>
+                    <a class="sidebar-nav-link" href="#" data-page="reports"><i class="bi bi-file-earmark-text me-2"></i>Reports</a>
                     <a class="sidebar-nav-link" href="#" data-page="watchlist"><i class="bi bi-eye me-2"></i>Watchlist</a>
                 </div>
 
@@ -1684,6 +1686,51 @@
                     </div>
                 </div>
 
+                <!-- Reports Page -->
+                <div id="reportsPage" class="page-content" style="display: none;">
+                    <div class="d-flex align-items-start justify-content-between flex-wrap gap-2 mb-3">
+                        <div>
+                            <h4 class="mb-0"><i class="bi bi-file-earmark-text me-2 text-primary"></i>Reports<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('reports')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
+                            <p class="text-muted small mb-0">Answers and write-ups you saved from the AI Chat, with their charts and tables.</p>
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary" id="refreshReports" title="Refresh reports">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                        </button>
+                    </div>
+                    <div class="row g-3">
+                        <div class="col-12 col-md-4">
+                            <div class="card">
+                                <div id="reportsList" class="list-group list-group-flush">
+                                    <div class="list-group-item text-muted small py-2">Loading…</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-12 col-md-8">
+                            <div class="card" id="reportViewer" style="display:none;">
+                                <div class="card-header d-flex align-items-center gap-2 flex-wrap">
+                                    <span class="fw-semibold text-truncate flex-grow-1" id="reportTitle" style="min-width:0;"></span>
+                                    <div class="btn-group btn-group-sm" role="group" aria-label="Report actions">
+                                        <button type="button" class="btn btn-outline-secondary" id="reportRename" title="Rename"><i class="bi bi-pencil"></i></button>
+                                        <button type="button" class="btn btn-outline-secondary" id="reportMd" title="Download Markdown"><i class="bi bi-markdown"></i></button>
+                                        <button type="button" class="btn btn-outline-secondary" id="reportHtml" title="Download web page"><i class="bi bi-filetype-html"></i></button>
+                                        <button type="button" class="btn btn-outline-secondary" id="reportPrint" title="Print / save as PDF"><i class="bi bi-printer"></i></button>
+                                        <button type="button" class="btn btn-outline-danger" id="reportDelete" title="Delete"><i class="bi bi-trash"></i></button>
+                                    </div>
+                                </div>
+                                <div class="card-body">
+                                    <div class="text-muted small mb-2" id="reportMeta"></div>
+                                    <div class="chat-bubble report-body" id="reportBody"></div>
+                                </div>
+                            </div>
+                            <div id="reportEmpty" class="text-center text-muted py-5 px-3" style="display:none;">
+                                <i class="bi bi-file-earmark-text fs-1 d-block mb-2"></i>
+                                <p class="mb-1" id="reportEmptyText">No reports yet.</p>
+                                <p class="small mb-0">Save one from the <a href="#" data-page="chat">AI Chat</a>: use the bookmark button under an answer, or Export, Write report from this thread.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- Chat Page -->
                 <div id="chatPage" class="page-content" style="display: none;">
                     <div class="d-flex align-items-center justify-content-between mb-3">
@@ -1716,6 +1763,10 @@
                                 <div class="chat-header d-flex align-items-center gap-2 flex-wrap">
                                     <span id="chatActiveThreadName" class="fw-semibold text-truncate flex-grow-1" style="min-width:0;"></span>
                                     <div class="d-flex align-items-center gap-1 ms-auto">
+                                        <div class="form-check form-switch chat-websearch mb-0" id="chatWebSearchWrap" style="display:none;" title="Web search lets the assistant look things up online. Searches leave this machine; your personal figures are not included in the queries.">
+                                            <input class="form-check-input" type="checkbox" role="switch" id="chatWebSearch">
+                                            <label class="form-check-label small" for="chatWebSearch"><i class="bi bi-globe2 me-1"></i>Web search</label>
+                                        </div>
                                         <select class="form-select form-select-sm chat-model-select" id="chatModelSelect" title="Model used for the next answer" aria-label="Model" style="display:none;"></select>
                                         <div class="dropdown">
                                             <button class="btn btn-sm btn-outline-secondary" id="chatExportBtn" data-bs-toggle="dropdown" aria-expanded="false" title="Export this thread" disabled>
@@ -1725,6 +1776,8 @@
                                                 <li><a class="dropdown-item" href="#" data-export="md"><i class="bi bi-markdown me-2"></i>Markdown (.md)</a></li>
                                                 <li><a class="dropdown-item" href="#" data-export="html"><i class="bi bi-filetype-html me-2"></i>Web page (.html)</a></li>
                                                 <li><a class="dropdown-item" href="#" data-export="print"><i class="bi bi-printer me-2"></i>Print / save as PDF</a></li>
+                                                <li><hr class="dropdown-divider"></li>
+                                                <li><a class="dropdown-item" href="#" data-export="report"><i class="bi bi-file-earmark-text me-2"></i>Write report from this thread</a></li>
                                             </ul>
                                         </div>
                                         <button class="btn btn-sm btn-outline-primary d-md-none" id="chatNewBtnMobile" title="New chat">
@@ -1738,11 +1791,29 @@
                                     <div class="chat-empty" id="chatEmpty">
                                         <i class="bi bi-robot"></i>
                                         <strong>What can I help you with?</strong>
-                                        <div class="chat-suggestions">
-                                            <button type="button" class="chat-suggestion">What is my total P&amp;L?</button>
-                                            <button type="button" class="chat-suggestion">Show my top holdings</button>
-                                            <button type="button" class="chat-suggestion">How diversified am I?</button>
-                                            <button type="button" class="chat-suggestion">Where should my next euro go?</button>
+                                        <div class="chat-starter-groups">
+                                            <div class="chat-starter-group"><span class="chat-starter-label">Portfolio</span>
+                                                <div class="chat-suggestions">
+                                                    <button type="button" class="chat-suggestion">What is my total P&amp;L?</button>
+                                                    <button type="button" class="chat-suggestion">How diversified am I?</button>
+                                                    <button type="button" class="chat-suggestion">Where should my next euro go?</button>
+                                                </div>
+                                            </div>
+                                            <div class="chat-starter-group"><span class="chat-starter-label">Spending</span>
+                                                <div class="chat-suggestions">
+                                                    <button type="button" class="chat-suggestion">Where did my money go last month?</button>
+                                                    <button type="button" class="chat-suggestion">Which subscriptions could I cancel?</button>
+                                                    <button type="button" class="chat-suggestion">What changed in my spending vs. last year?</button>
+                                                </div>
+                                            </div>
+                                            <div class="chat-starter-group"><span class="chat-starter-label">What if</span>
+                                                <div class="chat-suggestions">
+                                                    <button type="button" class="chat-suggestion">What if I lose my job?</button>
+                                                    <button type="button" class="chat-suggestion">What if my income drops 30%?</button>
+                                                    <button type="button" class="chat-suggestion">What if I buy a house?</button>
+                                                    <button type="button" class="chat-suggestion">What if stocks fall 40%: how long to recover?</button>
+                                                </div>
+                                            </div>
                                         </div>
                                         <span class="text-muted small">Or paste a broker statement and click <strong>Extract</strong>.</span>
                                     </div>
@@ -3262,8 +3333,13 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                             <div class="card">
                                 <div class="card-header fw-semibold d-flex align-items-center justify-content-between">
                                     <span>All categories</span>
-                                    <button class="btn btn-sm btn-outline-secondary" id="spCategoriesSortToggle" title="Toggle sort order"><i class="bi bi-sort-alpha-down"></i></button>
+                                    <span class="d-flex gap-1">
+                                        <button class="btn btn-sm btn-outline-info" id="spEssentialSuggestBtn" title="Suggest fixed, flexible or optional for spending categories that have none"><i class="bi bi-magic me-1"></i>Suggest with AI</button>
+                                        <button class="btn btn-sm btn-outline-secondary" id="spCategoriesSortToggle" title="Toggle sort order"><i class="bi bi-sort-alpha-down"></i></button>
+                                    </span>
                                 </div>
+                                <div class="border-bottom" id="spEssentialPanel" style="display:none;"></div>
+                                <div class="small text-muted px-3 py-2 border-bottom"><strong>Essentiality</strong> of a spending category: <em>fixed</em> is contractual (mortgage, insurance, school), <em>flexible</em> is needed but can be reduced (groceries, energy), <em>optional</em> can stop (restaurants, subscriptions). It guides the AI Chat's "what to cut first" answers.</div>
                                 <div id="spCategoriesList" class="list-group list-group-flush"></div>
                                 <div class="card-body border-top">
                                     <form id="spCategoryAddForm" class="row g-2 align-items-end">
@@ -4575,6 +4651,21 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                     <button type="button" class="btn btn-success" id="llmImportSaveBtn" style="display:none;">
                         <i class="bi bi-check-lg me-2"></i>Save Selected
                     </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Large view of a chat chart -->
+    <div class="modal fade" id="pfmChartModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Chart</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="pfm-chart-modal-canvas"></div>
                 </div>
             </div>
         </div>
