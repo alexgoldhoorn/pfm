@@ -45,3 +45,22 @@ test("spOwnPatternPreviewText: 0, 1 and many rows", () => {
     assert.equal(spOwnPatternPreviewText(1), "Would mark 1 row as a transfer");
     assert.equal(spOwnPatternPreviewText(5), "Would mark 5 rows as transfers");
 });
+
+test("spOwnPatternConfirmMessage: singular and plural", () => {
+    const { spOwnPatternConfirmMessage } = loadAppIntoContext();
+    assert.equal(
+        spOwnPatternConfirmMessage(1),
+        '1 row will be marked as a transfer. Their current categories will be replaced by "Transfer".'
+    );
+    assert.equal(
+        spOwnPatternConfirmMessage(5),
+        '5 rows will be marked as transfers. Their current categories will be replaced by "Transfer".'
+    );
+});
+
+test("spShouldCreateRule: never for the Transfer category", () => {
+    const { spShouldCreateRule } = loadAppIntoContext();
+    assert.equal(spShouldCreateRule("Transfer"), false);
+    assert.equal(spShouldCreateRule("  transfer "), false);
+    assert.equal(spShouldCreateRule("Groceries"), true);
+});

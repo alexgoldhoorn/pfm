@@ -8336,6 +8336,20 @@ function spOwnPatternPreviewText(count) {
 }
 window.spOwnPatternPreviewText = spOwnPatternPreviewText;
 
+// Pure: the confirm text shown before an own-account pattern is applied.
+function spOwnPatternConfirmMessage(count) {
+    const rows = count === 1 ? '1 row' : `${count} rows`;
+    const verb = count === 1 ? 'will be marked as a transfer' : 'will be marked as transfers';
+    return `${rows} ${verb}. Their current categories will be replaced by "Transfer".`;
+}
+window.spOwnPatternConfirmMessage = spOwnPatternConfirmMessage;
+
+// Pure: rules can't target "Transfer", so no rule is made for that category.
+function spShouldCreateRule(category) {
+    return String(category || '').trim().toLowerCase() !== 'transfer';
+}
+window.spShouldCreateRule = spShouldCreateRule;
+
 // Pure: the category cell's inner markup (text + optional Transfer badge).
 // Shared by the row template and the cancel/no-op revert path below, so a
 // cancelled edit can restore the cell locally without re-rendering the whole
@@ -9059,6 +9073,14 @@ async function _loadSpOwnPatterns() {
     }
 }
 
+// Disables the Add and remove buttons while a save is in flight.
+function _setSpOwnBusy(busy) {
+    const card = document.getElementById('spOwnForm')?.closest('.card') || document;
+    card.querySelectorAll('#spOwnForm button, [data-own-remove]').forEach(b => {
+        b.disabled = busy;
+    });
+}
+
 function _wireSpOwnAccounts() {
     const form = document.getElementById('spOwnForm');
     if (!form || form.dataset.wired) return;
@@ -9069,11 +9091,32 @@ function _wireSpOwnAccounts() {
         const input = document.getElementById('spOwnInput');
         const value = (input.value || '').trim();
         if (!value) return;
-        const ok = await _saveSpOwnPatterns([...window._spOwnPatterns, value]);
-        if (ok) {
-            input.value = '';
-            const out = document.getElementById('spOwnPreview');
-            if (out) out.textContent = '';
+        // Drop any pending or in-flight preview so it can't repaint afterwards.
+        clearTimeout(_spOwnPreviewTimer);
+        _spOwnPreviewSeq++;
+        _setSpOwnBusy(true);
+        try {
+            let count = 0;
+            try {
+                const res = await window.apiClient.previewOwnAccountPattern(value);
+                count = res.count || 0;
+            } catch (err) { /* the save below reports a real problem */ }
+            if (count > 0) {
+                const go = await confirmDialog({
+                    title: 'Mark rows as transfers?',
+                    message: spOwnPatternConfirmMessage(count),
+                    confirmLabel: 'Add pattern',
+                });
+                if (!go) return;
+            }
+            const ok = await _saveSpOwnPatterns([...window._spOwnPatterns, value]);
+            if (ok) {
+                input.value = '';
+                const out = document.getElementById('spOwnPreview');
+                if (out) out.textContent = '';
+            }
+        } finally {
+            _setSpOwnBusy(false);
         }
     });
     document.getElementById('spOwnList')?.addEventListener('click', async (e) => {
@@ -9081,8 +9124,13 @@ function _wireSpOwnAccounts() {
         if (!btn) return;
         const idx = Number(btn.dataset.ownRemove);
         const next = window._spOwnPatterns.filter((_, i) => i !== idx);
-        const ok = await _saveSpOwnPatterns(next);
-        if (ok) notify('Removed. Rows already marked as transfers stay marked.');
+        _setSpOwnBusy(true);
+        try {
+            const ok = await _saveSpOwnPatterns(next);
+            if (ok) notify('Removed. Rows already marked as transfers stay marked.');
+        } finally {
+            _setSpOwnBusy(false);
+        }
     });
     document.getElementById('spOwnHelp')?.setAttribute('title', (window.METRIC_HELP || {}).ownAccounts || '');
     _loadSpOwnPatterns();
@@ -9228,7 +9276,9 @@ function _wireSpendingImportModal(ids) {
             status.textContent = 'Saving…';
             try {
                 // AI-accepted suggestions become permanent rules so future imports auto-match.
-                const newRules = preview_.rows.filter(r => r._aiSuggested && r._suggestedPattern);
+                const newRules = preview_.rows.filter(
+                    r => r._aiSuggested && r._suggestedPattern && spShouldCreateRule(r.category)
+                );
                 for (const r of newRules) {
                     await window.apiClient.createSpendingRule(r._suggestedPattern, r.category);
                 }
