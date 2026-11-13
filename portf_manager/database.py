@@ -4515,6 +4515,7 @@ class Database:
         amount_sign: str = None,
         min_abs_amount: float = None,
         q: str = None,
+        transfer_linked: Optional[bool] = None,
     ) -> int:
         """Count spending transactions matching the same filters as
         list_spending_transactions (no JOIN needed — sort/portfolio_name
@@ -4530,6 +4531,7 @@ class Database:
                 amount_sign,
                 min_abs_amount,
                 q,
+                transfer_linked,
             )
             query = "SELECT COUNT(*) FROM spending_transactions s" + where_clause
             cursor = conn.execute(query, params)

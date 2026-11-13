@@ -9,6 +9,8 @@ category tree (a DB concern) stays out of this module.
 from typing import Callable, Iterable, Optional
 
 DEFAULT_PRIORITY = 100
+# Reserved category: only the transfer flag may file a row here, never a rule.
+TRANSFER_CATEGORY = "Transfer"
 # Float noise from bank CSVs must not push an exact bound out of range.
 _EPSILON = 1e-9
 
@@ -67,9 +69,13 @@ def pick_category(
 
     A match whose category can't hold this amount (an Income category on a
     debit) is skipped rather than ending the search, so a later rule can
-    still apply. Nothing applicable → ``"uncategorized"``.
+    still apply. A stored rule that targets ``TRANSFER_CATEGORY`` is skipped
+    too, so a rule can never file a row as a transfer without the flag.
+    Nothing applicable → ``"uncategorized"``.
     """
     for rule in sorted(rules, key=rule_sort_key):
+        if rule["category"] == TRANSFER_CATEGORY:
+            continue
         if not rule_matches(rule, description, merchant, amount, portfolio_id):
             continue
         if category_fits(rule["category"], amount):

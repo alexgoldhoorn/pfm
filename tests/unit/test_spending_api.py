@@ -2476,3 +2476,181 @@ def test_get_survives_malformed_setting(tmp_path):
     db.set_setting("own_account_patterns", "{not json")
     r = client.get(PATTERNS_URL, headers=HEADERS)
     assert r.status_code == 200 and r.json() == {"patterns": []}
+
+
+# --- "Transfer" category and the flag always agree --------------------------
+
+
+def _put(client, sid, **body):
+    return client.put(f"/api/v1/spending/{sid}", json=body, headers=HEADERS)
+
+
+def test_put_category_transfer_sets_flag_and_manual(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    sid = db.create_spending_transaction(pid, "2026-07-08", "Move", -100.0)
+    r = _put(client, sid, category="Transfer")
+    assert r.status_code == 200
+    assert r.json()["is_transfer"] is True
+    assert r.json()["transfer_source"] == "manual"
+    row = db.get_spending_transaction(sid)
+    assert row["is_transfer"] == 1
+    assert row["category"] == "Transfer"
+    assert row["transfer_source"] == "manual"
+    assert row["transfer_link_id"] is None
+
+
+def test_put_is_transfer_true_sets_manual(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    sid = db.create_spending_transaction(pid, "2026-07-08", "Move", -100.0)
+    assert _put(client, sid, is_transfer=True).status_code == 200
+    row = db.get_spending_transaction(sid)
+    assert row["is_transfer"] == 1 and row["transfer_source"] == "manual"
+
+
+def test_marking_a_linked_transfer_keeps_its_link(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    other = db.create_portfolio("Example Bank 2", account_type="bank")
+    a = db.create_spending_transaction(pid, "2026-07-01", "Out", -100.0)
+    b = db.create_spending_transaction(other, "2026-07-01", "In", 100.0)
+    for x, y in ((a, b), (b, a)):
+        db.update_spending_transaction(
+            x,
+            category="Transfer",
+            is_transfer=True,
+            transfer_link_type="spending",
+            transfer_link_id=y,
+            transfer_source="match",
+        )
+    assert _put(client, a, category="Transfer").status_code == 200
+    row = db.get_spending_transaction(a)
+    assert row["transfer_link_id"] == b and row["transfer_link_type"] == "spending"
+
+
+def _linked_pair(db):
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    other = db.create_portfolio("Example Bank 2", account_type="bank")
+    a = db.create_spending_transaction(pid, "2026-07-01", "Out", -100.0)
+    b = db.create_spending_transaction(other, "2026-07-01", "In", 100.0)
+    for x, y in ((a, b), (b, a)):
+        db.update_spending_transaction(
+            x,
+            category="Transfer",
+            is_transfer=True,
+            transfer_link_type="spending",
+            transfer_link_id=y,
+            transfer_source="match",
+        )
+    return a, b
+
+
+def test_unmark_sets_rejected_and_clears_link(tmp_path):
+    client, db = _make_client(tmp_path)
+    a, _ = _linked_pair(db)
+    r = _put(client, a, is_transfer=False)
+    assert r.status_code == 200 and r.json()["transfer_source"] == "rejected"
+    row = db.get_spending_transaction(a)
+    assert row["is_transfer"] == 0
+    assert row["transfer_link_id"] is None and row["transfer_link_type"] is None
+    assert row["transfer_source"] == "rejected"
+    # The flag and the category agree: no leftover "Transfer" category.
+    assert row["category"] != "Transfer"
+
+
+def test_recategorise_away_sets_rejected(tmp_path):
+    client, db = _make_client(tmp_path)
+    a, _ = _linked_pair(db)
+    assert _put(client, a, category="Groceries").status_code == 200
+    row = db.get_spending_transaction(a)
+    assert row["category"] == "Groceries"
+    assert row["is_transfer"] == 0
+    assert row["transfer_source"] == "rejected"
+    assert row["transfer_link_id"] is None
+
+
+def test_counterpart_source_cleared_not_rejected(tmp_path):
+    client, db = _make_client(tmp_path)
+    a, b = _linked_pair(db)
+    _put(client, a, is_transfer=False)
+    counterpart = db.get_spending_transaction(b)
+    assert counterpart["is_transfer"] == 0
+    assert counterpart["transfer_source"] is None
+
+
+def test_unmarked_row_survives_rescan(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    sid = db.create_spending_transaction(pid, "2026-01-10", "To Sam Sample", -100.0)
+    client.put(PATTERNS_URL, json={"patterns": ["Sam Sample"]}, headers=HEADERS)
+    assert db.get_spending_transaction(sid)["is_transfer"] == 1
+    _put(client, sid, is_transfer=False)
+    # A later statement arrives, then a rescan.
+    db.create_spending_transaction(pid, "2026-01-12", "Coffee", -3.0)
+    r = client.post("/api/v1/spending/rescan-transfers", headers=HEADERS)
+    assert r.status_code == 200
+    row = db.get_spending_transaction(sid)
+    assert row["is_transfer"] == 0
+    assert row["transfer_source"] == "rejected"
+
+
+def test_rejected_row_can_still_pair_match(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    other = db.create_portfolio("Example Bank 2", account_type="bank")
+    sid = db.create_spending_transaction(pid, "2026-07-08", "Move", -1500.0)
+    _put(client, sid, is_transfer=True)
+    _put(client, sid, is_transfer=False)
+    assert db.get_spending_transaction(sid)["transfer_source"] == "rejected"
+    oid = db.create_spending_transaction(other, "2026-07-08", "Move in", 1500.0)
+    client.post("/api/v1/spending/rescan-transfers", headers=HEADERS)
+    row = db.get_spending_transaction(sid)
+    assert row["is_transfer"] == 1
+    assert row["transfer_link_id"] == oid
+    assert row["transfer_source"] == "match"
+
+
+def test_rule_targeting_transfer_rejected_on_post_and_put(tmp_path):
+    client, db = _make_client(tmp_path)
+    msg = 'Rules can\'t file rows as "Transfer". Add the text to "My own accounts" instead.'
+    r = client.post(
+        "/api/v1/spending/rules",
+        json={"pattern": "savings", "category": "Transfer"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 400 and r.json()["detail"] == msg
+    ok = client.post(
+        "/api/v1/spending/rules",
+        json={"pattern": "savings", "category": "Dining"},
+        headers=HEADERS,
+    )
+    assert ok.status_code == 201
+    r = client.put(
+        f"/api/v1/spending/rules/{ok.json()['id']}",
+        json={"category": "Transfer"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 400 and r.json()["detail"] == msg
+    assert db.get_spending_rule(ok.json()["id"])["category"] == "Dining"
+
+
+def test_list_exposes_transfer_source_and_linked_filter(tmp_path):
+    client, db = _make_client(tmp_path)
+    a, b = _linked_pair(db)
+    pid = db.create_portfolio("Example Bank 3", account_type="bank")
+    lone = db.create_spending_transaction(pid, "2026-07-08", "Move", -50.0)
+    _put(client, lone, is_transfer=True)
+    db.create_spending_transaction(pid, "2026-07-09", "Coffee", -3.0)
+
+    allrows = client.get("/api/v1/spending/", headers=HEADERS).json()
+    by_id = {i["id"]: i for i in allrows["items"]}
+    assert by_id[a]["transfer_source"] == "match"
+    assert by_id[lone]["transfer_source"] == "manual"
+
+    linked = client.get("/api/v1/spending/?transfer_linked=true", headers=HEADERS)
+    assert {i["id"] for i in linked.json()["items"]} == {a, b}
+    assert linked.json()["total"] == 2
+    unlinked = client.get("/api/v1/spending/?transfer_linked=false", headers=HEADERS)
+    assert {i["id"] for i in unlinked.json()["items"]} == {lone}
+    assert unlinked.json()["total"] == 1

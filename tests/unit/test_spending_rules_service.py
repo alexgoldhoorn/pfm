@@ -80,3 +80,15 @@ def test_no_match_is_uncategorized():
     assert pick_category([_rule("ZZZ")], "SHOP", None, -5, 1, _always) == (
         "uncategorized"
     )
+
+
+def test_pick_category_skips_stored_transfer_rule():
+    from portf_manager.services.spending_rules import pick_category
+
+    rules = [
+        {"id": 1, "pattern": "savings", "category": "Transfer", "priority": 1},
+        {"id": 2, "pattern": "savings", "category": "Dining", "priority": 50},
+    ]
+    fits = lambda category, amount: True  # noqa: E731
+    assert pick_category(rules, "Savings", None, -10.0, 1, fits) == "Dining"
+    assert pick_category(rules[:1], "Savings", None, -10.0, 1, fits) == "uncategorized"

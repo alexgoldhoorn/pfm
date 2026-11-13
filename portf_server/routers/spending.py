@@ -40,7 +40,11 @@ from portf_manager.services.transfer_linking import (
 from portf_manager.services.budget import build_children_index, subtree_names
 from portf_manager.services.merchant import normalize_merchant
 from portf_manager.services.recurring import load_recurring
-from portf_manager.services.spending_rules import pick_category, rule_matches
+from portf_manager.services.spending_rules import (
+    TRANSFER_CATEGORY,
+    pick_category,
+    rule_matches,
+)
 from portf_manager.llm_client import get_llm_client
 
 from ..dependencies import get_database
@@ -134,6 +138,7 @@ class SpendingTransactionResponse(BaseModel):
     is_transfer: bool
     transfer_link_type: Optional[str] = None
     transfer_link_id: Optional[int] = None
+    transfer_source: Optional[str] = None
     source: Optional[str] = None
     balance: Optional[float] = None
     merchant: Optional[str] = None
@@ -540,6 +545,7 @@ async def list_spending(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     is_transfer: Optional[bool] = None,
+    transfer_linked: Optional[bool] = None,
     amount_sign: Optional[str] = None,
     min_abs_amount: Optional[float] = Query(default=None, ge=0),
     q: Optional[str] = Query(default=None, max_length=200),
@@ -558,8 +564,10 @@ async def list_spending(
     filters to negative-only ("negative", i.e. expenses) or positive-only
     ("positive", i.e. income); `min_abs_amount` additionally requires
     `ABS(amount) >= min_abs_amount`, so it composes naturally with either
-    sign or neither. `q` matches description, merchant or category name
-    (its own or one above it in the tree), case-insensitively and literally.
+    sign or neither. `transfer_linked=true` keeps rows linked to a counterpart,
+    `false` keeps flagged rows with no link. `q` matches description, merchant
+    or category name (its own or one above it in the tree), case-insensitively
+    and literally.
     """
     if sort_by not in _SPENDING_SORT_BY_VALUES:
         raise HTTPException(
@@ -583,6 +591,7 @@ async def list_spending(
         start_date=start_date,
         end_date=end_date,
         is_transfer=is_transfer,
+        transfer_linked=transfer_linked,
         amount_sign=amount_sign,
         min_abs_amount=min_abs_amount,
         q=(q or "").strip() or None,
@@ -653,26 +662,22 @@ async def update_spending_category(
 ):
     """Edit a spending row's category and/or its transfer flag.
 
-    Recategorizing a row away from "Transfer" also clears its transfer flag
-    and link fields — otherwise the row would keep showing the "Transfer"
-    badge and stay excluded from spent_eur/income_eur even though the user
-    just said it isn't a transfer.
+    The "Transfer" category and the ``is_transfer`` flag always agree:
 
-    Recategorizing TO "Transfer" still does not by itself set is_transfer —
-    that stays an explicit decision, made by passing ``is_transfer``.
+    - Marking (``is_transfer: true``, or ``category: "Transfer"`` with
+      ``is_transfer`` absent) sets the flag and ``transfer_source = "manual"``.
+      A row that is already a transfer keeps its link; any other row gets no
+      link, because by-hand marking exists for a counterpart that was never
+      imported (an untracked account) and so has nothing to point at.
+    - Un-marking (``is_transfer: false``, or any other category on a flagged
+      row) clears the flag and the link and sets ``transfer_source =
+      "rejected"``, so neither a rescan nor an own-account pattern re-flags
+      it. The row may still be pair-matched later. A genuine reciprocal
+      counterpart is reset as if the row had been deleted (its source goes
+      back to NULL, not "rejected": the user only judged this row).
 
-    **Marking a transfer by hand** (``is_transfer: true``) exists because the
-    matcher can only pair an outflow with a counterpart that has actually been
-    imported. A genuine move to an account you don't track, or one whose
-    statement you haven't loaded, otherwise counts as spending forever, with no
-    way to say otherwise. A hand-marked row carries no link (there is no
-    counterpart row to point at) and is categorized "Transfer" to match what
-    the matcher does, so every surface that already excludes transfers —
-    /summary, /trend, and the Budget — excludes it too, consistently.
-
-    Unmarking (``is_transfer: false``) clears the flag and the link, and resets
-    a genuine reciprocal counterpart the same way deleting the row would, so
-    the other leg is never left orphaned and excluded from totals forever.
+    Either way every surface that excludes transfers (/summary, /trend, the
+    Budget) sees the row consistently.
     """
     existing = db.get_spending_transaction(spending_id)
     if not existing:
@@ -689,6 +694,7 @@ async def update_spending_category(
         category = body.category.strip()
         if not category:
             raise HTTPException(status_code=400, detail="Category cannot be empty")
+        # "Transfer" sits outside the Income/Spend tree, so it fits any sign.
         root = db.get_spending_category_root(category)
         if not _sign_matches_root(root, existing["amount"]):
             raise HTTPException(
@@ -697,25 +703,33 @@ async def update_spending_category(
             )
         update_kwargs["category"] = category
 
-    if body.is_transfer is True:
+    was_transfer = bool(existing.get("is_transfer"))
+    mark = body.is_transfer is True or (
+        body.is_transfer is None and category == TRANSFER_CATEGORY
+    )
+    unmark = body.is_transfer is False or (
+        body.is_transfer is None
+        and category is not None
+        and category != TRANSFER_CATEGORY
+        and was_transfer
+    )
+    if mark:
         update_kwargs["is_transfer"] = True
-        # No counterpart exists to link to — that's the whole point of marking
-        # by hand — so the link fields stay empty.
-        update_kwargs["transfer_link_type"] = None
-        update_kwargs["transfer_link_id"] = None
-        update_kwargs.setdefault("category", "Transfer")
-        category = update_kwargs["category"]
-    elif body.is_transfer is False:
+        update_kwargs["transfer_source"] = "manual"
+        # The category always follows the flag, whatever was sent with it.
+        update_kwargs["category"] = TRANSFER_CATEGORY
+        if not was_transfer:
+            # No counterpart exists to link to, so the link fields stay empty.
+            update_kwargs["transfer_link_type"] = None
+            update_kwargs["transfer_link_id"] = None
+    elif unmark:
         update_kwargs["is_transfer"] = False
         update_kwargs["transfer_link_type"] = None
         update_kwargs["transfer_link_id"] = None
-        db.reset_transfer_counterpart(spending_id)
-    elif (
-        category is not None and category != "Transfer" and existing.get("is_transfer")
-    ):
-        update_kwargs["is_transfer"] = False
-        update_kwargs["transfer_link_type"] = None
-        update_kwargs["transfer_link_id"] = None
+        update_kwargs["transfer_source"] = "rejected"
+        if existing["category"] == TRANSFER_CATEGORY:
+            # A flag-less row must not keep the "Transfer" category.
+            update_kwargs.setdefault("category", "uncategorized")
         db.reset_transfer_counterpart(spending_id)
 
     db.update_spending_transaction(spending_id, **update_kwargs)
@@ -724,6 +738,7 @@ async def update_spending_category(
         "id": spending_id,
         "category": updated["category"],
         "is_transfer": bool(updated["is_transfer"]),
+        "transfer_source": updated["transfer_source"],
     }
 
 
@@ -817,6 +832,12 @@ def _validate_rule_conditions(
         )
 
 
+_TRANSFER_RULE_DETAIL = (
+    'Rules can\'t file rows as "Transfer". '
+    'Add the text to "My own accounts" instead.'
+)
+
+
 @router.get("/rules", response_model=List[SpendingRuleResponse])
 async def list_rules(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
     """List all spending category rules."""
@@ -836,6 +857,8 @@ async def create_rule(
         raise HTTPException(status_code=400, detail="Pattern cannot be empty")
     if not category:
         raise HTTPException(status_code=400, detail="Category cannot be empty")
+    if category == TRANSFER_CATEGORY:
+        raise HTTPException(status_code=400, detail=_TRANSFER_RULE_DETAIL)
     _validate_rule_conditions(db, body.portfolio_id, body.min_amount, body.max_amount)
     conditions = dict(
         portfolio_id=body.portfolio_id,
@@ -925,6 +948,8 @@ async def update_rule(
         category = body.category.strip()
         if not category:
             raise HTTPException(status_code=400, detail="Category cannot be empty")
+        if category == TRANSFER_CATEGORY:
+            raise HTTPException(status_code=400, detail=_TRANSFER_RULE_DETAIL)
         update_kwargs["category"] = category
     if body.priority is not None:
         update_kwargs["priority"] = body.priority
