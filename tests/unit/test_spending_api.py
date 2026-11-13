@@ -341,18 +341,20 @@ def test_put_with_neither_field_is_rejected(tmp_path):
     assert r.status_code == 400 and "Nothing to update" in r.json()["detail"]
 
 
-def test_a_hand_marked_transfer_is_not_reclaimed_by_the_matcher(tmp_path):
-    """A hand-marked row is in the unlinked pool (it has no link) but the
-    matcher still skips flagged rows, so a rescan can't pair it."""
+def test_a_hand_marked_transfer_is_linked_when_its_counterpart_exists(tmp_path):
+    """A hand-marked row has no link, so a rescan pairs it with an exact
+    counterpart and upgrades its source to "match"."""
     client, db = _make_client(tmp_path)
     pid = db.create_portfolio("Example Bank", account_type="bank")
     sid = db.create_spending_transaction(pid, "2026-07-08", "Move", -1500.0)
     client.put(f"/api/v1/spending/{sid}", json={"is_transfer": True}, headers=HEADERS)
     assert sid in {r["id"] for r in db.list_unlinked_spending_transactions()}
     other = db.create_portfolio("Other Bank", account_type="bank")
-    db.create_spending_transaction(other, "2026-07-08", "Move in", 1500.0)
+    oid = db.create_spending_transaction(other, "2026-07-08", "Move in", 1500.0)
     client.post("/api/v1/spending/rescan-transfers", headers=HEADERS)
-    assert db.get_spending_transaction(sid)["transfer_link_id"] is None
+    row = db.get_spending_transaction(sid)
+    assert row["transfer_link_id"] == oid
+    assert row["transfer_source"] == "match"
 
 
 def test_update_category_non_transfer_row_unaffected(tmp_path):

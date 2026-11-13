@@ -2182,6 +2182,11 @@ class PortfolioManagerCLI:
                 )
         if skipped:
             print(f"ℹ️  Skipped {skipped} booking(s) already in the DB.")
+        # Server mode's HTTP client can't link; the API does it on its own.
+        if imported and hasattr(self.db_manager, "list_unlinked_spending_transactions"):
+            from .services.transfer_linking import settle_after_bookings
+
+            settle_after_bookings(self.db_manager)
         return imported
 
     def list_bookings(self, portfolio_name: Optional[str] = None) -> None:

@@ -135,6 +135,9 @@ def find_all_transfer_matches(
     for row in rows:
         if row.get("transfer_link_id") is not None:
             continue
+        # Already claimed as another row's counterpart in this batch.
+        if row["id"] in consumed_spending_ids:
+            continue
         pool = [
             c for c in all_unlinked_spending if c["id"] not in consumed_spending_ids
         ]

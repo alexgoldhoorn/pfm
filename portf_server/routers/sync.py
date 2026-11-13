@@ -18,6 +18,7 @@ from pydantic import BaseModel
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
 from portf_manager.import_dedup import TransactionDeduplicator
+from portf_manager.services.transfer_linking import settle_after_bookings
 from portf_manager.parsers.pdt_xlsx_parser import (
     _detect_asset_type,
     _pdt_action_to_tx_type,
@@ -367,6 +368,10 @@ async def pull_from_sheets(
             saved_bk += 1
         except Exception as e:
             errors.append(f"Booking {row['date']}: {e}")
+
+    # Once, after the loop, so every new booking is a candidate.
+    if saved_bk:
+        settle_after_bookings(db)
 
     return PullResponse(
         spreadsheet_id=sheet_id,

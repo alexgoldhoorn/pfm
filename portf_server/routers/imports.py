@@ -31,6 +31,7 @@ from fastapi import (
 from pydantic import BaseModel
 
 from portf_manager.import_dedup import TransactionDeduplicator
+from portf_manager.services.transfer_linking import settle_after_bookings
 from portf_manager.currency_utils import normalize_gbx_amounts
 from portf_manager.models import AssetType
 from portf_manager.parsers.indexacapital_csv_parser import parse_indexacapital_csv
@@ -940,6 +941,10 @@ async def save_imported_transactions(
         except Exception as e:
             errors.append(f"Booking {bk.action} {bk.date}: {str(e)}")
             logger.warning(f"Failed to save booking {bk.date}: {e}")
+
+    # Once, after the loop, so every new booking is a candidate.
+    if saved_bookings:
+        settle_after_bookings(db)
 
     saved_deposits = 0
     existing_deps = db.get_fixed_deposits() if body.deposits else []

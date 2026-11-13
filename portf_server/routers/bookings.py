@@ -11,6 +11,8 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from portf_manager.services.transfer_linking import settle_after_bookings
+
 from ..dependencies import get_database
 
 router = APIRouter()
@@ -51,6 +53,8 @@ def create_booking(body: BookingCreate, db=Depends(get_database)):
             portfolio_id=body.portfolio_id,
         )
         booking = db.get_booking(booking_id)
+        # Never raises: the booking stays even if settling fails.
+        settle_after_bookings(db)
         return BookingResponse(**booking)
     except Exception:
         logger.exception("Error creating booking")

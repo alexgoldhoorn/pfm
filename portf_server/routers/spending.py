@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field
 from portf_manager.parsers.generic_bank_csv_parser import parse_generic_bank_csv
 from portf_manager.parsers.aeb43_parser import looks_like_aeb43, parse_aeb43
 from portf_manager.services.balance_check import find_balance_breaks
-from portf_manager.services.transfer_matcher import find_all_transfer_matches
+from portf_manager.services.transfer_linking import settle_transfers
 from portf_manager.services.budget import build_children_index, subtree_names
 from portf_manager.services.merchant import normalize_merchant
 from portf_manager.services.recurring import load_recurring
@@ -400,50 +400,6 @@ async def upload_bank_statement(
     )
 
 
-def _run_transfer_matching(db, saved_ids: List[int]) -> int:
-    """Run transfer auto-linking over the given spending row ids. Returns count linked."""
-    if not saved_ids:
-        return 0
-    unlinked = db.list_unlinked_spending_transactions()
-    rows = [r for r in unlinked if r["id"] in saved_ids]
-    if not rows:
-        return 0
-    # Bookings already claimed as a transfer counterpart in a prior save/
-    # rescan call must be excluded — otherwise an unrelated later spending
-    # row with the same amount/currency in the date window could wrongly
-    # link to the same already-used Deposit booking (bookings have no
-    # per-call "consumed" tracking of their own, unlike spending rows which
-    # drop out of the unlinked pool once is_transfer=1).
-    already_linked_booking_ids = {
-        r["transfer_link_id"]
-        for r in db.list_spending_transactions(is_transfer=True)
-        if r.get("transfer_link_type") == "booking"
-    }
-    deposit_bookings = [
-        b
-        for b in db.get_all_bookings()
-        if b.get("action") == "Deposit" and b["id"] not in already_linked_booking_ids
-    ]
-    matches = find_all_transfer_matches(rows, unlinked, deposit_bookings)
-    for m in matches:
-        db.update_spending_transaction(
-            m.spending_id,
-            category="Transfer",
-            is_transfer=True,
-            transfer_link_type=m.link_type,
-            transfer_link_id=m.link_id,
-        )
-        if m.link_type == "spending":
-            db.update_spending_transaction(
-                m.link_id,
-                category="Transfer",
-                is_transfer=True,
-                transfer_link_type="spending",
-                transfer_link_id=m.spending_id,
-            )
-    return len(matches)
-
-
 @router.post("/save", response_model=SpendingSaveResponse)
 async def save_spending_transactions(
     body: SpendingSaveRequest,
@@ -511,7 +467,7 @@ async def save_spending_transactions(
             errors.append(f"{row.date} {row.description}: {str(e)}")
             logger.warning(f"Failed to save spending row: {e}")
 
-    transfers_linked = _run_transfer_matching(db, saved_ids)
+    transfers_linked = settle_transfers(db, saved_ids)["linked"] if saved_ids else 0
 
     # Summary-only lookups: never fail a save because of them.
     account_name = None
@@ -732,8 +688,11 @@ async def rescan_transfers(
     """
     unlinked = db.list_unlinked_spending_transactions()
     ids = [r["id"] for r in unlinked]
-    linked = _run_transfer_matching(db, ids)
-    return {"transfers_linked": linked}
+    result = settle_transfers(db, ids)
+    return {
+        "transfers_linked": result["linked"],
+        "transfers_flagged": result["flagged"],
+    }
 
 
 class RescanCategoriesBody(BaseModel):

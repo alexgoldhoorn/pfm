@@ -319,3 +319,13 @@ def test_two_same_amount_rows_claim_two_bookings():
     matches = find_all_transfer_matches(rows, rows, bookings)
     assert len(matches) == 2
     assert {m.link_id for m in matches} == {5, 6}
+
+
+def test_source_row_claimed_as_counterpart_is_not_matched_again():
+    a = _spending(1, portfolio_id=1, date="2026-03-10", amount=-100.0)
+    b = _spending(2, portfolio_id=2, date="2026-03-10", amount=100.0)
+    d = _spending(3, portfolio_id=3, date="2026-03-10", amount=-100.0)
+    rows = [a, b, d]
+    matches = find_all_transfer_matches(rows, rows, [])
+    assert len(matches) == 1
+    assert [m for m in matches if 2 in (m.spending_id, m.link_id)] == matches
