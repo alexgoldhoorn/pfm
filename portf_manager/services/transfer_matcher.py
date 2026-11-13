@@ -12,7 +12,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List, Optional
+from collections import defaultdict
+from typing import Dict, List, Optional, Tuple
 
 _MATCH_WINDOW_DAYS = 3
 
@@ -34,6 +35,11 @@ def _days_apart(date_a: str, date_b: str) -> int:
     da = datetime.strptime(date_a, "%Y-%m-%d")
     db_date = datetime.strptime(date_b, "%Y-%m-%d")
     return abs((da - db_date).days)
+
+
+def _bucket_key(item: dict) -> Tuple[str, float]:
+    """Index key: currency and absolute amount rounded to cents."""
+    return (item.get("currency", "EUR"), round(abs(item["amount"]), 2))
 
 
 def _best(row: dict, fits: List[dict]) -> Optional[dict]:
@@ -132,16 +138,30 @@ def find_all_transfer_matches(
     consumed_spending_ids: set = set()
     consumed_booking_ids: set = set()
 
+    # Bucket the candidates once by (currency, amount in cents): a row can only
+    # match inside its own bucket, so each lookup stays small.
+    spending_index: Dict[Tuple[str, float], List[dict]] = defaultdict(list)
+    for cand in all_unlinked_spending:
+        spending_index[_bucket_key(cand)].append(cand)
+    booking_index: Dict[Tuple[str, float], List[dict]] = defaultdict(list)
+    for bk in all_bookings:
+        booking_index[_bucket_key(bk)].append(bk)
+
     for row in rows:
         if row.get("transfer_link_id") is not None:
             continue
         # Already claimed as another row's counterpart in this batch.
         if row["id"] in consumed_spending_ids:
             continue
+        key = _bucket_key(row)
         pool = [
-            c for c in all_unlinked_spending if c["id"] not in consumed_spending_ids
+            c
+            for c in spending_index.get(key, ())
+            if c["id"] not in consumed_spending_ids
         ]
-        bookings_pool = [b for b in all_bookings if b["id"] not in consumed_booking_ids]
+        bookings_pool = [
+            b for b in booking_index.get(key, ()) if b["id"] not in consumed_booking_ids
+        ]
         match = find_transfer_match(row, pool, bookings_pool)
         if match:
             matches.append(match)

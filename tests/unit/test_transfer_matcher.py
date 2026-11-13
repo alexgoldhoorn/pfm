@@ -329,3 +329,92 @@ def test_source_row_claimed_as_counterpart_is_not_matched_again():
     matches = find_all_transfer_matches(rows, rows, [])
     assert len(matches) == 1
     assert [m for m in matches if 2 in (m.spending_id, m.link_id)] == matches
+
+
+def test_find_all_matches_scales_with_many_rows():
+    import time
+
+    from portf_manager.services.transfer_matcher import find_all_transfer_matches
+
+    rows = [
+        {
+            "id": i,
+            "portfolio_id": 1,
+            "date": "2026-01-10",
+            "amount": -(100.0 + i),
+            "currency": "EUR",
+            "transfer_link_id": None,
+        }
+        for i in range(1, 3001)
+    ]
+    bookings = [
+        {
+            "id": i,
+            "portfolio_id": 9,
+            "date": "2026-01-10",
+            "action": "Deposit",
+            "amount": 100.0 + i,
+            "currency": "EUR",
+        }
+        for i in range(1, 201)
+    ]
+    start = time.perf_counter()
+    matches = find_all_transfer_matches(rows, rows, bookings)
+    assert time.perf_counter() - start < 1.0
+    assert len(matches) == 200
+    assert all(m.link_type == "booking" and m.link_id == m.spending_id for m in matches)
+
+
+def test_find_all_matches_mixed_case_tie_breaks_and_no_double_use():
+    from portf_manager.services.transfer_matcher import find_all_transfer_matches
+
+    def sp(i, pid, date, amount):
+        return {
+            "id": i,
+            "portfolio_id": pid,
+            "date": date,
+            "amount": amount,
+            "currency": "EUR",
+            "transfer_link_id": None,
+        }
+
+    spending = [
+        sp(1, 1, "2026-03-10", -50.0),
+        sp(2, 1, "2026-03-10", -50.0),
+        # Equal distance from rows 1 and 2: the lowest id wins.
+        sp(3, 2, "2026-03-11", 50.0),
+        sp(4, 2, "2026-03-11", 50.0),
+        # Closer than the above for a later row, but already used by then.
+        sp(5, 2, "2026-03-10", 70.0),
+        sp(6, 1, "2026-03-12", -70.0),
+        sp(7, 1, "2026-03-10", -90.0),
+    ]
+    bookings = [
+        {
+            "id": 1,
+            "portfolio_id": 9,
+            "date": "2026-03-10",
+            "action": "Deposit",
+            "amount": 90.0,
+            "currency": "EUR",
+        },
+        # Booking with the same amount as a spending pair: spending goes first.
+        {
+            "id": 2,
+            "portfolio_id": 9,
+            "date": "2026-03-10",
+            "action": "Deposit",
+            "amount": 50.0,
+            "currency": "EUR",
+        },
+    ]
+    result = [
+        (m.spending_id, m.link_type, m.link_id)
+        for m in find_all_transfer_matches(spending, spending, bookings)
+    ]
+    assert result == [
+        (1, "spending", 3),
+        (2, "spending", 4),
+        (5, "spending", 6),
+        (7, "booking", 1),
+    ]
