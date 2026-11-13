@@ -26,12 +26,11 @@ class TransferMatch:
 
 
 def _within_window(date_a: str, date_b: str, days: int = _MATCH_WINDOW_DAYS) -> bool:
-    da = datetime.strptime(date_a, "%Y-%m-%d")
-    db_date = datetime.strptime(date_b, "%Y-%m-%d")
-    return abs((da - db_date).days) <= days
+    return _days_apart(date_a, date_b) <= days
 
 
 def _days_apart(date_a: str, date_b: str) -> int:
+    """Return the absolute number of days between two ISO dates."""
     da = datetime.strptime(date_a, "%Y-%m-%d")
     db_date = datetime.strptime(date_b, "%Y-%m-%d")
     return abs((da - db_date).days)

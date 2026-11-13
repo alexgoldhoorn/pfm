@@ -42,11 +42,7 @@ def link_transfers(db, spending_ids: Optional[List[int]] = None) -> int:
         return 0
     # A booking already claimed by an earlier call must not be claimed again:
     # bookings have no per-call "consumed" tracking of their own.
-    claimed_booking_ids = {
-        r["transfer_link_id"]
-        for r in db.list_spending_transactions(is_transfer=True)
-        if r.get("transfer_link_type") == "booking"
-    }
+    claimed_booking_ids = db.list_claimed_booking_ids()
     bookings = [b for b in db.get_all_bookings() if b["id"] not in claimed_booking_ids]
     matches = find_all_transfer_matches(rows, unlinked, bookings)
     for m in matches:

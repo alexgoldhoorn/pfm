@@ -4575,6 +4575,16 @@ class Database:
             )
             return [dict(row) for row in cursor.fetchall()]
 
+    def list_claimed_booking_ids(self) -> set:
+        """Return the ids of bookings linked from any spending row."""
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "SELECT transfer_link_id FROM spending_transactions "
+                "WHERE transfer_link_type = 'booking' "
+                "AND transfer_link_id IS NOT NULL"
+            )
+            return {row[0] for row in cursor.fetchall()}
+
     def get_latest_bank_balance(self, portfolio_id: int) -> Optional[Dict]:
         """Return the most recent balance-bearing spending row for an account.
 

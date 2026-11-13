@@ -254,6 +254,23 @@ def test_delete_spending_transaction_booking_linked_unaffected(db):
     assert db.get_spending_transaction(tx_id) is None
 
 
+def test_list_claimed_booking_ids_only_booking_links(db):
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    a = db.create_spending_transaction(pid, "2026-01-05", "A", -10.0)
+    b = db.create_spending_transaction(pid, "2026-01-06", "B", -20.0)
+    c = db.create_spending_transaction(pid, "2026-01-07", "C", 20.0)
+    db.create_spending_transaction(pid, "2026-01-08", "Unlinked", -5.0)
+    db.update_spending_transaction(
+        a, is_transfer=True, transfer_link_type="booking", transfer_link_id=42
+    )
+    # A booking link counts even when the row is not flagged as a transfer.
+    db.update_spending_transaction(b, transfer_link_type="booking", transfer_link_id=7)
+    db.update_spending_transaction(
+        c, is_transfer=True, transfer_link_type="spending", transfer_link_id=b
+    )
+    assert db.list_claimed_booking_ids() == {42, 7}
+
+
 def test_create_spending_transaction_with_balance(db):
     pid = db.create_portfolio("Example Bank", account_type="bank")
     tx_id = db.create_spending_transaction(

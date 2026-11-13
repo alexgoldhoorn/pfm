@@ -38,6 +38,11 @@ def test_load_tolerates_garbage(db, raw):
     assert load_patterns(db) == []
 
 
+def test_load_drops_case_insensitive_duplicates(db):
+    db.set_setting(SETTING_KEY, '["Sam Sample", "sam sample"]')
+    assert load_patterns(db) == ["Sam Sample"]
+
+
 def test_load_missing_is_empty(db):
     assert load_patterns(db) == []
 

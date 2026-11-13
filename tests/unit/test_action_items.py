@@ -765,6 +765,18 @@ class TestUnmatchedPatternTransfers:
         self._row(db, source="match")
         assert check_unmatched_pattern_transfers(db, today=TODAY) == []
 
+    def test_row_linked_to_another_spending_row_is_quiet(self, tmp_path):
+        db = Database(str(tmp_path / "t.db"))
+        sid = self._row(db)
+        other = db.get_or_create_portfolio("Second Bank", account_type="bank")
+        oid = db.create_spending_transaction(
+            portfolio_id=other, date=_ago(10), description="IN", amount=500.0
+        )
+        db.update_spending_transaction(
+            sid, transfer_link_type="spending", transfer_link_id=oid
+        )
+        assert check_unmatched_pattern_transfers(db, today=TODAY) == []
+
     def test_linked_row_is_quiet(self, tmp_path):
         db = Database(str(tmp_path / "t.db"))
         sid = self._row(db)
@@ -843,6 +855,15 @@ class TestBookingsWithoutBankLeg:
             is_transfer=True,
             transfer_link_type="booking",
             transfer_link_id=bid,
+        )
+        assert check_bookings_without_bank_leg(db, today=TODAY) == []
+
+    def test_booking_linked_from_an_unflagged_row_is_quiet(self, tmp_path):
+        db = Database(str(tmp_path / "t.db"))
+        bank, bid = self._setup(db)
+        sid = self._bank_row(db, bank, days_ago=2)
+        db.update_spending_transaction(
+            sid, transfer_link_type="booking", transfer_link_id=bid
         )
         assert check_bookings_without_bank_leg(db, today=TODAY) == []
 

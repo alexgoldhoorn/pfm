@@ -807,6 +807,9 @@ def check_fund_exposure(db) -> list[dict]:
 
 RECURRING_PRICE_RISE_PCT = 10.0
 RECURRING_PRICE_RECENT_DAYS = 45
+TRANSFER_REVIEW_DAYS = 90
+TRANSFER_SETTLE_DAYS = 3
+BOOKING_BANK_LEG_MIN = 100
 
 
 def check_recurring_charges(db, today: date = None) -> list[dict]:
@@ -867,11 +870,6 @@ def check_recurring_charges(db, today: date = None) -> list[dict]:
     return items
 
 
-TRANSFER_REVIEW_DAYS = 90
-TRANSFER_SETTLE_DAYS = 3
-BOOKING_BANK_LEG_MIN = 100
-
-
 def check_unmatched_pattern_transfers(db, today: date = None) -> list[dict]:
     """Rows flagged as transfers by a pattern whose other leg never showed up.
 
@@ -930,11 +928,7 @@ def check_bookings_without_bank_leg(db, today: date = None) -> list[dict]:
             latest[p["id"]] = max(r["date"] for r in rows)
     if not latest:
         return []
-    linked = {
-        r["transfer_link_id"]
-        for r in db.list_spending_transactions(is_transfer=True)
-        if r.get("transfer_link_type") == "booking"
-    }
+    linked = db.list_claimed_booking_ids()
     items = []
     for b in db.get_all_bookings():
         if b["amount"] < BOOKING_BANK_LEG_MIN or b["date"] < window_start:

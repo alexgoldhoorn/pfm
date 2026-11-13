@@ -63,11 +63,15 @@ def load_patterns(db) -> List[str]:
         logger.warning("Setting %s is not a list of strings; ignoring", SETTING_KEY)
         return []
     kept: List[str] = []
+    seen = set()
     for item in data:
         text = item.strip()
         if len(text) < MIN_PATTERN_LENGTH:
             logger.warning("Dropping stored own-account pattern %r (too short)", item)
             continue
+        if text.lower() in seen:
+            continue
+        seen.add(text.lower())
         kept.append(text)
     return kept
 

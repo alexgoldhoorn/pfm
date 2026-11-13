@@ -31,7 +31,6 @@ from fastapi import (
 from pydantic import BaseModel
 
 from portf_manager.import_dedup import TransactionDeduplicator
-from portf_manager.services.transfer_linking import settle_after_bookings
 from portf_manager.currency_utils import normalize_gbx_amounts
 from portf_manager.models import AssetType
 from portf_manager.parsers.indexacapital_csv_parser import parse_indexacapital_csv
@@ -51,6 +50,7 @@ from portf_manager.parsers.pdt_xlsx_parser import (
     _detect_asset_type,
     _pdt_action_to_tx_type,
 )
+from portf_manager.services.transfer_linking import settle_after_bookings
 
 from ..dependencies import get_database
 from ..auth_middleware import APIKeyManager, require_api_key
