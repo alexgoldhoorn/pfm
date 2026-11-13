@@ -9,6 +9,7 @@ from httpx import AsyncClient
 from portf_manager.database import Database
 from portf_manager.services.action_items import (
     check_balance_sheet_freshness,
+    check_bookings_without_bank_leg,
     check_retirement_readiness,
     check_budget_overruns,
     check_data_quality,
@@ -18,6 +19,7 @@ from portf_manager.services.action_items import (
     check_recurring_charges,
     check_stale_imports,
     check_stale_research,
+    check_unmatched_pattern_transfers,
     checks_for_tests,
     get_action_items,
 )
@@ -708,6 +710,171 @@ class TestRecurringChargeItems:
         assert [
             i["id"] for i in check_recurring_charges(db, today=date(2026, 4, 20))
         ] == [f"recurring:price:{pid}:RISE:2026-04-15"]
+
+
+TODAY = date(2026, 6, 30)
+
+
+def _ago(days: int) -> str:
+    return (TODAY - timedelta(days=days)).isoformat()
+
+
+class TestUnmatchedPatternTransfers:
+    def _row(self, db, days_ago=10, source="pattern", amount=-500.0):
+        pid = db.get_or_create_portfolio("Example Bank", account_type="bank")
+        sid = db.create_spending_transaction(
+            portfolio_id=pid,
+            date=_ago(days_ago),
+            description="TRANSFER TO EXAMPLE BROKER",
+            amount=amount,
+        )
+        db.update_spending_transaction(sid, is_transfer=True, transfer_source=source)
+        return sid
+
+    def test_registered(self):
+        assert check_unmatched_pattern_transfers in checks_for_tests()
+
+    def test_fires_in_plain_case(self, tmp_path):
+        db = Database(str(tmp_path / "t.db"))
+        sid = self._row(db)
+        items = check_unmatched_pattern_transfers(db, today=TODAY)
+        assert len(items) == 1
+        item = items[0]
+        assert item["id"] == f"transfer:unmatched:{sid}"
+        assert item["category"] == "spending"
+        assert item["severity"] == "low"
+        assert item["link_page"] == "spending"
+        assert item["context"] == {"spending_id": sid}
+
+    def test_boundaries_are_inclusive(self, tmp_path):
+        db = Database(str(tmp_path / "t.db"))
+        old = self._row(db, days_ago=90)
+        fresh = self._row(db, days_ago=3)
+        ids = {i["id"] for i in check_unmatched_pattern_transfers(db, today=TODAY)}
+        assert ids == {f"transfer:unmatched:{old}", f"transfer:unmatched:{fresh}"}
+
+    def test_too_new_and_too_old_are_quiet(self, tmp_path):
+        db = Database(str(tmp_path / "t.db"))
+        self._row(db, days_ago=2)
+        self._row(db, days_ago=91)
+        assert check_unmatched_pattern_transfers(db, today=TODAY) == []
+
+    def test_other_sources_are_quiet(self, tmp_path):
+        db = Database(str(tmp_path / "t.db"))
+        self._row(db, source="manual")
+        self._row(db, source="match")
+        assert check_unmatched_pattern_transfers(db, today=TODAY) == []
+
+    def test_linked_row_is_quiet(self, tmp_path):
+        db = Database(str(tmp_path / "t.db"))
+        sid = self._row(db)
+        bid = db.create_booking(_ago(10), "Deposit", 500.0, "EUR")
+        db.update_spending_transaction(
+            sid, transfer_link_type="booking", transfer_link_id=bid
+        )
+        assert check_unmatched_pattern_transfers(db, today=TODAY) == []
+
+
+class TestBookingsWithoutBankLeg:
+    def _setup(self, db, booking_days_ago=10, amount=500.0, action="Deposit"):
+        broker = db.create_portfolio("Example Broker")
+        bank = db.create_portfolio("Example Bank", account_type="bank")
+        bid = db.create_booking(
+            _ago(booking_days_ago), action, amount, "EUR", portfolio_id=broker
+        )
+        return bank, bid
+
+    def _bank_row(self, db, bank, days_ago):
+        return db.create_spending_transaction(
+            portfolio_id=bank,
+            date=_ago(days_ago),
+            description="GROCERIES",
+            amount=-20.0,
+        )
+
+    def test_registered(self):
+        assert check_bookings_without_bank_leg in checks_for_tests()
+
+    def test_fires_in_plain_case(self, tmp_path):
+        db = Database(str(tmp_path / "t.db"))
+        bank, bid = self._setup(db)
+        # Bank is imported past booking date + 3 days, yet no leg exists.
+        self._bank_row(db, bank, days_ago=2)
+        items = check_bookings_without_bank_leg(db, today=TODAY)
+        assert len(items) == 1
+        item = items[0]
+        assert item["id"] == f"transfer:no-bank-leg:{bid}"
+        assert item["category"] == "spending"
+        assert item["severity"] == "medium"
+        assert item["link_page"] == "spending"
+        assert item["context"] == {"booking_id": bid}
+
+    def test_withdrawal_also_fires(self, tmp_path):
+        db = Database(str(tmp_path / "t.db"))
+        bank, bid = self._setup(db, action="Withdrawal")
+        self._bank_row(db, bank, days_ago=2)
+        items = check_bookings_without_bank_leg(db, today=TODAY)
+        assert [i["id"] for i in items] == [f"transfer:no-bank-leg:{bid}"]
+
+    def test_amount_below_minimum_is_quiet(self, tmp_path):
+        db = Database(str(tmp_path / "t.db"))
+        bank, _ = self._setup(db, amount=99.0)
+        self._bank_row(db, bank, days_ago=2)
+        assert check_bookings_without_bank_leg(db, today=TODAY) == []
+
+    def test_minimum_amount_fires(self, tmp_path):
+        db = Database(str(tmp_path / "t.db"))
+        bank, _ = self._setup(db, amount=100.0)
+        self._bank_row(db, bank, days_ago=2)
+        assert len(check_bookings_without_bank_leg(db, today=TODAY)) == 1
+
+    def test_old_booking_is_quiet(self, tmp_path):
+        db = Database(str(tmp_path / "t.db"))
+        bank, _ = self._setup(db, booking_days_ago=91)
+        self._bank_row(db, bank, days_ago=2)
+        assert check_bookings_without_bank_leg(db, today=TODAY) == []
+
+    def test_already_linked_booking_is_quiet(self, tmp_path):
+        db = Database(str(tmp_path / "t.db"))
+        bank, bid = self._setup(db)
+        sid = self._bank_row(db, bank, days_ago=2)
+        db.update_spending_transaction(
+            sid,
+            is_transfer=True,
+            transfer_link_type="booking",
+            transfer_link_id=bid,
+        )
+        assert check_bookings_without_bank_leg(db, today=TODAY) == []
+
+    def test_bank_not_imported_past_booking_is_quiet(self, tmp_path):
+        db = Database(str(tmp_path / "t.db"))
+        # Booking 10 days ago; the bank's latest row is 7 days ago, i.e. on
+        # booking date + 3, not after it.
+        bank, _ = self._setup(db)
+        self._bank_row(db, bank, days_ago=7)
+        assert check_bookings_without_bank_leg(db, today=TODAY) == []
+
+    def test_one_stale_bank_account_keeps_it_quiet(self, tmp_path):
+        db = Database(str(tmp_path / "t.db"))
+        bank, _ = self._setup(db)
+        other = db.create_portfolio("Sample Savings", account_type="bank")
+        self._bank_row(db, bank, days_ago=2)
+        self._bank_row(db, other, days_ago=8)
+        assert check_bookings_without_bank_leg(db, today=TODAY) == []
+
+    def test_inactive_bank_account_is_ignored(self, tmp_path):
+        db = Database(str(tmp_path / "t.db"))
+        bank, _ = self._setup(db)
+        dormant = db.create_portfolio("Old Bank", account_type="bank")
+        self._bank_row(db, bank, days_ago=2)
+        self._bank_row(db, dormant, days_ago=200)
+        assert len(check_bookings_without_bank_leg(db, today=TODAY)) == 1
+
+    def test_no_bank_accounts_is_quiet(self, tmp_path):
+        db = Database(str(tmp_path / "t.db"))
+        broker = db.create_portfolio("Example Broker")
+        db.create_booking(_ago(10), "Deposit", 500.0, "EUR", portfolio_id=broker)
+        assert check_bookings_without_bank_leg(db, today=TODAY) == []
 
 
 def _with_fx(monkeypatch):

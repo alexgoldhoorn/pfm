@@ -867,6 +867,107 @@ def check_recurring_charges(db, today: date = None) -> list[dict]:
     return items
 
 
+TRANSFER_REVIEW_DAYS = 90
+TRANSFER_SETTLE_DAYS = 3
+BOOKING_BANK_LEG_MIN = 100
+
+
+def check_unmatched_pattern_transfers(db, today: date = None) -> list[dict]:
+    """Rows flagged as transfers by a pattern whose other leg never showed up.
+
+    Rows newer than ``TRANSFER_SETTLE_DAYS`` are skipped (the other side may
+    simply not be imported yet); rows older than ``TRANSFER_REVIEW_DAYS`` are
+    not worth a nag any more.
+    """
+    today = today or date.today()
+    rows = db.list_spending_transactions(
+        is_transfer=True,
+        transfer_linked=False,
+        start_date=(today - timedelta(days=TRANSFER_REVIEW_DAYS)).isoformat(),
+        end_date=(today - timedelta(days=TRANSFER_SETTLE_DAYS)).isoformat(),
+    )
+    items = []
+    for row in rows:
+        if row.get("transfer_source") != "pattern":
+            continue
+        items.append(
+            {
+                "id": f"transfer:unmatched:{row['id']}",
+                "category": "spending",
+                "severity": "low",
+                "title": f"Transfer without a matching leg: {row['description']}",
+                "detail": (
+                    f"{row['amount']:,.2f} {row['currency']} on {row['date']} "
+                    "looks like a transfer, but no matching deposit or "
+                    "withdrawal was found. Import the other account, or mark "
+                    "it as a normal payment."
+                ),
+                "link_page": "spending",
+                "context": {"spending_id": row["id"]},
+            }
+        )
+    return items
+
+
+def check_bookings_without_bank_leg(db, today: date = None) -> list[dict]:
+    """Recent deposits/withdrawals with no bank-side row, despite fresh imports.
+
+    Fires only when every bank account that was active in the review window
+    has been imported past the booking date plus the settle days, so a bank
+    statement that simply has not been loaded yet stays quiet.
+    """
+    today = today or date.today()
+    window_start = (today - timedelta(days=TRANSFER_REVIEW_DAYS)).isoformat()
+    # Latest imported row per bank account that has any row in the window.
+    latest = {}
+    for p in db.get_all_portfolios():
+        if p.get("account_type") != "bank":
+            continue
+        rows = db.list_spending_transactions(
+            portfolio_id=p["id"], start_date=window_start
+        )
+        if rows:
+            latest[p["id"]] = max(r["date"] for r in rows)
+    if not latest:
+        return []
+    linked = {
+        r["transfer_link_id"]
+        for r in db.list_spending_transactions(is_transfer=True)
+        if r.get("transfer_link_type") == "booking"
+    }
+    items = []
+    for b in db.get_all_bookings():
+        if b["amount"] < BOOKING_BANK_LEG_MIN or b["date"] < window_start:
+            continue
+        if b["id"] in linked:
+            continue
+        cutoff = (
+            date.fromisoformat(b["date"]) + timedelta(days=TRANSFER_SETTLE_DAYS)
+        ).isoformat()
+        if not all(last > cutoff for last in latest.values()):
+            continue
+        items.append(
+            {
+                "id": f"transfer:no-bank-leg:{b['id']}",
+                "category": "spending",
+                "severity": "medium",
+                "title": (
+                    f"{b['action']} of {b['amount']:,.2f} {b['currency']} has "
+                    "no bank-side transaction"
+                ),
+                "detail": (
+                    f"Booked on {b['date']}, but none of your bank accounts "
+                    "shows a matching transfer even though they are imported "
+                    "past that date. Link it by hand, or the money may have "
+                    "come from an account that is not tracked."
+                ),
+                "link_page": "spending",
+                "context": {"booking_id": b["id"]},
+            }
+        )
+    return items
+
+
 _SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 
 # Every registered check, run independently by get_action_items(). A
@@ -887,6 +988,8 @@ _CHECKS = (
     check_budget_overruns,
     check_fund_exposure,
     check_recurring_charges,
+    check_unmatched_pattern_transfers,
+    check_bookings_without_bank_leg,
     check_decision_reviews,
     check_year_end_tax,
     check_position_caps,
