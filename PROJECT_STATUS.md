@@ -5,7 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-11-12
+Last updated: 2026-11-13
+
+**Recent (v2.5.95):** **Internal transfers stay out of income and spending.** Schema v41 adds `spending_transactions.transfer_source` (`match`/`pattern`/`manual`/`rejected`). Matching now works in both directions (bank inflow against a broker `Withdrawal`, flagged-but-unlinked rows upgrade to a linked pair) and re-runs when bookings are created on any path. "My own accounts" text patterns flag one-legged transfers; the "Transfer" category and `is_transfer` always agree and rules can no longer target it; un-marking sticks (`rejected`). Two Action Items checks, a "without counterpart" filter. Docs `spending.md`, `action-items.md`.
 
 **Recent (v2.5.94):** **AI chat analyses spending and draws charts.** Five read-only chat tools over the bank-statement data (`get_spending_summary`, `get_spending_trend`, `get_spending_breakdown`, `get_recurring_spending`, `search_spending_transactions`; 36 chat tools) and a fenced ```chart``` block in answers that renders as a Chart.js bar/line/donut chart. No schema change. Docs `llm.md`, `web-client.md`.
 
