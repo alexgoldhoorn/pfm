@@ -90,17 +90,92 @@ The AI chat draws a chart when an assistant answer contains a fenced code block
 with language `chart` holding JSON:
 
     {"type":"bar","title":"Spending by category","labels":["Food","Rent"],
-     "series":[{"name":"Oct","data":[320.5,900]}],"currency":"EUR"}
+     "series":[{"name":"Oct","data":[300,900]}],"currency":"EUR"}
 
-- `type`: `bar`, `line` or `pie` (a pie/donut uses the first series only).
+- `type`: `bar`, `hbar` (horizontal), `line`, `area` (filled line), `pie`
+  (donut, first series only), `combo` or `waterfall`.
 - `labels`: 1-60 strings. `series`: 1-6 objects `{name, data}`; `data` has one
   finite number per label. Optional: `title`, `currency` (3 letters, default
-  `EUR`, used with `Fmt.money` for tooltips and the axis), `stacked` (bar only).
+  `EUR`, money via `Fmt.money`), `stacked` (bar, hbar, area), `unit` (a string
+  such as `%` or `months`: values are then plain numbers with that unit, not
+  money), `x_title`, `y_title` (they title the horizontal and vertical axis as
+  drawn, so on an `hbar` `x_title` names the value axis).
+- `combo`: each series may carry `kind` (`bar` default, or `line`) and `axis`
+  (`left` default, or `right`). A right axis exists only when a series uses it;
+  it is a plain number axis with the optional `right_unit` appended. An unknown
+  `kind` or `axis` falls back to the default rather than invalidating the chart.
+- `waterfall`: first series only; `data` are signed deltas. `totals` lists label
+  indexes drawn as running totals from zero (the data value is replaced by the
+  running sum; at index 0 it seeds the starting amount). Invalid indexes are
+  dropped. Colours: `--viz-good` up, `--viz-bad` down, `--viz-neutral` totals.
 - `chatChartSpec` validates (pure, `window.`-exported, tested in
   `js/tests/chat_charts.test.mjs`); an invalid or unparseable block stays an
   ordinary code block. `chatPrepareCharts` swaps valid fences for a placeholder
-  before `marked`, and `hydrateCharts` draws them with Chart.js after the
-  message is in the DOM. Charts are destroyed when the thread is cleared or
-  another session is opened. Colours are the `--viz-1..8` tokens.
-- The Markdown export keeps the block as is; the HTML export shows it as a
-  `<pre>` (it does not load Chart.js).
+  before `marked`, and `chatHydrateCharts` draws them with Chart.js after the
+  message is in the DOM. Colours are the `--viz-1..8` tokens.
+- Each chart has a toolbar: download PNG (on a white background) and expand (a
+  Bootstrap modal, `#pfmChartModal`). Clicking a bar, slice or point sends
+  `chatChartDrillPrompt(spec, labelIndex, seriesIndex)`, i.e. `Break down "<label>"
+  from the chart "<title>" in more detail.` (`from the chart above` when there is
+  no title; with several series a `Focus on the series "<name>".` sentence is
+  added). On the Reports page charts are not clickable.
+- Exports: the Markdown export keeps the block as is. The HTML export and print
+  embed each chart as a PNG `<img>` read from the live canvases
+  (`chatCollectChartImages`, one entry per chart in document order, `''` when a
+  chart is not on screen, which falls back to a `<pre>` of the JSON).
+  `chatSessionToHtml(name, messages, chartImages)` stays pure: the third argument
+  is that array (or, for `chatMarkdownToExportHtml`, an object keyed by the
+  chart's JSON).
+
+## Tables in chat
+
+`chatEnhanceTables(root)` gives every Markdown table in an answer or report a CSV
+button (`tableToCsv`, UTF-8 BOM so Excel reads the euro sign) and click-to-sort
+headers (keyboard accessible, `aria-sort`). `chatSortCompare` sorts numbers
+numerically, best effort on "1,200 EUR", "(250)" and "-12%"
+(`chatParseNumber`; one separator followed by exactly three digits is thousands,
+as in the import parsers), otherwise text in natural order, empty cells last.
+Tables sit in a horizontally scrolling wrapper, so they do not widen the page at
+390px.
+
+## Follow-ups, sources and web search
+
+- `followups` (max 4) of the latest assistant answer render as chips (class
+  `chat-suggestion`, so a click sends them). Any new message removes the older
+  chips.
+- `sources` render as a "Sources" list under the answer (`chatSourcesHtml`): only
+  `http`/`https` links, titles escaped, `target="_blank" rel="noopener
+  noreferrer"`. Both exports include them.
+- The Web search switch in the chat header shows only when
+  `GET /llm/chat/models` says `web_search_available: true`; the choice is kept in
+  `localStorage` (`pfmChatWebSearch`) and sent as `web_search` on each turn. Its
+  tooltip says searches leave this machine and personal figures are not sent.
+- The empty chat offers starter questions in three groups (Portfolio, Spending,
+  What if), `CHAT_STARTERS`; `index.html` carries the same markup until a thread
+  is activated.
+
+## Reports
+
+Saved reports use `/api/v1/saved-reports` (`/api/v1/reports/portfolio` is the PDF
+portfolio report and is unrelated).
+
+- The bookmark button under an answer asks for a title (`noteDialog`, default from
+  `chatReportDefaultTitle`) and posts the answer's Markdown with the thread as
+  `source_session_id`. Export, "Write report from this thread" calls
+  `POST /llm/chat/sessions/{id}/report` (30-60 s, busy state on the Export
+  button) and opens the result on the Reports page via `window._reportsOpenId`.
+- The Reports page (Insights, after Decisions) lists reports newest first and
+  renders the selected one with the chat pipeline (`chatRenderMarkdown`,
+  `chatHydrateCharts`, `chatEnhanceTables`). Actions: rename, delete
+  (`confirmDialog`), download `.md`, download `.html` (charts embedded as PNG),
+  print. When the endpoint is missing or fails, the empty state shows (the e2e
+  smoke test relies on this); a non-404 failure adds its message.
+
+## Spending categories: essentiality
+
+Categories under the `Spend` root get a selector (-, Fixed, Flexible, Optional) in
+the Categories tab (`PUT /spending/categories/{name}/essentiality`). "Suggest with
+AI" (`POST .../suggest-essentiality`) opens a panel where each suggestion can be
+ticked and its level changed before anything is saved; `spendingEssentialitySuggestions`
+drops unknown names, invalid levels and categories outside Spend. The levels drive
+the chat's "what to cut first" answers (explained in the Spending help).

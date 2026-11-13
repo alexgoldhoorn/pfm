@@ -144,6 +144,16 @@ window.PAGE_HELP = {
       </ul>
       <p class="text-muted small mb-0">This is a tracking aid, not a recommendation to buy.</p>`
   },
+  reports: {
+    title: "Reports",
+    body: `
+      <p>Write-ups you saved from the AI Chat. A report is Markdown and can hold charts and tables, exactly as in the chat.</p>
+      <ul class="mb-2">
+        <li>Save one answer with the bookmark button under it, or the whole thread with <strong>Export, Write report from this thread</strong>.</li>
+        <li>Pick a report on the left to read it. Charts can be downloaded or expanded and tables sorted or saved as CSV.</li>
+        <li><strong>Rename</strong>, <strong>delete</strong>, download as <strong>Markdown</strong> or as a <strong>web page</strong> (charts embedded as images), or <strong>print</strong> it for a PDF.</li>
+      </ul>`
+  },
   decisions: {
     title: "Decisions",
     body: `
@@ -295,6 +305,7 @@ window.PAGE_HELP = {
         <li><strong>Rules</strong> can be limited to one account, money in or out, and an amount range. Lower priority numbers are tried first.</li>
         <li><strong>Recurring</strong> lists charges that arrive at a steady interval for a steady amount. <em>Missed</em> means a statement covering the due date is imported but the charge isn't in it.</li>
         <li>When a statement has a balance column, the import preview warns if the balances don't add up, which usually means missing rows.</li>
+        <li><strong>Essentiality</strong> (Categories tab, spending categories only) says how hard a category is to cut: <em>Fixed</em> is contractual and hard to change within months (mortgage, insurance, school), <em>Flexible</em> is needed but the amount can come down (groceries, energy, transport), <em>Optional</em> can stop (restaurants, subscriptions, travel). <strong>Suggest with AI</strong> proposes a level for each category that has none; nothing is saved until you accept. The AI Chat uses these levels to answer "what should I cut first?".</li>
       </ul>
       <p class="text-muted small mb-0">A read-only summary of the last 30 days also appears on the Net Worth page, next to your manual Monthly Cash Flow entries, for comparison.</p>`
   },
@@ -445,7 +456,10 @@ window.PAGE_HELP = {
         <li>The <strong>model picker</strong> chooses the tier for the next answer: fast is cheap and quick, heavy reasons the most. Each answer shows the model that wrote it.</li>
         <li><strong>Used N tools</strong> under an answer opens the data lookups the model made (tool, arguments, time) — if it isn't there, the answer came from the summary context only.</li>
         <li>A new thread is <strong>named automatically</strong> after its first answer; rename it from the thread list at any time.</li>
-        <li><strong>Export</strong> saves the thread as Markdown or a web page, or opens the print dialog for a PDF.</li>
+        <li><strong>Export</strong> saves the thread as Markdown or a web page (charts embedded as images), or opens the print dialog for a PDF. <strong>Write report from this thread</strong> asks the assistant for a structured report (up to a minute) and opens it on the Reports page.</li>
+        <li><strong>Charts</strong> have a download (PNG) and an expand button; click a bar, slice or point to ask for that item in more detail. <strong>Tables</strong> have a CSV button and sort when you click a header.</li>
+        <li>Under the latest answer, <strong>follow-up chips</strong> send a suggested next question, and <strong>Sources</strong> lists the web pages used. The bookmark button under an answer saves it as a report.</li>
+        <li><strong>Web search</strong> (shown when the server offers it) lets the assistant look things up online. Searches leave this machine; your personal figures are not included in the queries.</li>
         <li><strong>Extract</strong> pulls buy/sell transactions out of pasted text for you to review before saving.</li>
       </ul>`
   },
