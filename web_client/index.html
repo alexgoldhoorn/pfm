@@ -3161,6 +3161,13 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                     </div>
                                 </div>
                                 <div class="col-6 col-md-3">
+                                    <label class="form-label small mb-1" for="spTransferFilter">Transfers</label>
+                                    <select class="form-select form-select-sm" id="spTransferFilter">
+                                        <option value="">All rows</option>
+                                        <option value="unlinked">Transfers without counterpart</option>
+                                    </select>
+                                </div>
+                                <div class="col-6 col-md-3">
                                     <label class="form-label small mb-1">From</label>
                                     <input type="date" class="form-control form-control-sm" id="spFromDate">
                                     <div class="form-text" data-date-hint></div>
@@ -3326,6 +3333,26 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                     </form>
                                     <div id="spRulePreview" class="small text-muted mt-2" aria-live="polite"></div>
                                     <div id="spRuleStatus" class="small text-muted mt-2"></div>
+                                </div>
+                            </div>
+                            <div class="card mt-3" id="spOwnAccountsCard">
+                                <div class="card-header fw-semibold d-flex align-items-center justify-content-between">
+                                    <span>My own accounts</span>
+                                    <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip" id="spOwnHelp"></i>
+                                </div>
+                                <ul class="list-group list-group-flush" id="spOwnList"><li class="list-group-item text-muted small py-2">Nothing here yet.</li></ul>
+                                <div class="card-body border-top">
+                                    <form id="spOwnForm" class="row g-2 align-items-end">
+                                        <div class="col-12 col-sm-8">
+                                            <label class="form-label small mb-1" for="spOwnInput">Name or label as the bank prints it</label>
+                                            <input class="form-control form-control-sm" id="spOwnInput" placeholder="e.g. SAM SAMPLE" autocomplete="off" required>
+                                        </div>
+                                        <div class="col-12 col-sm-4">
+                                            <button type="submit" class="btn btn-sm btn-primary w-100"><i class="bi bi-plus-lg me-1"></i>Add</button>
+                                        </div>
+                                    </form>
+                                    <div id="spOwnPreview" class="small text-muted mt-2" aria-live="polite"></div>
+                                    <div id="spOwnStatus" class="small text-muted mt-2"></div>
                                 </div>
                             </div>
                         </div>

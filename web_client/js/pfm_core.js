@@ -2652,6 +2652,35 @@ function createAPIClient() {
             }
             return response.json();
         },
+        // Names the owner's own accounts as they appear in bank descriptions,
+        // so a one-legged transfer to an untracked account is still flagged.
+        async getOwnAccountPatterns() {
+            return this._ownAccountsRequest('GET', '/own-account-patterns');
+        },
+        async setOwnAccountPatterns(patterns) {
+            return this._ownAccountsRequest('PUT', '/own-account-patterns', { patterns });
+        },
+        async previewOwnAccountPattern(pattern) {
+            return this._ownAccountsRequest('POST', '/own-account-patterns/preview', { pattern });
+        },
+        async _ownAccountsRequest(method, path, body) {
+            const headers = { 'X-API-Key': this.apiKey };
+            if (body !== undefined) headers['Content-Type'] = 'application/json';
+            const response = await fetch(this.baseURL + '/api/v1/spending' + path, {
+                method,
+                headers,
+                body: body === undefined ? undefined : JSON.stringify(body)
+            });
+            if (!response.ok) {
+                let detail = 'Request failed';
+                try {
+                    const err = await response.json();
+                    detail = err.detail || detail;
+                } catch (e) { /* response wasn't JSON, use the generic message */ }
+                throw new Error(detail);
+            }
+            return response.json();
+        },
         async rescanCategories(ids) {
             const response = await fetch(this.baseURL + '/api/v1/spending/rescan-categories', {
                 method: 'POST',

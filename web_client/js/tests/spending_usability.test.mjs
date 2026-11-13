@@ -108,7 +108,7 @@ test("spCategoryCellInnerHtml: plain category, no Transfer badge", () => {
 test("spCategoryCellInnerHtml: escapes the category and appends the Transfer badge", () => {
     const { spCategoryCellInnerHtml } = loadAppIntoContext();
     assert.equal(
-        spCategoryCellInnerHtml({ category: "<b>x</b>", is_transfer: true }),
+        spCategoryCellInnerHtml({ category: "<b>x</b>", is_transfer: true, transfer_link_id: 7 }),
         '<span class="sp-cat-text border-bottom border-secondary-subtle">&lt;b&gt;x&lt;/b&gt;</span> <span class="badge bg-info ms-1">Transfer</span>',
     );
 });

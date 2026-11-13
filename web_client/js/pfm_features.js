@@ -7250,6 +7250,8 @@ function _wireSpRecurringTab() {
             window._spAmountSign = null;
             document.getElementById('spAmountSignNegative')?.classList.remove('active');
             document.getElementById('spAmountSignPositive')?.classList.remove('active');
+            const transferSel = document.getElementById('spTransferFilter');
+            if (transferSel) transferSel.value = '';
             window._spCategoryFilterSelected = null;
             _updateCategoryFilterButtonLabel();
             window._spTxState.page = 0;
@@ -7403,6 +7405,7 @@ function _updateSpSummaryLabels(days) {
 
 async function loadSpendingPage() {
     _wireSpendingRuleForm();
+    _wireSpOwnAccounts();
     _wireSpCategoryAddForm();
     _wireSpendingImportModal();
     _wireSpCategoryCellEditing();
@@ -7434,11 +7437,15 @@ async function loadSpendingPage() {
             try {
                 const result = await window.apiClient.rescanTransfers();
                 const n = (result && result.transfers_linked) || 0;
+                const f = (result && result.transfers_flagged) || 0;
                 await _refreshSpendingData();
                 if (status) {
-                    status.className = n > 0 ? 'small text-success mb-2' : 'small text-muted mb-2';
-                    status.textContent = n > 0
-                        ? `Found and linked ${n} transfer${n === 1 ? '' : 's'}.`
+                    status.className = (n + f) > 0 ? 'small text-success mb-2' : 'small text-muted mb-2';
+                    const parts = [];
+                    if (n > 0) parts.push(`linked ${n} transfer${n === 1 ? '' : 's'}`);
+                    if (f > 0) parts.push(`flagged ${f} from your own-accounts list`);
+                    status.textContent = parts.length
+                        ? `Found: ${parts.join(', ')}.`
                         : 'No new transfers found.';
                 }
             } catch (err) {
@@ -7536,6 +7543,14 @@ async function loadSpendingPage() {
     if (amountSignPosBtn && !amountSignPosBtn.dataset.wired) {
         amountSignPosBtn.dataset.wired = '1';
         amountSignPosBtn.addEventListener('click', () => setAmountSign('positive'));
+    }
+    const transferFilter = document.getElementById('spTransferFilter');
+    if (transferFilter && !transferFilter.dataset.wired) {
+        transferFilter.dataset.wired = '1';
+        transferFilter.addEventListener('change', () => {
+            window._spTxState.page = 0;
+            _fetchAndRenderSpendingTable();
+        });
     }
     const minAbsAmountInput = document.getElementById('spMinAbsAmount');
     if (minAbsAmountInput && !minAbsAmountInput.dataset.wired) {
@@ -8082,6 +8097,9 @@ async function _fetchAndRenderSpendingTable() {
     if (minAbsAmount) params.min_abs_amount = minAbsAmount;
     const q = (document.getElementById('spSearch')?.value || '').trim();
     if (q) params.q = q;
+    if (document.getElementById('spTransferFilter')?.value === 'unlinked') {
+        params.transfer_linked = 'false';
+    }
 
     let result;
     try {
@@ -8296,12 +8314,34 @@ function spRuleOfferText(merchant, category, count) {
 }
 window.spRuleOfferText = spRuleOfferText;
 
+// Pure: the Transfer badge. A transfer with a counterpart row is plain; one
+// flagged without a counterpart gets a muted marker whose tooltip says why.
+// A missing transfer_source (older API) reads as marked by hand.
+function spTransferBadge(row) {
+    if (!row.is_transfer) return '';
+    const badge = ' <span class="badge bg-info ms-1">Transfer</span>';
+    if (row.transfer_link_id !== null && row.transfer_link_id !== undefined) return badge;
+    const why = row.transfer_source === 'pattern'
+        ? 'Flagged by your own-accounts list'
+        : 'Marked by hand';
+    return `${badge} <span class="small text-muted ms-1" title="${why}">no counterpart</span>`;
+}
+window.spTransferBadge = spTransferBadge;
+
+// Pure: the live preview line under the own-accounts input.
+function spOwnPatternPreviewText(count) {
+    if (count === 1) return 'Would mark 1 row as a transfer';
+    if (count === 0) return 'Would mark 0 rows';
+    return `Would mark ${count} rows as transfers`;
+}
+window.spOwnPatternPreviewText = spOwnPatternPreviewText;
+
 // Pure: the category cell's inner markup (text + optional Transfer badge).
 // Shared by the row template and the cancel/no-op revert path below, so a
 // cancelled edit can restore the cell locally without re-rendering the whole
 // table (which would drop every other row's checked checkbox).
 function spCategoryCellInnerHtml(row) {
-    const badge = row.is_transfer ? ' <span class="badge bg-info ms-1">Transfer</span>' : '';
+    const badge = spTransferBadge(row);
     return `<span class="sp-cat-text border-bottom border-secondary-subtle">${esc(row.category)}</span>${badge}`;
 }
 window.spCategoryCellInnerHtml = spCategoryCellInnerHtml;
@@ -8946,6 +8986,107 @@ function _scheduleSpRulePreview() {
             out.textContent = 'Preview unavailable: ' + err.message;
         }
     }, 400);
+}
+
+// ---- "My own accounts" card ------------------------------------------------
+window._spOwnPatterns = window._spOwnPatterns || [];
+let _spOwnPreviewTimer = null;
+// Same latest-request-wins guard as the rule preview.
+let _spOwnPreviewSeq = 0;
+
+function _renderSpOwnPatterns() {
+    const list = document.getElementById('spOwnList');
+    if (!list) return;
+    const items = window._spOwnPatterns;
+    list.innerHTML = items.length
+        ? items.map((p, i) => `
+            <li class="list-group-item d-flex align-items-center justify-content-between py-1">
+                <span class="text-break">${esc(p)}</span>
+                <button type="button" class="btn btn-sm btn-outline-danger ms-2" data-own-remove="${i}" aria-label="Remove ${esc(p)}"><i class="bi bi-x-lg"></i></button>
+            </li>`).join('')
+        : '<li class="list-group-item text-muted small py-2">Nothing here yet.</li>';
+}
+
+async function _saveSpOwnPatterns(patterns) {
+    const status = document.getElementById('spOwnStatus');
+    try {
+        const res = await window.apiClient.setOwnAccountPatterns(patterns);
+        window._spOwnPatterns = res.patterns || patterns;
+        _renderSpOwnPatterns();
+        const n = res.flagged || 0;
+        if (status) {
+            status.className = 'small text-muted mt-2';
+            status.textContent = `Saved. ${n} row${n === 1 ? '' : 's'} newly marked as transfers.`;
+        }
+        if (n > 0) await _fetchAndRenderSpendingTable();
+        return true;
+    } catch (err) {
+        if (status) {
+            status.className = 'small text-danger mt-2';
+            status.textContent = 'Error: ' + err.message;
+        }
+        return false;
+    }
+}
+
+function _scheduleSpOwnPreview() {
+    clearTimeout(_spOwnPreviewTimer);
+    _spOwnPreviewTimer = setTimeout(async () => {
+        const out = document.getElementById('spOwnPreview');
+        if (!out) return;
+        const seq = ++_spOwnPreviewSeq;
+        const pattern = (document.getElementById('spOwnInput')?.value || '').trim();
+        if (!pattern) { out.textContent = ''; return; }
+        try {
+            const res = await window.apiClient.previewOwnAccountPattern(pattern);
+            if (seq !== _spOwnPreviewSeq) return;
+            out.textContent = spOwnPatternPreviewText(res.count || 0);
+        } catch (err) {
+            if (seq !== _spOwnPreviewSeq) return;
+            out.textContent = err.message;
+        }
+    }, 400);
+}
+
+async function _loadSpOwnPatterns() {
+    try {
+        const res = await window.apiClient.getOwnAccountPatterns();
+        window._spOwnPatterns = res.patterns || [];
+        _renderSpOwnPatterns();
+    } catch (err) {
+        const status = document.getElementById('spOwnStatus');
+        if (status) { status.className = 'small text-danger mt-2'; status.textContent = 'Error: ' + err.message; }
+    }
+}
+
+function _wireSpOwnAccounts() {
+    const form = document.getElementById('spOwnForm');
+    if (!form || form.dataset.wired) return;
+    form.dataset.wired = '1';
+    document.getElementById('spOwnInput')?.addEventListener('input', _scheduleSpOwnPreview);
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const input = document.getElementById('spOwnInput');
+        const value = (input.value || '').trim();
+        if (!value) return;
+        const ok = await _saveSpOwnPatterns([...window._spOwnPatterns, value]);
+        if (ok) {
+            input.value = '';
+            const out = document.getElementById('spOwnPreview');
+            if (out) out.textContent = '';
+        }
+    });
+    document.getElementById('spOwnList')?.addEventListener('click', async (e) => {
+        const btn = e.target.closest('[data-own-remove]');
+        if (!btn) return;
+        const idx = Number(btn.dataset.ownRemove);
+        const next = window._spOwnPatterns.filter((_, i) => i !== idx);
+        const ok = await _saveSpOwnPatterns(next);
+        if (ok) notify('Removed. Rows already marked as transfers stay marked.');
+    });
+    document.getElementById('spOwnHelp')?.setAttribute('title', (window.METRIC_HELP || {}).ownAccounts || '');
+    _loadSpOwnPatterns();
+    if (typeof initTooltips === 'function') initTooltips();
 }
 
 function _wireSpendingRuleForm() {
