@@ -2511,22 +2511,31 @@ def test_put_is_transfer_true_sets_manual(tmp_path):
 
 def test_marking_a_linked_transfer_keeps_its_link(tmp_path):
     client, db = _make_client(tmp_path)
-    pid = db.create_portfolio("Example Bank", account_type="bank")
-    other = db.create_portfolio("Example Bank 2", account_type="bank")
-    a = db.create_spending_transaction(pid, "2026-07-01", "Out", -100.0)
-    b = db.create_spending_transaction(other, "2026-07-01", "In", 100.0)
-    for x, y in ((a, b), (b, a)):
-        db.update_spending_transaction(
-            x,
-            category="Transfer",
-            is_transfer=True,
-            transfer_link_type="spending",
-            transfer_link_id=y,
-            transfer_source="match",
-        )
+    a, b = _linked_pair(db)
     assert _put(client, a, category="Transfer").status_code == 200
     row = db.get_spending_transaction(a)
     assert row["transfer_link_id"] == b and row["transfer_link_type"] == "spending"
+
+
+def test_unmarking_a_never_transfer_row_records_rejection(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    sid = db.create_spending_transaction(pid, "2026-07-01", "Coffee", -3.0)
+    assert _put(client, sid, is_transfer=False).status_code == 200
+    row = db.get_spending_transaction(sid)
+    assert row["is_transfer"] == 0
+    assert row["transfer_source"] == "rejected"
+
+
+def test_mark_transfer_overrides_a_given_category(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    sid = db.create_spending_transaction(pid, "2026-07-01", "Move", -100.0)
+    r = _put(client, sid, is_transfer=True, category="Groceries")
+    assert r.status_code == 200
+    row = db.get_spending_transaction(sid)
+    assert row["is_transfer"] == 1
+    assert row["category"] == "Transfer"
 
 
 def _linked_pair(db):

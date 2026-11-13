@@ -66,7 +66,8 @@ def test_fresh_db_has_transfer_source(tmp_path):
         version = conn.execute("SELECT MAX(version) FROM database_version").fetchone()[
             0
         ]
-    assert version == DATABASE_VERSION >= 41
+    assert version == DATABASE_VERSION
+    assert DATABASE_VERSION >= 41
     assert "transfer_source" in cols
 
 

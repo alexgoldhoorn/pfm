@@ -236,6 +236,18 @@ def test_rescan_reports_linked_and_flagged(tmp_path):
     assert r.json() == {"transfers_linked": 0, "transfers_flagged": 0}
 
 
+def test_rescan_reports_nonzero_linked_and_flagged(tmp_path):
+    client, db = _make_client(tmp_path)
+    bank = db.create_portfolio("Example Bank", account_type="bank")
+    bank2 = db.create_portfolio("Second Bank", account_type="bank")
+    db.create_spending_transaction(bank, "2026-07-08", "Move out", -800.0)
+    db.create_spending_transaction(bank2, "2026-07-08", "Move in", 800.0)
+    db.create_spending_transaction(bank, "2026-07-20", "To Sam Sample", -50.0)
+    db.set_setting("own_account_patterns", '["Sam Sample"]')
+    r = client.post("/api/v1/spending/rescan-transfers", headers=HEADERS)
+    assert r.json() == {"transfers_linked": 1, "transfers_flagged": 1}
+
+
 # --- CLI -------------------------------------------------------------------
 
 

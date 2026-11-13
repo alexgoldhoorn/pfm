@@ -218,10 +218,17 @@ def test_inflow_does_not_match_deposit_booking():
 
 def test_outflow_does_not_match_withdrawal_booking_both_actions_offered():
     row = _spending(1, portfolio_id=1, date="2026-03-10", amount=-3000.0)
-    booking = _booking(
+    withdrawal = _booking(
         8, portfolio_id=2, date="2026-03-10", action="Withdrawal", amount=3000.0
     )
-    assert find_transfer_match(row, [], [booking]) is None
+    deposit = _booking(
+        9, portfolio_id=2, date="2026-03-10", action="Deposit", amount=3000.0
+    )
+    assert find_transfer_match(row, [], [withdrawal]) is None
+    match = find_transfer_match(row, [], [withdrawal, deposit])
+    assert match is not None
+    assert match.link_type == "booking"
+    assert match.link_id == 9
 
 
 @pytest.mark.parametrize(
@@ -295,6 +302,19 @@ def test_closest_date_wins_then_lowest_id():
     ]
     match = find_transfer_match(row, [], bookings)
     assert match is not None
+    assert match.link_id == 3
+
+
+def test_closest_date_wins_then_lowest_id_among_spending_candidates():
+    row = _spending(1, portfolio_id=1, date="2026-03-10", amount=-200.0)
+    candidates = [
+        _spending(9, 2, "2026-03-12", 200.0),
+        _spending(5, 2, "2026-03-11", 200.0),
+        _spending(3, 2, "2026-03-09", 200.0),
+    ]
+    match = find_transfer_match(row, candidates, [])
+    assert match is not None
+    assert match.link_type == "spending"
     assert match.link_id == 3
 
 
