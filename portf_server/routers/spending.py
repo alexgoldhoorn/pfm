@@ -27,7 +27,16 @@ from pydantic import BaseModel, Field
 from portf_manager.parsers.generic_bank_csv_parser import parse_generic_bank_csv
 from portf_manager.parsers.aeb43_parser import looks_like_aeb43, parse_aeb43
 from portf_manager.services.balance_check import find_balance_breaks
-from portf_manager.services.transfer_linking import settle_transfers
+from portf_manager.services.own_accounts import (
+    clean_patterns,
+    load_patterns,
+    save_patterns,
+)
+from portf_manager.services.transfer_linking import (
+    flag_own_account_rows,
+    preview_own_account_pattern,
+    settle_transfers,
+)
 from portf_manager.services.budget import build_children_index, subtree_names
 from portf_manager.services.merchant import normalize_merchant
 from portf_manager.services.recurring import load_recurring
@@ -138,6 +147,14 @@ class RulePreviewResponse(BaseModel):
 class SpendingTransactionListResponse(BaseModel):
     items: List[SpendingTransactionResponse]
     total: int
+
+
+class OwnAccountPatternsBody(BaseModel):
+    patterns: List[str]
+
+
+class OwnAccountPreviewBody(BaseModel):
+    pattern: str
 
 
 class CategoryUpdateBody(BaseModel):
@@ -581,6 +598,50 @@ async def list_spending(
         ],
         total=total,
     )
+
+
+@router.get("/own-account-patterns", response_model=dict)
+async def get_own_account_patterns(
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Text patterns that mark a row as a transfer to the user's own account."""
+    return {"patterns": load_patterns(db)}
+
+
+@router.put("/own-account-patterns", response_model=dict)
+async def put_own_account_patterns(
+    body: OwnAccountPatternsBody,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Replace the pattern list, then flag every row that now matches."""
+    try:
+        stored = save_patterns(db, body.patterns)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"patterns": stored, "flagged": flag_own_account_rows(db)}
+
+
+@router.post("/own-account-patterns/preview", response_model=dict)
+async def preview_own_account_patterns(
+    body: OwnAccountPreviewBody,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Rows a pattern would flag, without saving it (first 20 returned)."""
+    try:
+        pattern = clean_patterns([body.pattern])[0]
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    rows = preview_own_account_pattern(db, pattern)
+    return {
+        "count": len(rows),
+        "rows": [
+            SpendingTransactionResponse(**{**r, "is_transfer": bool(r["is_transfer"])})
+            for r in rows[:20]
+        ],
+    }
 
 
 @router.put("/{spending_id}", response_model=dict)

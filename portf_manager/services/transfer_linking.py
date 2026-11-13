@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 from typing import Dict, List, Optional
 
+from portf_manager.services.own_accounts import load_patterns, matches_own_account
 from portf_manager.services.transfer_matcher import find_all_transfer_matches
 
 logger = logging.getLogger(__name__)
@@ -63,13 +64,73 @@ def link_transfers(db, spending_ids: Optional[List[int]] = None) -> int:
     return len(matches)
 
 
-def settle_transfers(db, spending_ids: Optional[List[int]] = None) -> Dict[str, int]:
-    """Link transfers over the given rows (None = all unlinked).
+def _pattern_candidates(db, spending_ids: Optional[List[int]]) -> List[Dict]:
+    """Rows eligible for pattern flagging: not a transfer, not rejected."""
+    rows = db.list_spending_transactions(is_transfer=False)
+    wanted = None if spending_ids is None else set(spending_ids)
+    return [
+        r
+        for r in rows
+        if r.get("transfer_source") != "rejected"
+        and (wanted is None or r["id"] in wanted)
+    ]
+
+
+def flag_own_account_rows(
+    db,
+    spending_ids: Optional[List[int]] = None,
+    patterns: Optional[List[str]] = None,
+) -> int:
+    """Flag rows matching an own-account pattern as one-legged transfers.
+
+    Rows already flagged as transfers and rows the user rejected are left
+    alone. A flagged row gets no link.
+
+    Args:
+        db: A ``Database``.
+        spending_ids: Rows to consider; None means every eligible row.
+        patterns: Patterns to use; None loads the stored ones.
 
     Returns:
-        ``{"linked": n, "flagged": 0}``; flagging by pattern comes later.
+        The number of rows flagged.
     """
-    return {"linked": link_transfers(db, spending_ids), "flagged": 0}
+    if patterns is None:
+        patterns = load_patterns(db)
+    if not patterns:
+        return 0
+    flagged = 0
+    for row in _pattern_candidates(db, spending_ids):
+        if matches_own_account(patterns, row["description"], row.get("merchant")):
+            db.update_spending_transaction(
+                row["id"],
+                category="Transfer",
+                is_transfer=True,
+                transfer_source="pattern",
+            )
+            flagged += 1
+    return flagged
+
+
+def preview_own_account_pattern(db, pattern: str) -> List[Dict]:
+    """Rows that flagging with this single pattern would change; writes nothing."""
+    return [
+        r
+        for r in _pattern_candidates(db, None)
+        if matches_own_account([pattern], r["description"], r.get("merchant"))
+    ]
+
+
+def settle_transfers(db, spending_ids: Optional[List[int]] = None) -> Dict[str, int]:
+    """Link transfers over the given rows (None = all), then flag by pattern.
+
+    Pair matching runs first so a real counterpart always wins over a pattern.
+
+    Returns:
+        ``{"linked": n, "flagged": m}``.
+    """
+    linked = link_transfers(db, spending_ids)
+    flagged = flag_own_account_rows(db, spending_ids)
+    return {"linked": linked, "flagged": flagged}
 
 
 def settle_after_bookings(db) -> Dict[str, int]:

@@ -2391,3 +2391,88 @@ def test_category_fits_memoises_root_lookups():
     assert fits("Groceries", -5.0) is True
     assert fits("Loose", 10.0) is True
     assert db.calls == 2
+
+
+# --- own-account patterns ---------------------------------------------------
+
+PATTERNS_URL = "/api/v1/spending/own-account-patterns"
+
+
+def test_patterns_get_put_roundtrip(tmp_path):
+    client, _ = _make_client(tmp_path)
+    assert client.get(PATTERNS_URL, headers=HEADERS).json() == {"patterns": []}
+    r = client.put(
+        PATTERNS_URL, json={"patterns": [" Sam Sample ", "sam sample"]}, headers=HEADERS
+    )
+    assert r.status_code == 200
+    assert r.json() == {"patterns": ["Sam Sample"], "flagged": 0}
+    assert client.get(PATTERNS_URL, headers=HEADERS).json() == {
+        "patterns": ["Sam Sample"]
+    }
+
+
+def test_put_applies_and_reports_flagged(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    sid = db.create_spending_transaction(pid, "2026-01-10", "To Sam Sample", -100.0)
+    r = client.put(PATTERNS_URL, json={"patterns": ["Sam Sample"]}, headers=HEADERS)
+    assert r.json()["flagged"] == 1
+    row = db.get_spending_transaction(sid)
+    assert row["is_transfer"] == 1 and row["transfer_source"] == "pattern"
+
+
+def test_put_rejects_short_pattern_400(tmp_path):
+    client, _ = _make_client(tmp_path)
+    r = client.put(PATTERNS_URL, json={"patterns": ["abc"]}, headers=HEADERS)
+    assert r.status_code == 400
+    assert "abc" in r.json()["detail"]
+    assert client.get(PATTERNS_URL, headers=HEADERS).json() == {"patterns": []}
+
+
+def test_preview_counts_without_writing(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    sid = db.create_spending_transaction(pid, "2026-01-10", "To Sam Sample", -100.0)
+    r = client.post(
+        PATTERNS_URL + "/preview", json={"pattern": "sam sample"}, headers=HEADERS
+    )
+    body = r.json()
+    assert r.status_code == 200 and body["count"] == 1
+    assert body["rows"][0]["id"] == sid
+    assert db.get_spending_transaction(sid)["is_transfer"] == 0
+    bad = client.post(PATTERNS_URL + "/preview", json={"pattern": " "}, headers=HEADERS)
+    assert bad.status_code == 400
+
+
+def test_save_pattern_wins_over_rule(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_rule(pattern="Sam Sample", category="Groceries")
+    client.put(PATTERNS_URL, json={"patterns": ["Sam Sample"]}, headers=HEADERS)
+    r = client.post(
+        "/api/v1/spending/save",
+        json={
+            "account_portfolio_id": pid,
+            "rows": [
+                {
+                    "date": "2026-01-10",
+                    "description": "To Sam Sample",
+                    "amount": -100.0,
+                    "currency": "EUR",
+                    "category": "Groceries",
+                }
+            ],
+        },
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+    row = db.list_spending_transactions()[0]
+    assert row["category"] == "Transfer"
+    assert row["transfer_source"] == "pattern"
+
+
+def test_get_survives_malformed_setting(tmp_path):
+    client, db = _make_client(tmp_path)
+    db.set_setting("own_account_patterns", "{not json")
+    r = client.get(PATTERNS_URL, headers=HEADERS)
+    assert r.status_code == 200 and r.json() == {"patterns": []}

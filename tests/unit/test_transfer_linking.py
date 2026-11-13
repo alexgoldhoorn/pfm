@@ -271,3 +271,82 @@ def test_cli_booking_import_does_not_settle_over_http(monkeypatch):
     )
     n = _cli_with(http)._import_pdt_bookings([bk], 1)
     assert n == 1 and calls == []
+
+
+# --- own-account patterns ---------------------------------------------------
+
+
+def _row(db, pid, day, desc, amount):
+    return db.create_spending_transaction(pid, day, desc, amount)
+
+
+def test_pattern_flags_on_settle(db, accounts):
+    db.set_setting("own_account_patterns", '["Sam Sample"]')
+    sid = _row(db, accounts["bank"], "2026-07-08", "Transfer to Sam Sample", -300.0)
+    assert settle_transfers(db, [sid]) == {"linked": 0, "flagged": 1}
+    row = db.get_spending_transaction(sid)
+    assert row["transfer_source"] == "pattern"
+    assert row["category"] == "Transfer"
+    assert row["is_transfer"] == 1
+    assert row["transfer_link_id"] is None
+
+
+def test_pair_match_wins_over_pattern(db, accounts):
+    db.set_setting("own_account_patterns", '["Sam Sample"]')
+    a = _row(db, accounts["bank"], "2026-07-08", "To Sam Sample", -300.0)
+    b = _row(db, accounts["bank2"], "2026-07-09", "From Sam Sample", 300.0)
+    assert settle_transfers(db) == {"linked": 1, "flagged": 0}
+    for sid, other in ((a, b), (b, a)):
+        row = db.get_spending_transaction(sid)
+        assert row["transfer_source"] == "match"
+        assert row["transfer_link_id"] == other
+
+
+def test_later_leg_links_to_pattern_flagged_row(db, accounts):
+    db.set_setting("own_account_patterns", '["Sam Sample"]')
+    a = _row(db, accounts["bank"], "2026-07-08", "To Sam Sample", -300.0)
+    settle_transfers(db)
+    assert db.get_spending_transaction(a)["transfer_source"] == "pattern"
+    b = _row(db, accounts["bank2"], "2026-07-09", "Incoming", 300.0)
+    assert settle_transfers(db)["linked"] == 1
+    assert db.get_spending_transaction(a)["transfer_source"] == "match"
+    assert db.get_spending_transaction(a)["transfer_link_id"] == b
+
+
+def test_pattern_leaves_linked_row_alone(db, accounts):
+    a = _row(db, accounts["bank"], "2026-07-08", "To Sam Sample", -300.0)
+    b = _row(db, accounts["bank2"], "2026-07-09", "Incoming", 300.0)
+    assert link_transfers(db) == 1
+    before = db.get_spending_transaction(a)
+    assert transfer_linking.flag_own_account_rows(db, patterns=["Sam Sample"]) == 0
+    assert db.get_spending_transaction(a) == before
+    assert db.get_spending_transaction(b)["transfer_source"] == "match"
+
+
+def test_pattern_overrides_existing_category(db, accounts):
+    sid = _row(db, accounts["bank"], "2026-07-08", "Sam Sample", -50.0)
+    db.update_spending_transaction(sid, category="Groceries")
+    assert transfer_linking.flag_own_account_rows(db, patterns=["Sam Sample"]) == 1
+    assert db.get_spending_transaction(sid)["category"] == "Transfer"
+
+
+def test_pattern_skips_rejected_row(db, accounts):
+    sid = _row(db, accounts["bank"], "2026-07-08", "Sam Sample", -50.0)
+    db.update_spending_transaction(sid, transfer_source="rejected")
+    assert transfer_linking.flag_own_account_rows(db, patterns=["Sam Sample"]) == 0
+    row = db.get_spending_transaction(sid)
+    assert row["transfer_source"] == "rejected" and row["is_transfer"] == 0
+
+
+def test_removing_pattern_does_not_unflag(db, accounts):
+    sid = _row(db, accounts["bank"], "2026-07-08", "Sam Sample", -50.0)
+    assert transfer_linking.flag_own_account_rows(db, patterns=["Sam Sample"]) == 1
+    assert transfer_linking.flag_own_account_rows(db, patterns=[]) == 0
+    assert db.get_spending_transaction(sid)["transfer_source"] == "pattern"
+
+
+def test_preview_lists_without_writing(db, accounts):
+    sid = _row(db, accounts["bank"], "2026-07-08", "Sam Sample", -50.0)
+    rows = transfer_linking.preview_own_account_pattern(db, "sam sample")
+    assert [r["id"] for r in rows] == [sid]
+    assert db.get_spending_transaction(sid)["is_transfer"] == 0
