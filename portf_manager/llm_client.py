@@ -42,7 +42,7 @@ import re
 import threading
 import time
 from dataclasses import dataclass
-from typing import Callable, List, Optional, Protocol, runtime_checkable
+from typing import Any, Callable, List, Optional, Protocol, runtime_checkable
 
 import requests
 
@@ -1193,12 +1193,24 @@ class AnthropicLLMClient:
             kwargs["tool_choice"] = {"type": "none"}
         return _anthropic_text(self._create(**kwargs))
 
+    def _search_tool(self) -> dict:
+        """The web_search server tool definition for this model."""
+        # Dynamic-filtering search needs Opus/Sonnet; Haiku keeps the basic one.
+        search_type = (
+            "web_search_20250305"
+            if "haiku" in self.model_name
+            else "web_search_20260209"
+        )
+        return {"type": search_type, "name": "web_search", "max_uses": 5}
+
     def run_tool_loop(
         self,
         messages: list[dict],
         tools: list["ToolDefinition"],
         execute: Callable[[str, dict], str],
         max_rounds: int = 6,
+        web_search: bool = False,
+        sources: Optional[list] = None,
     ) -> str:
         """Let the model call tools until it answers, then return the answer.
 
@@ -1207,17 +1219,35 @@ class AnthropicLLMClient:
         empty end_turn under tool_choice=none (2026-10-23). Here each round runs
         every tool_use block of the turn; the last round forbids tools and says
         so in the user turn, so the model writes prose with what it has.
+
+        With ``web_search`` the model may also run Anthropic's server-side web
+        search; the pages it read are appended to ``sources`` as
+        ``{"title", "url"}`` (deduplicated by URL). A server-tool turn that
+        pauses is resumed and does not count as a round.
         """
         system = next((m["content"] for m in messages if m["role"] == "system"), None)
         history = [m for m in messages if m["role"] != "system"]
         api_tools = _anthropic_tools(tools)
-        for round_no in range(max_rounds + 1):
+        if web_search:
+            api_tools = api_tools + [self._search_tool()]
+        round_no = pauses = 0
+        while round_no <= max_rounds:
             final = round_no == max_rounds
             kwargs: dict = {"messages": history, "tools": api_tools}
             if system:
                 kwargs["system"] = system
             kwargs["tool_choice"] = {"type": "none"} if final else {"type": "auto"}
             msg = self._create(**kwargs)
+            if sources is not None:
+                _collect_search_sources(msg, sources)
+            assistant_turn = {
+                "role": "assistant",
+                "content": [b.model_dump(exclude_none=True) for b in msg.content],
+            }
+            if getattr(msg, "stop_reason", None) == "pause_turn" and pauses < 4:
+                pauses += 1
+                history = history + [assistant_turn]
+                continue
             calls = [b for b in msg.content if getattr(b, "type", None) == "tool_use"]
             if not calls:
                 return _anthropic_text(msg)
@@ -1236,14 +1266,29 @@ class AnthropicLLMClient:
                         "text": "Tool budget used up: answer now with the data above.",
                     }
                 )
-            history = history + [
-                {
-                    "role": "assistant",
-                    "content": [b.model_dump(exclude_none=True) for b in msg.content],
-                },
-                {"role": "user", "content": results},
-            ]
+            history = history + [assistant_turn, {"role": "user", "content": results}]
+            round_no += 1
         raise LLMResponseError("Anthropic tool loop ended without an answer")
+
+
+def _collect_search_sources(msg: Any, sources: list) -> None:
+    """Append the pages of every web_search result block in ``msg``."""
+    for block in getattr(msg, "content", None) or []:
+        if getattr(block, "type", None) != "web_search_tool_result":
+            continue
+        content = getattr(block, "content", None)
+        if not isinstance(content, list):
+            continue
+        for r in content:
+            url = getattr(r, "url", None)
+            if isinstance(url, str) and all(s["url"] != url for s in sources):
+                title = getattr(r, "title", None)
+                sources.append(
+                    {
+                        "title": title if isinstance(title, str) and title else url,
+                        "url": url,
+                    }
+                )
 
 
 for _provider_cls in (

@@ -45,6 +45,22 @@ SCENARIOS: dict[str, dict] = {
             },
         },
     },
+    "ai_bubble": {
+        "label": "AI bubble bursts",
+        "description": (
+            "Technology, semiconductors and communication services -60%, "
+            "other equities -30%."
+        ),
+        "shocks": {
+            "asset_class": {"equity": -30},
+            "sector": {
+                "Technology": -60,
+                "Information Technology": -60,
+                "Semiconductors": -60,
+                "Communication Services": -60,
+            },
+        },
+    },
     "usd_down": {
         "label": "Dollar slump",
         "description": "USD falls 10% against the euro.",

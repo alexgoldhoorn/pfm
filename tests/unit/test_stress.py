@@ -236,6 +236,7 @@ def test_list_scenarios_order():
     assert names == [
         "equity_bear",
         "semis_crash",
+        "ai_bubble",
         "usd_down",
         "rates_up",
         "crypto_winter",
@@ -269,7 +270,7 @@ def client(db):
 
 def test_endpoints(client):
     r = client.get("/api/v1/analytics/stress/scenarios", headers=HEADERS)
-    assert r.status_code == 200 and len(r.json()["scenarios"]) == 6
+    assert r.status_code == 200 and len(r.json()["scenarios"]) == 7
 
     r = client.get("/api/v1/analytics/stress?scenario=crypto_winter", headers=HEADERS)
     body = r.json()

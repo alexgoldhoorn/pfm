@@ -615,10 +615,23 @@ def _search_spending_transactions(
         q=query,
         limit=limit,
     )
+    # Totals over every matching row, so a sum is exact beyond the listed rows.
+    every = db.list_spending_transactions(
+        category=category,
+        start_date=start_date,
+        end_date=end_date,
+        is_transfer=False,
+        amount_sign=amount_sign,
+        min_abs_amount=(float(min_abs_amount) if min_abs_amount is not None else None),
+        q=query,
+    )
+    total = sum(float(r["amount"]) * _fx(r.get("currency") or "EUR") for r in every)
     return _j(
         {
             "count": len(rows),
             "limit": limit,
+            "total_matching": len(every),
+            "total_matching_amount_eur": round(total, 2),
             "transactions": [
                 {
                     "date": r["date"],
@@ -1427,7 +1440,7 @@ TOOLS: list[ToolDefinition] = [
     ),
     ToolDefinition(
         name="search_spending_transactions",
-        description="Search individual bank transactions (transfers excluded), newest first, max 50 rows. Use it for merchant-level questions ('how much at Mercadona in October', 'the biggest purchases this year'). Rows are raw bank text: quote only what the user asked for and never repeat account numbers or tax ids.",
+        description="Search individual bank transactions (transfers excluded), newest first, max 50 rows listed; total_matching and total_matching_amount_eur cover every matching row. Use it for merchant-level questions ('how much at Mercadona in October', 'the biggest purchases this year'). Rows are raw bank text: quote only what the user asked for and never repeat account numbers or tax ids.",
         parameters=[
             {
                 "name": "query",
@@ -1727,7 +1740,7 @@ TOOLS: list[ToolDefinition] = [
             {
                 "name": "scenario",
                 "type": "string",
-                "description": "Preset name; default equity_bear.",
+                "description": "Preset name (equity_bear, ai_bubble, semis_crash, usd_down, rates_up, crypto_winter, stagflation); default equity_bear.",
                 "required": False,
             },
         ],
@@ -1760,6 +1773,257 @@ TOOLS: list[ToolDefinition] = [
         ),
         parameters=[],
     ),
+    ToolDefinition(
+        name="run_job_loss_scenario",
+        description=(
+            "What if the user loses their job (or other income stops): months "
+            "the money lasts at three spending levels (as today, without "
+            "optional spending, lean), on cash alone and with investments sold "
+            "after tax, the money left month by month, and which categories to "
+            "cut first with the euros each saves. Uses real bank statements, "
+            "balances and the portfolio."
+        ),
+        parameters=[
+            {
+                "name": "income_lost_monthly_eur",
+                "type": "number",
+                "description": "Monthly income that stops; default all income from work.",
+                "required": False,
+            },
+            {
+                "name": "benefit_monthly_eur",
+                "type": "number",
+                "description": "Unemployment benefit per month while it lasts (default 0).",
+                "required": False,
+            },
+            {
+                "name": "benefit_months",
+                "type": "integer",
+                "description": "Months the benefit is paid (default 0).",
+                "required": False,
+            },
+            {
+                "name": "severance_eur",
+                "type": "number",
+                "description": "One-off severance payment (default 0).",
+                "required": False,
+            },
+            {
+                "name": "flexible_cut_pct",
+                "type": "number",
+                "description": "How far flexible spending is trimmed in the lean level (default 20).",
+                "required": False,
+            },
+            {
+                "name": "market_drop_pct",
+                "type": "number",
+                "description": "Portfolio fall at the same time, e.g. 30 for a recession (default 0).",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="run_income_change_scenario",
+        description=(
+            "What if income changes (pay cut, part-time, one earner stops, a "
+            "raise): the monthly net and savings rate before and after, whether "
+            "the goals' contributions still fit, the effect on the primary "
+            "wealth plan, and the cuts that would close a gap. Give exactly one "
+            "of change_pct or new_income_monthly_eur."
+        ),
+        parameters=[
+            {
+                "name": "change_pct",
+                "type": "number",
+                "description": "Change in total household income in percent, e.g. -30.",
+                "required": False,
+            },
+            {
+                "name": "new_income_monthly_eur",
+                "type": "number",
+                "description": "The new total monthly income in EUR.",
+                "required": False,
+            },
+            {
+                "name": "flexible_cut_pct",
+                "type": "number",
+                "description": "How far flexible spending could be trimmed (default 20).",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="run_house_purchase_scenario",
+        description=(
+            "What if the user buys a home: cash needed (down payment plus "
+            "costs), how much comes from cash and how much from selling "
+            "investments (with the tax), the mortgage payment and total "
+            "interest, the month before and after, loan payments as a share of "
+            "income against the 35% lenders use, the highest price that limit "
+            "allows, and what is left afterwards. The price is required; ask "
+            "for it if the user gave none."
+        ),
+        parameters=[
+            {
+                "name": "price_eur",
+                "type": "number",
+                "description": "Purchase price in EUR.",
+                "required": True,
+            },
+            {
+                "name": "down_payment_pct",
+                "type": "number",
+                "description": "Down payment as % of the price (default 20).",
+                "required": False,
+            },
+            {
+                "name": "rate_pct",
+                "type": "number",
+                "description": "Mortgage rate, % a year (default 3; say it is an assumption).",
+                "required": False,
+            },
+            {
+                "name": "term_years",
+                "type": "integer",
+                "description": "Mortgage term in years (default 30).",
+                "required": False,
+            },
+            {
+                "name": "purchase_costs_pct",
+                "type": "number",
+                "description": "Taxes, notary and registry as % of the price (default 12, an assumption).",
+                "required": False,
+            },
+            {
+                "name": "monthly_running_eur",
+                "type": "number",
+                "description": "New monthly costs: property tax, community fees, insurance (default 0).",
+                "required": False,
+            },
+            {
+                "name": "sale_proceeds_eur",
+                "type": "number",
+                "description": "Cash left from selling the current home after repaying its mortgage (default 0).",
+                "required": False,
+            },
+            {
+                "name": "existing_loans_repaid",
+                "type": "boolean",
+                "description": "True when today's loans are repaid from the sale, so their payments stop.",
+                "required": False,
+            },
+            {
+                "name": "rent_saved_monthly_eur",
+                "type": "number",
+                "description": "Rent that stops (default 0).",
+                "required": False,
+            },
+            {
+                "name": "buffer_months",
+                "type": "integer",
+                "description": "Months of spending kept in cash, not used for the purchase (default 6).",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="run_market_crash_scenario",
+        description=(
+            "What if markets crash: the loss on the held portfolio (funds "
+            "looked through), net worth after, the gain needed to recover, and "
+            "how many months until the portfolio shows today's value again at "
+            "low/expected/high returns, with and without monthly contributions, "
+            "plus how long past crashes took. Give drop_pct (all equities) or "
+            "a preset scenario; with neither it runs the ai_bubble preset."
+        ),
+        parameters=[
+            {
+                "name": "drop_pct",
+                "type": "number",
+                "description": "Fall in all equities as a positive number, e.g. 40.",
+                "required": False,
+            },
+            {
+                "name": "scenario",
+                "type": "string",
+                "description": "Preset: ai_bubble, equity_bear, semis_crash, usd_down, rates_up, crypto_winter or stagflation.",
+                "required": False,
+            },
+            {
+                "name": "expected_return_pct",
+                "type": "number",
+                "description": "Annual return assumed during the recovery (default 6).",
+                "required": False,
+            },
+            {
+                "name": "monthly_contribution_eur",
+                "type": "number",
+                "description": "New money invested per month; default from the wealth plan or the bank statements.",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="get_spending_cut_candidates",
+        description=(
+            "Where the user could save: average monthly spending split into "
+            "fixed, flexible, optional and unclassified, every category with "
+            "its tier, and the order to cut in (optional first, then a trim of "
+            "flexible) with the euros each step saves. Use for 'what can I cut', "
+            "'where can I save', 'how much of my spending is fixed'."
+        ),
+        parameters=[
+            {
+                "name": "months",
+                "type": "integer",
+                "description": "Complete months to average over (default 12, max 36).",
+                "required": False,
+            },
+            {
+                "name": "flexible_cut_pct",
+                "type": "number",
+                "description": "Trim applied to flexible categories (default 20).",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="get_spending_matrix",
+        description=(
+            "Exact spending per calendar month by category or by merchant "
+            "(transfers excluded), largest first, with monthly and overall "
+            "totals. Use for a detailed breakdown, month-to-month comparisons, "
+            "'what changed', or the merchants inside one category (pass "
+            "category; its sub-categories are included). The current month is "
+            "still in progress."
+        ),
+        parameters=[
+            {
+                "name": "months",
+                "type": "integer",
+                "description": "Calendar months back including the current one (default 6, max 24).",
+                "required": False,
+            },
+            {
+                "name": "group_by",
+                "type": "string",
+                "description": "'category' (default) or 'merchant'.",
+                "required": False,
+            },
+            {
+                "name": "category",
+                "type": "string",
+                "description": "Only this category and its sub-categories.",
+                "required": False,
+            },
+            {
+                "name": "top",
+                "type": "integer",
+                "description": "Rows to list (default 25, max 40); the rest is summed.",
+                "required": False,
+            },
+        ],
+    ),
 ]
 
 
@@ -1783,3 +2047,223 @@ def _get_position_caps(db: Database) -> str:
     from portf_manager.services.caps import cap_status
 
     return _j(cap_status(db, fx=_fx))
+
+
+def _scenario(fn, db: Database, **kwargs) -> str:
+    """Run a life scenario; a bad input comes back as a readable error."""
+    try:
+        return _j(fn(db, fx=_fx, **kwargs))
+    except (ValueError, TypeError) as e:
+        return f"Error: {e}"
+
+
+def _num(value, cast=float):
+    return None if value is None else cast(value)
+
+
+@_tool("run_job_loss_scenario")
+def _run_job_loss_scenario(
+    db: Database,
+    income_lost_monthly_eur: Optional[float] = None,
+    benefit_monthly_eur: float = 0.0,
+    benefit_months: int = 0,
+    severance_eur: float = 0.0,
+    flexible_cut_pct: float = 20.0,
+    market_drop_pct: float = 0.0,
+) -> str:
+    """Runway after losing income, at three spending levels."""
+    from portf_manager.services.life_scenarios import run_job_loss
+
+    return _scenario(
+        run_job_loss,
+        db,
+        income_lost_monthly_eur=_num(income_lost_monthly_eur),
+        benefit_monthly_eur=float(benefit_monthly_eur or 0),
+        benefit_months=int(benefit_months or 0),
+        severance_eur=float(severance_eur or 0),
+        flexible_cut_pct=float(flexible_cut_pct),
+        market_drop_pct=float(market_drop_pct or 0),
+    )
+
+
+@_tool("run_income_change_scenario")
+def _run_income_change_scenario(
+    db: Database,
+    change_pct: Optional[float] = None,
+    new_income_monthly_eur: Optional[float] = None,
+    flexible_cut_pct: float = 20.0,
+) -> str:
+    """The monthly picture after income changes."""
+    from portf_manager.services.life_scenarios import run_income_change
+
+    return _scenario(
+        run_income_change,
+        db,
+        change_pct=_num(change_pct),
+        new_income_monthly_eur=_num(new_income_monthly_eur),
+        flexible_cut_pct=float(flexible_cut_pct),
+    )
+
+
+@_tool("run_house_purchase_scenario")
+def _run_house_purchase_scenario(
+    db: Database,
+    price_eur: float,
+    down_payment_pct: float = 20.0,
+    rate_pct: float = 3.0,
+    term_years: int = 30,
+    purchase_costs_pct: float = 12.0,
+    monthly_running_eur: float = 0.0,
+    sale_proceeds_eur: float = 0.0,
+    existing_loans_repaid: bool = False,
+    rent_saved_monthly_eur: float = 0.0,
+    buffer_months: int = 6,
+) -> str:
+    """Cash needed, funding, mortgage and the new month for a home purchase."""
+    from portf_manager.services.life_scenarios import run_house_purchase
+
+    return _scenario(
+        run_house_purchase,
+        db,
+        price_eur=float(price_eur),
+        down_payment_pct=float(down_payment_pct),
+        rate_pct=float(rate_pct),
+        term_years=int(term_years),
+        purchase_costs_pct=float(purchase_costs_pct),
+        monthly_running_eur=float(monthly_running_eur or 0),
+        sale_proceeds_eur=float(sale_proceeds_eur or 0),
+        existing_loans_repaid=existing_loans_repaid is True
+        or str(existing_loans_repaid).lower() == "true",
+        rent_saved_monthly_eur=float(rent_saved_monthly_eur or 0),
+        buffer_months=int(buffer_months),
+    )
+
+
+@_tool("run_market_crash_scenario")
+def _run_market_crash_scenario(
+    db: Database,
+    drop_pct: Optional[float] = None,
+    scenario: Optional[str] = None,
+    expected_return_pct: float = 6.0,
+    monthly_contribution_eur: Optional[float] = None,
+) -> str:
+    """A crash on the held portfolio and the time to get back."""
+    from portf_manager.services.life_scenarios import run_market_crash
+
+    if drop_pct is None and not scenario:
+        scenario = "ai_bubble"
+    return _scenario(
+        run_market_crash,
+        db,
+        drop_pct=_num(drop_pct),
+        scenario=scenario or None,
+        expected_return_pct=float(expected_return_pct),
+        monthly_contribution_eur=_num(monthly_contribution_eur),
+    )
+
+
+@_tool("get_spending_cut_candidates")
+def _get_spending_cut_candidates(
+    db: Database, months: int = 12, flexible_cut_pct: float = 20.0
+) -> str:
+    """Average monthly spending by tier and the order to cut it in."""
+    from portf_manager.services.life_scenarios import cut_plan, household_baseline
+
+    months = max(1, min(int(months), 36))
+    pct = max(0.0, min(float(flexible_cut_pct), 100.0))
+    base = household_baseline(db, fx=_fx, months=months)
+    profile = base["spending"]
+    cuts = cut_plan(profile, pct)
+    return _j(
+        {
+            "months_used": profile["months_used"],
+            "income_monthly_eur": profile["income_monthly_eur"],
+            "spend_monthly_eur": profile["spend_monthly_eur"],
+            "spend_by_tier_monthly_eur": profile["by_tier_monthly_eur"],
+            "categories": profile["categories"][:60],
+            "cut_first": cuts,
+            "total_saves_monthly_eur": round(
+                sum(c["saves_monthly_eur"] for c in cuts), 2
+            ),
+            "warnings": base["warnings"],
+            "notes": (
+                "Monthly averages over complete imported months, transfers and "
+                "money moved into investments excluded. tier comes from the "
+                "category's fixed/flexible/optional mark (inherited from its "
+                "parent); 'unclassified' categories have no mark yet and are "
+                "not in cut_first. For the single charges behind a category "
+                "use get_recurring_spending or search_spending_transactions."
+            ),
+        }
+    )
+
+
+@_tool("get_spending_matrix")
+def _get_spending_matrix(
+    db: Database,
+    months: int = 6,
+    group_by: str = "category",
+    category: Optional[str] = None,
+    top: int = 25,
+) -> str:
+    """Spending per month by category or merchant, exact to the cent."""
+    from datetime import date
+
+    from portf_manager.services.retirement import expand_categories
+
+    if group_by not in ("category", "merchant"):
+        return "Error: group_by must be 'category' or 'merchant'"
+    months = max(1, min(int(months), 24))
+    top = max(1, min(int(top), 40))
+    today = date.today()
+    index = today.year * 12 + today.month - months
+    start = date(index // 12, index % 12 + 1, 1).isoformat()
+    names = None
+    if category:
+        names = expand_categories(db.list_spending_categories_tree(), [category])
+    cells: dict[str, dict[str, float]] = {}
+    month_keys: set[str] = set()
+    for r in db.list_spending_transactions(
+        start_date=start, is_transfer=False, amount_sign="negative"
+    ):
+        if names is not None and r.get("category") not in names:
+            continue
+        key = (
+            (r.get("category") or "uncategorized")
+            if group_by == "category"
+            else (r.get("merchant") or (r.get("description") or "")[:40] or "unknown")
+        )
+        month = str(r["date"])[:7]
+        month_keys.add(month)
+        row = cells.setdefault(key, {})
+        row[month] = row.get(month, 0.0) - float(r["amount"]) * _fx(
+            r.get("currency") or "EUR"
+        )
+    ordered = sorted(month_keys)
+    rows = sorted(
+        (
+            {
+                group_by: key,
+                "by_month_eur": {m: round(v.get(m, 0.0), 2) for m in ordered},
+                "total_eur": round(sum(v.values()), 2),
+            }
+            for key, v in cells.items()
+        ),
+        key=lambda r: -r["total_eur"],
+    )
+    listed = rows[:top]
+    return _j(
+        {
+            "months": ordered,
+            "current_month_in_progress": today.strftime("%Y-%m"),
+            "group_by": group_by,
+            "category_filter": category,
+            "rows": listed,
+            "rows_not_listed": len(rows) - len(listed),
+            "not_listed_total_eur": round(sum(r["total_eur"] for r in rows[top:]), 2),
+            "total_by_month_eur": {
+                m: round(sum(v.get(m, 0.0) for v in cells.values()), 2) for m in ordered
+            },
+            "total_eur": round(sum(r["total_eur"] for r in rows), 2),
+        }
+    )

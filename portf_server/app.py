@@ -53,6 +53,8 @@ from .routers import (
     wealth_scenarios,
     caps,
     decisions,
+    saved_reports,
+    scenarios,
     market,
     system,
     deposits,
@@ -464,6 +466,20 @@ app.include_router(
     decisions.router,
     prefix="/api/v1/decisions",
     tags=["Decisions"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    saved_reports.router,
+    prefix="/api/v1/saved-reports",
+    tags=["Saved reports"],
+    dependencies=_PROTECTED,
+)
+
+app.include_router(
+    scenarios.router,
+    prefix="/api/v1/scenarios",
+    tags=["Scenarios"],
     dependencies=_PROTECTED,
 )
 

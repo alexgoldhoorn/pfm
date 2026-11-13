@@ -1186,6 +1186,132 @@ async def reparent_category(
     return {"name": name, "new_parent_name": body.new_parent_name}
 
 
+class CategoryEssentialityBody(BaseModel):
+    """``fixed`` | ``flexible`` | ``optional``, or null to clear the mark."""
+
+    essentiality: Optional[Literal["fixed", "flexible", "optional"]] = None
+
+
+_ESSENTIALITY_PROMPT = """Classify household spending categories by how \
+easily the spending can be reduced if income falls.
+
+Levels:
+- fixed: contractual or unavoidable, hard to change within months (mortgage,
+  rent, insurance, school fees, taxes, loan payments, utilities' standing part)
+- flexible: needed, but the amount can be reduced (groceries, energy use,
+  transport, clothing, household goods, health)
+- optional: can stop without hardship (restaurants, travel, hobbies,
+  subscriptions, entertainment, gifts)
+
+Categories (name, with its parent category in brackets):
+{categories}
+
+Return ONLY a JSON array, one object per category, in the same order:
+[{{"name": "<exact name>", "essentiality": "fixed|flexible|optional", \
+"reason": "<max 12 words>"}}]
+"""
+
+
+def spend_categories_without_essentiality(tree: List[dict]) -> List[dict]:
+    """Non-root categories under the Spend root that carry no mark."""
+    by_name = {row["name"]: row for row in tree}
+
+    def root_of(row: dict) -> Optional[str]:
+        for _ in range(100):
+            if row.get("is_root"):
+                return row["name"]
+            row = by_name.get(row.get("parent_name") or "")
+            if row is None:
+                return None
+        return None
+
+    return [
+        row
+        for row in tree
+        if not row.get("is_root")
+        and not row.get("essentiality")
+        and root_of(row) == "Spend"
+    ]
+
+
+def parse_essentiality_suggestions(data: object, names: set[str]) -> List[dict]:
+    """Keep well-formed suggestions for known categories; drop the rest."""
+    out = []
+    for item in data if isinstance(data, list) else []:
+        if not isinstance(item, dict):
+            continue
+        name, level = item.get("name"), item.get("essentiality")
+        if name in names and level in ("fixed", "flexible", "optional"):
+            out.append(
+                {
+                    "name": name,
+                    "essentiality": level,
+                    "reason": str(item.get("reason") or "")[:200],
+                }
+            )
+    return out
+
+
+@router.put("/categories/{name}/essentiality", response_model=dict)
+def set_category_essentiality(
+    name: str,
+    body: CategoryEssentialityBody,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Mark a category fixed, flexible or optional (null clears the mark).
+
+    The mark drives the what-if scenarios' "what to cut first"; a category
+    without one inherits its nearest marked ancestor's.
+    """
+    row = db.find_spending_category_by_name(name)
+    if not row:
+        raise HTTPException(status_code=404, detail=f"Category '{name}' not found")
+    if row.get("is_root"):
+        raise HTTPException(
+            status_code=400, detail="A root category cannot carry a mark"
+        )
+    db.set_spending_category_essentiality(name, body.essentiality)
+    return {"name": name, "essentiality": body.essentiality}
+
+
+@router.post("/categories/suggest-essentiality", response_model=dict)
+def suggest_category_essentiality(
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """LLM suggestions for Spend categories that have no mark yet.
+
+    Nothing is saved: the user accepts suggestions one by one or all at once.
+    Only category names go to the LLM, never transactions.
+    """
+    pending = spend_categories_without_essentiality(db.list_spending_categories_tree())
+    if not pending:
+        return {"suggestions": []}
+    listing = "\n".join(
+        f"- {row['name']} ({row.get('parent_name') or 'Spend'})" for row in pending
+    )
+    try:
+        llm = get_llm_client(tier="fast")
+        text = llm.generate(_ESSENTIALITY_PROMPT.format(categories=listing)).strip()
+        if text.startswith("```"):
+            text = "\n".join(
+                ln for ln in text.split("\n") if not ln.strip().startswith("```")
+            )
+        data = json.loads(text)
+    except Exception as e:
+        logger.warning("Essentiality suggestion LLM call failed: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Suggestion failed: {e}",
+        )
+    return {
+        "suggestions": parse_essentiality_suggestions(
+            data, {row["name"] for row in pending}
+        )
+    }
+
+
 @router.get("/summary", response_model=SpendingSummaryResponse)
 def get_spending_summary(
     days: int = 30,

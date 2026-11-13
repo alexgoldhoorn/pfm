@@ -9,14 +9,14 @@ import json
 import sqlite3
 import logging
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Dict, List, Optional, Any, Set
 from pathlib import Path
 
 from portf_manager.services.merchant import fold_for_search, normalize_merchant
 
 # Database version for migration tracking
-DATABASE_VERSION = 41
+DATABASE_VERSION = 42
 
 
 # black
@@ -805,12 +805,27 @@ class Database:
                 name       TEXT NOT NULL UNIQUE,
                 parent_id  INTEGER REFERENCES spending_categories(id),
                 is_root    INTEGER NOT NULL DEFAULT 0,
+                essentiality TEXT
+                    CHECK (essentiality IN ('fixed', 'flexible', 'optional')),
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
         conn.execute(
             "INSERT INTO spending_categories (name, parent_id, is_root) VALUES ('Income', NULL, 1), ('Spend', NULL, 1)"
+        )
+        # Saved AI reports (Markdown, may hold chart blocks). See _migrate_to_v42.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS reports (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                title             TEXT NOT NULL,
+                content_md        TEXT NOT NULL,
+                source_session_id TEXT,
+                created_at        TEXT NOT NULL,
+                updated_at        TEXT NOT NULL
+            )
+            """
         )
 
         # Budgets: named, open-ended monthly plans (base / best case / worst
@@ -1002,6 +1017,8 @@ class Database:
             self._migrate_to_v40(conn)
         if current_version < 41:
             self._migrate_to_v41(conn)
+        if current_version < 42:
+            self._migrate_to_v42(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -2183,6 +2200,37 @@ class Database:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_decisions_review "
             "ON decisions (reviewed_at, review_on)"
+        )
+        conn.commit()
+
+    def _migrate_to_v42(self, conn: sqlite3.Connection) -> None:
+        """Migrate from v41 to v42 — category essentiality and saved reports.
+
+        ``spending_categories.essentiality`` marks a category as ``fixed``,
+        ``flexible`` or ``optional`` (NULL = not marked; nothing is guessed on
+        migration). ``reports`` holds Markdown reports saved from the AI chat.
+        Every step is guarded so a rerun is harmless.
+        """
+        cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(spending_categories)")
+        }
+        # a hand-built partial test database may lack the table altogether
+        if cols and "essentiality" not in cols:
+            conn.execute(
+                "ALTER TABLE spending_categories ADD COLUMN essentiality TEXT "
+                "CHECK (essentiality IN ('fixed', 'flexible', 'optional'))"
+            )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS reports (
+                id                INTEGER PRIMARY KEY AUTOINCREMENT,
+                title             TEXT NOT NULL,
+                content_md        TEXT NOT NULL,
+                source_session_id TEXT,
+                created_at        TEXT NOT NULL,
+                updated_at        TEXT NOT NULL
+            )
+            """
         )
         conn.commit()
 
@@ -4831,17 +4879,106 @@ class Database:
 
     def list_spending_categories_tree(self) -> List[Dict]:
         """Every category with its tree position: id, name, parent_id,
-        parent_name (None for roots), is_root."""
+        parent_name (None for roots), is_root, essentiality."""
         with self.get_connection() as conn:
             cursor = conn.execute(
                 """
-                SELECT c.id, c.name, c.parent_id, p.name AS parent_name, c.is_root
+                SELECT c.id, c.name, c.parent_id, p.name AS parent_name,
+                       c.is_root, c.essentiality
                 FROM spending_categories c
                 LEFT JOIN spending_categories p ON c.parent_id = p.id
                 ORDER BY c.name
                 """
             )
             return [dict(row) for row in cursor.fetchall()]
+
+    ESSENTIALITY_LEVELS = ("fixed", "flexible", "optional")
+
+    def set_spending_category_essentiality(
+        self, name: str, essentiality: Optional[str]
+    ) -> bool:
+        """Mark a registered category fixed/flexible/optional, or clear it.
+
+        Returns False when the category is not registered.
+
+        Raises:
+            ValueError: for an unknown level.
+        """
+        if essentiality is not None and essentiality not in self.ESSENTIALITY_LEVELS:
+            raise ValueError(f"unknown essentiality {essentiality!r}")
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "UPDATE spending_categories SET essentiality = ? WHERE name = ?",
+                (essentiality, name),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    # ── Saved reports ─────────────────────────────────────────────────────────
+
+    def create_report(
+        self, title: str, content_md: str, source_session_id: Optional[str] = None
+    ) -> int:
+        """Save a Markdown report and return its id."""
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                "INSERT INTO reports (title, content_md, source_session_id, "
+                "created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                (title, content_md, source_session_id, now, now),
+            )
+            conn.commit()
+            return cursor.lastrowid
+
+    def get_report(self, report_id: int) -> Optional[Dict]:
+        """One saved report, or None."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM reports WHERE id = ?", (report_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def list_reports(self) -> List[Dict]:
+        """Saved reports without their content, newest first."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT id, title, source_session_id, created_at, updated_at "
+                "FROM reports ORDER BY created_at DESC, id DESC"
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def update_report(
+        self,
+        report_id: int,
+        title: Optional[str] = None,
+        content_md: Optional[str] = None,
+    ) -> bool:
+        """Change a report's title and/or content; None leaves a field as is."""
+        sets, params = [], []
+        if title is not None:
+            sets.append("title = ?")
+            params.append(title)
+        if content_md is not None:
+            sets.append("content_md = ?")
+            params.append(content_md)
+        if not sets:
+            return self.get_report(report_id) is not None
+        sets.append("updated_at = ?")
+        params.append(datetime.now(timezone.utc).isoformat(timespec="seconds"))
+        params.append(report_id)
+        with self.get_connection() as conn:
+            cursor = conn.execute(
+                f"UPDATE reports SET {', '.join(sets)} WHERE id = ?", params
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
+    def delete_report(self, report_id: int) -> bool:
+        """Delete a saved report."""
+        with self.get_connection() as conn:
+            cursor = conn.execute("DELETE FROM reports WHERE id = ?", (report_id,))
+            conn.commit()
+            return cursor.rowcount > 0
 
     def reparent_spending_category(self, name: str, new_parent_name: str) -> None:
         # NOTE: get_connection()'s context manager catches any Exception

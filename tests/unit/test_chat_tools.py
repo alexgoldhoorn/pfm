@@ -28,10 +28,10 @@ def db(tmp_path):
     return d
 
 
-def test_tools_list_has_36_entries():
+def test_tools_list_has_42_entries():
     from portf_server.chat_tools import TOOLS
 
-    assert len(TOOLS) == 36
+    assert len(TOOLS) == 42
 
 
 def test_every_tool_definition_has_a_handler():
