@@ -462,9 +462,12 @@ async def save_spending_transactions(
                     # "Transfer" category and the flag must stay in agreement.
                     current = db.get_spending_transaction(existing["id"]) or {}
                     if not current.get("is_transfer"):
-                        db.update_spending_transaction(
-                            existing["id"], category=_resolve_row_category(row)
-                        )
+                        new_category = _resolve_row_category(row)
+                        fields: dict = {"category": new_category}
+                        if new_category == TRANSFER_CATEGORY:
+                            # Same as the insert path: a hand-marked transfer.
+                            fields.update(is_transfer=True, transfer_source="manual")
+                        db.update_spending_transaction(existing["id"], **fields)
                     overwritten += 1
                     saved_ids.append(existing["id"])
                     continue

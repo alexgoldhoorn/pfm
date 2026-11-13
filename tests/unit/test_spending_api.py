@@ -2717,3 +2717,40 @@ def test_unmark_with_transfer_category_is_rejected_and_writes_nothing(tmp_path):
         "transfer_link_id",
     ):
         assert after[key] == before[key], key
+
+
+def _ow_row(category):
+    return {
+        "date": "2026-01-05",
+        "description": "Move",
+        "amount": -100.0,
+        "currency": "EUR",
+        "category": category,
+    }
+
+
+SAVE_URL = "/api/v1/spending/save"
+
+
+def test_overwrite_to_transfer_sets_the_flag(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    client.post(
+        SAVE_URL,
+        json={"account_portfolio_id": pid, "rows": [_ow_row("Groceries")]},
+        headers=HEADERS,
+    )
+    client.post(
+        SAVE_URL,
+        json={
+            "account_portfolio_id": pid,
+            "rows": [_ow_row("Transfer")],
+            "duplicate_action": "overwrite",
+        },
+        headers=HEADERS,
+    )
+    row = db.list_spending_transactions()[0]
+    assert row["category"] == "Transfer"
+    assert row["is_transfer"] == 1
+    assert row["transfer_source"] == "manual"
+    assert row["transfer_link_id"] is None

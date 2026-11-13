@@ -9100,7 +9100,10 @@ function _wireSpOwnAccounts() {
             try {
                 const res = await window.apiClient.previewOwnAccountPattern(value);
                 count = res.count || 0;
-            } catch (err) { /* the save below reports a real problem */ }
+            } catch (err) {
+                notify('Could not check which rows this pattern would change. Nothing was changed.', 'danger');
+                return;
+            }
             if (count > 0) {
                 const go = await confirmDialog({
                     title: 'Mark rows as transfers?',
