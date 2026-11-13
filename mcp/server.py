@@ -19,6 +19,7 @@ from pfm_mcp.tools.analytics import *  # noqa: E402,F401,F403
 from pfm_mcp.tools.networth import *  # noqa: E402,F401,F403
 from pfm_mcp.tools.portfolio import *  # noqa: E402,F401,F403
 from pfm_mcp.tools.research import *  # noqa: E402,F401,F403
+from pfm_mcp.tools.scenarios import *  # noqa: E402,F401,F403
 from pfm_mcp.tools.spending import *  # noqa: E402,F401,F403
 from pfm_mcp.tools.tax import *  # noqa: E402,F401,F403
 

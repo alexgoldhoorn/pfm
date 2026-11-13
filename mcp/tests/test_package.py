@@ -28,8 +28,11 @@ def test_shim_works_through_a_symlink(tmp_path):
     (tmp_path / "pfm" / "server.py").symlink_to(ROOT / "server.py")
     code = (
         "import sys; sys.path.insert(0, %r)\n"
-        "from pfm.server import networth, next_euro, wash_sale_check, mcp\n"
-        "print(len(mcp._tool_manager.list_tools()))"
+        "import pfm.server as shim\n"
+        "tools = shim.mcp._tool_manager.list_tools()\n"
+        "missing = [t.name for t in tools if not hasattr(shim, t.name)]\n"
+        "assert not missing, missing\n"
+        "print(len(tools))"
     ) % str(tmp_path)
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
     out = subprocess.run(
