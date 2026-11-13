@@ -100,6 +100,7 @@ const chartMd = "Intro\n\n```chart\n" + JSON.stringify({ type: "bar", title: 'T 
 
 test("export embeds chart images, falls back to a pre, rejects odd sources", () => {
     win.marked = { parse: (t) => t };
+    win.DOMPurify = { sanitize: (h) => h };
     const withImg = win.chatMarkdownToExportHtml(chartMd, [PNG]);
     assert.match(withImg, /<figure class="chart"><img src="data:image\/png;base64,iVBORw0KGgo=" alt="T &quot;q&quot;"><\/figure>/);
     assert.ok(!withImg.includes("```chart"));
@@ -112,6 +113,7 @@ test("export embeds chart images, falls back to a pre, rejects odd sources", () 
 
 test("export images can be keyed by the chart json", () => {
     win.marked = { parse: (t) => t };
+    win.DOMPurify = { sanitize: (h) => h };
     const json = JSON.stringify(win.chatChartSpec(chartMd.split("\n").slice(3, 4).join("")));
     const html = win.chatMarkdownToExportHtml(chartMd, { [json]: PNG });
     assert.match(html, /<img src=/);
@@ -119,6 +121,7 @@ test("export images can be keyed by the chart json", () => {
 
 test("chatSessionToHtml: images follow the charts across messages; sources included", () => {
     win.marked = { parse: (t) => t };
+    win.DOMPurify = { sanitize: (h) => h };
     const msgs = [
         { role: "user", content: "q" },
         { role: "assistant", content: chartMd, sources: [{ title: "S", url: "https://example.com/s" }] },
@@ -183,4 +186,48 @@ test("spendingEssentialitySuggestions keeps valid, known, unique Spend rows", ()
         { name: "Housing", essentiality: "flexible", reason: "" },
     ]);
     assert.deepEqual(Array.from(win.spendingEssentialitySuggestions(undefined, TREE)), []);
+});
+
+test("safeMarkdownHtml shows escaped text when DOMPurify is missing", () => {
+    const saved = win.DOMPurify;
+    win.DOMPurify = undefined;
+    const out = win.safeMarkdownHtml("<img src=x onerror=alert(1)>", "<img src=x onerror=alert(1)>");
+    win.DOMPurify = saved;
+    assert.ok(!out.includes("<img"));
+    assert.ok(out.includes("&lt;img"));
+});
+
+test("safeMarkdownHtml sanitises, drops remote images and hardens links", () => {
+    const saved = win.DOMPurify;
+    const hooks = {};
+    let seen = null;
+    win.DOMPurify = {
+        addHook: (name, fn) => { hooks[name] = fn; },
+        sanitize: (html, config) => { seen = config; return `clean:${html}`; },
+    };
+    assert.equal(win.safeMarkdownHtml("<b>x</b>", "x"), "clean:<b>x</b>");
+    assert.ok(seen.FORBID_TAGS.includes("iframe") && seen.FORBID_TAGS.includes("form"));
+    assert.ok(seen.FORBID_ATTR.includes("style"));
+    const hook = hooks.afterSanitizeAttributes;
+    const node = (tag, attrs) => ({
+        tagName: tag, attrs: { ...attrs }, removed: false,
+        getAttribute(k) { return this.attrs[k] ?? null; },
+        setAttribute(k, v) { this.attrs[k] = v; },
+        removeAttribute(k) { delete this.attrs[k]; },
+        remove() { this.removed = true; },
+    });
+    const remote = node("IMG", { src: "https://example.com/p.png?leak=1" });
+    hook(remote);
+    assert.equal(remote.removed, true);
+    const inline = node("IMG", { src: "data:image/png;base64,AAAA" });
+    hook(inline);
+    assert.equal(inline.removed, false);
+    const link = node("A", { href: "https://example.com/" });
+    hook(link);
+    assert.equal(link.attrs.target, "_blank");
+    assert.equal(link.attrs.rel, "noopener noreferrer");
+    const script = node("A", { href: "javascript:alert(1)" });
+    hook(script);
+    assert.equal(script.attrs.href, undefined);
+    win.DOMPurify = saved;
 });

@@ -28,6 +28,10 @@ UNCLASSIFIED = "unclassified"
 SAVINGS_CATEGORIES = ("Invest", "House purchase")
 MAX_MONTHS = 600
 SERIES_MONTHS = 60
+# A category is "irregular" when it had spending in at most this share of the
+# months used, given at least this many months of data.
+IRREGULAR_MAX_SHARE = 0.25
+IRREGULAR_MIN_MONTHS = 6
 DEFAULT_FLEXIBLE_CUT_PCT = 20.0
 DEFAULT_BUFFER_MONTHS = 6
 DEFAULT_PURCHASE_COSTS_PCT = 12.0
@@ -105,6 +109,7 @@ def spending_profile(
     today: date,
     months: int = 12,
     work_income: Optional[Callable[[dict], bool]] = None,
+    exclude: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """Average monthly income and spending by category and tier.
 
@@ -115,12 +120,23 @@ def spending_profile(
         months: how many complete months back to look.
         work_income: predicate marking an income row as pay from work; when
             None every income row counts as work income.
+        exclude: spending categories left out (with their sub-categories),
+            e.g. a one-off renovation; reported as ``excluded_monthly_eur``.
+
+    A category is flagged ``irregular`` when its spending fell in at most a
+    quarter of the months used (at least six months of data): a one-off or
+    seasonal cost that a monthly average spreads thin.
     """
     used = complete_months(rows, today, months)
     n = len(used)
     savings = _descendants(tree, SAVINGS_CATEGORIES)
-    income = work = saved = 0.0
+    wanted = [c.strip() for c in (exclude or []) if c and c.strip()]
+    lowered = {name.lower(): name for name in tree}
+    resolved = [lowered.get(c.lower(), c) for c in wanted]
+    excluded = _descendants(tree, tuple(resolved)) if resolved else frozenset()
+    income = work = saved = left_out = 0.0
     by_cat: dict[str, float] = {}
+    active: dict[str, set[str]] = {}
     for r in rows:
         if str(r.get("date"))[:7] not in used:
             continue
@@ -132,8 +148,11 @@ def spending_profile(
                 work += amt
         elif cat in savings:
             saved -= amt
+        elif cat in excluded:
+            left_out -= amt
         else:
             by_cat[cat] = by_cat.get(cat, 0.0) - amt
+            active.setdefault(cat, set()).add(str(r.get("date"))[:7])
     div = n or 1
     categories = sorted(
         (
@@ -141,6 +160,9 @@ def spending_profile(
                 "name": name,
                 "tier": tier_of(name, tree),
                 "monthly_eur": round(total / div, 2),
+                "months_with_spending": len(active[name]),
+                "irregular": n >= IRREGULAR_MIN_MONTHS
+                and len(active[name]) <= n * IRREGULAR_MAX_SHARE,
             }
             for name, total in by_cat.items()
         ),
@@ -158,6 +180,8 @@ def spending_profile(
         "savings_transfers_monthly_eur": round(saved / div, 2),
         "by_tier_monthly_eur": {k: round(v, 2) for k, v in by_tier.items()},
         "categories": categories,
+        "excluded_categories": sorted(resolved),
+        "excluded_monthly_eur": round(left_out / div, 2),
     }
 
 
@@ -739,6 +763,7 @@ def household_baseline(
     today: Optional[date] = None,
     fx: Optional[Callable[[str], float]] = None,
     months: int = 12,
+    exclude_categories: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """The household's own numbers every scenario starts from.
 
@@ -780,12 +805,27 @@ def household_baseline(
             )
     except Exception as e:
         warnings.append(f"Work income could not be told apart: {e}")
-    profile = spending_profile(rows, tree, today, months, work_pred)
+    profile = spending_profile(rows, tree, today, months, work_pred, exclude_categories)
     if not profile["months_used"]:
         warnings.append(
             "No complete month of bank statements is imported: spending and "
             "income read as zero."
         )
+    irregular = [c["name"] for c in profile["categories"] if c["irregular"]]
+    if irregular:
+        warnings.append(
+            "Irregular spending (in a quarter of the months or fewer) is "
+            "averaged into the monthly figure: "
+            + ", ".join(irregular[:8])
+            + ". Re-run with exclude_categories to leave a one-off out."
+        )
+    if profile["excluded_categories"]:
+        warnings.append(
+            f"Left out on request: {', '.join(profile['excluded_categories'])} "
+            f"({profile['excluded_monthly_eur']} EUR a month)."
+        )
+    if not profile["months_used"]:
+        pass
     elif len(profile["months_used"]) < 6:
         warnings.append(
             f"Only {len(profile['months_used'])} complete months of bank "
@@ -865,7 +905,9 @@ def run_job_loss(
     db: Any, today: Optional[date] = None, fx: Optional[Callable] = None, **kwargs
 ) -> dict:
     """``job_loss`` on the live numbers."""
-    return job_loss(household_baseline(db, today, fx), **kwargs)
+    exclude = kwargs.pop("exclude_categories", None)
+    base = household_baseline(db, today, fx, exclude_categories=exclude)
+    return job_loss(base, **kwargs)
 
 
 def run_income_change(
@@ -874,7 +916,8 @@ def run_income_change(
     """``income_change`` on the live numbers, with goals and the primary plan."""
     from portf_manager.services.goals import goals_summary, list_goals_with_progress
 
-    base = household_baseline(db, today, fx)
+    exclude = kwargs.pop("exclude_categories", None)
+    base = household_baseline(db, today, fx, exclude_categories=exclude)
     planned = None
     try:
         planned = goals_summary(list_goals_with_progress(db, today or date.today()))[
@@ -894,7 +937,9 @@ def run_house_purchase(
     db: Any, today: Optional[date] = None, fx: Optional[Callable] = None, **kwargs
 ) -> dict:
     """``house_purchase`` on the live numbers."""
-    return house_purchase(household_baseline(db, today, fx), **kwargs)
+    exclude = kwargs.pop("exclude_categories", None)
+    base = household_baseline(db, today, fx, exclude_categories=exclude)
+    return house_purchase(base, **kwargs)
 
 
 def run_market_crash(

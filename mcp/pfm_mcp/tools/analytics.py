@@ -584,8 +584,8 @@ def stress_test(scenario: str = "equity_bear") -> str:
     set up) the retirement verdicts before and after. Read-only.
 
     Args:
-        scenario: 'equity_bear' (default), 'semis_crash', 'usd_down',
-            'rates_up', 'crypto_winter' or 'stagflation'.
+        scenario: 'equity_bear' (default), 'ai_bubble', 'semis_crash',
+            'usd_down', 'rates_up', 'crypto_winter' or 'stagflation'.
     """
     try:
         data = client._get("/api/v1/analytics/stress", {"scenario": scenario})

@@ -12,6 +12,7 @@ from pfm_mcp.tools import (  # noqa: F401  (importing registers the tools)
     networth,
     portfolio,
     research,
+    scenarios,
     spending,
     tax,
 )

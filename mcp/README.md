@@ -106,10 +106,14 @@ Never print to stdout from a tool: stdout is the protocol channel.
 | `allocator_settings` | The allocator's configuration |
 | `return_attribution` | What drove the return: gain per holding, type and broker |
 | `position_caps` | Position, sector and asset-type caps vs current weights: headroom in € and pp, ok/near/breached, plus the implicit single-stock cap |
-| `stress_test` | Shock the held portfolio through the fund look-through (presets: equity_bear, semis_crash, usd_down, rates_up, crypto_winter, stagflation): loss, top losers, net worth before/after, retirement verdict after |
+| `stress_test` | Shock the held portfolio through the fund look-through (presets: equity_bear, ai_bubble, semis_crash, usd_down, rates_up, crypto_winter, stagflation): loss, top losers, net worth before/after, retirement verdict after |
 | `year_end_tax` | Year-end IRPF planner: realised gains and income, harvestable losses with the tax each would save, 2-month-rule blocks, loss carry-forward from prior years, days to 31 December |
 | `decisions` | The decision journal with the price move since each call |
 | `research_scorecard` | How good past research targets were, per report and in total |
+| `scenario_job_loss` | What if work income stops: months the money lasts at three spending levels, on cash and with investments sold, and what to cut first |
+| `scenario_income_change` | What if income changes: monthly net and savings rate before/after, goal fit, wealth-plan impact, cuts that close the gap |
+| `scenario_house_purchase` | What if a home is bought: cash needed, funding from cash and investments, mortgage, debt ratio, what is left |
+| `scenario_market_crash` | What if markets crash: loss on the held portfolio and months to get back to today's value, with past crashes for reference |
 
 `tests/test_readme.py` fails if this table and the registered tools differ.
 

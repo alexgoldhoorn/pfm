@@ -214,3 +214,14 @@ kinds of item, both category `spending`:
   drops are never flagged.
 
 Both link to the Spending page. Deterministic — no LLM involved.
+
+### Category essentiality (v42)
+
+`spending_categories.essentiality` marks a category `fixed`, `flexible` or
+`optional` (NULL = not marked). It is inherited from the nearest marked
+ancestor and drives "what to cut first" in the what-if scenarios; an unmarked
+category is never cut. `GET /spending/categories/tree` returns it,
+`PUT /spending/categories/{name}/essentiality` sets or clears it (404 unknown,
+400 for a root) and `POST /spending/categories/suggest-essentiality` returns
+LLM suggestions for unmarked Spend categories without saving them. Full
+description: `scenarios.md` → Spending tiers.

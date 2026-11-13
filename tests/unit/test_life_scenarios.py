@@ -476,27 +476,27 @@ def test_scenario_endpoints(client):
     assert r.status_code == 200
     assert r.json()["spending"]["spend_monthly_eur"] == 1800.0
 
-    r = client.post("/api/v1/scenarios/job-loss", headers=HEADERS)
+    r = client.get("/api/v1/scenarios/job-loss", headers=HEADERS)
     assert r.status_code == 200
     assert r.json()["levels"]["as_today"]["months_on_cash"] == 14
 
-    r = client.post(
-        "/api/v1/scenarios/income-change", json={"change_pct": -50}, headers=HEADERS
+    r = client.get(
+        "/api/v1/scenarios/income-change", params={"change_pct": -50}, headers=HEADERS
     )
     assert r.status_code == 200
     assert r.json()["net_monthly_after_eur"] == -300.0
 
-    r = client.post(
+    r = client.get(
         "/api/v1/scenarios/house-purchase",
-        json={"price_eur": 100000, "rate_pct": 0},
+        params={"price_eur": 100000, "rate_pct": 0},
         headers=HEADERS,
     )
     assert r.status_code == 200
     assert r.json()["cash_needed_eur"] == 32000.0
 
-    r = client.post(
+    r = client.get(
         "/api/v1/scenarios/market-crash",
-        json={"scenario": "ai_bubble"},
+        params={"scenario": "ai_bubble"},
         headers=HEADERS,
     )
     assert r.status_code == 200
@@ -504,17 +504,17 @@ def test_scenario_endpoints(client):
 
 
 def test_scenario_endpoints_reject_bad_input(client):
-    r = client.post("/api/v1/scenarios/income-change", json={}, headers=HEADERS)
+    r = client.get("/api/v1/scenarios/income-change", params={}, headers=HEADERS)
     assert r.status_code == 422
-    r = client.post(
-        "/api/v1/scenarios/house-purchase", json={"price_eur": -1}, headers=HEADERS
+    r = client.get(
+        "/api/v1/scenarios/house-purchase", params={"price_eur": -1}, headers=HEADERS
     )
     assert r.status_code == 422
-    r = client.post(
-        "/api/v1/scenarios/market-crash", json={"scenario": "nope"}, headers=HEADERS
+    r = client.get(
+        "/api/v1/scenarios/market-crash", params={"scenario": "nope"}, headers=HEADERS
     )
     assert r.status_code == 422
-    assert client.post("/api/v1/scenarios/job-loss").status_code in (401, 403)
+    assert client.get("/api/v1/scenarios/job-loss").status_code in (401, 403)
 
 
 def test_scenario_chat_tools(db, fx_patches):
@@ -590,3 +590,89 @@ def test_search_totals_cover_every_matching_row(db):
     assert out["count"] == 2
     assert out["total_matching"] == 6
     assert out["total_matching_amount_eur"] == -3600.0
+
+
+# ── irregular spending and exclusions ───────────────────────────────────────
+
+
+def _year_rows():
+    """Twelve months of rent plus one large roof repair in March."""
+    rows = []
+    for month in range(1, 13):
+        rows.append(
+            {"date": f"2025-{month:02d}-02", "amount_eur": -1000.0, "category": "Rent"}
+        )
+    rows.append({"date": "2025-03-10", "amount_eur": -6000.0, "category": "Roof"})
+    rows.append({"date": "2025-03-11", "amount_eur": -600.0, "category": "Roofer"})
+    return rows
+
+
+_YEAR_TREE = {
+    "Spend": {"name": "Spend", "parent_name": None, "essentiality": None},
+    "Rent": {"name": "Rent", "parent_name": "Spend", "essentiality": "fixed"},
+    "Roof": {"name": "Roof", "parent_name": "Spend", "essentiality": None},
+    "Roofer": {"name": "Roofer", "parent_name": "Roof", "essentiality": None},
+}
+
+
+def test_one_off_spending_is_flagged_irregular():
+    p = ls.spending_profile(_year_rows(), _YEAR_TREE, date(2026, 1, 15))
+    cats = {c["name"]: c for c in p["categories"]}
+    assert cats["Roof"]["irregular"] is True
+    assert cats["Roof"]["months_with_spending"] == 1
+    assert cats["Rent"]["irregular"] is False
+    assert p["spend_monthly_eur"] == 1550.0
+
+
+def test_irregular_needs_six_months_of_data():
+    rows = [r for r in _year_rows() if r["date"] < "2025-05"]
+    p = ls.spending_profile(rows, _YEAR_TREE, date(2025, 5, 15))
+    assert all(c["irregular"] is False for c in p["categories"])
+
+
+def test_excluded_categories_take_their_children_and_ignore_case():
+    p = ls.spending_profile(
+        _year_rows(), _YEAR_TREE, date(2026, 1, 15), exclude=["roof", " "]
+    )
+    assert p["spend_monthly_eur"] == 1000.0
+    assert p["excluded_categories"] == ["Roof"]
+    assert p["excluded_monthly_eur"] == 550.0
+    assert [c["name"] for c in p["categories"]] == ["Rent"]
+
+
+def test_exclude_through_the_database_api_and_tools(client, db):
+    r = client.get(
+        "/api/v1/scenarios/job-loss",
+        params={"exclude_categories": "Fun, Food"},
+        headers=HEADERS,
+    )
+    assert r.status_code == 200
+    data = r.json()
+    assert data["levels"]["as_today"]["monthly_spend_eur"] == 1000.0
+    assert any("Left out on request: Food, Fun" in w for w in data["warnings"])
+
+    r = client.get(
+        "/api/v1/scenarios/baseline",
+        params={"exclude_categories": "Fun"},
+        headers=HEADERS,
+    )
+    assert r.json()["spending"]["excluded_monthly_eur"] == 200.0
+
+    from portf_server.chat_tools import execute_tool
+
+    with patch("portf_server.chat_tools._fx", _fx):
+        out = json.loads(
+            execute_tool(
+                "get_spending_cut_candidates", {"exclude_categories": "Fun"}, db
+            )
+        )
+        assert out["excluded_categories"] == ["Fun"]
+        assert out["spend_monthly_eur"] == 1600.0
+        out = json.loads(
+            execute_tool(
+                "run_house_purchase_scenario",
+                {"price_eur": 100000, "exclude_categories": ["Fun"]},
+                db,
+            )
+        )
+        assert out["monthly"]["spend_before_eur"] == 1600.0

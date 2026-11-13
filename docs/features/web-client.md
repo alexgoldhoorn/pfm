@@ -179,3 +179,15 @@ AI" (`POST .../suggest-essentiality`) opens a panel where each suggestion can be
 ticked and its level changed before anything is saved; `spendingEssentialitySuggestions`
 drops unknown names, invalid levels and categories outside Spend. The levels drive
 the chat's "what to cut first" answers (explained in the Spending help).
+
+## Untrusted Markdown
+
+Model-written Markdown (chat answers, reports, the dashboard chat bubble) goes
+through `safeMarkdownHtml(html, fallbackText)` in `pfm_core.js` before it
+reaches `innerHTML`: DOMPurify removes scripts, handlers, forms, frames and
+`style`; a hook drops every image that is not an inline PNG/JPEG data URI (a
+remote image URL could carry private figures out of the browser, which matters
+once web search can bring outside text into an answer) and gives http(s) links
+`target="_blank" rel="noopener noreferrer"`, removing any other `href`. Without
+DOMPurify (CDN blocked) the text is shown escaped. Chart placeholders survive
+because `class` and `data-*` attributes are allowed.

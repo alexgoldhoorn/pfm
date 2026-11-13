@@ -1373,7 +1373,7 @@ function chatMarkdownToExportHtml(text, images, counter) {
         return `<pre><code>${esc(json)}</code></pre>`;
     };
     if (typeof marked !== 'undefined' && marked && marked.parse) {
-        return marked.parse(chatPrepareCharts(text, render), { breaks: true });
+        return safeMarkdownHtml(marked.parse(chatPrepareCharts(text, render), { breaks: true }), text || '');
     }
     return `<p style="white-space:pre-wrap;margin:0">${esc(text || '')}</p>`;
 }
@@ -1729,7 +1729,8 @@ function chatSourcesHtml(sources) {
     if (!list.length) return '';
     const items = list.map(s =>
         `<li><a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer">${esc(s.title)}</a> <span class="text-muted">${esc(s.host)}</span></li>`).join('');
-    return `<div class="chat-sources"><span class="chat-sources-label"><i class="bi bi-globe2"></i> Sources</span><ol>${items}</ol></div>`;
+    // A long list would bury the answer: collapsed unless it is short.
+    return `<details class="chat-sources"${list.length <= 3 ? ' open' : ''}><summary class="chat-sources-label"><i class="bi bi-globe2"></i> Sources (${list.length})</summary><ol>${items}</ol></details>`;
 }
 
 function chatSourcesMarkdown(sources) {
@@ -1927,7 +1928,7 @@ function chatEnhanceTables(root) {
 
 // Markdown (with chart blocks) as page HTML; the same for chat and reports.
 function chatRenderMarkdown(text) {
-    return window.marked ? marked.parse(chatPrepareCharts(text), { breaks: true }) : esc(text);
+    return window.marked ? safeMarkdownHtml(marked.parse(chatPrepareCharts(text), { breaks: true }), text) : esc(text);
 }
 
 window.chatHydrateCharts = chatHydrateCharts;

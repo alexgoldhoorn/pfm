@@ -150,6 +150,37 @@ function esc(s) {
 }
 window.esc = esc;
 
+// HTML made from model-written Markdown is untrusted: an answer can echo bank
+// text or, with web search on, a web page. Sanitise it, and drop every image
+// that is not an inline PNG/JPEG: a remote image URL could carry private
+// figures out of the browser. Without DOMPurify (CDN blocked) the text is
+// shown escaped, never as raw HTML.
+const SAFE_MD_FORBID_TAGS = ['style', 'form', 'input', 'button', 'textarea', 'select', 'iframe', 'object', 'embed', 'video', 'audio', 'source', 'picture', 'svg', 'math', 'link', 'meta', 'base'];
+function safeMarkdownHtml(html, fallbackText) {
+    const purify = (typeof window !== 'undefined') ? window.DOMPurify : null;
+    if (!purify || typeof purify.sanitize !== 'function') {
+        return `<p style="white-space:pre-wrap;margin:0">${esc(fallbackText)}</p>`;
+    }
+    if (!purify._pfmHooked && typeof purify.addHook === 'function') {
+        purify.addHook('afterSanitizeAttributes', node => {
+            const tag = node.tagName;
+            if (tag === 'IMG' && !/^data:image\/(png|jpeg);base64,/i.test(node.getAttribute('src') || '')) {
+                node.remove();
+            } else if (tag === 'A') {
+                if (/^https?:\/\//i.test(node.getAttribute('href') || '')) {
+                    node.setAttribute('target', '_blank');
+                    node.setAttribute('rel', 'noopener noreferrer');
+                } else {
+                    node.removeAttribute('href');
+                }
+            }
+        });
+        purify._pfmHooked = true;
+    }
+    return purify.sanitize(String(html), { FORBID_TAGS: SAFE_MD_FORBID_TAGS, FORBID_ATTR: ['style', 'srcset'] });
+}
+window.safeMarkdownHtml = safeMarkdownHtml;
+
 // Good/OK/bad bands for the metrics that can honestly be called good or bad.
 // Bands are checked top-down; the first `value >= min` wins. `neutral` metrics
 // (volatility, beta, max drawdown) depend on risk appetite, so they get a

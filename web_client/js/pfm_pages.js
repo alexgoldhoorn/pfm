@@ -1102,7 +1102,7 @@ function setupHelpAi() {
         if (isUser) {
             bubble.textContent = text;
         } else {
-            bubble.innerHTML = window.marked ? marked.parse(text) : esc(text);
+            bubble.innerHTML = window.marked ? safeMarkdownHtml(marked.parse(text), text) : esc(text);
         }
         div.appendChild(bubble);
         historyEl.appendChild(div);

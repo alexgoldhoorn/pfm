@@ -68,7 +68,7 @@ remote_gateway/server.py".
 ### Database
 SQLite by default (`portfolio.db`), PostgreSQL via `DATABASE_URL` env var. Use `portf_manager/database.py` for SQLite, `database_factory.py` for auto-detection.
 
-**Current schema version: 41.** Migrations run automatically on startup.
+**Current schema version: 42.** Migrations run automatically on startup.
 
 Migration history (condensed — see `_migrate_to_vN` for full schema detail):
 - v5: `bookings` table (deposits/withdrawals); `tax` on `transactions`
@@ -97,6 +97,7 @@ Migration history (condensed — see `_migrate_to_vN` for full schema detail):
 - v39: `research_history` (append-only copy of every research report: asset_id, symbol, generated_at, source [`llm`|`bulk`|`backfill`], recommendation, confidence, fair_value, buy_below, sell_above, currency, price_at_report, horizon_months default 12) — `upsert_research_report` appends a row on every call, the migration backfills one row per existing `research_reports` row. Feeds the research scorecard. See `docs/features/research-rebalance.md`.
 - v40: `position_caps` (scope `symbol`|`sector`|`asset_type`, key, max_pct, note; UNIQUE(scope, key)) — user caps checked against `compute_exposure` (`services/caps.py`), enforced by the allocator for symbols and sectors, raised as Action Items when breached. See `docs/features/research-rebalance.md`.
 - v41: `spending_transactions.transfer_source` (`match`|`pattern`|`manual`|`rejected`, nullable) — how a row became a transfer; backfills flagged rows (`match` if linked, else `manual`) and sets rows with category `Transfer` but no flag back to `uncategorized`. See `docs/features/spending.md`.
+- v42: `spending_categories.essentiality` (`fixed`|`flexible`|`optional`, nullable, nothing backfilled) — drives the what-if scenarios' cut order; `reports` (id, title, content_md, source_session_id, created_at, updated_at) — Markdown reports saved from the AI chat. See `docs/features/scenarios.md` and `llm.md`.
 
 ⚠️ **New tables must appear in BOTH `_create_all_tables` (fresh DBs) AND `_migrate_to_vN` (existing DBs)** — migration-only adds break fresh installs/tests with "no such table".
 ⚠️ **CHECK constraint rebuilds** require `PRAGMA legacy_alter_table=ON` around the `RENAME` — see `_migrate_to_v13`.
@@ -127,7 +128,7 @@ the provider there, not only in `.env.local`.
   `available: false` when no provider is set — never a 5xx (e2e fails on any).
 - Search grounding (`generate_with_search`) exists only on Gemini and Anthropic;
   callers detect it with `hasattr`. All four providers implement
-  `ToolCapableLLMClient`; the 36 chat tools in `portf_server/chat_tools.py` call
+  `ToolCapableLLMClient`; the 42 chat tools in `portf_server/chat_tools.py` call
   DB/service functions directly, never HTTP. Only `set_action_item_status`
   (follow-up state) and `record_decision` (the journal) write; `tests/unit/test_chat_tools.py` pins the count. Chat on Anthropic runs
   `AnthropicLLMClient.run_tool_loop` (several tools per answer, 6 rounds); the
@@ -136,6 +137,15 @@ the provider there, not only in `.env.local`.
   (`PORTF_LLM_MAX_ATTEMPTS`, `PORTF_LLM_RETRY_DELAY`), config/request errors fail
   at once, a final failure raises `LLMError`, and each call is logged as an
   `llm.call` event in `app_logs`.
+- Chat web search is off unless the turn sends `web_search: true` (Anthropic
+  only; queries leave the machine, and the system prompt forbids personal
+  figures in them). Answers end with a ```followups``` block that
+  `split_followups` cuts off before storing; `sources`/`followups` are stored
+  on the message like `tools_used`. Model-written Markdown is untrusted: the web
+  client renders it only through `safeMarkdownHtml` (DOMPurify, remote images
+  dropped) — never `marked.parse` straight into `innerHTML`.
+- Saved reports are `/api/v1/saved-reports`; `/api/v1/reports/portfolio` is the
+  older PDF report and a different router.
 - **LLM failures are errors, never an empty result.** Extraction raises
   `LLMError`/`LLMResponseError` rather than returning `[]`; routers return 502
   with the reason in `detail`; chat writes nothing to the session on failure;
@@ -183,6 +193,7 @@ it.** The column on the right lists only what's easy to break.
 | Budgeting | `budgeting.md` | `GET /summary` must stay before `/{budget_id}`. Positive variance always means favourable. Attribute unbudgeted actuals by SIGN, not tree root. Budget and `/spending/trend` must reconcile to the cent. An all-digits investment `ref_key` is a broker — use `line_uses_category()`. `net` is cash flow, not "better off". Never show a flattering variance for a month with nothing imported. |
 | Action Items, Diagnostics follow-up | `action-items.md` | Each check is wrapped independently. Net Worth checklist gaps are merged client-side (`computeNetWorthChecklist`), never duplicated server-side. Item ids are deterministic per entity. Only `consolidation_candidate` fund overlaps raise an item. Checked/snoozed state is server-side in `app_settings` `action_item_ack:{id}` (`services/action_item_acks.py`), never `localStorage`; Data Quality findings use id `dq:{finding_key}` and `check_data_quality` counts only un-checked ones. `GET /action-items/` defaults to `status=open`; the web page asks for `all`. `check_decision_reviews` nags on open journal decisions whose `review_on` passed. |
 | Decision journal | `decisions.md` | A known `symbol` gets its latest stored price attached on create; an unknown one is kept as typed with no price. `record_decision` is a write-capable chat tool: only a decision the user confirmed, never a suggestion. `POST /{id}/review` with `reviewed: false` clears the review. |
+| What-if scenarios (job loss, income change, house purchase, crash) | `scenarios.md` | All maths is in `services/life_scenarios.py`; chat tools, `/api/v1/scenarios/*` (read-only GETs) and the MCP tools only wrap it. A category with no `essentiality` (own or inherited) is `unclassified` and never cut — don't add a guess. Loan payments are already inside the bank-statement spending; never subtract them again. Money moved to `Invest`/`House purchase` is not spending. Rate and purchase costs are assumptions an answer must state. |
 | Next-euro allocator | `allocator.md` | The tax reserve reads only the work-income merchants ticked in the settings; an empty list counts every income row and adds a warning. Traspasos are planned before the new-money split. Antiaplicación unavailable → no stock is proposed. |
 | Price updates, market data | `prices-market.md` | `run_price_update(db)` takes the real `Database`, never `PortfolioHTTPClient`: in server mode the CLI delegates to `POST /analytics/trigger-price-update` (`symbols`, `source`) and reports the run record (adding a DB method to the updater broke every cron run for four nights in 2026-10). A fetched price far outside the band around the last stored one is held, not stored (`services/price_guard.py`; held state is `app_settings` `price_guard:{asset_id}`) and shown as an Action Item until a later fetch confirms it; manual prices skip the guard. yfinance returns UK prices in GBX — ÷100 when `fast_info.currency == "GBp"`. `_CRYPTO_YF_OVERRIDES` lives only in `price_updater.py`. Read `previous_close` by subscript, never `fast_info.get()` (silently None). Currency self-healing skips crypto. |
 | Web client | `web-client.md` | See the Web Client section below. |
@@ -248,7 +259,7 @@ Full reference (dashboard layout, chart helpers, page-by-page wiring):
 - Pre-push hook runs the full unit suite. F541 fixer:
   `uv run python scripts/fix_f541.py`. Reset the LLM singleton with
   `portf_manager.llm_client.reset_llm_client()`.
-- DB version bump: update every `== 41` assertion in `tests/test_database.py`, and check `tests/unit/test_schema_v*.py` — a per-version module may pin the number too (v37's did, and failed on the v38 bump); new ones compare with `DATABASE_VERSION`.
+- DB version bump: update every `== 42` assertion in `tests/test_database.py`, and check `tests/unit/test_schema_v*.py` — a per-version module may pin the number too (v37's did, and failed on the v38 bump); new ones compare with `DATABASE_VERSION`.
 
 ## Documentation (Default Behaviour)
 When adding or changing a feature, always update:

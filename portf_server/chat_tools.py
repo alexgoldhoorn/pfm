@@ -1820,6 +1820,12 @@ TOOLS: list[ToolDefinition] = [
                 "description": "Portfolio fall at the same time, e.g. 30 for a recession (default 0).",
                 "required": False,
             },
+            {
+                "name": "exclude_categories",
+                "type": "string",
+                "description": "Comma-separated spending categories to leave out (sub-categories included), e.g. a one-off renovation or a cost that would stop too. Say which you left out.",
+                "required": False,
+            },
         ],
     ),
     ToolDefinition(
@@ -1848,6 +1854,12 @@ TOOLS: list[ToolDefinition] = [
                 "name": "flexible_cut_pct",
                 "type": "number",
                 "description": "How far flexible spending could be trimmed (default 20).",
+                "required": False,
+            },
+            {
+                "name": "exclude_categories",
+                "type": "string",
+                "description": "Comma-separated spending categories to leave out (sub-categories included), e.g. a one-off renovation or a cost that would stop too. Say which you left out.",
                 "required": False,
             },
         ],
@@ -1924,6 +1936,12 @@ TOOLS: list[ToolDefinition] = [
                 "description": "Months of spending kept in cash, not used for the purchase (default 6).",
                 "required": False,
             },
+            {
+                "name": "exclude_categories",
+                "type": "string",
+                "description": "Comma-separated spending categories to leave out (sub-categories included), e.g. a one-off renovation or a cost that would stop too. Say which you left out.",
+                "required": False,
+            },
         ],
     ),
     ToolDefinition(
@@ -1983,6 +2001,12 @@ TOOLS: list[ToolDefinition] = [
                 "name": "flexible_cut_pct",
                 "type": "number",
                 "description": "Trim applied to flexible categories (default 20).",
+                "required": False,
+            },
+            {
+                "name": "exclude_categories",
+                "type": "string",
+                "description": "Comma-separated spending categories to leave out (sub-categories included), e.g. a one-off renovation or a cost that would stop too. Say which you left out.",
                 "required": False,
             },
         ],
@@ -2061,6 +2085,15 @@ def _num(value, cast=float):
     return None if value is None else cast(value)
 
 
+def _names(value) -> Optional[list]:
+    """Category names from a comma-separated string or a list."""
+    if value is None:
+        return None
+    parts = value if isinstance(value, (list, tuple)) else str(value).split(",")
+    names = [str(p).strip() for p in parts if str(p).strip()]
+    return names or None
+
+
 @_tool("run_job_loss_scenario")
 def _run_job_loss_scenario(
     db: Database,
@@ -2070,6 +2103,7 @@ def _run_job_loss_scenario(
     severance_eur: float = 0.0,
     flexible_cut_pct: float = 20.0,
     market_drop_pct: float = 0.0,
+    exclude_categories: Optional[str] = None,
 ) -> str:
     """Runway after losing income, at three spending levels."""
     from portf_manager.services.life_scenarios import run_job_loss
@@ -2083,6 +2117,7 @@ def _run_job_loss_scenario(
         severance_eur=float(severance_eur or 0),
         flexible_cut_pct=float(flexible_cut_pct),
         market_drop_pct=float(market_drop_pct or 0),
+        exclude_categories=_names(exclude_categories),
     )
 
 
@@ -2092,6 +2127,7 @@ def _run_income_change_scenario(
     change_pct: Optional[float] = None,
     new_income_monthly_eur: Optional[float] = None,
     flexible_cut_pct: float = 20.0,
+    exclude_categories: Optional[str] = None,
 ) -> str:
     """The monthly picture after income changes."""
     from portf_manager.services.life_scenarios import run_income_change
@@ -2102,6 +2138,7 @@ def _run_income_change_scenario(
         change_pct=_num(change_pct),
         new_income_monthly_eur=_num(new_income_monthly_eur),
         flexible_cut_pct=float(flexible_cut_pct),
+        exclude_categories=_names(exclude_categories),
     )
 
 
@@ -2118,6 +2155,7 @@ def _run_house_purchase_scenario(
     existing_loans_repaid: bool = False,
     rent_saved_monthly_eur: float = 0.0,
     buffer_months: int = 6,
+    exclude_categories: Optional[str] = None,
 ) -> str:
     """Cash needed, funding, mortgage and the new month for a home purchase."""
     from portf_manager.services.life_scenarios import run_house_purchase
@@ -2136,6 +2174,7 @@ def _run_house_purchase_scenario(
         or str(existing_loans_repaid).lower() == "true",
         rent_saved_monthly_eur=float(rent_saved_monthly_eur or 0),
         buffer_months=int(buffer_months),
+        exclude_categories=_names(exclude_categories),
     )
 
 
@@ -2164,14 +2203,19 @@ def _run_market_crash_scenario(
 
 @_tool("get_spending_cut_candidates")
 def _get_spending_cut_candidates(
-    db: Database, months: int = 12, flexible_cut_pct: float = 20.0
+    db: Database,
+    months: int = 12,
+    flexible_cut_pct: float = 20.0,
+    exclude_categories: Optional[str] = None,
 ) -> str:
     """Average monthly spending by tier and the order to cut it in."""
     from portf_manager.services.life_scenarios import cut_plan, household_baseline
 
     months = max(1, min(int(months), 36))
     pct = max(0.0, min(float(flexible_cut_pct), 100.0))
-    base = household_baseline(db, fx=_fx, months=months)
+    base = household_baseline(
+        db, fx=_fx, months=months, exclude_categories=_names(exclude_categories)
+    )
     profile = base["spending"]
     cuts = cut_plan(profile, pct)
     return _j(
@@ -2181,6 +2225,8 @@ def _get_spending_cut_candidates(
             "spend_monthly_eur": profile["spend_monthly_eur"],
             "spend_by_tier_monthly_eur": profile["by_tier_monthly_eur"],
             "categories": profile["categories"][:60],
+            "excluded_categories": profile["excluded_categories"],
+            "excluded_monthly_eur": profile["excluded_monthly_eur"],
             "cut_first": cuts,
             "total_saves_monthly_eur": round(
                 sum(c["saves_monthly_eur"] for c in cuts), 2

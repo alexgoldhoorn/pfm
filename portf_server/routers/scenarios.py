@@ -2,7 +2,8 @@
 
 Thin HTTP wrappers over ``portf_manager.services.life_scenarios``; the AI
 chat's scenario tools call the same service functions. Every endpoint is a
-plain ``def`` because the FX and balance-sheet lookups block.
+read-only GET whose inputs are query parameters, and a plain ``def`` because
+the FX and balance-sheet lookups block.
 """
 
 from typing import Optional
@@ -18,8 +19,22 @@ from ..dependencies import get_api_key_manager, get_database
 
 router = APIRouter()
 
+_EXCLUDE = Field(
+    default=None,
+    max_length=500,
+    description="Comma-separated spending categories to leave out (with their "
+    "sub-categories), e.g. a one-off renovation.",
+)
+
+
+def split_categories(value: Optional[str]) -> Optional[list[str]]:
+    """``"A, B"`` -> ``["A", "B"]``; None or blank -> None."""
+    names = [part.strip() for part in (value or "").split(",") if part.strip()]
+    return names or None
+
 
 class JobLossRequest(BaseModel):
+    exclude_categories: Optional[str] = _EXCLUDE
     income_lost_monthly_eur: Optional[float] = Field(default=None, ge=0)
     benefit_monthly_eur: float = Field(default=0.0, ge=0)
     benefit_months: int = Field(default=0, ge=0, le=60)
@@ -31,6 +46,7 @@ class JobLossRequest(BaseModel):
 
 
 class IncomeChangeRequest(BaseModel):
+    exclude_categories: Optional[str] = _EXCLUDE
     change_pct: Optional[float] = Field(default=None, ge=-100, le=1000)
     new_income_monthly_eur: Optional[float] = Field(default=None, ge=0)
     flexible_cut_pct: float = Field(
@@ -39,6 +55,7 @@ class IncomeChangeRequest(BaseModel):
 
 
 class HousePurchaseRequest(BaseModel):
+    exclude_categories: Optional[str] = _EXCLUDE
     price_eur: float = Field(gt=0)
     down_payment_pct: float = Field(default=20.0, ge=0, le=100)
     rate_pct: float = Field(default=3.0, ge=0, le=50)
@@ -69,33 +86,40 @@ async def _auth(
 
 
 def _run(fn, db: Database, body: BaseModel) -> dict:
+    args = body.model_dump()
+    if "exclude_categories" in args:
+        args["exclude_categories"] = split_categories(args["exclude_categories"])
     try:
-        return fn(db, **body.model_dump())
+        return fn(db, **args)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
 
 @router.get("/baseline")
 def get_baseline(
-    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+    exclude_categories: Optional[str] = None,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
 ):
     """The numbers every scenario starts from: income, spending by tier, money."""
-    return life_scenarios.household_baseline(db)
+    return life_scenarios.household_baseline(
+        db, exclude_categories=split_categories(exclude_categories)
+    )
 
 
-@router.post("/job-loss")
-def post_job_loss(
-    body: Optional[JobLossRequest] = None,
+@router.get("/job-loss")
+def get_job_loss(
+    body: JobLossRequest = Depends(),
     db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Runway after losing income, and what to cut first."""
-    return _run(life_scenarios.run_job_loss, db, body or JobLossRequest())
+    return _run(life_scenarios.run_job_loss, db, body)
 
 
-@router.post("/income-change")
-def post_income_change(
-    body: IncomeChangeRequest,
+@router.get("/income-change")
+def get_income_change(
+    body: IncomeChangeRequest = Depends(),
     db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
@@ -103,9 +127,9 @@ def post_income_change(
     return _run(life_scenarios.run_income_change, db, body)
 
 
-@router.post("/house-purchase")
-def post_house_purchase(
-    body: HousePurchaseRequest,
+@router.get("/house-purchase")
+def get_house_purchase(
+    body: HousePurchaseRequest = Depends(),
     db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
@@ -113,9 +137,9 @@ def post_house_purchase(
     return _run(life_scenarios.run_house_purchase, db, body)
 
 
-@router.post("/market-crash")
-def post_market_crash(
-    body: MarketCrashRequest,
+@router.get("/market-crash")
+def get_market_crash(
+    body: MarketCrashRequest = Depends(),
     db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
