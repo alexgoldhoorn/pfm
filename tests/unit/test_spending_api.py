@@ -342,13 +342,17 @@ def test_put_with_neither_field_is_rejected(tmp_path):
 
 
 def test_a_hand_marked_transfer_is_not_reclaimed_by_the_matcher(tmp_path):
-    """is_transfer=1 self-excludes from the unlinked pool, so a later rescan
-    can't pair a row the user already settled."""
+    """A hand-marked row is in the unlinked pool (it has no link) but the
+    matcher still skips flagged rows, so a rescan can't pair it."""
     client, db = _make_client(tmp_path)
     pid = db.create_portfolio("Example Bank", account_type="bank")
     sid = db.create_spending_transaction(pid, "2026-07-08", "Move", -1500.0)
     client.put(f"/api/v1/spending/{sid}", json={"is_transfer": True}, headers=HEADERS)
-    assert sid not in {r["id"] for r in db.list_unlinked_spending_transactions()}
+    assert sid in {r["id"] for r in db.list_unlinked_spending_transactions()}
+    other = db.create_portfolio("Other Bank", account_type="bank")
+    db.create_spending_transaction(other, "2026-07-08", "Move in", 1500.0)
+    client.post("/api/v1/spending/rescan-transfers", headers=HEADERS)
+    assert db.get_spending_transaction(sid)["transfer_link_id"] is None
 
 
 def test_update_category_non_transfer_row_unaffected(tmp_path):

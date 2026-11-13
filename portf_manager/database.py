@@ -16,7 +16,7 @@ from pathlib import Path
 from portf_manager.services.merchant import fold_for_search, normalize_merchant
 
 # Database version for migration tracking
-DATABASE_VERSION = 40
+DATABASE_VERSION = 41
 
 
 # black
@@ -765,6 +765,7 @@ class Database:
                 source             TEXT,
                 balance            REAL,
                 merchant           TEXT,
+                transfer_source    TEXT CHECK (transfer_source IN ('match', 'pattern', 'manual', 'rejected')),
                 created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (portfolio_id) REFERENCES portfolios (id) ON DELETE CASCADE
             )
@@ -999,6 +1000,8 @@ class Database:
             self._migrate_to_v39(conn)
         if current_version < 40:
             self._migrate_to_v40(conn)
+        if current_version < 41:
+            self._migrate_to_v41(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -2180,6 +2183,39 @@ class Database:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_decisions_review "
             "ON decisions (reviewed_at, review_on)"
+        )
+        conn.commit()
+
+    def _migrate_to_v41(self, conn: sqlite3.Connection) -> None:
+        """Migrate from v40 to v41 — spending_transactions.transfer_source.
+
+        Records how a row came to be a transfer (``match``, ``pattern``,
+        ``manual``) or that the user rejected one (``rejected``). Backfills
+        linked flagged rows as ``match`` and unlinked flagged rows as
+        ``manual``, and repairs rows carrying the ``Transfer`` category
+        without the flag. Every step is guarded so a rerun is harmless.
+        """
+        cols = {
+            row[1] for row in conn.execute("PRAGMA table_info(spending_transactions)")
+        }
+        if "transfer_source" not in cols:
+            conn.execute(
+                "ALTER TABLE spending_transactions ADD COLUMN transfer_source TEXT "
+                "CHECK (transfer_source IN ('match', 'pattern', 'manual', 'rejected'))"
+            )
+        conn.execute(
+            "UPDATE spending_transactions SET transfer_source = 'match' "
+            "WHERE is_transfer = 1 AND transfer_link_id IS NOT NULL "
+            "AND transfer_source IS NULL"
+        )
+        conn.execute(
+            "UPDATE spending_transactions SET transfer_source = 'manual' "
+            "WHERE is_transfer = 1 AND transfer_link_id IS NULL "
+            "AND transfer_source IS NULL"
+        )
+        conn.execute(
+            "UPDATE spending_transactions SET category = 'uncategorized' "
+            "WHERE category = 'Transfer' AND is_transfer = 0"
         )
         conn.commit()
 
@@ -4319,6 +4355,7 @@ class Database:
         amount_sign: str = None,
         min_abs_amount: float = None,
         q: str = None,
+        transfer_linked: Optional[bool] = None,
     ):
         """Shared WHERE-clause builder for list/count spending transactions.
 
@@ -4354,6 +4391,10 @@ class Database:
         if is_transfer is not None:
             conditions.append("s.is_transfer = ?")
             params.append(1 if is_transfer else 0)
+        if transfer_linked is True:
+            conditions.append("s.transfer_link_id IS NOT NULL")
+        elif transfer_linked is False:
+            conditions.append("s.is_transfer = 1 AND s.transfer_link_id IS NULL")
         if amount_sign == "negative":
             conditions.append("s.amount < 0")
         elif amount_sign == "positive":
@@ -4422,6 +4463,7 @@ class Database:
         offset: int = None,
         sort_by: str = None,
         sort_dir: str = None,
+        transfer_linked: Optional[bool] = None,
     ) -> List[Dict]:
         """List spending transactions with optional filters.
 
@@ -4444,6 +4486,7 @@ class Database:
                 amount_sign,
                 min_abs_amount,
                 q,
+                transfer_linked,
             )
             query = (
                 "SELECT s.*, p.name AS portfolio_name FROM spending_transactions s "
@@ -4508,6 +4551,7 @@ class Database:
             "is_transfer",
             "transfer_link_type",
             "transfer_link_id",
+            "transfer_source",
         }
         update_fields = {k: v for k, v in kwargs.items() if k in valid_fields}
         if not update_fields:
@@ -4522,10 +4566,10 @@ class Database:
             return cursor.rowcount > 0
 
     def list_unlinked_spending_transactions(self) -> List[Dict]:
-        """List spending rows not yet linked as a transfer (is_transfer = 0)."""
+        """List spending rows with no transfer link (flagged or not)."""
         with self.get_connection() as conn:
             cursor = conn.execute(
-                "SELECT * FROM spending_transactions WHERE is_transfer = 0"
+                "SELECT * FROM spending_transactions WHERE transfer_link_id IS NULL"
             )
             return [dict(row) for row in cursor.fetchall()]
 
@@ -4615,6 +4659,7 @@ class Database:
                 SET is_transfer = 0,
                     transfer_link_type = NULL,
                     transfer_link_id = NULL,
+                    transfer_source = NULL,
                     category = 'uncategorized'
                 WHERE id = ?
                 """,
@@ -4657,6 +4702,7 @@ class Database:
                         SET is_transfer = 0,
                             transfer_link_type = NULL,
                             transfer_link_id = NULL,
+                            transfer_source = NULL,
                             category = 'uncategorized'
                         WHERE id = ?
                         """,

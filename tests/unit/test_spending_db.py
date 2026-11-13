@@ -123,15 +123,60 @@ def test_update_spending_transaction_transfer_link(db):
     assert row["transfer_link_id"] == 42
 
 
-def test_list_unlinked_spending_transactions(db):
+def test_unlinked_includes_flagged_rows_without_link(db):
     pid = db.create_portfolio("Example Bank", account_type="bank")
-    id1 = db.create_spending_transaction(pid, "2026-01-05", "A", -10.0)
-    id2 = db.create_spending_transaction(pid, "2026-01-06", "B", -20.0)
-    db.update_spending_transaction(id1, is_transfer=True)
-    unlinked = db.list_unlinked_spending_transactions()
-    ids = [r["id"] for r in unlinked]
-    assert id1 not in ids
-    assert id2 in ids
+    flagged = db.create_spending_transaction(pid, "2026-01-05", "A", -10.0)
+    linked = db.create_spending_transaction(pid, "2026-01-06", "B", -20.0)
+    plain = db.create_spending_transaction(pid, "2026-01-07", "C", -30.0)
+    db.update_spending_transaction(flagged, is_transfer=True)
+    db.update_spending_transaction(
+        linked,
+        is_transfer=True,
+        transfer_link_type="booking",
+        transfer_link_id=42,
+    )
+    ids = {r["id"] for r in db.list_unlinked_spending_transactions()}
+    assert ids == {flagged, plain}
+
+
+def test_transfer_linked_filter(db):
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    flagged = db.create_spending_transaction(pid, "2026-01-05", "A", -10.0)
+    linked = db.create_spending_transaction(pid, "2026-01-06", "B", -20.0)
+    plain = db.create_spending_transaction(pid, "2026-01-07", "C", -30.0)
+    db.update_spending_transaction(flagged, is_transfer=True)
+    db.update_spending_transaction(
+        linked,
+        is_transfer=True,
+        transfer_link_type="booking",
+        transfer_link_id=42,
+    )
+
+    def ids(**kw):
+        return {r["id"] for r in db.list_spending_transactions(**kw)}
+
+    assert ids(transfer_linked=True) == {linked}
+    assert ids(transfer_linked=False) == {flagged}
+    assert ids() == {flagged, linked, plain}
+
+
+def test_reset_counterpart_clears_source(db):
+    pid_a = db.create_portfolio("Bank A", account_type="bank")
+    pid_b = db.create_portfolio("Bank B", account_type="bank")
+    id_a = db.create_spending_transaction(pid_a, "2026-01-05", "Out", -100.0)
+    id_b = db.create_spending_transaction(pid_b, "2026-01-06", "In", 100.0)
+    for me, other in ((id_a, id_b), (id_b, id_a)):
+        db.update_spending_transaction(
+            me,
+            is_transfer=True,
+            transfer_link_type="spending",
+            transfer_link_id=other,
+            transfer_source="match",
+        )
+    assert db.reset_transfer_counterpart(id_a) is True
+    survivor = db.get_spending_transaction(id_b)
+    assert survivor["is_transfer"] == 0
+    assert survivor["transfer_source"] is None
 
 
 def test_spending_rules_crud(db):
