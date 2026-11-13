@@ -703,6 +703,11 @@ async def update_spending_category(
             )
         update_kwargs["category"] = category
 
+    if body.is_transfer is False and category == TRANSFER_CATEGORY:
+        raise HTTPException(
+            status_code=400,
+            detail='A row can\'t be in the "Transfer" category without being a transfer',
+        )
     was_transfer = bool(existing.get("is_transfer"))
     mark = body.is_transfer is True or (
         body.is_transfer is None and category == TRANSFER_CATEGORY

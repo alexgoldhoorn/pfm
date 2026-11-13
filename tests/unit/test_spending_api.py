@@ -2654,3 +2654,21 @@ def test_list_exposes_transfer_source_and_linked_filter(tmp_path):
     unlinked = client.get("/api/v1/spending/?transfer_linked=false", headers=HEADERS)
     assert {i["id"] for i in unlinked.json()["items"]} == {lone}
     assert unlinked.json()["total"] == 1
+
+
+def test_unmark_with_transfer_category_is_rejected_and_writes_nothing(tmp_path):
+    client, db = _make_client(tmp_path)
+    a, _ = _linked_pair(db)
+    before = db.get_spending_transaction(a)
+    r = _put(client, a, is_transfer=False, category="Transfer")
+    assert r.status_code == 400
+    assert "Transfer" in r.json()["detail"]
+    after = db.get_spending_transaction(a)
+    for key in (
+        "category",
+        "is_transfer",
+        "transfer_source",
+        "transfer_link_type",
+        "transfer_link_id",
+    ):
+        assert after[key] == before[key], key
