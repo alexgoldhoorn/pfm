@@ -1,12 +1,22 @@
 """Tests for the pure transfer-matching logic."""
 
+import pytest
+
 from portf_manager.services.transfer_matcher import (
     find_transfer_match,
     find_all_transfer_matches,
 )
 
 
-def _spending(id, portfolio_id, date, amount, currency="EUR", is_transfer=False):
+def _spending(
+    id,
+    portfolio_id,
+    date,
+    amount,
+    currency="EUR",
+    is_transfer=False,
+    transfer_link_id=None,
+):
     return {
         "id": id,
         "portfolio_id": portfolio_id,
@@ -14,6 +24,7 @@ def _spending(id, portfolio_id, date, amount, currency="EUR", is_transfer=False)
         "amount": amount,
         "currency": currency,
         "is_transfer": is_transfer,
+        "transfer_link_id": transfer_link_id,
     }
 
 
@@ -80,7 +91,12 @@ def test_no_match_same_sign():
 def test_no_match_candidate_already_transfer():
     row = _spending(1, portfolio_id=10, date="2026-01-10", amount=-500.0)
     candidate = _spending(
-        2, portfolio_id=20, date="2026-01-11", amount=500.0, is_transfer=True
+        2,
+        portfolio_id=20,
+        date="2026-01-11",
+        amount=500.0,
+        is_transfer=True,
+        transfer_link_id=7,
     )
     assert find_transfer_match(row, [candidate], []) is None
 
@@ -168,8 +184,138 @@ def test_find_all_transfer_matches_source_row_not_reused_as_counterpart():
 def test_find_all_transfer_matches_skips_already_transfer_rows():
     rows = [
         _spending(
-            1, portfolio_id=10, date="2026-01-10", amount=-500.0, is_transfer=True
+            1,
+            portfolio_id=10,
+            date="2026-01-10",
+            amount=-500.0,
+            is_transfer=True,
+            transfer_link_id=7,
         )
     ]
     matches = find_all_transfer_matches(rows, rows, [])
     assert matches == []
+
+
+def test_inflow_matches_withdrawal_booking():
+    row = _spending(1, portfolio_id=1, date="2026-03-10", amount=3000.0)
+    booking = _booking(
+        8, portfolio_id=2, date="2026-03-09", action="Withdrawal", amount=3000.0
+    )
+    match = find_transfer_match(row, [], [booking])
+    assert match is not None
+    assert match.link_type == "booking"
+    assert match.link_id == 8
+    assert match.spending_id == 1
+
+
+def test_inflow_does_not_match_deposit_booking():
+    row = _spending(1, portfolio_id=1, date="2026-03-10", amount=3000.0)
+    booking = _booking(
+        8, portfolio_id=2, date="2026-03-10", action="Deposit", amount=3000.0
+    )
+    assert find_transfer_match(row, [], [booking]) is None
+
+
+def test_outflow_does_not_match_withdrawal_booking_both_actions_offered():
+    row = _spending(1, portfolio_id=1, date="2026-03-10", amount=-3000.0)
+    booking = _booking(
+        8, portfolio_id=2, date="2026-03-10", action="Withdrawal", amount=3000.0
+    )
+    assert find_transfer_match(row, [], [booking]) is None
+
+
+@pytest.mark.parametrize(
+    "portfolio_id,date,currency,amount",
+    [
+        (1, "2026-03-10", "EUR", 3000.0),
+        (2, "2026-03-20", "EUR", 3000.0),
+        (2, "2026-03-10", "USD", 3000.0),
+        (2, "2026-03-10", "EUR", 2999.0),
+    ],
+)
+def test_withdrawal_exclusions(portfolio_id, date, currency, amount):
+    row = _spending(1, portfolio_id=1, date="2026-03-10", amount=3000.0)
+    booking = _booking(
+        8,
+        portfolio_id=portfolio_id,
+        date=date,
+        action="Withdrawal",
+        amount=amount,
+        currency=currency,
+    )
+    assert find_transfer_match(row, [], [booking]) is None
+
+
+def test_flagged_unlinked_candidate_is_matched():
+    row = _spending(1, portfolio_id=10, date="2026-01-10", amount=-500.0)
+    candidate = _spending(
+        2,
+        portfolio_id=20,
+        date="2026-01-10",
+        amount=500.0,
+        is_transfer=True,
+        transfer_link_id=None,
+    )
+    match = find_transfer_match(row, [candidate], [])
+    assert match is not None
+    assert match.link_id == 2
+
+
+def test_flagged_unlinked_source_is_matched():
+    row = _spending(
+        1, portfolio_id=10, date="2026-01-10", amount=-500.0, is_transfer=True
+    )
+    candidate = _spending(2, portfolio_id=20, date="2026-01-10", amount=500.0)
+    matches = find_all_transfer_matches([row], [row, candidate], [])
+    assert len(matches) == 1
+    assert matches[0].spending_id == 1
+    assert matches[0].link_id == 2
+
+
+def test_linked_row_is_neither_source_nor_candidate():
+    linked = _spending(
+        1,
+        portfolio_id=10,
+        date="2026-01-10",
+        amount=-500.0,
+        is_transfer=True,
+        transfer_link_id=9,
+    )
+    other = _spending(2, portfolio_id=20, date="2026-01-10", amount=500.0)
+    assert find_all_transfer_matches([linked], [linked, other], []) == []
+    assert find_transfer_match(other, [linked], []) is None
+
+
+def test_closest_date_wins_then_lowest_id():
+    row = _spending(1, portfolio_id=1, date="2026-03-10", amount=-200.0)
+    bookings = [
+        _booking(9, 2, "2026-03-12", "Deposit", 200.0),
+        _booking(5, 2, "2026-03-11", "Deposit", 200.0),
+        _booking(3, 2, "2026-03-09", "Deposit", 200.0),
+    ]
+    match = find_transfer_match(row, [], bookings)
+    assert match is not None
+    assert match.link_id == 3
+
+
+def test_spending_candidate_preferred_over_booking():
+    row = _spending(1, portfolio_id=1, date="2026-03-10", amount=-200.0)
+    cand = _spending(4, portfolio_id=3, date="2026-03-13", amount=200.0)
+    booking = _booking(2, 2, "2026-03-10", "Deposit", 200.0)
+    match = find_transfer_match(row, [cand], [booking])
+    assert match.link_type == "spending"
+    assert match.link_id == 4
+
+
+def test_two_same_amount_rows_claim_two_bookings():
+    rows = [
+        _spending(1, portfolio_id=1, date="2026-03-10", amount=-200.0),
+        _spending(2, portfolio_id=1, date="2026-03-10", amount=-200.0),
+    ]
+    bookings = [
+        _booking(5, 2, "2026-03-10", "Deposit", 200.0),
+        _booking(6, 2, "2026-03-10", "Deposit", 200.0),
+    ]
+    matches = find_all_transfer_matches(rows, rows, bookings)
+    assert len(matches) == 2
+    assert {m.link_id for m in matches} == {5, 6}
