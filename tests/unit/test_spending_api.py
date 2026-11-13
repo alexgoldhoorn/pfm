@@ -2595,15 +2595,60 @@ def test_unmarked_row_survives_rescan(tmp_path):
     assert row["transfer_source"] == "rejected"
 
 
-def test_rejected_row_can_still_pair_match(tmp_path):
-    client, db = _make_client(tmp_path)
-    pid = db.create_portfolio("Example Bank", account_type="bank")
-    other = db.create_portfolio("Example Bank 2", account_type="bank")
-    sid = db.create_spending_transaction(pid, "2026-07-08", "Move", -1500.0)
+def _rejected_row(client, db, pid, amount=-1500.0):
+    sid = db.create_spending_transaction(pid, "2026-07-08", "Move", amount)
     _put(client, sid, is_transfer=True)
     _put(client, sid, is_transfer=False)
     assert db.get_spending_transaction(sid)["transfer_source"] == "rejected"
+    return sid
+
+
+def test_rejected_row_not_paired_with_spending_counterpart(tmp_path):
+    from portf_manager.services.transfer_linking import settle_after_bookings
+
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    other = db.create_portfolio("Example Bank 2", account_type="bank")
+    sid = _rejected_row(client, db, pid)
     oid = db.create_spending_transaction(other, "2026-07-08", "Move in", 1500.0)
+    client.post("/api/v1/spending/rescan-transfers", headers=HEADERS)
+    settle_after_bookings(db)
+    for i in (sid, oid):
+        row = db.get_spending_transaction(i)
+        assert row["is_transfer"] == 0 and row["transfer_link_id"] is None
+    assert db.get_spending_transaction(sid)["transfer_source"] == "rejected"
+
+
+def test_rejected_row_not_paired_with_booking(tmp_path):
+    from portf_manager.services.transfer_linking import settle_after_bookings
+
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    broker = db.create_portfolio("Example Broker")
+    sid = _rejected_row(client, db, pid)
+    db.create_booking(
+        date="2026-07-08",
+        action="Deposit",
+        amount=1500.0,
+        currency="EUR",
+        portfolio_id=broker,
+    )
+    client.post("/api/v1/spending/rescan-transfers", headers=HEADERS)
+    settle_after_bookings(db)
+    row = db.get_spending_transaction(sid)
+    assert row["is_transfer"] == 0 and row["transfer_link_id"] is None
+    assert row["transfer_source"] == "rejected"
+
+
+def test_remarking_rejected_row_by_hand_allows_linking(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    other = db.create_portfolio("Example Bank 2", account_type="bank")
+    sid = _rejected_row(client, db, pid)
+    oid = db.create_spending_transaction(other, "2026-07-08", "Move in", 1500.0)
+    client.post("/api/v1/spending/rescan-transfers", headers=HEADERS)
+    assert db.get_spending_transaction(sid)["transfer_link_id"] is None
+    _put(client, sid, is_transfer=True)
     client.post("/api/v1/spending/rescan-transfers", headers=HEADERS)
     row = db.get_spending_transaction(sid)
     assert row["is_transfer"] == 1

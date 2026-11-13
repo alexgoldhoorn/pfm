@@ -672,7 +672,8 @@ async def update_spending_category(
     - Un-marking (``is_transfer: false``, or any other category on a flagged
       row) clears the flag and the link and sets ``transfer_source =
       "rejected"``, so neither a rescan nor an own-account pattern re-flags
-      it. The row may still be pair-matched later. A genuine reciprocal
+      it. A rejected row is never linked or flagged automatically again; only
+      marking it by hand makes it a transfer. A genuine reciprocal
       counterpart is reset as if the row had been deleted (its source goes
       back to NULL, not "rejected": the user only judged this row).
 

@@ -84,7 +84,7 @@ as income. Looking into it found four separate holes:
   linked pair when its booking or its other bank leg arrives later. Note that
   today `find_all_transfer_matches` skips `is_transfer` rows and
   `list_unlinked_spending_transactions()` means `is_transfer = 0`; both need
-  to mean "no link" instead (the exception is `rejected`, section 4).
+  to mean "no link" instead (rows with `transfer_source = 'rejected'` stay excluded, section 4).
 - Ties: when several candidates fit, the closest date wins, then the lowest
   id. (Author's call.)
 
@@ -163,8 +163,11 @@ spread over rules.
   `is_transfer: true` sets `manual` too. Un-marking a row (`is_transfer: false`, or
   recategorising away from "Transfer") sets its source to `rejected`, a fourth
   value meaning "the owner said this is not a transfer": patterns skip it from
-  then on, so un-marking sticks. An exact pair match may still link a
-  `rejected` row, as a rescan can today. The counterpart reset by
+  then on, so un-marking sticks. Pair matching skips a `rejected` row too, as
+  source and as counterpart, for bank rows and bookings (final-review ruling:
+  settles run on every booking import and would otherwise undo the owner's
+  decision). Only marking the row by hand again makes it a transfer; marking
+  sets `manual`, after which it is matchable as before. The counterpart reset by
   `reset_transfer_counterpart` gets its source cleared (NULL), not `rejected`.
 - "Transfer" is not in the category tree (it has no root), so the sign check
   on `PUT` should already pass for both signs; the builder confirms this, and

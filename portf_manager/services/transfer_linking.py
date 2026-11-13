@@ -26,7 +26,13 @@ def link_transfers(db, spending_ids: Optional[List[int]] = None) -> int:
     Returns:
         The number of matches made.
     """
-    unlinked = db.list_unlinked_spending_transactions()
+    # A row the owner un-marked is never linked automatically, neither as the
+    # row being matched nor as someone else's counterpart.
+    unlinked = [
+        r
+        for r in db.list_unlinked_spending_transactions()
+        if r.get("transfer_source") != "rejected"
+    ]
     if spending_ids is None:
         rows = list(unlinked)
     else:
