@@ -136,7 +136,23 @@ numerically, best effort on "1,200 EUR", "(250)" and "-12%"
 (`chatParseNumber`; one separator followed by exactly three digits is thousands,
 as in the import parsers), otherwise text in natural order, empty cells last.
 Tables sit in a horizontally scrolling wrapper, so they do not widen the page at
-390px.
+390px. Inside a table the bubble's `overflow-wrap: anywhere` is switched off:
+headers and numeric cells (`td.chat-num`, tagged by `chatEnhanceTables` with
+`chatParseNumber`) never wrap, text cells wrap at word boundaries, and a table
+that still does not fit scrolls sideways instead of breaking figures across
+lines.
+
+## Chat on phones
+
+Under 576px the panel runs edge to edge (negative inline margin equal to the
+`.app-content` padding, so change both together), avatars and the page subtitle
+are hidden, and an answer bubble takes the full width: about 350px of text on a
+390px screen, where the desktop layout left 267px. The table scroller extends to
+the bubble edges. The panel height uses `100dvh` (with a `100vh` fallback) so the
+composer stays above the mobile browser's toolbar. Under 768px the thread list
+(`#chatThreadsPanel`, Bootstrap `offcanvas-md`) is a drawer opened from the list
+button in the chat header; `hideThreadsPanel()` closes it after a thread is
+picked or a new one is started.
 
 ## Follow-ups, sources and web search
 

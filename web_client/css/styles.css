@@ -588,13 +588,79 @@ body {
     align-items: center;
     justify-content: center;
 }
+/* Tables keep whole words and figures and scroll sideways when they do not
+   fit; the bubble's "break anywhere" would squeeze a column to one letter. */
+.chat-bubble table {
+    overflow-wrap: normal;
+    word-break: normal;
+}
+.chat-bubble th,
+.chat-bubble td.chat-num {
+    white-space: nowrap;
+}
+.chat-bubble td.chat-num {
+    font-variant-numeric: tabular-nums;
+}
+/* Phones: the thread list is a drawer (offcanvas-md), opened from the header. */
+@media (max-width: 767.98px) {
+    #chatThreadsPanel {
+        --bs-offcanvas-width: min(20rem, 85vw);
+        margin-top: 0;
+        padding: 0;
+    }
+    #chatThreadsPanel .card {
+        border: 0;
+        border-radius: 0;
+    }
+    #chatSessionsList {
+        max-height: none !important;
+    }
+}
+/* Phones: the panel runs edge to edge and an answer uses the full width
+   (no avatar column, slimmer padding), so text and tables get ~90% of the
+   screen instead of ~60%. */
 @media (max-width: 575.98px) {
+    #chatPage > .d-flex:first-child {
+        margin-bottom: 0.5rem !important;
+    }
+    #chatPage > .d-flex:first-child p {
+        display: none;
+    }
     .chat-panel {
-        height: calc(100vh - 190px);
+        margin-inline: -1rem;
+        border-inline: 0;
+        border-radius: 0;
+        height: calc(100vh - 135px);
+        height: calc(100dvh - 135px);
         min-height: 360px;
     }
+    .chat-thread {
+        padding: 0.75rem 0.5rem;
+    }
+    .chat-avatar {
+        display: none;
+    }
     .chat-body {
-        max-width: 92%;
+        max-width: 100%;
+    }
+    .chat-user .chat-body {
+        max-width: 88%;
+    }
+    .chat-bubble {
+        padding: 0.5rem 0.65rem;
+        border-radius: 0.9rem;
+    }
+    .chat-bubble table {
+        font-size: 0.82em;
+    }
+    /* A wide table scrolls across the whole bubble, not just its text box. */
+    .chat-table-scroll {
+        max-width: none;
+        margin-inline: -0.65rem;
+        padding-inline: 0.65rem;
+    }
+    .chat-chart {
+        width: 100%;
     }
 }
 

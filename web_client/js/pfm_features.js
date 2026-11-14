@@ -1913,6 +1913,12 @@ function chatEnhanceTables(root) {
             rows.sort((a, b) => chatSortCompare(a.text, b.text, dir) || a.i - b.i);
             rows.forEach(r => body.appendChild(r.row));
         };
+        // Figures stay on one line (the CSS keeps .chat-num from wrapping).
+        Array.from(table.tBodies).forEach(body => Array.from(body.rows).forEach(row => {
+            Array.from(row.cells).forEach(cell => {
+                if (!Number.isNaN(chatParseNumber(cell.textContent.trim()))) cell.classList.add('chat-num');
+            });
+        }));
         table.tHead.querySelectorAll('th').forEach(th => {
             th.classList.add('chat-sortable');
             th.tabIndex = 0;
@@ -2263,9 +2269,18 @@ function setupChatPage() {
                     }
                     return;
                 }
+                hideThreadsPanel();
                 await activateSession(btn.dataset.sessionId);
             });
         });
+    }
+
+    // On phones the thread list is an offcanvas drawer: close it after a pick.
+    function hideThreadsPanel() {
+        const panel = document.getElementById('chatThreadsPanel');
+        if (panel && panel.classList.contains('show')) {
+            window.bootstrap?.Offcanvas?.getInstance(panel)?.hide();
+        }
     }
 
     async function activateSession(id) {
@@ -2486,7 +2501,7 @@ function setupChatPage() {
         if (chatIsSendKey(e)) { e.preventDefault(); doSend(); }
     });
     inputEl.addEventListener('input', autoGrow);
-    if (newBtn) newBtn.addEventListener('click', doNewChat);
+    if (newBtn) newBtn.addEventListener('click', () => { hideThreadsPanel(); doNewChat(); });
     if (newBtnMob) newBtnMob.addEventListener('click', doNewChat);
     if (webSearchEl) webSearchEl.addEventListener('change', () => {
         try { localStorage.setItem(CHAT_WEB_KEY, webSearchEl.checked ? '1' : '0'); } catch (e) { /* no storage */ }

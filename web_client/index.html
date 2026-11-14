@@ -1742,7 +1742,7 @@
 
                     <div class="row g-3">
                         <!-- Sessions sidebar -->
-                        <div class="col-md-3 d-none d-md-block">
+                        <div class="col-md-3 offcanvas-md offcanvas-start" id="chatThreadsPanel" tabindex="-1" aria-label="Chat threads">
                             <div class="card h-100">
                                 <div class="card-header py-2 d-flex align-items-center justify-content-between">
                                     <span class="fw-semibold small">Threads</span>
@@ -1761,6 +1761,9 @@
                             <div class="chat-panel d-flex flex-column">
                                 <!-- Thread header: name, model picker, export -->
                                 <div class="chat-header d-flex align-items-center gap-2 flex-wrap">
+                                    <button class="btn btn-sm btn-outline-secondary d-md-none" type="button" data-bs-toggle="offcanvas" data-bs-target="#chatThreadsPanel" aria-controls="chatThreadsPanel" title="Threads" aria-label="Show threads">
+                                        <i class="bi bi-list-ul"></i>
+                                    </button>
                                     <span id="chatActiveThreadName" class="fw-semibold text-truncate flex-grow-1" style="min-width:0;"></span>
                                     <div class="d-flex align-items-center gap-1 ms-auto">
                                         <div class="form-check form-switch chat-websearch mb-0" id="chatWebSearchWrap" style="display:none;" title="Web search lets the assistant look things up online. Searches leave this machine; your personal figures are not included in the queries.">
