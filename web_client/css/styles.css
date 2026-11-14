@@ -637,6 +637,8 @@ body {
         display: none !important;
     }
     #chatPage > .row {
+        /* No page padding left to absorb the row's negative side margins. */
+        --bs-gutter-x: 0;
         --bs-gutter-y: 0;
     }
     .chat-panel {
