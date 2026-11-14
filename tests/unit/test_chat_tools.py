@@ -28,10 +28,10 @@ def db(tmp_path):
     return d
 
 
-def test_tools_list_has_42_entries():
+def test_tools_list_has_43_entries():
     from portf_server.chat_tools import TOOLS
 
-    assert len(TOOLS) == 42
+    assert len(TOOLS) == 43
 
 
 def test_every_tool_definition_has_a_handler():
@@ -464,3 +464,105 @@ def test_search_spending_transactions_rejects_bad_sign(bank_db):
 
     out = execute_tool("search_spending_transactions", {"amount_sign": "up"}, bank_db)
     assert out.startswith("Error:")
+
+
+_INFO = {
+    "longName": "Example Corp",
+    "quoteType": "EQUITY",
+    "currency": "USD",
+    "sector": "Technology",
+    "longBusinessSummary": "word " * 400,
+    "currentPrice": 100.0,
+    "fiftyTwoWeekHigh": 120.0,
+    "trailingPE": 20.0,
+    "targetMeanPrice": 110.0,
+    "recommendationKey": "buy",
+    "exDividendDate": 1700000000,
+    "marketCap": None,
+}
+
+
+def test_market_profile_groups_fields_and_serves_the_cache(db):
+    from portf_manager import market
+
+    calls = []
+
+    def fake(symbol):
+        calls.append(symbol)
+        return dict(_INFO)
+
+    with patch.object(market, "_fetch_info_live", fake):
+        first = market.get_market_profile(db, "exco")
+        second = market.get_market_profile(db, "EXCO")
+    assert calls == ["EXCO"]
+    assert first["source"] == "live" and second["source"] == "cache"
+    assert first["name"] == "Example Corp"
+    assert first["price"] == {"price": 100.0, "week52_high": 120.0}
+    assert first["valuation"] == {"trailing_pe": 20.0}
+    assert first["analysts"] == {"recommendation": "buy", "target_mean": 110.0}
+    assert first["dividends"] == {"ex_dividend_date": "2023-11-14"}
+    assert len(first["profile"]["summary"]) <= 801
+    assert "fund" not in first
+
+
+def test_market_profile_converts_pence_prices_only(db):
+    from portf_manager import market
+
+    info = {"currency": "GBp", "currentPrice": 18400.0, "marketCap": 6_000_000_000}
+    with patch.object(market, "_fetch_info_live", lambda s: info):
+        out = market.get_market_profile(db, "EXCO.L")
+    assert out["currency"] == "GBP"
+    assert out["price"] == {"price": 184.0, "market_cap": 6_000_000_000}
+    assert "pence" in out["note"]
+
+
+def test_market_profile_failure_is_an_error_not_an_empty_profile(db):
+    from portf_manager import market
+
+    def boom(symbol):
+        raise RuntimeError("yahoo down")
+
+    with patch.object(market, "_fetch_info_live", boom):
+        out = market.get_market_profile(db, "NOPE")
+    assert out == {
+        "symbol": "NOPE",
+        "error": "yahoo down",
+        "source": "error",
+        "stale": True,
+    }
+    with patch.object(market, "_fetch_info_live", lambda s: {"currency": "USD"}):
+        assert market.get_market_profile(db, "NOPE")["error"] == "no data available"
+
+
+def test_get_market_data_tool_uses_the_held_assets_ticker_and_adds_news(db):
+    from portf_manager import market
+    from portf_manager.services import research
+    from portf_server.chat_tools import execute_tool
+
+    asset = db.get_asset_by_symbol("AAPL")
+    db.update_asset(asset["id"], ticker="AAPL.XY")
+    seen = []
+
+    def fake(symbol):
+        seen.append(symbol)
+        return {**_INFO, "quoteType": "ETF"}
+
+    news = [{"title": "Example news", "url": "https://example.com/n", "publisher": ""}]
+    comp = {"sectors": {"Technology": 0.6}, "asset_class": {"equity": 1.0}}
+    with (
+        patch.object(market, "_fetch_info_live", fake),
+        patch.object(market, "get_fund_composition", lambda d, s: comp),
+        patch.object(research, "fetch_recent_news", lambda s, db=None: news),
+    ):
+        data = json.loads(execute_tool("get_market_data", {"symbol": "AAPL"}, db))
+        quiet = json.loads(
+            execute_tool(
+                "get_market_data", {"symbol": "AAPL", "include_news": False}, db
+            )
+        )
+    assert seen == ["AAPL.XY"]
+    assert data["requested_symbol"] == "AAPL"
+    assert data["held_asset"]["symbol"] == "AAPL"
+    assert data["composition"] == comp
+    assert data["news"] == news
+    assert "news" not in quiet

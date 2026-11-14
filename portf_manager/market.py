@@ -9,7 +9,7 @@ fails. Spec: docs/superpowers/specs/2026-06-12-market-data-api-design.md.
 
 import logging
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 import yfinance as yf
@@ -293,6 +293,197 @@ def get_fundamentals(db, symbol: str, max_age: float = 21600) -> dict:
     if cached:
         return {**cached, "source": "cache", "stale": True}
     return {"symbol": sym, "error": "no data available", "stale": True}
+
+
+# What a Yahoo Finance quote page shows, grouped the way the page is. Each
+# entry maps our key to the yfinance ``info`` field it is read from.
+_PROFILE_GROUPS: dict[str, dict[str, str]] = {
+    "profile": {
+        "sector": "sector",
+        "industry": "industry",
+        "country": "country",
+        "website": "website",
+        "employees": "fullTimeEmployees",
+        "summary": "longBusinessSummary",
+    },
+    "price": {
+        "price": "currentPrice",
+        "regular_market_price": "regularMarketPrice",
+        "previous_close": "previousClose",
+        "open": "open",
+        "day_low": "dayLow",
+        "day_high": "dayHigh",
+        "week52_low": "fiftyTwoWeekLow",
+        "week52_high": "fiftyTwoWeekHigh",
+        "week52_change": "52WeekChange",
+        "avg_50d": "fiftyDayAverage",
+        "avg_200d": "twoHundredDayAverage",
+        "volume": "volume",
+        "avg_volume": "averageVolume",
+        "market_cap": "marketCap",
+        "beta": "beta",
+    },
+    "valuation": {
+        "trailing_pe": "trailingPE",
+        "forward_pe": "forwardPE",
+        "peg_ratio": "trailingPegRatio",
+        "price_to_book": "priceToBook",
+        "price_to_sales": "priceToSalesTrailing12Months",
+        "enterprise_value": "enterpriseValue",
+        "ev_to_revenue": "enterpriseToRevenue",
+        "ev_to_ebitda": "enterpriseToEbitda",
+    },
+    "financials": {
+        "total_revenue": "totalRevenue",
+        "revenue_growth": "revenueGrowth",
+        "earnings_growth": "earningsGrowth",
+        "gross_margin": "grossMargins",
+        "operating_margin": "operatingMargins",
+        "profit_margin": "profitMargins",
+        "ebitda": "ebitda",
+        "trailing_eps": "trailingEps",
+        "forward_eps": "forwardEps",
+        "return_on_equity": "returnOnEquity",
+        "return_on_assets": "returnOnAssets",
+        "total_cash": "totalCash",
+        "total_debt": "totalDebt",
+        "debt_to_equity": "debtToEquity",
+        "current_ratio": "currentRatio",
+        "free_cashflow": "freeCashflow",
+        "operating_cashflow": "operatingCashflow",
+        "shares_outstanding": "sharesOutstanding",
+        "next_earnings_date": "earningsTimestamp",
+    },
+    "dividends": {
+        "dividend_rate": "dividendRate",
+        "dividend_yield": "dividendYield",
+        "five_year_avg_yield": "fiveYearAvgDividendYield",
+        "payout_ratio": "payoutRatio",
+        "ex_dividend_date": "exDividendDate",
+    },
+    "analysts": {
+        "recommendation": "recommendationKey",
+        "recommendation_mean": "recommendationMean",
+        "analyst_count": "numberOfAnalystOpinions",
+        "target_mean": "targetMeanPrice",
+        "target_median": "targetMedianPrice",
+        "target_low": "targetLowPrice",
+        "target_high": "targetHighPrice",
+    },
+    "fund": {
+        "family": "fundFamily",
+        "category": "category",
+        "legal_type": "legalType",
+        "total_assets": "totalAssets",
+        "nav_price": "navPrice",
+        "expense_ratio": "netExpenseRatio",
+        "yield": "yield",
+        "ytd_return": "ytdReturn",
+        "three_year_avg_return": "threeYearAverageReturn",
+        "five_year_avg_return": "fiveYearAverageReturn",
+        "beta_3y": "beta3Year",
+    },
+}
+
+# Per-share figures Yahoo reports in pence for a GBp listing (see
+# research._GBP_PENCE_FIELDS for why totals such as market cap are left alone).
+_PROFILE_PENCE_KEYS = {
+    "price",
+    "regular_market_price",
+    "previous_close",
+    "open",
+    "day_low",
+    "day_high",
+    "week52_low",
+    "week52_high",
+    "avg_50d",
+    "avg_200d",
+    "target_mean",
+    "target_median",
+    "target_low",
+    "target_high",
+    "nav_price",
+}
+_PROFILE_DATE_KEYS = {"next_earnings_date", "ex_dividend_date"}
+_PROFILE_SUMMARY_CHARS = 800
+
+
+def _fetch_info_live(symbol: str) -> dict:
+    """Live yfinance ``info`` dict for *symbol*. Patched in tests."""
+    return yf.Ticker(symbol).info or {}
+
+
+def _profile_from_info(symbol: str, info: dict) -> dict:
+    """Shape a raw yfinance ``info`` dict into the grouped market profile."""
+    pence = (info.get("currency") or "") == "GBp"
+    out: dict[str, Any] = {
+        "symbol": symbol,
+        "name": info.get("longName") or info.get("shortName"),
+        "quote_type": info.get("quoteType"),
+        "exchange": info.get("fullExchangeName") or info.get("exchange"),
+        "currency": "GBP" if pence else info.get("currency"),
+    }
+    for group, fields in _PROFILE_GROUPS.items():
+        block: dict[str, Any] = {}
+        for key, source in fields.items():
+            value = info.get(source)
+            if value is None or value == "":
+                continue
+            is_number = isinstance(value, (int, float)) and not isinstance(value, bool)
+            if pence and key in _PROFILE_PENCE_KEYS and is_number:
+                value = value / 100.0
+            elif key in _PROFILE_DATE_KEYS and is_number:
+                value = (
+                    datetime.fromtimestamp(value, tz=timezone.utc).date().isoformat()
+                )
+            elif key == "summary":
+                text = str(value)
+                value = (
+                    text
+                    if len(text) <= _PROFILE_SUMMARY_CHARS
+                    else text[:_PROFILE_SUMMARY_CHARS].rsplit(" ", 1)[0] + "…"
+                )
+            block[key] = value
+        if block:
+            out[group] = block
+    if pence:
+        out["note"] = (
+            "Yahoo quotes this listing in pence; prices and targets are converted "
+            "to GBP. dividend_rate is as Yahoo reports it and may be in pence."
+        )
+    return out
+
+
+def get_market_profile(db, symbol: str, max_age: float = 21600) -> dict:
+    """Everything a Yahoo Finance quote page shows for *symbol*, grouped.
+
+    Company or fund profile, price and trading range, valuation, financials,
+    dividends, analyst targets and fund facts — only the fields Yahoo has for
+    that instrument. Same read-time freshness pattern as quotes, under
+    ``mkt:profile:{SYM}``: a value no older than *max_age* comes from the
+    cache, otherwise one live fetch, and a failed fetch serves the cached
+    value flagged ``stale`` or an ``error`` entry — never an empty profile.
+    """
+    sym = symbol.strip().upper()
+    now = time.time()
+    key = f"mkt:profile:{sym}"
+    cached = _cache_get(db, key)
+    if cached and now - cached.get("fetched_at", 0) <= max_age:
+        return {**cached, "source": "cache", "stale": False}
+    error = "no data available"
+    try:
+        data = _profile_from_info(sym, _fetch_info_live(sym))
+    except Exception as e:
+        logger.warning(f"market profile fetch failed for {sym}: {e}")
+        data, error = {}, str(e)
+    # A genuine hit has at least one data group, not just the identity keys.
+    if any(group in data for group in _PROFILE_GROUPS):
+        data["fetched_at"] = now
+        _cache_set(db, key, data)
+        return {**data, "source": "live", "stale": False}
+    if cached:
+        return {**cached, "source": "cache", "stale": True}
+    return {"symbol": sym, "error": error, "source": "error", "stale": True}
 
 
 # yfinance reports fund sector weights under lowercase compact keys; direct

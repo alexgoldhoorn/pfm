@@ -7,6 +7,8 @@
 
 Last updated: 2026-11-14
 
+**Recent (v2.5.98):** **Yahoo Finance data in the AI chat.** New chat tool `get_market_data` (43 tools): profile, price ranges, valuation, financials, dividends, analyst targets, fund facts and composition, and news for any ticker, from the cached market service (`mkt:profile:{SYM}`, 6 h). No schema or API change. Docs `llm.md`, `prices-market.md`.
+
 **Recent (v2.5.97):** **AI chat readable on phones.** Under 576px the chat panel runs edge to edge and answers use the full width (text column 267px → 351px on a 390px screen); tables keep figures on one line and scroll sideways instead of breaking numbers; the thread list is now reachable on phones as a drawer. Web client only, no API or schema change. Docs `web-client.md`.
 
 **Recent (v2.5.96):** **AI chat deep dive: what-if scenarios, web search, reports.** New scenario service (`services/life_scenarios.py`) answers "what if I lose my job / earn less / buy a house / the market crashes" from the real bank statements, balances and portfolio: runway in months at three spending levels, what to cut first, house funding and debt ratio, crash loss and months to recover. Six new chat tools (42), read-only `/api/v1/scenarios/*`, four MCP tools (42). Schema v42: spending categories can be marked fixed/flexible/optional (with AI suggestions), and reports saved from chat (`/api/v1/saved-reports`, new Reports page). Chat: optional web search with sources, follow-up chips, clickable charts with four new types, sortable tables with CSV, exports with real charts, 12 messages of context and 10 tool rounds. Model-written Markdown is now sanitised (DOMPurify). Docs `scenarios.md`, `llm.md`, `web-client.md`, `spending.md`.

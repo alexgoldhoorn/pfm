@@ -261,6 +261,45 @@ def _get_quote(db: Database, symbol: str) -> str:
         return _j({"symbol": symbol, "error": str(e)})
 
 
+@_tool("get_market_data")
+def _get_market_data(db: Database, symbol: str, include_news: bool = True) -> str:
+    """The Yahoo Finance picture of one instrument, from the cached service."""
+    from portf_manager.market import get_fund_composition, get_market_profile
+    from portf_manager.services.research import fetch_recent_news
+
+    asked = (symbol or "").strip()
+    if not asked:
+        return "Error: symbol is required"
+    # A held asset may be stored under its ISIN with the Yahoo ticker alongside.
+    asset = db.get_asset_by_symbol(asked)
+    yahoo_symbol = ((asset or {}).get("ticker") or asked).strip().upper()
+    result = get_market_profile(db, yahoo_symbol)
+    result["requested_symbol"] = asked
+    if asset:
+        result["held_asset"] = {
+            "symbol": asset.get("symbol"),
+            "name": asset.get("name"),
+            "asset_type": asset.get("asset_type"),
+        }
+    if result.get("error"):
+        return _j(result)
+    if result.get("quote_type") in ("ETF", "MUTUALFUND"):
+        comp = get_fund_composition(db, yahoo_symbol)
+        if comp.get("sectors") or comp.get("asset_class"):
+            result["composition"] = {
+                "sectors": comp.get("sectors", {}),
+                "asset_class": comp.get("asset_class", {}),
+            }
+    if include_news:
+        result["news"] = fetch_recent_news(yahoo_symbol, db=db)
+        if not result["news"]:
+            # The news fetcher logs a failure and returns []; say so here.
+            result["news_note"] = (
+                "Yahoo returned no headlines (none, or the feed failed)."
+            )
+    return _j(result)
+
+
 @_tool("get_price")
 def _get_price(
     db: Database,
@@ -1271,6 +1310,33 @@ TOOLS: list[ToolDefinition] = [
                 "type": "string",
                 "description": "Ticker symbol (e.g. AAPL, BTC-EUR, ^GSPC).",
                 "required": True,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="get_market_data",
+        description=(
+            "Everything Yahoo Finance shows for one instrument, held or not: "
+            "company or fund profile, price and 52-week range, moving averages, "
+            "valuation ratios, revenue, margins and debt, dividends, analyst "
+            "rating and price targets, fund facts (assets, costs, returns, sector "
+            "and asset-class split) and recent news headlines with links. Cached "
+            "for 6 hours (news 30 minutes); check 'stale' and 'fetched_at'. Use it "
+            "for questions about a company, ETF or fund itself; use get_quote for "
+            "just the price."
+        ),
+        parameters=[
+            {
+                "name": "symbol",
+                "type": "string",
+                "description": "Yahoo ticker (e.g. AAPL, VWCE.DE, BTC-EUR) or the symbol/ISIN of a held asset.",
+                "required": True,
+            },
+            {
+                "name": "include_news",
+                "type": "boolean",
+                "description": "Include recent news headlines (default true).",
+                "required": False,
             },
         ],
     ),
