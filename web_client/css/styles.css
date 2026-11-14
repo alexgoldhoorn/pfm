@@ -248,7 +248,7 @@ body {
     border-radius: 0.75rem;
     background: var(--chat-bg);
     overflow: hidden;
-    height: clamp(420px, calc(100vh - 230px), 860px);
+    height: max(420px, calc(100vh - 120px));
 }
 .chat-header {
     padding: 0.5rem 0.75rem;
@@ -601,6 +601,13 @@ body {
 .chat-bubble td.chat-num {
     font-variant-numeric: tabular-nums;
 }
+/* With the mobile top bar (under 992px) the panel starts lower. */
+@media (max-width: 991.98px) {
+    .chat-panel {
+        height: max(420px, calc(100vh - 160px));
+        height: max(420px, calc(100dvh - 160px));
+    }
+}
 /* Phones: the thread list is a drawer (offcanvas-md), opened from the header. */
 @media (max-width: 767.98px) {
     #chatThreadsPanel {
@@ -620,19 +627,52 @@ body {
    (no avatar column, slimmer padding), so text and tables get ~90% of the
    screen instead of ~60%. */
 @media (max-width: 575.98px) {
-    #chatPage > .d-flex:first-child {
-        margin-bottom: 0.5rem !important;
+    /* The chat fills everything under the sticky top bar (57px): no page
+       title, no page padding, one-row header and one-row composer, so the
+       thread gets the height. */
+    #chatPage {
+        margin: -1rem;
     }
-    #chatPage > .d-flex:first-child p {
-        display: none;
+    #chatPage > .d-flex:first-child {
+        display: none !important;
+    }
+    #chatPage > .row {
+        /* No page padding left to absorb the row's negative side margins. */
+        --bs-gutter-x: 0;
+        --bs-gutter-y: 0;
     }
     .chat-panel {
-        margin-inline: -1rem;
-        border-inline: 0;
+        border: 0;
         border-radius: 0;
-        height: calc(100vh - 135px);
-        height: calc(100dvh - 135px);
-        min-height: 360px;
+        height: calc(100vh - 57px);
+        height: calc(100dvh - 57px);
+        min-height: 300px;
+    }
+    .chat-header {
+        flex-wrap: nowrap !important;
+        padding: 0.35rem 0.5rem;
+    }
+    .chat-header > .ms-auto {
+        flex-wrap: nowrap;
+        flex-shrink: 0;
+    }
+    .chat-panel .chat-header .chat-model-select {
+        max-width: 6.5rem;
+        text-overflow: ellipsis;
+    }
+    .chat-composer {
+        display: flex;
+        align-items: flex-end;
+        gap: 0.4rem;
+        padding: 0.4rem 0.5rem calc(0.4rem + env(safe-area-inset-bottom, 0px));
+    }
+    .chat-composer textarea {
+        flex: 1 1 auto;
+        min-width: 0;
+    }
+    .chat-composer > .d-flex {
+        margin-top: 0 !important;
+        flex-shrink: 0;
     }
     .chat-thread {
         padding: 0.75rem 0.5rem;
