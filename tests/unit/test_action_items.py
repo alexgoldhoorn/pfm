@@ -17,6 +17,7 @@ from portf_manager.services.action_items import (
     check_price_alerts,
     check_price_update_failures,
     check_recurring_charges,
+    check_spending_anomalies,
     check_stale_imports,
     check_stale_research,
     check_unmatched_pattern_transfers,
@@ -639,6 +640,69 @@ def _charges(db, pid, merchant, amounts, months):
             description=merchant,
             amount=-amount,
         )
+
+
+class TestSpendingAnomalyItems:
+    def _db(self, tmp_path):
+        db = Database(str(tmp_path / "t.db"))
+        pid = db.create_portfolio("Example Bank", account_type="bank")
+        for month in range(1, 7):
+            db.create_spending_transaction(
+                pid,
+                f"2026-{month:02d}-10",
+                "Example Market",
+                -100.0,
+                category="Groceries",
+            )
+        return db, pid
+
+    def test_is_registered(self):
+        assert check_spending_anomalies in checks_for_tests()
+
+    def test_recent_large_charge_raises_a_low_item(self, tmp_path):
+        db, pid = self._db(tmp_path)
+        big = db.create_spending_transaction(
+            pid, "2026-07-10", "Example Market", -500.0, category="Groceries"
+        )
+        items = check_spending_anomalies(db, today=date(2026, 7, 12))
+        assert [i["id"] for i in items] == [f"anomaly:large:{big}"]
+        assert items[0]["severity"] == "low"
+        assert items[0]["link_page"] == "spending"
+        assert items[0]["context"]["transaction_ids"] == [big]
+
+    def test_old_charge_is_left_for_the_spending_page(self, tmp_path):
+        db, pid = self._db(tmp_path)
+        db.create_spending_transaction(
+            pid, "2026-07-01", "Example Market", -500.0, category="Groceries"
+        )
+        assert check_spending_anomalies(db, today=date(2026, 7, 30)) == []
+
+    def test_marking_it_one_off_clears_the_item(self, tmp_path):
+        db, pid = self._db(tmp_path)
+        big = db.create_spending_transaction(
+            pid, "2026-07-10", "Example Market", -500.0, category="Groceries"
+        )
+        db.update_spending_transaction(big, one_off=True)
+        assert check_spending_anomalies(db, today=date(2026, 7, 12)) == []
+
+    def test_quiet_without_data(self, tmp_path):
+        db = Database(str(tmp_path / "empty.db"))
+        assert check_spending_anomalies(db, today=date(2026, 7, 12)) == []
+
+    def test_item_can_be_checked_off_through_the_ack_state(self, tmp_path):
+        from portf_manager.services.action_item_acks import annotate_items, set_ack
+
+        db, pid = self._db(tmp_path)
+        big = db.create_spending_transaction(
+            pid, "2026-07-10", "Example Market", -500.0, category="Groceries"
+        )
+        items = check_spending_anomalies(db, today=date(2026, 7, 12))
+        set_ack(db, items[0]["id"], "checked")
+        from portf_manager.services.action_item_acks import list_acks
+
+        done = annotate_items(items, list_acks(db), date(2026, 7, 12))
+        assert done[0]["status"] == "checked"
+        assert done[0]["id"] == f"anomaly:large:{big}"
 
 
 class TestHeldPriceItems:

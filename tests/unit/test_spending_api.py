@@ -2763,3 +2763,173 @@ def test_overwrite_to_transfer_sets_the_flag(tmp_path):
     assert row["is_transfer"] == 1
     assert row["transfer_source"] == "manual"
     assert row["transfer_link_id"] is None
+
+
+# ── one-off rows, comparison, anomalies, tiers ──────────────────────────────
+
+
+def _month_day(months_ago: int, day: int) -> str:
+    today = date.today()
+    y, m = today.year, today.month - months_ago
+    while m <= 0:
+        m += 12
+        y -= 1
+    return date(y, m, day).isoformat()
+
+
+def _month_end_day(months_ago: int) -> str:
+    first_next = date.fromisoformat(_month_day(months_ago - 1, 1))
+    return (first_next - timedelta(days=1)).isoformat()
+
+
+def test_put_one_off_flags_the_row_and_the_list_returns_and_filters_it(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    a = db.create_spending_transaction(pid, _month_day(1, 5), "Example Shop", -300.0)
+    db.create_spending_transaction(pid, _month_day(1, 6), "Sample Energy", -50.0)
+
+    r = client.put(f"/api/v1/spending/{a}", json={"one_off": True}, headers=HEADERS)
+    assert r.status_code == 200
+    assert r.json()["one_off"] is True
+    assert r.json()["category"] == "uncategorized"
+
+    items = client.get("/api/v1/spending/", headers=HEADERS).json()["items"]
+    assert {i["description"]: i["one_off"] for i in items} == {
+        "Example Shop": True,
+        "Sample Energy": False,
+    }
+    only = client.get("/api/v1/spending/?one_off=true", headers=HEADERS).json()
+    assert [i["id"] for i in only["items"]] == [a] and only["total"] == 1
+    rest = client.get("/api/v1/spending/?one_off=false", headers=HEADERS).json()
+    assert rest["total"] == 1
+
+    r = client.put(f"/api/v1/spending/{a}", json={"one_off": False}, headers=HEADERS)
+    assert r.json()["one_off"] is False
+
+
+def test_put_with_nothing_to_update_is_still_rejected(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    a = db.create_spending_transaction(pid, _month_day(1, 5), "Example Shop", -3.0)
+    assert (
+        client.put(f"/api/v1/spending/{a}", json={}, headers=HEADERS).status_code == 400
+    )
+
+
+def test_trend_reports_one_off_spending_and_still_counts_it(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    month = _month_day(0, 1)
+    db.create_spending_transaction(pid, month, "Sample Energy", -50.0)
+    big = db.create_spending_transaction(pid, month, "Example Shop", -300.0)
+    db.update_spending_transaction(big, one_off=True)
+    row = client.get("/api/v1/spending/trend?months=1", headers=HEADERS).json()[0]
+    assert row["spent_eur"] == 350.0
+    assert row["one_off_eur"] == 300.0
+
+
+def _compare_data(db):
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    for ago in (4, 3, 2):
+        db.create_spending_transaction(
+            pid, _month_day(ago, 10), "Example Market", -100.0, category="Groceries"
+        )
+    db.create_spending_transaction(
+        pid, _month_day(1, 10), "Example Market", -160.0, category="Groceries"
+    )
+    # reaches the last day of the compared month, so it reads as fully imported
+    db.create_spending_transaction(
+        pid, _month_end_day(1), "Example Employer", 10.0, category="uncategorized"
+    )
+    return pid
+
+
+def test_compare_endpoint_defaults_and_shape(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = _compare_data(db)
+    month = _month_day(1, 1)[:7]
+    r = client.get(
+        f"/api/v1/spending/compare?month={month}&baseline_months=3", headers=HEADERS
+    )
+    assert r.status_code == 200
+    d = r.json()
+    assert d["status"] == "complete"
+    assert d["group_by"] == "category"
+    assert d["totals"]["actual_eur"] == 160.0
+    assert d["totals"]["baseline_eur"] == 100.0
+    assert d["totals"]["delta_pct"] == 60.0
+    groc = d["items"][0]
+    assert groc["name"] == "Groceries" and groc["last_year_eur"] is None
+
+    scoped = client.get(
+        f"/api/v1/spending/compare?month={month}&portfolio_id={pid + 99}",
+        headers=HEADERS,
+    ).json()
+    assert scoped["status"] == "no_imports"
+    assert scoped["totals"]["actual_eur"] is None
+
+
+def test_compare_endpoint_validates_input(tmp_path):
+    client, _ = _make_client(tmp_path)
+    for query in (
+        "month=2026-13",
+        "month=nope",
+        "group_by=colour",
+        "baseline_months=0",
+    ):
+        r = client.get(f"/api/v1/spending/compare?{query}", headers=HEADERS)
+        assert r.status_code in (400, 422), query
+    future = (date.today().replace(day=1) + timedelta(days=40)).strftime("%Y-%m")
+    r = client.get(f"/api/v1/spending/compare?month={future}", headers=HEADERS)
+    assert r.status_code == 400
+
+
+def test_compare_defaults_to_the_last_complete_month(tmp_path):
+    client, db = _make_client(tmp_path)
+    _compare_data(db)
+    d = client.get("/api/v1/spending/compare", headers=HEADERS).json()
+    assert d["month"] == _month_day(1, 1)[:7]
+
+
+def test_anomalies_endpoint(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    for ago in (5, 4, 3, 2, 1):
+        db.create_spending_transaction(
+            pid, _month_day(ago, 10), "Example Market", -100.0, category="Groceries"
+        )
+    big = db.create_spending_transaction(
+        pid, (date.today() - timedelta(days=2)).isoformat(), "Example Market", -500.0
+    )
+    r = client.get("/api/v1/spending/anomalies?days=30", headers=HEADERS)
+    assert r.status_code == 200
+    d = r.json()
+    assert [i["id"] for i in d["items"]] == [f"anomaly:large:{big}"]
+    assert d["items"][0]["usual_eur"] == 100.0
+    assert d["days"] == 30 and d["data_through"]
+    assert (
+        client.get("/api/v1/spending/anomalies?days=0", headers=HEADERS).status_code
+        == 422
+    )
+
+
+def test_tiers_endpoint_splits_by_essentiality(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    spend = db.find_spending_category_by_name("Spend")["id"]
+    db.create_spending_category("Rent", spend)
+    db.set_spending_category_essentiality("Rent", "fixed")
+    month = _month_day(1, 3)
+    db.create_spending_transaction(
+        pid, month, "Example Landlord", -900.0, category="Rent"
+    )
+    db.create_spending_transaction(pid, month, "Sample Energy", -40.0)
+    r = client.get("/api/v1/spending/tiers?months=2", headers=HEADERS)
+    assert r.status_code == 200
+    first, second = r.json()
+    assert first["month"] == month[:7]
+    assert first["fixed_eur"] == 900.0 and first["unclassified_eur"] == 40.0
+    assert first["top_categories"]["fixed"] == [{"name": "Rent", "amount_eur": 900.0}]
+    assert second["in_progress"] is True and second["has_imports"] is False
+    spent = client.get("/api/v1/spending/trend?months=2", headers=HEADERS).json()[0]
+    assert round(first["total_eur"] + first["savings_eur"], 2) == spent["spent_eur"]

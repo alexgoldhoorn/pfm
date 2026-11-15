@@ -646,3 +646,38 @@ def test_seed_proposals_average_complete_months_and_skip_empty_categories(tmp_pa
 def test_seed_proposals_are_empty_without_activity(tmp_path):
     db = Database(str(tmp_path / "seed_empty.db"))
     assert bs.propose_budget_lines(db, 12, _fx) == []
+
+
+def test_one_off_rows_count_in_actuals_but_not_in_seed_proposals(tmp_path):
+    from datetime import date
+
+    db = Database(str(tmp_path / "seed_one_off.db"))
+    bank = db.get_or_create_portfolio("Example Bank", account_type="bank")
+    spend = db.find_spending_category_by_name("Spend")["id"]
+    db.create_spending_category("Gadgets", parent_id=spend)
+    today = date.today()
+    end_year, end_month = today.year, today.month - 1
+    if end_month == 0:
+        end_month, end_year = 12, end_year - 1
+    period = bs.month_range(f"{end_year:04d}-{end_month:02d}", 3)
+    for month in period:
+        db.create_spending_transaction(
+            bank, f"{month}-10", "Example Shop", -100.0, category="Gadgets"
+        )
+    big = db.create_spending_transaction(
+        bank, f"{period[0]}-20", "Example Shop", -900.0, category="Gadgets"
+    )
+    db.update_spending_transaction(big, one_off=True)
+
+    proposals = {
+        (p["line_type"], p["ref_key"]): p for p in bs.propose_budget_lines(db, 3, _fx)
+    }
+    assert proposals[("spending", "Gadgets")]["monthly_amount"] == 100.0
+
+    budget_id = db.create_budget("Example Budget")
+    db.create_budget_line(budget_id, "spending", "Gadgets", 100.0)
+    section = _section(
+        bs.compute_budget_variance(db, budget_id, period, _fx), "spending"
+    )
+    # actuals still carry the one-off row, so they reconcile with the trend
+    assert section["actual_total"] == 1200.0

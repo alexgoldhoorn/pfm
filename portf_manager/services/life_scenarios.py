@@ -123,6 +123,9 @@ def spending_profile(
         exclude: spending categories left out (with their sub-categories),
             e.g. a one-off renovation; reported as ``excluded_monthly_eur``.
 
+    Rows carrying ``one_off: True`` are left out of every average and
+    reported as ``one_off_spend_monthly_eur`` / ``one_off_income_monthly_eur``.
+
     A category is flagged ``irregular`` when its spending fell in at most a
     quarter of the months used (at least six months of data): a one-off or
     seasonal cost that a monthly average spreads thin.
@@ -135,6 +138,7 @@ def spending_profile(
     resolved = [lowered.get(c.lower(), c) for c in wanted]
     excluded = _descendants(tree, tuple(resolved)) if resolved else frozenset()
     income = work = saved = left_out = 0.0
+    one_off_spend = one_off_income = 0.0
     by_cat: dict[str, float] = {}
     active: dict[str, set[str]] = {}
     for r in rows:
@@ -142,6 +146,13 @@ def spending_profile(
             continue
         amt = float(r.get("amount_eur") or 0)
         cat = r.get("category") or "uncategorized"
+        # a row marked one-off is not normal: report it, keep it out of averages
+        if r.get("one_off"):
+            if amt > 0:
+                one_off_income += amt
+            elif cat not in savings:
+                one_off_spend -= amt
+            continue
         if amt > 0:
             income += amt
             if work_income is None or work_income(r):
@@ -182,6 +193,8 @@ def spending_profile(
         "categories": categories,
         "excluded_categories": sorted(resolved),
         "excluded_monthly_eur": round(left_out / div, 2),
+        "one_off_spend_monthly_eur": round(one_off_spend / div, 2),
+        "one_off_income_monthly_eur": round(one_off_income / div, 2),
     }
 
 
@@ -788,6 +801,7 @@ def household_baseline(
             "category": r.get("category"),
             "merchant": r.get("merchant"),
             "is_transfer": False,
+            "one_off": bool(r.get("one_off")),
         }
         for r in db.list_spending_transactions(start_date=start, is_transfer=False)
     ]
@@ -818,6 +832,12 @@ def household_baseline(
             "averaged into the monthly figure: "
             + ", ".join(irregular[:8])
             + ". Re-run with exclude_categories to leave a one-off out."
+        )
+    if profile["one_off_spend_monthly_eur"] or profile["one_off_income_monthly_eur"]:
+        warnings.append(
+            "Rows marked one-off are left out of the averages: "
+            f"{profile['one_off_spend_monthly_eur']} EUR of spending and "
+            f"{profile['one_off_income_monthly_eur']} EUR of income a month."
         )
     if profile["excluded_categories"]:
         warnings.append(

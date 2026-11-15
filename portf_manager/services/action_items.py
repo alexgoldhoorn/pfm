@@ -870,6 +870,50 @@ def check_recurring_charges(db, today: date = None) -> list[dict]:
     return items
 
 
+# Only charges this recent raise an item; older ones stay on the Spending page.
+ANOMALY_ITEM_DAYS = 14
+ANOMALY_ITEM_MAX = 8
+
+
+def check_spending_anomalies(db, today: date = None) -> list[dict]:
+    """Unusual recent charges (low severity, newest first, capped).
+
+    The ids come from ``spending_insights.find_anomalies`` and are stable, so
+    the stored check/snooze state applies. Rows the user marked one-off are
+    never flagged, which is how an item is made to go away for good.
+    """
+    from portf_manager.services import exposure, spending_insights
+
+    today = today or date.today()
+    found = spending_insights.load_anomalies(
+        db, exposure._default_fx, today, ANOMALY_ITEM_DAYS
+    )
+    items = []
+    for a in found["items"][:ANOMALY_ITEM_MAX]:
+        title = {
+            "large_charge": f"Unusually large charge at {a['merchant']}",
+            "new_merchant": f"Large charge from a new merchant: {a['merchant']}",
+            "category_spike": f"{a['category']} spending well above normal",
+            "possible_duplicate": f"Possible double charge at {a['merchant']}",
+        }[a["kind"]]
+        items.append(
+            {
+                "id": a["id"],
+                "category": "spending",
+                "severity": "low",
+                "title": title,
+                "detail": a["detail"],
+                "link_page": "spending",
+                "context": {
+                    "kind": a["kind"],
+                    "date": a["date"],
+                    "transaction_ids": a["transaction_ids"],
+                },
+            }
+        )
+    return items
+
+
 def check_unmatched_pattern_transfers(db, today: date = None) -> list[dict]:
     """Rows flagged as transfers by a pattern whose other leg never showed up.
 
@@ -982,6 +1026,7 @@ _CHECKS = (
     check_budget_overruns,
     check_fund_exposure,
     check_recurring_charges,
+    check_spending_anomalies,
     check_unmatched_pattern_transfers,
     check_bookings_without_bank_leg,
     check_decision_reviews,

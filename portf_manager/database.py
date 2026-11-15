@@ -16,7 +16,7 @@ from pathlib import Path
 from portf_manager.services.merchant import fold_for_search, normalize_merchant
 
 # Database version for migration tracking
-DATABASE_VERSION = 42
+DATABASE_VERSION = 43
 
 
 # black
@@ -766,6 +766,7 @@ class Database:
                 balance            REAL,
                 merchant           TEXT,
                 transfer_source    TEXT CHECK (transfer_source IN ('match', 'pattern', 'manual', 'rejected')),
+                one_off            INTEGER NOT NULL DEFAULT 0,
                 created_at         TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (portfolio_id) REFERENCES portfolios (id) ON DELETE CASCADE
             )
@@ -863,6 +864,9 @@ class Database:
                 overrides      TEXT,
                 link_id        INTEGER,
                 notes          TEXT,
+                period         TEXT NOT NULL DEFAULT 'monthly'
+                                   CHECK (period IN ('monthly', 'yearly')),
+                rollover       INTEGER NOT NULL DEFAULT 0,
                 created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (budget_id, line_type, ref_key)
             )
@@ -1019,6 +1023,8 @@ class Database:
             self._migrate_to_v41(conn)
         if current_version < 42:
             self._migrate_to_v42(conn)
+        if current_version < 43:
+            self._migrate_to_v43(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -2200,6 +2206,31 @@ class Database:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_decisions_review "
             "ON decisions (reviewed_at, review_on)"
+        )
+        conn.commit()
+
+    def _migrate_to_v43(self, conn: sqlite3.Connection) -> None:
+        """Migrate from v42 to v43 — one-off rows, yearly and rolling budget lines.
+
+        ``spending_transactions.one_off`` marks a row that still counts in every
+        total but is left out of averages and baselines. ``budget_lines.period``
+        (``monthly`` | ``yearly``) says whether ``monthly_amount`` holds a
+        monthly or a yearly figure, and ``budget_lines.rollover`` carries
+        under- or overspend from earlier months of the year. Nothing is
+        backfilled; every step is guarded so a rerun is harmless.
+        """
+        _add_column_if_missing(
+            conn, "spending_transactions", "one_off", "INTEGER NOT NULL DEFAULT 0"
+        )
+        _add_column_if_missing(
+            conn,
+            "budget_lines",
+            "period",
+            "TEXT NOT NULL DEFAULT 'monthly' "
+            "CHECK (period IN ('monthly', 'yearly'))",
+        )
+        _add_column_if_missing(
+            conn, "budget_lines", "rollover", "INTEGER NOT NULL DEFAULT 0"
         )
         conn.commit()
 
@@ -4404,6 +4435,7 @@ class Database:
         min_abs_amount: float = None,
         q: str = None,
         transfer_linked: Optional[bool] = None,
+        one_off: Optional[bool] = None,
     ):
         """Shared WHERE-clause builder for list/count spending transactions.
 
@@ -4443,6 +4475,9 @@ class Database:
             conditions.append("s.transfer_link_id IS NOT NULL")
         elif transfer_linked is False:
             conditions.append("s.is_transfer = 1 AND s.transfer_link_id IS NULL")
+        if one_off is not None:
+            conditions.append("s.one_off = ?")
+            params.append(1 if one_off else 0)
         if amount_sign == "negative":
             conditions.append("s.amount < 0")
         elif amount_sign == "positive":
@@ -4512,6 +4547,7 @@ class Database:
         sort_by: str = None,
         sort_dir: str = None,
         transfer_linked: Optional[bool] = None,
+        one_off: Optional[bool] = None,
     ) -> List[Dict]:
         """List spending transactions with optional filters.
 
@@ -4535,6 +4571,7 @@ class Database:
                 min_abs_amount,
                 q,
                 transfer_linked,
+                one_off,
             )
             query = (
                 "SELECT s.*, p.name AS portfolio_name FROM spending_transactions s "
@@ -4564,6 +4601,7 @@ class Database:
         min_abs_amount: float = None,
         q: str = None,
         transfer_linked: Optional[bool] = None,
+        one_off: Optional[bool] = None,
     ) -> int:
         """Count spending transactions matching the same filters as
         list_spending_transactions (no JOIN needed — sort/portfolio_name
@@ -4580,6 +4618,7 @@ class Database:
                 min_abs_amount,
                 q,
                 transfer_linked,
+                one_off,
             )
             query = "SELECT COUNT(*) FROM spending_transactions s" + where_clause
             cursor = conn.execute(query, params)
@@ -4595,13 +4634,14 @@ class Database:
             return dict(row) if row else None
 
     def update_spending_transaction(self, spending_id: int, **kwargs) -> bool:
-        """Update spending transaction fields (category, is_transfer, transfer link)."""
+        """Update spending transaction fields (category, transfer fields, one_off)."""
         valid_fields = {
             "category",
             "is_transfer",
             "transfer_link_type",
             "transfer_link_id",
             "transfer_source",
+            "one_off",
         }
         update_fields = {k: v for k, v in kwargs.items() if k in valid_fields}
         if not update_fields:
@@ -6346,6 +6386,8 @@ class Database:
         overrides: str = None,
         link_id: int = None,
         notes: str = None,
+        period: str = "monthly",
+        rollover: bool = False,
     ) -> int:
         """Create a budget line.
 
@@ -6353,13 +6395,16 @@ class Database:
             overrides: Per-month exceptions as a JSON object string,
                 ``{"2026-03": 450.0}`` — serialized by the caller, stored
                 verbatim.
+            period: ``monthly`` or ``yearly``; a yearly line's
+                ``monthly_amount`` holds the yearly figure.
+            rollover: carry under- or overspend over within the calendar year.
         """
         with self.get_connection() as conn:
             cursor = conn.execute(
                 """INSERT INTO budget_lines
                        (budget_id, line_type, ref_key, monthly_amount,
-                        overrides, link_id, notes)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        overrides, link_id, notes, period, rollover)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     budget_id,
                     line_type,
@@ -6368,6 +6413,8 @@ class Database:
                     overrides,
                     link_id,
                     notes,
+                    period,
+                    1 if rollover else 0,
                 ),
             )
             self._touch_budget(conn, budget_id)
@@ -6375,7 +6422,7 @@ class Database:
             return cursor.lastrowid
 
     def update_budget_line(self, line_id: int, **kwargs) -> bool:
-        """Update a budget line's amount/overrides/link/notes (and ref_key)."""
+        """Update a budget line's amount/overrides/link/notes/period/rollover."""
         valid_fields = {
             "line_type",
             "ref_key",
@@ -6383,8 +6430,12 @@ class Database:
             "overrides",
             "link_id",
             "notes",
+            "period",
+            "rollover",
         }
         update_fields = {k: v for k, v in kwargs.items() if k in valid_fields}
+        if "rollover" in update_fields:
+            update_fields["rollover"] = 1 if update_fields["rollover"] else 0
         if not update_fields:
             return False
         with self.get_connection() as conn:
@@ -6435,13 +6486,22 @@ class Database:
                 if existing:
                     conn.execute(
                         """UPDATE budget_lines
-                           SET monthly_amount = ?, overrides = ?, link_id = ?, notes = ?
+                           SET monthly_amount = ?, overrides = ?, link_id = ?,
+                               notes = ?,
+                               period = COALESCE(?, period),
+                               rollover = COALESCE(?, rollover)
                            WHERE id = ?""",
                         (
                             line.get("monthly_amount", 0),
                             line.get("overrides"),
                             line.get("link_id"),
                             line.get("notes"),
+                            line.get("period"),
+                            (
+                                None
+                                if line.get("rollover") is None
+                                else int(bool(line["rollover"]))
+                            ),
                             existing[0],
                         ),
                     )
@@ -6450,8 +6510,8 @@ class Database:
                     conn.execute(
                         """INSERT INTO budget_lines
                                (budget_id, line_type, ref_key, monthly_amount,
-                                overrides, link_id, notes)
-                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                                overrides, link_id, notes, period, rollover)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
                             budget_id,
                             line["line_type"],
@@ -6460,6 +6520,8 @@ class Database:
                             line.get("overrides"),
                             line.get("link_id"),
                             line.get("notes"),
+                            line.get("period") or "monthly",
+                            1 if line.get("rollover") else 0,
                         ),
                     )
                     created += 1

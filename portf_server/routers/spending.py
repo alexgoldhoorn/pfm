@@ -40,6 +40,7 @@ from portf_manager.services.transfer_linking import (
 from portf_manager.services.budget import build_children_index, subtree_names
 from portf_manager.services.merchant import normalize_merchant
 from portf_manager.services.recurring import load_recurring
+from portf_manager.services import spending_insights
 from portf_manager.services.spending_rules import (
     TRANSFER_CATEGORY,
     pick_category,
@@ -142,6 +143,7 @@ class SpendingTransactionResponse(BaseModel):
     source: Optional[str] = None
     balance: Optional[float] = None
     merchant: Optional[str] = None
+    one_off: bool = False
 
 
 class RulePreviewResponse(BaseModel):
@@ -165,6 +167,8 @@ class OwnAccountPreviewBody(BaseModel):
 class CategoryUpdateBody(BaseModel):
     category: Optional[str] = None
     is_transfer: Optional[bool] = None
+    # One-off rows still count in totals; averages and baselines skip them.
+    one_off: Optional[bool] = None
 
 
 class SpendingRuleBody(BaseModel):
@@ -558,6 +562,7 @@ async def list_spending(
     end_date: Optional[str] = None,
     is_transfer: Optional[bool] = None,
     transfer_linked: Optional[bool] = None,
+    one_off: Optional[bool] = None,
     amount_sign: Optional[str] = None,
     min_abs_amount: Optional[float] = Query(default=None, ge=0),
     q: Optional[str] = Query(default=None, max_length=200),
@@ -576,7 +581,8 @@ async def list_spending(
     filters to negative-only ("negative", i.e. expenses) or positive-only
     ("positive", i.e. income); `min_abs_amount` additionally requires
     `ABS(amount) >= min_abs_amount`, so it composes naturally with either
-    sign or neither. `transfer_linked=true` keeps rows linked to a counterpart,
+    sign or neither. `one_off=true|false` keeps only rows marked (or not
+    marked) as one-off. `transfer_linked=true` keeps rows linked to a counterpart,
     `false` keeps flagged rows with no link. `q` matches description, merchant
     or category name (its own or one above it in the tree), case-insensitively
     and literally.
@@ -604,6 +610,7 @@ async def list_spending(
         end_date=end_date,
         is_transfer=is_transfer,
         transfer_linked=transfer_linked,
+        one_off=one_off,
         amount_sign=amount_sign,
         min_abs_amount=min_abs_amount,
         q=(q or "").strip() or None,
@@ -614,7 +621,13 @@ async def list_spending(
     total = db.count_spending_transactions(**filters)
     return SpendingTransactionListResponse(
         items=[
-            SpendingTransactionResponse(**{**r, "is_transfer": bool(r["is_transfer"])})
+            SpendingTransactionResponse(
+                **{
+                    **r,
+                    "is_transfer": bool(r["is_transfer"]),
+                    "one_off": bool(r.get("one_off")),
+                }
+            )
             for r in rows
         ],
         total=total,
@@ -695,13 +708,15 @@ async def update_spending_category(
     existing = db.get_spending_transaction(spending_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Spending transaction not found")
-    if body.category is None and body.is_transfer is None:
+    if body.category is None and body.is_transfer is None and body.one_off is None:
         raise HTTPException(
             status_code=400,
-            detail="Nothing to update: pass category, is_transfer, or both",
+            detail="Nothing to update: pass category, is_transfer or one_off",
         )
 
     update_kwargs: dict = {}
+    if body.one_off is not None:
+        update_kwargs["one_off"] = 1 if body.one_off else 0
     category = None
     if body.category is not None:
         category = body.category.strip()
@@ -759,6 +774,7 @@ async def update_spending_category(
         "category": updated["category"],
         "is_transfer": bool(updated["is_transfer"]),
         "transfer_source": updated["transfer_source"],
+        "one_off": bool(updated["one_off"]),
     }
 
 
@@ -1407,6 +1423,9 @@ class SpendingTrendMonth(BaseModel):
     spent_eur: float
     income_eur: float
     net_eur: float
+    # Spending in the month that rows marked one-off account for (already
+    # inside spent_eur: one-offs count in every total).
+    one_off_eur: float = 0.0
 
 
 @router.get("/trend", response_model=List[SpendingTrendMonth])
@@ -1438,9 +1457,11 @@ def get_spending_trend(
     for r in rows:
         key = r["date"][:7]
         amt_eur = float(r["amount"]) * _fx(r.get("currency", "EUR"))
-        b = buckets.setdefault(key, {"spent": 0.0, "income": 0.0})
+        b = buckets.setdefault(key, {"spent": 0.0, "income": 0.0, "one_off": 0.0})
         if amt_eur < 0:
             b["spent"] += abs(amt_eur)
+            if r.get("one_off"):
+                b["one_off"] += abs(amt_eur)
         else:
             b["income"] += amt_eur
 
@@ -1448,13 +1469,14 @@ def get_spending_trend(
     y, m = start_year, start_month_num
     for _ in range(months):
         key = f"{y:04d}-{m:02d}"
-        b = buckets.get(key, {"spent": 0.0, "income": 0.0})
+        b = buckets.get(key, {"spent": 0.0, "income": 0.0, "one_off": 0.0})
         result.append(
             SpendingTrendMonth(
                 month=key,
                 spent_eur=round(b["spent"], 2),
                 income_eur=round(b["income"], 2),
                 net_eur=round(b["income"] - b["spent"], 2),
+                one_off_eur=round(b["one_off"], 2),
             )
         )
         m += 1
@@ -1462,6 +1484,94 @@ def get_spending_trend(
             m = 1
             y += 1
     return result
+
+
+_MONTH_PATTERN = r"^\d{4}-(0[1-9]|1[0-2])$"
+
+
+def _category_tree(db) -> Dict[str, dict]:
+    return {row["name"]: row for row in db.list_spending_categories_tree()}
+
+
+@router.get("/compare", response_model=dict)
+def compare_spending(
+    month: Optional[str] = Query(default=None, pattern=_MONTH_PATTERN),
+    baseline_months: int = Query(default=6, ge=1, le=24),
+    group_by: Literal["category", "merchant"] = "category",
+    portfolio_id: Optional[int] = None,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """One month against its normal and against the same month a year ago.
+
+    ``month`` defaults to the last complete month. The baseline is the
+    average of up to ``baseline_months`` complete months before it that have
+    imports (rows marked one-off left out; they still count in the actual).
+    Only a complete month gets deltas: a month in progress, a month the data
+    stops short of, or a month with no imports reports ``status`` and null
+    deltas instead of a flattering number. Transfers and the Invest / House
+    purchase categories are not spending (the latter is ``savings_eur``).
+    Plain ``def`` because of the FX lookups.
+    """
+    from datetime import date
+
+    today = date.today()
+    if month is None:
+        month = spending_insights.previous_month(today)
+    year, mon = int(month[:4]), int(month[5:7])
+    start = date(year - 1, mon, 1).isoformat()
+    rows = spending_insights.load_rows(
+        db, _fx, start_date=start, portfolio_id=portfolio_id
+    )
+    try:
+        return spending_insights.compare_month(
+            rows, _category_tree(db), month, today, baseline_months, group_by
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/anomalies", response_model=dict)
+def get_spending_anomalies(
+    days: int = Query(default=60, ge=1, le=365),
+    portfolio_id: Optional[int] = None,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Unusual charges in the last ``days`` days (deterministic, no LLM).
+
+    Kinds: ``large_charge``, ``new_merchant``, ``category_spike`` and
+    ``possible_duplicate``; each item has a stable ``id``. Rows marked
+    one-off are never flagged. Plain ``def`` because of the FX lookups.
+    """
+    from datetime import date
+
+    return spending_insights.load_anomalies(
+        db, _fx, date.today(), days, portfolio_id=portfolio_id
+    )
+
+
+@router.get("/tiers", response_model=List[dict])
+def get_spending_tiers(
+    months: int = Query(default=12, ge=1, le=60),
+    portfolio_id: Optional[int] = None,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Per month, spending split by fixed / flexible / optional / unclassified.
+
+    Uses the inherited category essentiality; an unmarked category stays
+    ``unclassified``. ``total_eur + savings_eur`` equals ``/trend`` ``spent_eur``
+    for the same month. Oldest month first, the month in progress last.
+    """
+    from datetime import date
+
+    today = date.today()
+    first = spending_insights.shift_month(today.strftime("%Y-%m"), -(months - 1))
+    rows = spending_insights.load_rows(
+        db, _fx, start_date=f"{first}-01", portfolio_id=portfolio_id
+    )
+    return spending_insights.tier_breakdown(rows, _category_tree(db), today, months)
 
 
 class SuggestCategoriesRequest(BaseModel):

@@ -712,8 +712,13 @@ def propose_budget_lines(db, months: int, fx: Callable[[str], float]) -> List[Di
     children_by_parent = build_children_index(tree)
     month_set = set(period)
 
+    # A row marked one-off still counts in the budget's actuals, but a plan
+    # built from averages must not carry it forward.
     rows = db.list_spending_transactions(
-        start_date=f"{period[0]}-01", end_date=_month_end(period[-1]), is_transfer=False
+        start_date=f"{period[0]}-01",
+        end_date=_month_end(period[-1]),
+        is_transfer=False,
+        one_off=False,
     )
     category_actuals = _collect_category_actuals(rows, month_set, fx)
     booking_actuals = _collect_booking_actuals(db.get_all_bookings(), month_set, fx)

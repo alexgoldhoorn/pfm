@@ -676,3 +676,23 @@ def test_exclude_through_the_database_api_and_tools(client, db):
             )
         )
         assert out["monthly"]["spend_before_eur"] == 1600.0
+
+
+def test_one_off_rows_are_left_out_of_the_baseline_and_reported(db, fx_patches):
+    bank = db.get_all_portfolios()[0]["id"]
+    big = db.create_spending_transaction(
+        bank, "2026-03-12", "Example Shop", -1200.0, category="Fun"
+    )
+    db.update_spending_transaction(big, one_off=True)
+    bonus = db.create_spending_transaction(
+        bank, "2026-04-12", "Example Employer", 600.0, category="Salary"
+    )
+    db.update_spending_transaction(bonus, one_off=True)
+    p = ls.household_baseline(db, TODAY, _fx)["spending"]
+    assert p["by_tier_monthly_eur"]["optional"] == 200.0
+    assert p["income_monthly_eur"] == 3000.0
+    assert p["one_off_spend_monthly_eur"] == 200.0
+    assert p["one_off_income_monthly_eur"] == 100.0
+    assert any(
+        "one-off" in w for w in ls.household_baseline(db, TODAY, _fx)["warnings"]
+    )
