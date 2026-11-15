@@ -2787,6 +2787,42 @@ function createAPIClient() {
             if (!response.ok) throw new Error('Failed to load spending trend');
             return response.json();
         },
+        // Cost control: JSON GETs under /spending/ (compare, anomalies, tiers,
+        // forecast). Params with null/empty values are left out.
+        async _spendingGet(path, params, failMessage) {
+            const qs = new URLSearchParams();
+            Object.entries(params || {}).forEach(([key, value]) => {
+                if (value !== undefined && value !== null && value !== '') qs.append(key, value);
+            });
+            const query = qs.toString();
+            const response = await fetch(this.baseURL + '/api/v1/spending/' + path + (query ? '?' + query : ''), {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) throw new Error(errorDetailFromBody(await response.text(), failMessage));
+            return response.json();
+        },
+        async getSpendingCompare(params) {
+            return this._spendingGet('compare', params, 'Failed to load the comparison');
+        },
+        async getSpendingAnomalies(days = 60) {
+            return this._spendingGet('anomalies', { days }, 'Failed to load unusual charges');
+        },
+        async getSpendingTiers(months = 12) {
+            return this._spendingGet('tiers', { months }, 'Failed to load the spending tiers');
+        },
+        async getCashflowForecast(months = 12) {
+            return this._spendingGet('forecast', { months }, 'Failed to load the cash-flow forecast');
+        },
+        // One-off rows still count in every total; averages and baselines skip them.
+        async setSpendingOneOff(id, oneOff) {
+            const response = await fetch(this.baseURL + '/api/v1/spending/' + id, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify({ one_off: !!oneOff })
+            });
+            if (!response.ok) throw new Error(errorDetailFromBody(await response.text(), 'Failed to update the one-off flag'));
+            return response.json();
+        },
         async getSpendingCategoryBreakdown(parent, days) {
             const response = await fetch(
                 this.baseURL + `/api/v1/spending/categories/breakdown?parent=${encodeURIComponent(parent)}&days=${days}`,

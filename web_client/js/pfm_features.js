@@ -8106,6 +8106,7 @@ async function loadSpendingPage() {
     _wireSpendingImportModal();
     _wireSpCategoryCellEditing();
     _wireSpRecurringTab();
+    _wireSpOneOff();
     const periodSel = document.getElementById('spSummaryPeriod');
     if (periodSel) {
         // Reflect the persisted choice immediately, before the first
@@ -8289,6 +8290,7 @@ async function loadSpendingPage() {
         analyticsTabBtn.addEventListener('shown.bs.tab', () => {
             _renderSpTrendChart();
             _loadSpBreakdownLevel();
+            loadSpCostControl();
         });
     }
     const chartTypeBtn = document.getElementById('spCategoryChartTypeToggle');
@@ -8796,6 +8798,8 @@ async function _fetchAndRenderSpendingTable() {
     if (document.getElementById('spTransferFilter')?.value === 'unlinked') {
         params.transfer_linked = 'false';
     }
+    const oneOffFilter = document.getElementById('spOneOffFilter')?.value;
+    if (oneOffFilter === 'true' || oneOffFilter === 'false') params.one_off = oneOffFilter;
 
     let result;
     try {
@@ -8813,10 +8817,10 @@ async function _fetchAndRenderSpendingTable() {
                 <td class="ps-3"><input type="checkbox" class="form-check-input sp-row-check" data-id="${r.id}"></td>
                 <td>${Fmt.date(r.date)}</td>
                 <td>${esc(r.portfolio_name || '')}</td>
-                <td>${spDescriptionCellHtml(r)}</td>
+                <td>${spDescriptionCellHtml(r)}${spOneOffBadgeHtml(r)}</td>
                 <td class="sp-cat-cell" data-id="${r.id}" title="Click to change category" style="cursor:pointer;">${spCategoryCellInnerHtml(r)}</td>
                 <td class="text-end ${r.amount < 0 ? 'text-danger' : 'text-success'}">${Fmt.money(r.amount, r.currency, 2)}</td>
-                <td class="pe-3"></td>
+                <td class="pe-3 text-end">${spOneOffButtonHtml(r)}</td>
             </tr>`).join('') : '<tr><td colspan="7" class="text-center text-muted py-3">No transactions match the current filters.</td></tr>';
     }
     _updateSpBulkBar();
@@ -10300,7 +10304,9 @@ function budgetMonthRange(endMonth, count) {
  * Mirror of the service's planned_for_months, for the edit grid's preview.
  */
 function expandBudgetLineMonths(line, months) {
-    const base = Number(line && line.monthly_amount) || 0;
+    // A yearly line stores the YEARLY figure; each month sets a twelfth aside.
+    const stored = Number(line && line.monthly_amount) || 0;
+    const base = line && line.period === 'yearly' ? stored / 12 : stored;
     const overrides = (line && line.overrides) || {};
     const out = {};
     months.forEach(m => {
@@ -10432,14 +10438,17 @@ async function loadBudgetPage() {
     }
     const empty = document.getElementById('bgEmptyState');
     const main = document.getElementById('bgMain');
-    if (!window._bgBudgets.length) {
+    // The Forecast tab needs no budget, so the tabs stay; only the two that are
+    // about a budget's lines go away until one exists.
+    const hasBudget = window._bgBudgets.length > 0;
+    _bgShowBudgetTabs(hasBudget);
+    if (main) main.style.display = '';
+    if (!hasBudget) {
         if (empty) empty.style.display = '';
-        if (main) main.style.display = 'none';
         _renderBgScenarios();
         return;
     }
     if (empty) empty.style.display = 'none';
-    if (main) main.style.display = '';
 
     // Default to the active budget, but keep whatever the user picked if it
     // still exists — reloading the page shouldn't yank them back.
@@ -10453,6 +10462,27 @@ async function loadBudgetPage() {
     await _refreshBudgetData();
 }
 window.loadBudgetPage = loadBudgetPage;
+
+/**
+ * Show or hide the tabs that need a budget (Overview, Edit). With none, the
+ * Forecast tab takes over if the tab that was showing is gone.
+ */
+function _bgShowBudgetTabs(hasBudget) {
+    const wasHidden = window._bgBudgetTabsHidden === true;
+    ['bgTabItemOverview', 'bgTabItemEdit'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('d-none', !hasBudget);
+    });
+    window._bgBudgetTabsHidden = !hasBudget;
+    if (!window.bootstrap) return;
+    const pick = id => { const t = document.getElementById(id); if (t) new window.bootstrap.Tab(t).show(); };
+    if (!hasBudget) {
+        const active = document.querySelector('#bgTabs .nav-link.active');
+        if (!active || active.closest('.d-none')) pick('bgTabBtnForecast');
+    } else if (wasHidden) {
+        pick('bgTabBtnOverview');
+    }
+}
 
 function _renderBgBudgetSelect() {
     const select = document.getElementById('bgBudgetSelect');
@@ -10537,7 +10567,10 @@ function _renderBgKpis() {
     _renderBgNetBreakdown();
     setText('bgKpiPlannedLabel', `Planned spending (${suffix})`);
     setText('bgKpiActualLabel', `Actual spending (${suffix})`);
-    set('bgKpiPlanned', spending ? _bgEur(spending.planned_total) : '—');
+    // Variance is measured against what is available (planned plus anything
+    // carried over), so the planned tile shows the same figure.
+    const plan = spending ? (spending.available_total != null ? spending.available_total : spending.planned_total) : null;
+    set('bgKpiPlanned', spending ? _bgEur(plan) + (spending.available_total != null && Math.abs(spending.available_total - spending.planned_total) >= 0.005 ? ' <span class="small text-muted fw-normal" title="Planned plus what yearly funds and carry-over lines bring in">incl. carry</span>' : '') : '—');
     set('bgKpiActual', spending ? _bgEur(spending.actual_total) : '—');
     set('bgKpiVariance', spending ? _bgVarianceCell(spending.variance_eur, spending.favourable) : '—');
     set('bgKpiNet', `${_bgEur(variance.net.planned_total)} → ${_bgEur(variance.net.actual_total)} ${_bgVarianceCell(variance.net.variance_eur, variance.net.favourable)}`);
@@ -10582,25 +10615,40 @@ function _renderBgVariance() {
         return;
     }
 
-    area.innerHTML = missingNote + BG_SECTION_ORDER.map(key => {
+    const warningsNote = (variance.warnings && variance.warnings.length) ? `<div class="alert alert-warning py-2 small mb-3"><ul class="mb-0 ps-3">${variance.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></div>` : '';
+    const throughNote = variance.data_through ? `<div class="small text-muted mb-2"><i class="bi bi-calendar-check me-1"></i>Bank data through ${esc(Fmt.date(variance.data_through))}.</div>` : '';
+
+    area.innerHTML = throughNote + warningsNote + missingNote + BG_SECTION_ORDER.map(key => {
         const section = variance.sections.find(s => s.key === key);
         if (!section || (!section.lines.length && !section.unbudgeted.length)) return '';
-        const rows = section.lines.map(line => `
+        const rows = section.lines.map(line => {
+            const pace = paceMeta(line.pace);
+            const fund = fundText(line.fund);
+            const carried = line.carried_total;
+            return `
             <tr>
                 <td>
-                    <div>${esc(line.label)}</div>
+                    <div>${esc(line.label)}
+                        ${line.tier ? tierBadgeHtml(line.tier) : ''}
+                        ${line.period === 'yearly' ? ` <span class="badge text-bg-info" title="${escapeForAttr((window.METRIC_HELP || {}).budgetYearly || '')}">yearly</span>` : ''}
+                        ${line.rollover && line.period !== 'yearly' ? ` <span class="badge text-bg-info" title="${escapeForAttr((window.METRIC_HELP || {}).budgetRollover || '')}">carry over</span>` : ''}
+                    </div>
                     ${line.notes ? `<div class="text-muted small">${esc(line.notes)}</div>` : ''}
                     ${line.link_label ? `<div class="text-muted small">against ${_bgEur(line.link_amount_eur)} outstanding on ${esc(line.link_label)}</div>` : ''}
-                    ${_bgProgressBar(line.planned_total, line.actual_total, section.favourable_when_under)}
+                    ${fund ? `<div class="text-muted small"><i class="bi bi-piggy-bank me-1"></i>Fund ${esc(fund)} (yearly figure ${_bgEur(line.monthly_amount)})</div>` : ''}
+                    ${pace ? `<div class="small d-md-none"><span class="badge ${pace.badge}">${esc(pace.label)}</span> ${esc(pace.text)}</div>` : ''}
+                    ${_bgProgressBar(budgetLinePlan(line), line.actual_total, section.favourable_when_under)}
                 </td>
-                <td class="text-end">${_bgEur(line.planned_total)}</td>
+                <td class="text-end">${_bgEur(line.planned_total)}${budgetPlanDiffers(line) ? `<div class="small text-muted" title="Variance is measured against this">available ${_bgEur(budgetLinePlan(line))}${carried ? ` (carried ${Fmt.money(carried, 'EUR', 0)})` : ''}</div>` : ''}</td>
                 <td class="text-end">${_bgEur(line.actual_total)}</td>
                 <td class="text-end">${_bgVarianceCell(line.variance_eur, line.favourable)}</td>
                 <td class="text-end text-muted small">${line.variance_pct === null || line.variance_pct === undefined ? '—' : Fmt.num(line.variance_pct, 1, 1) + '%'}</td>
-            </tr>`).join('');
+                <td class="text-end small d-none d-md-table-cell">${pace ? `<span class="badge ${pace.badge}" title="${escapeForAttr(pace.text)}">${esc(pace.label)}</span><div class="text-muted">&rarr; ${esc(pace.projected)}</div>` : '<span class="text-muted">—</span>'}</td>
+            </tr>`;
+        }).join('');
 
         const suppressed = section.unbudgeted_suppressed ? `
-            <tr><td colspan="5" class="text-muted small">
+            <tr><td colspan="6" class="text-muted small">
                 <i class="bi bi-info-circle me-1"></i>Deposits into your brokers aren't listed
                 separately here: this budget measures contributions from the bank side, and the
                 outflow plus the deposit it funds are the same money.
@@ -10610,18 +10658,31 @@ function _renderBgVariance() {
         // adds up — the whole point of showing them.
         const unbudgeted = section.unbudgeted.map(item => `
             <tr class="table-warning-subtle">
-                <td class="text-muted"><i class="bi bi-exclamation-circle me-1"></i>${esc(item.label)} <span class="badge text-bg-light">not budgeted</span></td>
+                <td class="text-muted"><i class="bi bi-exclamation-circle me-1"></i>${esc(item.label)} ${item.tier ? tierBadgeHtml(item.tier) : ''} <span class="badge text-bg-light">not budgeted</span></td>
                 <td class="text-end text-muted">—</td>
                 <td class="text-end">${_bgEur(item.actual_total)}</td>
                 <td class="text-end text-muted">—</td>
                 <td class="text-end text-muted small">—</td>
+                <td class="d-none d-md-table-cell"></td>
             </tr>`).join('');
+
+        const sectionPace = paceMeta(section.pace);
+        const paceBanner = sectionPace ? `<div class="card-body py-2 border-bottom small">
+                <span class="badge ${sectionPace.badge} me-1">${esc(sectionPace.label)}</span>
+                <strong>This month:</strong> ${esc(sectionPace.text)} ${ccHelpIcon('budgetPace')}
+            </div>` : '';
+        const tierRows = section.key === 'spending' ? tierTotalsModel(section.tier_totals) : [];
+        const tierBanner = tierRows.length ? `<div class="card-body py-2 border-top small d-flex flex-wrap gap-3">
+                ${tierRows.map(t => `<span><span style="color:var(${CC_TIER_COLOR[t.tier]});">&#9632;</span> ${esc(t.label)} ${_bgEur(t.actual)}${t.planned ? ` <span class="text-muted">of ${_bgEur(t.planned)}</span>` : ''}</span>`).join('')}
+            </div>` : '';
+        const sectionPlan = section.available_total != null ? section.available_total : section.planned_total;
 
         return `<div class="card mb-3">
             <div class="card-header py-2 d-flex align-items-center justify-content-between">
                 <span class="fw-semibold small">${esc(section.label)}</span>
-                <span class="small">${_bgEur(section.actual_total)} of ${_bgEur(section.planned_total)} planned ${_bgVarianceCell(section.variance_eur, section.favourable)}</span>
+                <span class="small">${_bgEur(section.actual_total)} of ${_bgEur(sectionPlan)} planned ${_bgVarianceCell(section.variance_eur, section.favourable)}</span>
             </div>
+            ${paceBanner}
             <div class="card-body p-0">
                 <div class="table-responsive">
                     <table class="table table-sm mb-0 align-middle">
@@ -10631,11 +10692,13 @@ function _renderBgVariance() {
                             <th class="text-end">Actual</th>
                             <th class="text-end">Variance</th>
                             <th class="text-end">%</th>
+                            <th class="text-end d-none d-md-table-cell">Pace</th>
                         </tr></thead>
                         <tbody>${rows}${unbudgeted}${suppressed}</tbody>
                     </table>
                 </div>
             </div>
+            ${tierBanner}
         </div>`;
     }).join('');
 }
@@ -10672,7 +10735,10 @@ function _renderBgLines() {
             </td>
             <td class="text-end">
                 <span id="bgLineAmount${line.id}" data-value="${escapeForAttr(String(line.monthly_amount))}">${_bgEur(line.monthly_amount)}</span>
+                <span class="text-muted small">${esc(budgetAmountSuffix(line.period))}</span>
+                ${line.period === 'yearly' ? `<div class="text-muted small">${_bgEur(budgetMonthlyShare(line.monthly_amount, line.period))} set aside a month</div>` : ''}
                 ${overrideCount ? `<div class="text-muted small">${overrideCount} month${overrideCount === 1 ? '' : 's'} overridden</div>` : ''}
+                ${_bgFundControlsHtml(line)}
             </td>
             <td class="text-muted small">${esc(line.notes || '')}</td>
             <td class="text-end text-nowrap">
@@ -10682,6 +10748,60 @@ function _renderBgLines() {
             </td>
         </tr>`;
     }).join('');
+}
+
+/**
+ * Period and carry-over controls for a cost line. Income and investment lines
+ * get none: the server refuses a yearly or carry-over line of those types.
+ */
+function _bgFundControlsHtml(line) {
+    if (!budgetFundControlsAllowed(line.line_type)) return '';
+    const yearly = line.period === 'yearly';
+    return `<div class="d-flex flex-wrap justify-content-end align-items-center gap-2 mt-1">
+        <select class="form-select form-select-sm bg-line-period" data-line-id="${line.id}" style="width:auto;" aria-label="Amount period">
+            <option value="monthly" ${yearly ? '' : 'selected'}>per month</option>
+            <option value="yearly" ${yearly ? 'selected' : ''}>per year</option>
+        </select>
+        ${yearly ? '<span class="small text-muted">fund carries over</span>' : `<label class="small mb-0 text-nowrap"><input type="checkbox" class="form-check-input bg-line-rollover me-1" data-line-id="${line.id}" ${line.rollover ? 'checked' : ''}>carry over</label>`}
+    </div>`;
+}
+
+/** One delegated listener for the period / carry-over controls in the Edit table. */
+function _wireBgFundControls() {
+    const body = document.getElementById('bgLinesBody');
+    if (!body || body.dataset.fundWired) return;
+    body.dataset.fundWired = '1';
+    body.addEventListener('change', async e => {
+        const period = e.target.closest('.bg-line-period');
+        const rollover = e.target.closest('.bg-line-rollover');
+        if (!period && !rollover) return;
+        const el = period || rollover;
+        const payload = period ? { period: period.value } : { rollover: rollover.checked };
+        try {
+            await window.apiClient.updateBudgetLine(window._bgSelectedId, parseInt(el.dataset.lineId, 10), payload);
+            _bgStatus(period
+                ? (period.value === 'yearly' ? 'Line is now yearly: its amount is the yearly figure.' : 'Line is now monthly.')
+                : (rollover.checked ? 'Leftovers now carry over within the year.' : 'Carry over switched off.'), 'success');
+        } catch (err) {
+            _bgStatus(err.message, 'danger');
+        }
+        await _refreshBudgetData();
+    });
+}
+
+/** Reflect the Add form's type and period choices: label, fund row visibility. */
+function _bgSyncNewLineFundRow() {
+    const type = (document.getElementById('bgNewLineType') || {}).value || 'spending';
+    const period = (document.getElementById('bgNewLinePeriod') || {}).value || 'monthly';
+    const row = document.getElementById('bgNewLineFundRow');
+    const allowed = budgetFundControlsAllowed(type);
+    if (row) row.classList.toggle('d-none', !allowed);
+    const wrap = document.getElementById('bgNewLineRolloverWrap');
+    if (wrap) wrap.classList.toggle('d-none', period === 'yearly');
+    const label = document.getElementById('bgNewLineAmountLabel');
+    if (label) label.textContent = allowed && period === 'yearly' ? '€ / year' : '€ / month';
+    ccApplyHelpTitle('bgNewLinePeriodHelp', 'budgetYearly');
+    ccApplyHelpTitle('bgNewLineRolloverHelp', 'budgetRollover');
 }
 
 /**
@@ -10822,7 +10942,7 @@ function _renderBgScenarios() {
         body.innerHTML = window._bgBudgets.map((budget, index) => {
             const totals = { income: 0, spending: 0, debt: 0, investment: 0 };
             allLines[index].forEach(line => {
-                totals[line.line_type] = (totals[line.line_type] || 0) + (Number(line.monthly_amount) || 0);
+                totals[line.line_type] = (totals[line.line_type] || 0) + budgetMonthlyShare(line.monthly_amount, line.period);
             });
             const net = totals.income - totals.spending - totals.debt - totals.investment;
             return `<tr${budget.id === window._bgSelectedId ? ' class="table-active"' : ''}>
@@ -11109,13 +11229,21 @@ async function _bgAddLine() {
             return;
         }
     }
+    const payload = {
+        line_type: type,
+        ref_key: refKey,
+        // For a yearly line this is the YEARLY figure.
+        monthly_amount: amount,
+        notes: notesEl.value.trim() || null,
+    };
+    // period / rollover are only valid on spending and debt lines (400 otherwise)
+    if (budgetFundControlsAllowed(type)) {
+        const period = (document.getElementById('bgNewLinePeriod') || {}).value || 'monthly';
+        if (period === 'yearly') payload.period = 'yearly';
+        else if ((document.getElementById('bgNewLineRollover') || {}).checked) payload.rollover = true;
+    }
     try {
-        await window.apiClient.createBudgetLine(window._bgSelectedId, {
-            line_type: type,
-            ref_key: refKey,
-            monthly_amount: amount,
-            notes: notesEl.value.trim() || null,
-        });
+        await window.apiClient.createBudgetLine(window._bgSelectedId, payload);
         amountEl.value = '';
         notesEl.value = '';
         document.getElementById('bgNewLineRef').value = '';
@@ -11267,7 +11395,12 @@ function _wireBudgetPage() {
         const nameEl = document.getElementById('bgNewName');
         if (nameEl) nameEl.focus();
     });
+    wire('bgNewLinePeriod', 'change', _bgSyncNewLineFundRow);
+    _wireBgFundControls();
+    _wireBgForecast();
+    _bgSyncNewLineFundRow();
     wire('bgNewLineType', 'change', e => {
+        _bgSyncNewLineFundRow();
         const isInvestment = e.target.value === 'investment';
         const refEl = document.getElementById('bgNewLineRef');
         const portfolioEl = document.getElementById('bgNewLinePortfolio');
@@ -11277,6 +11410,941 @@ function _wireBudgetPage() {
         if (labelEl) labelEl.textContent = isInvestment ? 'Destination' : 'Category';
         _renderBgCategoryDatalist();
     });
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Cost control: comparison, unusual charges, tiers, one-offs, budget pace /
+// yearly funds, and the cash-flow forecast tab. Pure helpers come first
+// (window-exported, tested in tests/cost_control.test.mjs); the DOM code
+// follows. Rules the backend sets and this code must not undo:
+//   - a null figure is "not available", never 0 and never a green number;
+//   - a comparison or a pace exists only for months with imported statements.
+// ─────────────────────────────────────────────────────────────────────────
+
+const CC_NA = 'not available';
+
+/** EUR amount, or the words "not available" for a null/undefined/NaN figure. */
+function ccMoney(value, decimals = 0) {
+    if (value === null || value === undefined || value === '' || Number.isNaN(Number(value))) return CC_NA;
+    return Fmt.money(Number(value), 'EUR', decimals);
+}
+
+/** Signed EUR amount ("+€12" / "−€12"), or "not available". */
+function ccSignedMoney(value, decimals = 0) {
+    if (value === null || value === undefined || value === '' || Number.isNaN(Number(value))) return CC_NA;
+    const n = Number(value);
+    if (Math.abs(n) < 0.005) return Fmt.money(0, 'EUR', decimals);
+    return (n > 0 ? '+' : '−') + Fmt.money(Math.abs(n), 'EUR', decimals);
+}
+
+function ccHelpIcon(key) {
+    const text = (window.METRIC_HELP || {})[key] || '';
+    return `<i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip" title="${escapeForAttr(text)}"></i>`;
+}
+
+/** Point a static info icon at its METRIC_HELP sentence. */
+function ccApplyHelpTitle(id, key) {
+    const el = document.getElementById(id);
+    if (el) el.setAttribute('title', (window.METRIC_HELP || {})[key] || '');
+}
+
+// ── Comparison ──────────────────────────────────────────────────────────────
+
+const CC_COMPARE_STATUS = {
+    complete: { label: 'Complete month', tone: 'success', compares: true },
+    in_progress: { label: 'Month in progress', tone: 'warning', compares: false },
+    partial: { label: 'Imported data ends early', tone: 'warning', compares: false },
+    no_imports: { label: 'Nothing imported', tone: 'secondary', compares: false },
+};
+
+function compareStatusMeta(status) {
+    return CC_COMPARE_STATUS[status] || { label: String(status || 'Unknown'), tone: 'secondary', compares: false };
+}
+
+/**
+ * Colour class for a spending delta. Lower than normal is good, higher is bad;
+ * an unknown delta (null) is neutral, never green.
+ */
+function compareDeltaClass(delta) {
+    if (delta === null || delta === undefined || Number.isNaN(Number(delta))) return 'text-muted';
+    const n = Number(delta);
+    if (Math.abs(n) < 0.005) return 'text-muted';
+    return n < 0 ? 'text-success' : 'text-danger';
+}
+
+/**
+ * Turn a /spending/compare response into text-ready rows.
+ *
+ * Deltas are shown only when the backend sent them (complete month). A month
+ * that cannot be compared keeps its reason in `notice` and its rows show a dash
+ * in the delta columns.
+ */
+function compareRowsModel(data, limit) {
+    const d = data || {};
+    const meta = compareStatusMeta(d.status);
+    const items = Array.isArray(d.items) ? d.items : [];
+    const max = limit && limit > 0 ? limit : items.length;
+    const shown = items.slice(0, max);
+    const totals = d.totals || {};
+    const dash = '—';
+    const pctText = pct => (pct === null || pct === undefined ? dash : `${pct > 0 ? '+' : (pct < 0 ? '−' : '')}${Math.abs(Number(pct)).toFixed(1)}%`);
+    return {
+        status: d.status || null,
+        meta,
+        compares: !!meta.compares,
+        month: d.month || null,
+        dataThrough: d.data_through || null,
+        notice: Array.isArray(d.warnings) ? d.warnings.join(' ') : '',
+        baselineMonths: d.baseline_months || [],
+        totals: {
+            actual: ccMoney(totals.actual_eur),
+            baseline: ccMoney(totals.baseline_eur),
+            lastYear: ccMoney(totals.last_year_eur),
+            delta: totals.delta_eur === null || totals.delta_eur === undefined ? dash : ccSignedMoney(totals.delta_eur),
+            deltaPct: pctText(totals.delta_pct),
+            deltaClass: compareDeltaClass(totals.delta_eur),
+            oneOff: Number(totals.one_off_eur) > 0 ? ccMoney(totals.one_off_eur) : null,
+            savings: totals.savings_eur === null || totals.savings_eur === undefined ? null : ccMoney(totals.savings_eur),
+        },
+        rows: shown.map(it => ({
+            name: it.name,
+            tier: it.tier || null,
+            actual: ccMoney(it.actual_eur),
+            baseline: ccMoney(it.baseline_eur),
+            lastYear: ccMoney(it.last_year_eur),
+            delta: it.delta_eur === null || it.delta_eur === undefined ? dash : ccSignedMoney(it.delta_eur),
+            deltaPct: pctText(it.delta_pct),
+            deltaClass: compareDeltaClass(it.delta_eur),
+            oneOff: Number(it.one_off_eur) > 0 ? ccMoney(it.one_off_eur) : null,
+        })),
+        hidden: Math.max(0, items.length - shown.length),
+    };
+}
+
+/** The last `count` months ending at `currentMonth` ("YYYY-MM"), newest first. */
+function ccMonthChoices(currentMonth, count) {
+    return budgetMonthRange(currentMonth, count).reverse();
+}
+
+/** The month before `month` ("YYYY-MM"): the default comparison month. */
+function ccPreviousMonth(month) {
+    return budgetMonthRange(month, 2)[0];
+}
+
+// ── Unusual charges ─────────────────────────────────────────────────────────
+
+const CC_ANOMALY_KINDS = {
+    large_charge: { label: 'Large charge', badge: 'text-bg-danger' },
+    new_merchant: { label: 'New merchant', badge: 'text-bg-warning' },
+    category_spike: { label: 'Category spike', badge: 'text-bg-warning' },
+    possible_duplicate: { label: 'Possible duplicate', badge: 'text-bg-info' },
+};
+
+function anomalyKindMeta(kind) {
+    return CC_ANOMALY_KINDS[kind] || { label: String(kind || 'Unusual'), badge: 'text-bg-secondary' };
+}
+
+/**
+ * Items not waved away. The id of an anomaly is the id of its Action Item, so
+ * the server-side follow-up state (checked / snoozed) applies to both lists.
+ */
+function anomalyVisibleItems(items, acks, today) {
+    return (items || []).filter(item => !ackIsActive((acks || {})[item.id], today));
+}
+
+/** Only an anomaly that points at bank rows can be marked one-off. */
+function anomalyOneOffIds(item) {
+    const ids = item && Array.isArray(item.transaction_ids) ? item.transaction_ids : [];
+    return ids.filter(id => Number.isInteger(id));
+}
+
+function anomalyOneOffLabel(item) {
+    return anomalyOneOffIds(item).length > 1 ? 'Mark both one-off' : 'Mark one-off';
+}
+
+// ── Tiers ───────────────────────────────────────────────────────────────────
+
+const CC_TIERS = ['fixed', 'flexible', 'optional', 'unclassified'];
+const CC_TIER_LABEL = { fixed: 'Fixed', flexible: 'Flexible', optional: 'Optional', unclassified: 'Unclassified' };
+// Colour follows the tier, never its rank.
+const CC_TIER_COLOR = {
+    fixed: '--viz-1',
+    flexible: '--viz-3',
+    optional: '--viz-4',
+    unclassified: '--viz-neutral',
+};
+
+function tierMeta(tier) {
+    return {
+        tier,
+        label: CC_TIER_LABEL[tier] || String(tier || 'Unclassified'),
+        cssVar: CC_TIER_COLOR[tier] || '--viz-other',
+    };
+}
+
+/**
+ * Small coloured pill for a category/line tier. Empty for none and for
+ * 'unclassified': most categories start unmarked, and a pill on every row is
+ * noise (the totals strip still counts them under Unclassified).
+ */
+function tierBadgeHtml(tier) {
+    if (!tier || tier === 'unclassified') return '';
+    const meta = tierMeta(tier);
+    return `<span class="badge text-bg-light border" style="border-left:3px solid var(${meta.cssVar}) !important;" title="Essentiality: ${esc(meta.label)}">${esc(meta.label)}</span>`;
+}
+
+/**
+ * Chart data for /spending/tiers. A month with no imported statement is null
+ * (a gap), not a zero bar: a missing statement is not a month of no spending.
+ */
+function tierChartModel(tiers) {
+    const months = Array.isArray(tiers) ? tiers : [];
+    const labels = months.map(m => monthKeyLabel(m.month) + (m.in_progress ? ' (so far)' : ''));
+    const datasets = CC_TIERS.map(tier => ({
+        tier,
+        label: CC_TIER_LABEL[tier],
+        cssVar: CC_TIER_COLOR[tier],
+        data: months.map(m => (m.has_imports ? Number(m[`${tier}_eur`]) || 0 : null)),
+    }));
+    return {
+        labels,
+        datasets,
+        hasData: months.some(m => m.has_imports),
+        savings: months.map(m => (m.has_imports ? Number(m.savings_eur) || 0 : null)),
+    };
+}
+
+/**
+ * The month whose top categories are listed under the chart: the latest
+ * complete month with imports, else the month in progress.
+ */
+function tierTopModel(tiers) {
+    const months = (Array.isArray(tiers) ? tiers : []).filter(m => m.has_imports);
+    if (!months.length) return null;
+    const complete = months.filter(m => !m.in_progress);
+    const month = complete.length ? complete[complete.length - 1] : months[months.length - 1];
+    return {
+        month: month.month,
+        inProgress: !!month.in_progress,
+        total: Number(month.total_eur) || 0,
+        columns: CC_TIERS.map(tier => ({
+            tier,
+            label: CC_TIER_LABEL[tier],
+            amount: Number(month[`${tier}_eur`]) || 0,
+            items: ((month.top_categories || {})[tier] || []).map(c => ({ name: c.name, amount: Number(c.amount_eur) || 0 })),
+        })),
+    };
+}
+
+/** Budget tier totals as rows, leaving out tiers with nothing in them. */
+function tierTotalsModel(tierTotals) {
+    const t = tierTotals || {};
+    return CC_TIERS
+        .filter(tier => t[tier] && (Number(t[tier].planned_eur) || Number(t[tier].actual_eur)))
+        .map(tier => ({
+            tier,
+            label: CC_TIER_LABEL[tier],
+            planned: Number(t[tier].planned_eur) || 0,
+            actual: Number(t[tier].actual_eur) || 0,
+        }));
+}
+
+// ── Budget: pace, yearly funds, carry-over ──────────────────────────────────
+
+const CC_PACE_STATUS = {
+    on_track: { label: 'On track', badge: 'text-bg-success' },
+    at_risk: { label: 'At risk', badge: 'text-bg-warning' },
+    over: { label: 'Over', badge: 'text-bg-danger' },
+};
+
+/** Badge and sentence for a line's (or the section's) pace; null when there is none. */
+function paceMeta(pace) {
+    if (!pace || !pace.status) return null;
+    const meta = CC_PACE_STATUS[pace.status] || { label: String(pace.status), badge: 'text-bg-secondary' };
+    const projected = ccMoney(pace.projected_month_end_eur);
+    const limit = ccMoney(pace.limit_eur);
+    const through = pace.data_through ? ` Data through ${Fmt.date(pace.data_through)}.` : '';
+    const text = pace.status === 'over'
+        ? `Already over: ${ccMoney(pace.actual_to_date_eur)} spent of ${limit}, heading for ${projected} by month end.${through}`
+        : `Heading for ${projected} of ${limit} by month end.${through}`;
+    return { status: pace.status, label: meta.label, badge: meta.badge, projected, limit, text };
+}
+
+/** "2026: set aside €x, spent €y, left €z", or null for a line without a fund. */
+function fundText(fund) {
+    if (!fund) return null;
+    return `${fund.year}: set aside ${ccMoney(fund.set_aside_eur)}, spent ${ccMoney(fund.spent_eur)}, left ${ccMoney(fund.remaining_eur)}`;
+}
+
+/** What a line's variance is measured against: available when it carries over. */
+function budgetLinePlan(line) {
+    if (!line) return 0;
+    const available = line.available_total;
+    return available === null || available === undefined ? Number(line.planned_total) || 0 : Number(available) || 0;
+}
+
+/** True when the plan differs from the planned total (carry or fund brought in). */
+function budgetPlanDiffers(line) {
+    return Math.abs(budgetLinePlan(line) - (Number(line && line.planned_total) || 0)) >= 0.005;
+}
+
+/** A yearly line's monthly share; a monthly line's own amount. */
+function budgetMonthlyShare(amount, period) {
+    const n = Number(amount) || 0;
+    return period === 'yearly' ? n / 12 : n;
+}
+
+function budgetAmountSuffix(period) {
+    return period === 'yearly' ? 'per year' : 'per month';
+}
+
+/** Only cost lines can be yearly or carry over (the server refuses the rest). */
+function budgetFundControlsAllowed(lineType) {
+    return lineType === 'spending' || lineType === 'debt';
+}
+
+// ── Forecast ────────────────────────────────────────────────────────────────
+
+/** Each account's freshness as text-ready rows. */
+function forecastAccountsModel(forecast) {
+    return ((forecast && forecast.accounts) || []).map(a => ({
+        name: a.name,
+        through: a.data_through ? Fmt.date(a.data_through) : null,
+        daysBehind: a.days_behind,
+        stale: !!a.stale,
+        balance: ccMoney(a.balance_eur),
+        balanceDate: a.balance_date ? Fmt.date(a.balance_date) : null,
+        text: a.data_through
+            ? `data through ${Fmt.date(a.data_through)}${a.days_behind != null ? ` (${a.days_behind} day${a.days_behind === 1 ? '' : 's'} ago)` : ''}`
+            : 'no statement imported',
+    }));
+}
+
+/** This month's projection as labelled lines plus a status banner. */
+function forecastThisMonthModel(forecast) {
+    const tm = (forecast && forecast.this_month) || {};
+    const range = tm.range || {};
+    let banner = null;
+    if (tm.status === 'no_imports') banner = `Nothing is imported for ${tm.month || 'this month'} yet: the month is projected from the baseline and the recurring charges alone.`;
+    else if (tm.status === 'no_baseline') banner = 'There is no baseline (a complete month of statements) to project everyday spending and income from, so those figures are not available.';
+    const line = (label, value, signed) => ({ label, text: signed ? ccSignedMoney(value) : ccMoney(value), missing: value === null || value === undefined });
+    return {
+        month: tm.month || null,
+        status: tm.status || null,
+        banner,
+        through: tm.data_through ? Fmt.date(tm.data_through) : null,
+        elapsedShare: tm.elapsed_share,
+        lines: [
+            line('Spent so far', tm.spent_to_date_eur),
+            line('Recurring still to come', tm.recurring_remaining_eur),
+            line('Everyday spending for the rest', tm.variable_remaining_eur),
+            line('Projected spending', tm.projected_spending_eur),
+            line('Projected income', tm.projected_income_eur),
+            line('Projected net', tm.projected_net_eur, true),
+            line('Balance at month end', tm.projected_balance_end_eur),
+        ],
+        rangeText: range.spending_low_eur === null || range.spending_low_eur === undefined || range.spending_high_eur === null || range.spending_high_eur === undefined
+            ? null
+            : `Spending between ${ccMoney(range.spending_low_eur)} and ${ccMoney(range.spending_high_eur)}`,
+        netClass: tm.projected_net_eur === null || tm.projected_net_eur === undefined ? 'text-muted' : (tm.projected_net_eur < 0 ? 'text-danger' : 'text-success'),
+    };
+}
+
+/** Rows of the month-by-month table; a null figure reads "not available". */
+function forecastTableRows(forecast) {
+    return ((forecast && forecast.next_months) || []).map(m => ({
+        month: m.month,
+        label: monthKeyLabel(m.month),
+        income: ccMoney(m.income_eur),
+        recurring: ccMoney(m.recurring_eur),
+        variable: ccMoney(m.variable_eur),
+        savings: ccMoney(m.savings_eur),
+        net: ccSignedMoney(m.net_eur),
+        netClass: m.net_eur === null || m.net_eur === undefined ? 'text-muted' : (m.net_eur < 0 ? 'text-danger' : 'text-success'),
+        balance: ccMoney(m.projected_balance_eur),
+        below: !!m.balance_below_zero,
+        billCount: m.known_bill_count || 0,
+    }));
+}
+
+/** Upcoming bills as rows, optionally capped. */
+function forecastBillRows(forecast, limit) {
+    const bills = (forecast && forecast.known_bills) || [];
+    const shown = limit && limit > 0 ? bills.slice(0, limit) : bills;
+    return {
+        rows: shown.map(b => ({
+            date: Fmt.date(b.date),
+            merchant: b.merchant,
+            cadence: b.cadence ? recurringCadenceLabel(b.cadence) : '',
+            account: b.account_name || '',
+            amount: ccMoney(b.amount_eur, 2),
+            savings: b.kind === 'savings',
+        })),
+        hidden: Math.max(0, bills.length - shown.length),
+    };
+}
+
+/**
+ * Points for the balance chart: the projected balance at the end of this month,
+ * then each following month. A null balance stays null (a gap in the line).
+ */
+function forecastBalancePoints(forecast) {
+    if (!forecast) return [];
+    const tm = forecast.this_month || {};
+    const points = [];
+    if (tm.month) points.push({ label: `${monthKeyLabel(tm.month)} (end)`, value: tm.projected_balance_end_eur === undefined ? null : tm.projected_balance_end_eur });
+    ((forecast.next_months) || []).forEach(m => points.push({ label: monthKeyLabel(m.month), value: m.projected_balance_eur === undefined ? null : m.projected_balance_eur }));
+    return points;
+}
+
+/** Sentence for the first month the balance goes below zero, or null. */
+function forecastBelowZeroText(forecast) {
+    if (!forecast || !forecast.first_below_zero) return null;
+    return `The projected balance goes below zero in ${monthKeyLabel(forecast.first_below_zero)}.`;
+}
+
+window.ccMoney = ccMoney;
+window.ccSignedMoney = ccSignedMoney;
+window.compareStatusMeta = compareStatusMeta;
+window.compareDeltaClass = compareDeltaClass;
+window.compareRowsModel = compareRowsModel;
+window.ccMonthChoices = ccMonthChoices;
+window.ccPreviousMonth = ccPreviousMonth;
+window.anomalyKindMeta = anomalyKindMeta;
+window.anomalyVisibleItems = anomalyVisibleItems;
+window.anomalyOneOffIds = anomalyOneOffIds;
+window.anomalyOneOffLabel = anomalyOneOffLabel;
+window.tierMeta = tierMeta;
+window.tierBadgeHtml = tierBadgeHtml;
+window.tierChartModel = tierChartModel;
+window.tierTopModel = tierTopModel;
+window.tierTotalsModel = tierTotalsModel;
+window.paceMeta = paceMeta;
+window.fundText = fundText;
+window.budgetLinePlan = budgetLinePlan;
+window.budgetPlanDiffers = budgetPlanDiffers;
+window.budgetMonthlyShare = budgetMonthlyShare;
+window.budgetAmountSuffix = budgetAmountSuffix;
+window.budgetFundControlsAllowed = budgetFundControlsAllowed;
+window.forecastAccountsModel = forecastAccountsModel;
+window.forecastThisMonthModel = forecastThisMonthModel;
+window.forecastTableRows = forecastTableRows;
+window.forecastBillRows = forecastBillRows;
+window.forecastBalancePoints = forecastBalancePoints;
+window.forecastBelowZeroText = forecastBelowZeroText;
+
+// One-off flag helpers for the Transactions table.
+function spOneOffBadgeHtml(row) {
+    return row && row.one_off
+        ? ' <span class="badge text-bg-warning-subtle border" title="One-off: counts in totals, left out of averages and baselines">one-off</span>'
+        : '';
+}
+function spOneOffButtonHtml(row) {
+    const on = !!(row && row.one_off);
+    const label = on ? 'One-off: click to count it as normal spending again' : 'Mark as one-off (a payment that will not repeat)';
+    return `<button type="button" class="btn btn-sm btn-link p-0 sp-oneoff-btn ${on ? 'text-warning' : 'text-muted'}" data-id="${Number(row.id)}" title="${escapeForAttr(label)}" aria-label="${escapeForAttr(label)}"><i class="bi bi-flag${on ? '-fill' : ''}"></i></button>`;
+}
+window.spOneOffBadgeHtml = spOneOffBadgeHtml;
+window.spOneOffButtonHtml = spOneOffButtonHtml;
+
+// ── Spending › Analytics: comparison, unusual charges, tiers ────────────────
+
+window._spCmp = { group: 'category', showAll: false, data: null };
+let _spTierChartInstance = null;
+
+function _ccCurrentMonth() {
+    return localIsoDay().slice(0, 7);
+}
+
+function _ccFillMonthPicker() {
+    const sel = document.getElementById('spCmpMonth');
+    if (!sel || sel.dataset.filled) return;
+    sel.dataset.filled = '1';
+    const current = _ccCurrentMonth();
+    const choices = ccMonthChoices(current, 13);
+    sel.innerHTML = choices.map(m => `<option value="${m}">${esc(monthKeyLabel(m))}${m === current ? ' (in progress)' : ''}</option>`).join('');
+    sel.value = ccPreviousMonth(current);
+}
+
+function _renderSpCompare() {
+    const body = document.getElementById('spCmpBody');
+    if (!body) return;
+    const model = compareRowsModel(window._spCmp.data, window._spCmp.showAll ? 0 : 12);
+    const groupLabel = window._spCmp.group === 'merchant' ? 'Merchant' : 'Category';
+    const notice = !model.compares && model.notice
+        ? `<div class="alert alert-${model.meta.tone === 'secondary' ? 'secondary' : 'warning'} py-2 small mb-3"><i class="bi bi-info-circle me-1"></i><strong>${esc(model.meta.label)}.</strong> ${esc(model.notice)}</div>`
+        : (model.notice ? `<div class="alert alert-info py-2 small mb-3"><i class="bi bi-info-circle me-1"></i>${esc(model.notice)}</div>` : '');
+    if (model.status === 'no_imports') {
+        body.innerHTML = notice;
+        return;
+    }
+    const t = model.totals;
+    const actualLabel = model.status === 'in_progress' ? 'So far' : 'Spent';
+    const summary = `
+        <div class="row g-2 mb-3 text-center">
+            <div class="col-6 col-md-3"><div class="small text-muted">${actualLabel}</div><div class="fw-bold">${esc(t.actual)}</div></div>
+            <div class="col-6 col-md-3"><div class="small text-muted">Normal${model.baselineMonths.length ? ` (${model.baselineMonths.length} mo)` : ''}</div><div class="fw-bold">${esc(t.baseline)}</div></div>
+            <div class="col-6 col-md-3"><div class="small text-muted">Same month last year</div><div class="fw-bold">${esc(t.lastYear)}</div></div>
+            <div class="col-6 col-md-3"><div class="small text-muted">Difference</div><div class="fw-bold ${t.deltaClass}">${esc(t.delta)}${t.deltaPct !== '—' ? ` <span class="small">(${esc(t.deltaPct)})</span>` : ''}</div></div>
+        </div>
+        ${t.oneOff ? `<div class="small text-muted mb-1">Includes ${esc(t.oneOff)} marked one-off: it counts in what was spent but is left out of the normal.</div>` : ''}
+        ${t.savings !== null ? `<div class="small text-muted mb-2">Set aside apart from spending (Invest, House purchase): ${esc(t.savings)}.</div>` : ''}`;
+    const rows = model.rows.map(r => `
+        <tr>
+            <td class="ps-3">${esc(r.name)}${r.tier ? ' ' + tierBadgeHtml(r.tier) : ''}${r.oneOff ? ` <span class="small text-muted">(${esc(r.oneOff)} one-off)</span>` : ''}</td>
+            <td class="text-end">${esc(r.actual)}</td>
+            <td class="text-end">${esc(r.baseline)}</td>
+            <td class="text-end d-none d-md-table-cell">${esc(r.lastYear)}</td>
+            <td class="text-end ${r.deltaClass}">${esc(r.delta)}</td>
+            <td class="text-end pe-3 ${r.deltaClass} d-none d-sm-table-cell">${esc(r.deltaPct)}</td>
+        </tr>`).join('');
+    const more = model.hidden
+        ? `<div class="px-3 py-2 border-top"><button type="button" class="btn btn-sm btn-link p-0" id="spCmpShowAll">Show all ${model.rows.length + model.hidden} rows</button></div>`
+        : (window._spCmp.showAll && model.rows.length > 12 ? '<div class="px-3 py-2 border-top"><button type="button" class="btn btn-sm btn-link p-0" id="spCmpShowAll">Show fewer</button></div>' : '');
+    body.innerHTML = `${notice}${summary}
+        <div class="table-responsive mx-n3">
+            <table class="table table-sm mb-0 align-middle">
+                <thead><tr>
+                    <th class="ps-3">${groupLabel}</th>
+                    <th class="text-end">${actualLabel}</th>
+                    <th class="text-end">Normal</th>
+                    <th class="text-end d-none d-md-table-cell">Last year</th>
+                    <th class="text-end">Δ €</th>
+                    <th class="text-end pe-3 d-none d-sm-table-cell">Δ %</th>
+                </tr></thead>
+                <tbody>${rows || '<tr><td colspan="6" class="text-center text-muted py-3">No spending in this month.</td></tr>'}</tbody>
+            </table>
+        </div>${more}`;
+    const toggle = document.getElementById('spCmpShowAll');
+    if (toggle) toggle.addEventListener('click', () => {
+        window._spCmp.showAll = !window._spCmp.showAll;
+        _renderSpCompare();
+    });
+}
+
+async function loadSpCompare() {
+    const body = document.getElementById('spCmpBody');
+    if (!body) return;
+    _ccFillMonthPicker();
+    const month = (document.getElementById('spCmpMonth') || {}).value || '';
+    const baseline = (document.getElementById('spCmpBaseline') || {}).value || '6';
+    body.innerHTML = '<div class="text-muted small">Loading…</div>';
+    try {
+        window._spCmp.data = await window.apiClient.getSpendingCompare({
+            month, baseline_months: baseline, group_by: window._spCmp.group,
+        });
+        window._spCmp.showAll = false;
+        _renderSpCompare();
+    } catch (err) {
+        body.innerHTML = `<div class="text-danger small">${esc(err.message)}</div>`;
+    }
+}
+window.loadSpCompare = loadSpCompare;
+
+async function loadSpAnomalies() {
+    const body = document.getElementById('spAnomBody');
+    const meta = document.getElementById('spAnomMeta');
+    if (!body) return;
+    body.innerHTML = '<div class="card-body text-muted small">Loading…</div>';
+    try {
+        const [data, acks] = await Promise.all([
+            window.apiClient.getSpendingAnomalies(60),
+            window.apiClient.getActionItemAcks().catch(() => ({})),
+        ]);
+        const items = anomalyVisibleItems(data.items, acks, localIsoDay());
+        window._spAnomalies = items;
+        if (meta) meta.textContent = data.data_through ? `Data through ${Fmt.date(data.data_through)}` : 'No statement imported';
+        if (!items.length) {
+            body.innerHTML = `<div class="card-body text-muted small">${data.items && data.items.length ? 'Everything flagged has been dismissed.' : 'Nothing unusual in the last 60 days.'}</div>`;
+            return;
+        }
+        body.innerHTML = '<div class="list-group list-group-flush">' + items.map(item => {
+            const kind = anomalyKindMeta(item.kind);
+            const canOneOff = anomalyOneOffIds(item).length > 0;
+            return `<div class="list-group-item d-flex flex-wrap justify-content-between align-items-start gap-2" data-anomaly-id="${escapeForAttr(item.id)}">
+                <div style="min-width:0;">
+                    <span class="badge ${kind.badge} me-2">${esc(kind.label)}</span><span class="text-muted small">${esc(Fmt.date(item.date))}</span>
+                    <div>${esc(item.detail || '')}</div>
+                </div>
+                <div class="d-flex gap-1 flex-shrink-0">
+                    ${canOneOff ? `<button type="button" class="btn btn-sm btn-outline-secondary sp-anom-oneoff" data-anomaly-id="${escapeForAttr(item.id)}"><i class="bi bi-flag me-1"></i>${esc(anomalyOneOffLabel(item))}</button>` : ''}
+                    <button type="button" class="btn btn-sm btn-outline-secondary sp-anom-dismiss" data-anomaly-id="${escapeForAttr(item.id)}"><i class="bi bi-check2 me-1"></i>Dismiss</button>
+                </div>
+            </div>`;
+        }).join('') + '</div>';
+    } catch (err) {
+        body.innerHTML = `<div class="card-body text-danger small">${esc(err.message)}</div>`;
+    }
+}
+window.loadSpAnomalies = loadSpAnomalies;
+
+async function _spAnomalyAction(button) {
+    const id = button.dataset.anomalyId;
+    const item = (window._spAnomalies || []).find(i => i.id === id);
+    if (!item) return;
+    button.disabled = true;
+    try {
+        if (button.classList.contains('sp-anom-oneoff')) {
+            for (const txId of anomalyOneOffIds(item)) await window.apiClient.setSpendingOneOff(txId, true);
+            notify('Marked as one-off. It still counts in your totals but no longer in normal spending.', 'success');
+            // One-offs change the comparison, the tiers and which charges look unusual.
+            await Promise.all([loadSpAnomalies(), loadSpCompare(), loadSpTiers()]);
+        } else {
+            await setFindingStatus(id, 'checked', { note: 'Dismissed from Spending › Analytics' });
+            await loadSpAnomalies();
+        }
+    } catch (err) {
+        button.disabled = false;
+        notify('Could not save: ' + err.message, 'danger');
+    }
+}
+
+async function loadSpTiers() {
+    const canvas = document.getElementById('spTierChartCanvas');
+    const errEl = document.getElementById('spTierChartError');
+    const legend = document.getElementById('spTierLegend');
+    const top = document.getElementById('spTierTop');
+    if (!canvas) return;
+    if (errEl) errEl.style.display = 'none';
+    canvas.style.display = '';
+    try {
+        const tiers = await window.apiClient.getSpendingTiers(12);
+        const model = tierChartModel(tiers);
+        if (_spTierChartInstance) { _spTierChartInstance.destroy(); _spTierChartInstance = null; }
+        if (legend) {
+            legend.innerHTML = CC_TIERS.map(t => `<span><span style="color:var(${CC_TIER_COLOR[t]});">&#9632;</span> ${esc(CC_TIER_LABEL[t])}</span>`).join('')
+                + '<span class="text-muted">A month with no imported statement has no bar.</span>';
+        }
+        if (!model.hasData) {
+            canvas.style.display = 'none';
+            if (errEl) { errEl.className = 'text-muted small'; errEl.textContent = 'No imported statements yet.'; errEl.style.display = ''; }
+            if (top) top.innerHTML = '';
+            return;
+        }
+        _spTierChartInstance = new Chart(canvas, {
+            type: 'bar',
+            data: {
+                labels: model.labels,
+                datasets: model.datasets.map(ds => ({
+                    label: ds.label,
+                    data: ds.data,
+                    backgroundColor: cssVar(ds.cssVar),
+                    stack: 'tiers',
+                })),
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false }, tooltip: { callbacks: chartEurTooltip } },
+                scales: {
+                    x: { stacked: true },
+                    y: { stacked: true, beginAtZero: true, ticks: { callback: v => Fmt.money(v, 'EUR', 0) } },
+                },
+            },
+        });
+        const topModel = tierTopModel(tiers);
+        if (top) {
+            top.innerHTML = topModel ? `<div class="fw-semibold mb-1">Top categories in ${esc(monthKeyLabel(topModel.month))}${topModel.inProgress ? ' (so far)' : ''}</div>
+                <div class="row g-2">${topModel.columns.map(c => `
+                    <div class="col-6 col-md-3">
+                        <div><span style="color:var(${CC_TIER_COLOR[c.tier]});">&#9632;</span> ${esc(c.label)} <span class="text-muted">${esc(ccMoney(c.amount))}</span></div>
+                        ${c.items.length ? '<ul class="list-unstyled mb-0 text-muted">' + c.items.map(i => `<li>${esc(i.name)} ${esc(ccMoney(i.amount))}</li>`).join('') + '</ul>' : '<div class="text-muted">none</div>'}
+                    </div>`).join('')}</div>` : '';
+        }
+    } catch (err) {
+        if (_spTierChartInstance) { _spTierChartInstance.destroy(); _spTierChartInstance = null; }
+        canvas.style.display = 'none';
+        if (errEl) { errEl.className = 'text-danger small'; errEl.textContent = 'Failed to load tiers: ' + err.message; errEl.style.display = ''; }
+    }
+}
+window.loadSpTiers = loadSpTiers;
+
+function loadSpCostControl() {
+    ccApplyHelpTitle('spCmpHelp', 'costCompare');
+    ccApplyHelpTitle('spAnomHelp', 'costAnomalies');
+    ccApplyHelpTitle('spTierHelp', 'costTiers');
+    ccApplyHelpTitle('spOneOffHelp', 'oneOff');
+    _wireSpCostControl();
+    // Independent cards: one failing must not blank the others.
+    loadSpCompare();
+    loadSpAnomalies();
+    loadSpTiers();
+    if (window.initTooltips) window.initTooltips();
+}
+window.loadSpCostControl = loadSpCostControl;
+
+function _wireSpCostControl() {
+    const wire = (id, event, handler) => {
+        const el = document.getElementById(id);
+        if (el && !el.dataset.wired) {
+            el.dataset.wired = '1';
+            el.addEventListener(event, handler);
+        }
+    };
+    wire('spCmpMonth', 'change', () => loadSpCompare());
+    wire('spCmpBaseline', 'change', () => loadSpCompare());
+    const setGroup = group => {
+        window._spCmp.group = group;
+        document.getElementById('spCmpGroupCategory')?.classList.toggle('active', group === 'category');
+        document.getElementById('spCmpGroupMerchant')?.classList.toggle('active', group === 'merchant');
+        loadSpCompare();
+    };
+    wire('spCmpGroupCategory', 'click', () => setGroup('category'));
+    wire('spCmpGroupMerchant', 'click', () => setGroup('merchant'));
+    const anom = document.getElementById('spAnomBody');
+    if (anom && !anom.dataset.wired) {
+        anom.dataset.wired = '1';
+        anom.addEventListener('click', e => {
+            const btn = e.target.closest('.sp-anom-oneoff, .sp-anom-dismiss');
+            if (btn) _spAnomalyAction(btn);
+        });
+    }
+}
+
+// ── Spending › Transactions: one-off toggle, filter and bulk buttons ────────
+
+function _wireSpOneOff() {
+    const tbody = document.getElementById('spTxBody');
+    if (tbody && !tbody.dataset.oneOffWired) {
+        tbody.dataset.oneOffWired = '1';
+        tbody.addEventListener('click', async e => {
+            const btn = e.target.closest('.sp-oneoff-btn');
+            if (!btn) return;
+            const id = Number(btn.dataset.id);
+            const row = (window._spendingAllRows || []).find(r => r.id === id);
+            if (!row) return;
+            btn.disabled = true;
+            try {
+                await window.apiClient.setSpendingOneOff(id, !row.one_off);
+                await _fetchAndRenderSpendingTable();
+            } catch (err) {
+                btn.disabled = false;
+                notify('Could not save: ' + err.message, 'danger');
+            }
+        });
+    }
+    const filter = document.getElementById('spOneOffFilter');
+    if (filter && !filter.dataset.wired) {
+        filter.dataset.wired = '1';
+        filter.addEventListener('change', () => {
+            window._spTxState.page = 0;
+            _fetchAndRenderSpendingTable();
+        });
+    }
+    [['spBulkMarkOneOffBtn', true], ['spBulkUnmarkOneOffBtn', false]].forEach(([btnId, flag]) => {
+        const btn = document.getElementById(btnId);
+        if (!btn || btn.dataset.wired) return;
+        btn.dataset.wired = '1';
+        btn.addEventListener('click', async () => {
+            const ids = _selectedSpendingIds();
+            if (!ids.length) return;
+            btn.disabled = true;
+            let succeeded = 0, failed = 0;
+            for (const id of ids) {
+                try { await window.apiClient.setSpendingOneOff(id, flag); succeeded++; } catch (err) { failed++; }
+            }
+            await _refreshSpendingData();
+            const status = document.getElementById('spBulkStatus');
+            if (status) {
+                status.className = failed > 0 ? 'small text-danger px-3 pt-2' : 'small text-success px-3 pt-2';
+                status.textContent = failed > 0
+                    ? `Updated ${succeeded} of ${ids.length} (${failed} failed).`
+                    : `${succeeded} row(s) ${flag ? 'marked as one-off: still in your totals, left out of averages and baselines' : 'counted as normal spending again'}.`;
+            }
+            btn.disabled = false;
+        });
+    });
+}
+
+// ── Budget › Forecast tab ───────────────────────────────────────────────────
+
+let _bgFcChartInstance = null;
+window._bgFc = { data: null, showAllBills: false };
+
+function _bgFcMonths() {
+    const value = parseInt((document.getElementById('bgFcMonths') || {}).value, 10);
+    return Number.isFinite(value) && value > 0 ? value : 12;
+}
+
+function _renderBgFcWarnings(fc) {
+    const el = document.getElementById('bgFcWarnings');
+    if (!el) return;
+    const below = forecastBelowZeroText(fc);
+    const warnings = (fc.warnings || []);
+    el.innerHTML = (below ? `<div class="alert alert-danger py-2 small mb-2"><i class="bi bi-exclamation-triangle me-1"></i>${esc(below)}</div>` : '')
+        + (warnings.length ? `<div class="alert alert-warning py-2 small mb-3"><ul class="mb-0 ps-3">${warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></div>` : '');
+}
+
+function _renderBgFcFreshness(fc) {
+    const el = document.getElementById('bgFcFreshness');
+    if (!el) return;
+    const accounts = forecastAccountsModel(fc);
+    if (!accounts.length) {
+        el.innerHTML = '<div class="small text-muted"><i class="bi bi-info-circle me-1"></i>No bank account yet. Import a statement on the Spending page.</div>';
+        return;
+    }
+    el.innerHTML = '<div class="small text-muted mb-1">Bank data</div>' + accounts.map(a => `
+        <div class="d-flex flex-wrap justify-content-between small border-bottom py-1">
+            <span>${esc(a.name)} ${a.stale ? '<span class="badge text-bg-warning">stale</span>' : ''}</span>
+            <span class="text-muted">${esc(a.text)} &middot; balance ${esc(a.balance)}${a.balanceDate ? ' (' + esc(a.balanceDate) + ')' : ''}</span>
+        </div>`).join('');
+}
+
+function _renderBgFcThisMonth(fc) {
+    const el = document.getElementById('bgFcThisMonth');
+    if (!el) return;
+    const m = forecastThisMonthModel(fc);
+    el.innerHTML = `<div class="card">
+        <div class="card-header py-2 d-flex justify-content-between align-items-center flex-wrap gap-1">
+            <span class="fw-semibold small">This month${m.month ? ' (' + esc(monthKeyLabel(m.month)) + ')' : ''}</span>
+            <span class="small text-muted">${m.through ? 'Data through ' + esc(m.through) : 'No data'}</span>
+        </div>
+        <div class="card-body py-2">
+            ${m.banner ? `<div class="alert alert-secondary py-2 small mb-2"><i class="bi bi-info-circle me-1"></i>${esc(m.banner)}</div>` : ''}
+            <div class="row g-2">
+                ${m.lines.map(l => `<div class="col-6 col-md-3"><div class="small text-muted">${esc(l.label)}</div><div class="fw-bold ${l.missing ? 'text-muted' : (l.label === 'Projected net' ? m.netClass : '')}">${esc(l.text)}</div></div>`).join('')}
+            </div>
+            ${m.rangeText ? `<div class="small text-muted mt-2">${esc(m.rangeText)} ${ccHelpIcon('cashflowRange')}</div>` : ''}
+        </div></div>`;
+}
+
+function _renderBgFcTable(fc) {
+    const body = document.getElementById('bgFcTableBody');
+    if (!body) return;
+    const rows = forecastTableRows(fc);
+    if (!rows.length) {
+        body.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">No months to project.</td></tr>';
+        return;
+    }
+    body.innerHTML = rows.map(r => `<tr${r.below ? ' class="table-danger"' : ''}>
+        <td class="ps-3">${esc(r.label)}${r.billCount ? ` <span class="small text-muted" title="Known bills this month">&middot; ${r.billCount} bill${r.billCount === 1 ? '' : 's'}</span>` : ''}</td>
+        <td class="text-end">${esc(r.income)}</td>
+        <td class="text-end">${esc(r.recurring)}</td>
+        <td class="text-end">${esc(r.variable)}</td>
+        <td class="text-end">${esc(r.savings)}</td>
+        <td class="text-end ${r.netClass}">${esc(r.net)}</td>
+        <td class="text-end pe-3 ${r.below ? 'text-danger fw-bold' : ''}">${esc(r.balance)}${r.below ? ' <i class="bi bi-exclamation-triangle" title="Below zero"></i>' : ''}</td>
+    </tr>`).join('');
+}
+
+function _renderBgFcBills(fc) {
+    const body = document.getElementById('bgFcBillsBody');
+    const toggle = document.getElementById('bgFcBillsToggle');
+    if (!body) return;
+    const model = forecastBillRows(fc, window._bgFc.showAllBills ? 0 : 15);
+    body.innerHTML = model.rows.length ? model.rows.map(b => `<tr>
+        <td class="ps-3">${esc(b.date)}</td>
+        <td>${esc(b.merchant)}${b.savings ? ' <span class="badge text-bg-light border">savings</span>' : ''}${b.account ? `<div class="small text-muted">${esc(b.account)}</div>` : ''}</td>
+        <td class="d-none d-sm-table-cell">${esc(b.cadence)}</td>
+        <td class="text-end pe-3">${esc(b.amount)}</td>
+    </tr>`).join('') : '<tr><td colspan="4" class="text-center text-muted py-3">No recurring charges are known yet.</td></tr>';
+    if (toggle) {
+        const total = (fc.known_bills || []).length;
+        toggle.style.display = total > 15 ? '' : 'none';
+        toggle.textContent = window._bgFc.showAllBills ? 'Show fewer' : `Show all ${total}`;
+    }
+}
+
+function _renderBgFcChart(fc) {
+    const canvas = document.getElementById('bgFcChartCanvas');
+    const note = document.getElementById('bgFcChartNote');
+    if (!canvas) return;
+    if (_bgFcChartInstance) { _bgFcChartInstance.destroy(); _bgFcChartInstance = null; }
+    const points = forecastBalancePoints(fc);
+    const known = points.filter(p => p.value !== null);
+    if (!known.length) {
+        canvas.style.display = 'none';
+        if (note) note.textContent = `Projected balance ${CC_NA}: it needs a stored bank balance and a baseline of complete months.`;
+        return;
+    }
+    canvas.style.display = '';
+    if (note) note.textContent = known.length < points.length ? 'Months without a balance are left as gaps: they are not available, not zero.' : '';
+    const good = cssVar('--viz-1');
+    const bad = cssVar('--viz-bad', '#dc2626');
+    try {
+        _bgFcChartInstance = new Chart(canvas, {
+            type: 'line',
+            data: {
+                labels: points.map(p => p.label),
+                datasets: [{
+                    label: 'Projected balance',
+                    data: points.map(p => p.value),
+                    borderColor: good,
+                    backgroundColor: good,
+                    spanGaps: false,
+                    tension: 0.1,
+                    segment: { borderColor: ctx => ((ctx.p1.parsed.y < 0 || ctx.p0.parsed.y < 0) ? bad : good) },
+                }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false }, tooltip: { callbacks: chartEurTooltip } },
+                scales: { y: { ticks: { callback: v => Fmt.money(v, 'EUR', 0) } } },
+            },
+        });
+    } catch (err) {
+        canvas.style.display = 'none';
+        if (note) note.textContent = 'Chart unavailable: ' + err.message;
+    }
+}
+
+function _renderBgFcAssumptions(fc) {
+    const el = document.getElementById('bgFcAssumptions');
+    if (!el) return;
+    el.innerHTML = (fc.assumptions || []).map(a => `<li>${esc(a)}</li>`).join('')
+        || '<li class="text-muted">No assumptions reported.</li>';
+}
+
+async function loadCashflowForecast() {
+    const status = document.getElementById('bgFcStatus');
+    if (!document.getElementById('bgPaneForecast')) return;
+    ccApplyHelpTitle('bgFcHelp', 'cashflowForecast');
+    ccApplyHelpTitle('bgFcBalanceHelp', 'cashflowForecast');
+    if (status) { status.className = 'small text-muted mb-2'; status.textContent = 'Loading…'; }
+    try {
+        const fc = await window.apiClient.getCashflowForecast(_bgFcMonths());
+        window._bgFc.data = fc;
+        window._bgFc.showAllBills = false;
+        if (status) status.textContent = `As of ${Fmt.date(fc.as_of)}${fc.data_through ? ' · bank data through ' + Fmt.date(fc.data_through) : ' · no bank data'}.`;
+        _renderBgFcWarnings(fc);
+        _renderBgFcFreshness(fc);
+        _renderBgFcThisMonth(fc);
+        _renderBgFcChart(fc);
+        _renderBgFcTable(fc);
+        _renderBgFcBills(fc);
+        _renderBgFcAssumptions(fc);
+        if (window.initTooltips) window.initTooltips();
+    } catch (err) {
+        if (status) { status.className = 'small text-danger mb-2'; status.textContent = err.message; }
+    }
+}
+window.loadCashflowForecast = loadCashflowForecast;
+
+function _wireBgForecast() {
+    const tab = document.getElementById('bgTabBtnForecast');
+    if (tab && !tab.dataset.wired) {
+        tab.dataset.wired = '1';
+        tab.addEventListener('shown.bs.tab', () => loadCashflowForecast());
+    }
+    const months = document.getElementById('bgFcMonths');
+    if (months && !months.dataset.wired) {
+        months.dataset.wired = '1';
+        months.addEventListener('change', () => loadCashflowForecast());
+    }
+    const refresh = document.getElementById('bgFcRefresh');
+    if (refresh && !refresh.dataset.wired) {
+        refresh.dataset.wired = '1';
+        refresh.addEventListener('click', () => loadCashflowForecast());
+    }
+    const toggle = document.getElementById('bgFcBillsToggle');
+    if (toggle && !toggle.dataset.wired) {
+        toggle.dataset.wired = '1';
+        toggle.addEventListener('click', () => {
+            window._bgFc.showAllBills = !window._bgFc.showAllBills;
+            if (window._bgFc.data) _renderBgFcBills(window._bgFc.data);
+        });
+    }
 }
 
 // ── Dashboard card ─────────────────────────────────────────────────────────
@@ -11315,6 +12383,13 @@ async function loadDashboardBudget() {
     // Nothing imported for this month yet: show the plan, but don't dress a
     // missing statement up as a favourable variance.
     const noActivity = budgetMonthsWithoutActivity(summary).length > 0;
+    // One pace line, only when the backend has one: it exists for the month in
+    // progress once something is imported, and not under the no-activity rule.
+    const spendingSection = summary.sections.find(s => s.key === 'spending');
+    const dashPace = noActivity ? null : paceMeta(spendingSection && spendingSection.pace);
+    const dashPaceHtml = dashPace
+        ? `<div class="small border-top pt-2 mt-2"><span class="badge ${dashPace.badge} me-1">${esc(dashPace.label)}</span>Spending: ${esc(dashPace.text)}</div>`
+        : '';
     area.innerHTML = sections.map(section => `
         <div class="mb-2">
             <div class="d-flex justify-content-between small">
@@ -11322,7 +12397,7 @@ async function loadDashboardBudget() {
                 <span>${_bgEur(section.actual_total)} / ${_bgEur(section.planned_total)} ${noActivity ? '' : _bgVarianceCell(section.variance_eur, section.favourable)}</span>
             </div>
             ${_bgProgressBar(section.planned_total, section.actual_total, section.favourable_when_under)}
-        </div>`).join('') + (noActivity ? `
+        </div>`).join('') + dashPaceHtml + (noActivity ? `
         <div class="small text-muted border-top pt-2 mt-2">
             <i class="bi bi-info-circle me-1"></i>Nothing imported for this month yet — actuals will fill in once you import a statement.
         </div>` : `
