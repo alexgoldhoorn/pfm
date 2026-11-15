@@ -2968,3 +2968,40 @@ def test_forecast_endpoint_with_an_account_and_a_balance(tmp_path):
     assert body["accounts"][0]["data_through"] == today.isoformat()
     assert body["accounts"][0]["stale"] is False
     assert len(body["next_months"]) == 12
+
+
+def test_review_endpoint_is_routed_validated_and_degrades_not_errors(tmp_path):
+    client, db = _make_client(tmp_path)
+    r = client.get("/api/v1/spending/review", headers=HEADERS)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["month"] == (date.today().replace(day=1) - timedelta(days=1)).strftime(
+        "%Y-%m"
+    )
+    assert body["status"] == "no_imports"
+    assert body["budget"] is None
+    assert "warnings" in body
+    assert (
+        client.get("/api/v1/spending/review?month=2999-01", headers=HEADERS).status_code
+        == 400
+    )
+    assert (
+        client.get("/api/v1/spending/review?month=nope", headers=HEADERS).status_code
+        == 422
+    )
+
+
+def test_review_endpoint_with_an_account(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    month = _month_day(1, 3)
+    db.create_spending_transaction(
+        pid, month, "Example Market", -100.0, category="Groceries"
+    )
+    body = client.get(
+        f"/api/v1/spending/review?month={month[:7]}&portfolio_id={pid}",
+        headers=HEADERS,
+    ).json()
+    assert body["month"] == month[:7]
+    assert body["totals"]["totals"]["actual_eur"] == 100.0
+    assert body["freshness"][0]["name"] == "Example Bank"

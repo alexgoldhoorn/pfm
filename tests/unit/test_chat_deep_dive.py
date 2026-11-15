@@ -158,6 +158,11 @@ class TestChatTurn:
             "run_market_crash_scenario",
             "get_spending_cut_candidates",
             "get_spending_matrix",
+            "compare_spending",
+            "get_spending_anomalies",
+            "get_spending_tiers",
+            "get_cashflow_forecast",
+            "get_spending_review",
         ):
             assert name in system
 

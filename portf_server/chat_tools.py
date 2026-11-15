@@ -526,17 +526,7 @@ def _get_household_finances(db: Database) -> str:
             out["budget_this_month"] = None
         else:
             b = budget.model_dump() if hasattr(budget, "model_dump") else dict(budget)
-            out["budget_this_month"] = {
-                "budget_name": b.get("budget_name"),
-                "sections": [
-                    {
-                        k: sec.get(k)
-                        for k in ("key", "label", "planned_total", "actual_total")
-                    }
-                    for sec in b.get("sections") or []
-                ],
-                "net": b.get("net"),
-            }
+            out["budget_this_month"] = _budget_digest(b)
     except Exception as e:
         out["budget_this_month"] = {"error": str(e)}
 
@@ -576,6 +566,79 @@ def _get_household_finances(db: Database) -> str:
         "available today."
     )
     return _j(out)
+
+
+def _budget_digest(b: dict) -> dict:
+    """The budget variance trimmed for chat.
+
+    ``planned_total`` is the plan for the window; ``available_total`` is what
+    the section could spend (the plan plus anything carried in), which is what
+    ``variance_eur`` is measured against. On a yearly line ``planned_total`` is
+    only the set-aside, so the yearly fund and the pace come alongside.
+    """
+    sections = []
+    funds = []
+    at_risk = []
+    for sec in b.get("sections") or []:
+        pace = sec.get("pace")
+        sections.append(
+            {
+                **{
+                    k: sec.get(k)
+                    for k in (
+                        "key",
+                        "label",
+                        "planned_total",
+                        "available_total",
+                        "actual_total",
+                        "variance_eur",
+                    )
+                },
+                "pace": pace,
+            }
+        )
+        for ln in sec.get("lines") or []:
+            if ln.get("fund"):
+                funds.append(
+                    {
+                        "label": ln.get("label"),
+                        "yearly_amount_eur": ln["fund"].get("yearly_amount_eur"),
+                        "set_aside_per_month_eur": ln.get("set_aside_eur"),
+                        "fund": ln["fund"],
+                        "available_total": ln.get("available_total"),
+                        "actual_total": ln.get("actual_total"),
+                    }
+                )
+            lp = ln.get("pace")
+            if lp and lp.get("status") in ("at_risk", "over"):
+                at_risk.append(
+                    {
+                        "label": ln.get("label"),
+                        "status": lp["status"],
+                        "limit_eur": lp.get("limit_eur"),
+                        "actual_to_date_eur": lp.get("actual_to_date_eur"),
+                        "projected_month_end_eur": lp.get("projected_month_end_eur"),
+                    }
+                )
+    return {
+        "budget_name": b.get("budget_name"),
+        "months": b.get("months"),
+        "as_of": b.get("as_of"),
+        "data_through": b.get("data_through"),
+        "sections": sections,
+        "yearly_funds": funds,
+        "lines_at_risk_or_over": at_risk,
+        "net": b.get("net"),
+        "warnings": b.get("warnings"),
+        "notes": (
+            "Variance is against available_total (plan plus anything carried "
+            "in from earlier months), not planned_total. A yearly line sets "
+            "aside a twelfth a month: its planned_total is only that "
+            "set-aside, and the fund shows what is built up and left. pace is "
+            "a projection of the month in progress up to data_through, an "
+            "estimate; it is absent for a month with nothing imported."
+        ),
+    }
 
 
 @_tool("get_spending_summary")
@@ -1456,7 +1519,7 @@ TOOLS: list[ToolDefinition] = [
     ),
     ToolDefinition(
         name="get_household_finances",
-        description="Return the monthly money picture: the entered monthly cash flow (income, mortgage, other expenses), the income/spending/savings rate measured from imported bank statements over the last complete months with the emergency-fund cover, this month's budget vs actual, the loans (balance, monthly payment, rate, end date) and the monthly contributions the open goals assume. Use it to judge whether a goal, a contribution or a purchase is realistic.",
+        description="Return the monthly money picture: the entered monthly cash flow (income, mortgage, other expenses), the income/spending/savings rate measured from imported bank statements over the last complete months with the emergency-fund cover, this month's budget vs actual (against what each section could spend, with the pace to month end and any yearly fund), the loans (balance, monthly payment, rate, end date) and the monthly contributions the open goals assume. Use it to judge whether a goal, a contribution or a purchase is realistic.",
         parameters=[],
     ),
     ToolDefinition(
@@ -2057,6 +2120,114 @@ TOOLS: list[ToolDefinition] = [
         ],
     ),
     ToolDefinition(
+        name="compare_spending",
+        description=(
+            "One month's spending against its normal (average of up to N "
+            "complete earlier months, one-offs left out) and against the same "
+            "month a year before, by category or by merchant, biggest move "
+            "first, with the fixed/flexible/optional tier per category. Use "
+            "for 'how did last month compare', 'what changed', 'why was "
+            "March expensive'. Baselines are estimates; deltas exist only for "
+            "a complete month. Say the data_through date."
+        ),
+        parameters=[
+            {
+                "name": "month",
+                "type": "string",
+                "description": "YYYY-MM (default: the last complete month).",
+                "required": False,
+            },
+            {
+                "name": "group_by",
+                "type": "string",
+                "description": "'category' (default) or 'merchant'.",
+                "required": False,
+            },
+            {
+                "name": "baseline_months",
+                "type": "integer",
+                "description": "Complete months to average (default 6, max 24).",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="get_spending_anomalies",
+        description=(
+            "Unusual charges in the last N days: a charge far above the "
+            "merchant's usual, a large first charge from a new merchant, a "
+            "category far above its normal month, a possible double charge. "
+            "Deterministic flags, not verdicts. Use for 'anything odd', "
+            "'unusual charges', 'did I get charged twice'."
+        ),
+        parameters=[
+            {
+                "name": "days",
+                "type": "integer",
+                "description": "Look-back window in days (default 60, max 365).",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="get_spending_tiers",
+        description=(
+            "Monthly spending split into fixed, flexible, optional and "
+            "unclassified (from the category marks), with the top categories "
+            "per tier and the money moved to Invest / House purchase kept "
+            "apart. Use for 'how much of my spending is fixed', 'what is "
+            "optional'. The last month is in progress."
+        ),
+        parameters=[
+            {
+                "name": "months",
+                "type": "integer",
+                "description": "Calendar months back including the current one (default 6, max 24).",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="get_cashflow_forecast",
+        description=(
+            "Where this month ends and the next N months: income, recurring "
+            "bills on their due dates, everyday spending, net and the projected "
+            "bank balance, the known upcoming bills, a low/high range and the "
+            "first month the balance goes below zero. Every figure is an "
+            "estimate built from past months; state the data_through date and "
+            "the warnings. Use for 'will I run short', 'what bills are "
+            "coming', 'where will I end the month'."
+        ),
+        parameters=[
+            {
+                "name": "months",
+                "type": "integer",
+                "description": "Months after the current one (default 6, max 24).",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="get_spending_review",
+        description=(
+            "The monthly spending review in one call: totals against normal "
+            "and last year, biggest movers, unusual charges, the "
+            "fixed/flexible/optional split, new/ended/missed/price-changed "
+            "recurring charges, the active budget's result, next month's "
+            "forecast with the upcoming bills, and data freshness per "
+            "account. Use for 'review last month' or 'how did I do'. Parts "
+            "that could not be built are null with a warning."
+        ),
+        parameters=[
+            {
+                "name": "month",
+                "type": "string",
+                "description": "YYYY-MM (default: the last complete month).",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
         name="get_spending_cut_candidates",
         description=(
             "Where the user could save: average monthly spending split into "
@@ -2274,6 +2445,133 @@ def _run_market_crash_scenario(
         expected_return_pct=float(expected_return_pct),
         monthly_contribution_eur=_num(monthly_contribution_eur),
     )
+
+
+# ── cost control: comparison, anomalies, tiers, forecast, review ──────────
+
+
+def _insight_rows(db: Database, start: str):
+    from portf_manager.services import spending_insights
+
+    rows = spending_insights.load_rows(db, _fx, start_date=start)
+    tree = {r["name"]: r for r in db.list_spending_categories_tree()}
+    return rows, tree
+
+
+@_tool("compare_spending")
+def _compare_spending(
+    db: Database,
+    month: Optional[str] = None,
+    group_by: str = "category",
+    baseline_months: int = 6,
+) -> str:
+    from portf_manager.services import spending_insights
+
+    today = date.today()
+    month = month or spending_insights.previous_month(today)
+    baseline_months = max(1, min(int(baseline_months), 24))
+    start = f"{int(month[:4]) - 1}-{month[5:7]}-01"
+    rows, tree = _insight_rows(db, start)
+    res = spending_insights.compare_month(
+        rows, tree, month, today, baseline_months, group_by
+    )
+    shown = res["items"][:25]
+    res["items_omitted"] = len(res["items"]) - len(shown)
+    res["items"] = shown
+    res["notes"] = (
+        "baseline_eur is an average of complete earlier months (rows marked "
+        "one-off left out; they still count in actual_eur), so it is an "
+        "estimate of 'normal'. Deltas are null unless the month is complete. "
+        "data_through is the date of the latest imported row."
+    )
+    return _j(res)
+
+
+@_tool("get_spending_anomalies")
+def _get_spending_anomalies(db: Database, days: int = 60) -> str:
+    from portf_manager.services import spending_insights
+
+    days = max(1, min(int(days), 365))
+    res = spending_insights.load_anomalies(db, _fx, date.today(), days)
+    res["items"] = res["items"][:25]
+    res["notes"] = (
+        "Deterministic flags (large_charge, new_merchant, category_spike, "
+        "possible_duplicate), not verdicts: a flagged charge may be fine. Rows "
+        "marked one-off are never flagged. Only data up to data_through is seen."
+    )
+    return _j(res)
+
+
+@_tool("get_spending_tiers")
+def _get_spending_tiers(db: Database, months: int = 6) -> str:
+    from portf_manager.services import spending_insights
+
+    months = max(1, min(int(months), 24))
+    today = date.today()
+    first = spending_insights.shift_month(today.strftime("%Y-%m"), -(months - 1))
+    rows, tree = _insight_rows(db, f"{first}-01")
+    return _j(
+        {
+            "months": spending_insights.tier_breakdown(rows, tree, today, months),
+            "data_through": spending_insights.data_through(rows),
+            "notes": (
+                "Spending per month split fixed / flexible / optional / "
+                "unclassified from the category marks (inherited from the "
+                "parent); unclassified has no mark and is never guessed. "
+                "savings_eur is money moved to Invest / House purchase, not "
+                "spending. The last month is in progress."
+            ),
+        }
+    )
+
+
+@_tool("get_cashflow_forecast")
+def _get_cashflow_forecast(db: Database, months: int = 6) -> str:
+    from portf_manager.services import cashflow_forecast
+
+    months = max(1, min(int(months), 24))
+    res = cashflow_forecast.load_forecast(db, _fx, date.today(), months)
+    res["next_months"] = [
+        {
+            k: m.get(k)
+            for k in (
+                "month",
+                "income_eur",
+                "recurring_eur",
+                "variable_eur",
+                "savings_eur",
+                "net_eur",
+                "projected_balance_eur",
+                "balance_below_zero",
+            )
+        }
+        for m in res["next_months"]
+    ]
+    res["known_bills"] = res["known_bills"][:25]
+    res["notes"] = (
+        "Every figure is an estimate: the average of complete past months "
+        "plus the recurring charges placed on their due dates. The balance is "
+        "bank accounts only (moves to a broker are not projected). The rest "
+        "of this month is measured from data_through, not from today. A null "
+        "means the source was missing; say so, never read it as zero."
+    )
+    return _j(res)
+
+
+@_tool("get_spending_review")
+def _get_spending_review(db: Database, month: Optional[str] = None) -> str:
+    from portf_manager.services import spending_review
+
+    res = spending_review.build_review(db, _fx, date.today(), month)
+    res["notes"] = (
+        "One bundle for the month: totals against the baseline (an estimate "
+        "of normal) and last year, biggest movers, the month's unusual "
+        "charges, the tier split, recurring changes, the budget result, next "
+        "month's forecast (an estimate) and data freshness. A null part could "
+        "not be built (see warnings). A month in progress or with no imports "
+        "has no deltas. data_through is the date of the latest imported row."
+    )
+    return _j(res)
 
 
 @_tool("get_spending_cut_candidates")

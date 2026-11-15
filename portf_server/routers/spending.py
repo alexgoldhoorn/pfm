@@ -40,7 +40,11 @@ from portf_manager.services.transfer_linking import (
 from portf_manager.services.budget import build_children_index, subtree_names
 from portf_manager.services.merchant import normalize_merchant
 from portf_manager.services.recurring import load_recurring
-from portf_manager.services import cashflow_forecast, spending_insights
+from portf_manager.services import (
+    cashflow_forecast,
+    spending_insights,
+    spending_review,
+)
 from portf_manager.services.spending_rules import (
     TRANSFER_CATEGORY,
     pick_category,
@@ -1606,6 +1610,36 @@ def get_cashflow_forecast(
     return cashflow_forecast.load_forecast(
         db, _fx, date.today(), months, portfolio_id=portfolio_id
     )
+
+
+@router.get("/review", response_model=dict)
+def get_spending_review(
+    month: Optional[str] = Query(default=None, pattern=_MONTH_PATTERN),
+    portfolio_id: Optional[int] = None,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """One month's review in a single payload (deterministic, no LLM).
+
+    ``month`` defaults to the last complete month. Assembled only from the
+    other spending services: totals against the baseline and last year, the
+    biggest movers by category and merchant, the month's unusual charges, the
+    fixed / flexible / optional split, recurring charges that are new, ended,
+    missed or changed price, the active budget's result for the month (null
+    without one), next month's forecast line with the upcoming known bills,
+    and data freshness per account. Each part is built on its own: one that
+    fails is null with a warning in ``warnings``, never a 5xx. A month in
+    progress, a month the data stops short of and a month with no imports
+    carry no deltas. Plain ``def`` because of the FX lookups.
+    """
+    from datetime import date
+
+    try:
+        return spending_review.build_review(
+            db, _fx, date.today(), month, portfolio_id=portfolio_id
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 class SuggestCategoriesRequest(BaseModel):

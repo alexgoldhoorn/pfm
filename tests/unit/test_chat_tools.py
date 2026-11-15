@@ -1,6 +1,7 @@
 """Tests for chat tool catalog and execute_tool() dispatcher."""
 
 import json
+from datetime import date, timedelta
 import pytest
 from unittest.mock import MagicMock, patch
 
@@ -28,10 +29,10 @@ def db(tmp_path):
     return d
 
 
-def test_tools_list_has_43_entries():
+def test_tools_list_has_48_entries():
     from portf_server.chat_tools import TOOLS
 
-    assert len(TOOLS) == 43
+    assert len(TOOLS) == 48
 
 
 def test_every_tool_definition_has_a_handler():
@@ -595,3 +596,111 @@ def test_get_market_data_tool_resolves_a_held_coin_to_its_yahoo_pair(db):
             execute_tool("get_market_data", {"symbol": sym, "include_news": False}, db)
     # The override map wins; any other coin is the plain EUR pair.
     assert seen == ["SUI20947-USD", "EXC-EUR"]
+
+
+# ── cost control tools ────────────────────────────────────────────────────
+
+
+@pytest.fixture
+def cost_db(tmp_path):
+    from portf_manager.database import Database
+
+    d = Database(str(tmp_path / "cost.db"))
+    spend = d.find_spending_category_by_name("Spend")["id"]
+    d.create_spending_category("Rent", spend)
+    d.set_spending_category_essentiality("Rent", "fixed")
+    pid = d.get_or_create_portfolio("Example Bank", account_type="bank")
+    today = date.today()
+    for ago in range(1, 5):
+        day = (today.replace(day=1) - timedelta(days=30 * ago)).replace(day=3)
+        d.create_spending_transaction(
+            pid, day.isoformat(), "Example Landlord", -900.0, category="Rent"
+        )
+    d.create_spending_transaction(
+        pid, today.isoformat(), "Example Market", -40.0, balance=500.0
+    )
+    return d
+
+
+def test_compare_spending_reports_status_and_notes(cost_db):
+    from portf_server.chat_tools import execute_tool
+
+    data = json.loads(
+        execute_tool("compare_spending", {"group_by": "merchant"}, cost_db)
+    )
+    assert data["group_by"] == "merchant"
+    assert data["status"] in ("complete", "no_imports", "partial")
+    assert "estimate" in data["notes"] and "data_through" in data
+    assert execute_tool("compare_spending", {"group_by": "x"}, cost_db).startswith(
+        "Error:"
+    )
+
+
+def test_anomalies_tiers_forecast_and_review_tools(cost_db):
+    from portf_server.chat_tools import execute_tool
+
+    anomalies = json.loads(
+        execute_tool("get_spending_anomalies", {"days": 30}, cost_db)
+    )
+    assert anomalies["days"] == 30 and "verdicts" in anomalies["notes"]
+    tiers = json.loads(execute_tool("get_spending_tiers", {"months": 3}, cost_db))
+    assert len(tiers["months"]) == 3 and tiers["data_through"]
+    forecast = json.loads(execute_tool("get_cashflow_forecast", {"months": 2}, cost_db))
+    assert len(forecast["next_months"]) == 2
+    assert forecast["balance"]["start_eur"] == 500.0
+    assert "estimate" in forecast["notes"]
+    review = json.loads(execute_tool("get_spending_review", {}, cost_db))
+    assert review["data_through"] == date.today().isoformat()
+    assert {"totals", "movers", "forecast", "warnings", "notes"} <= set(review)
+    assert execute_tool(
+        "get_spending_review", {"month": "2999-01"}, cost_db
+    ).startswith("Error:")
+
+
+def test_household_finances_budget_reports_available_pace_and_fund(cost_db):
+    from portf_server.chat_tools import _budget_digest
+
+    digest = _budget_digest(
+        {
+            "budget_name": "Base",
+            "months": ["2026-07"],
+            "as_of": "2026-07-15",
+            "data_through": "2026-07-10",
+            "sections": [
+                {
+                    "key": "spending",
+                    "label": "Spending",
+                    "planned_total": 100.0,
+                    "available_total": 140.0,
+                    "actual_total": 90.0,
+                    "variance_eur": 50.0,
+                    "pace": {"status": "on_track"},
+                    "lines": [
+                        {
+                            "label": "Insurance",
+                            "set_aside_eur": 100.0,
+                            "available_total": 140.0,
+                            "actual_total": 0.0,
+                            "fund": {
+                                "yearly_amount_eur": 1200.0,
+                                "remaining_eur": 140.0,
+                            },
+                            "pace": {
+                                "status": "at_risk",
+                                "limit_eur": 140.0,
+                                "actual_to_date_eur": 0.0,
+                                "projected_month_end_eur": 300.0,
+                            },
+                        }
+                    ],
+                }
+            ],
+            "net": {},
+            "warnings": [],
+        }
+    )
+    sec = digest["sections"][0]
+    assert sec["available_total"] == 140.0 and sec["pace"] == {"status": "on_track"}
+    assert digest["yearly_funds"][0]["yearly_amount_eur"] == 1200.0
+    assert digest["lines_at_risk_or_over"][0]["status"] == "at_risk"
+    assert digest["data_through"] == "2026-07-10"
