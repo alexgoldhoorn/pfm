@@ -8,7 +8,7 @@ both ``balance_as_of`` and ``rate_as_of`` are set, (``rate_as_of``,
 
 import calendar
 from datetime import date, datetime
-from typing import Union
+from typing import Optional, Union
 
 DateLike = Union[str, date]
 
@@ -148,8 +148,9 @@ def end_date(loan: dict) -> date:
 def schedule(loan: dict) -> list[dict]:
     """Return one entry per calendar year from the anchor year to the last.
 
-    Each entry has ``year``, ``balance_end_eur``, ``interest_paid_eur`` and
-    ``payments_eur`` (all payments in that year, extra included).
+    Each entry has ``year``, ``balance_end_eur``, ``interest_paid_eur``,
+    ``principal_paid_eur``, ``payments_eur`` (all payments in that year, extra
+    included) and ``payments_count``.
     """
     anchor, opening, remaining = _anchor(loan)
     # a loan with no payments left is a single zero row in the anchor year
@@ -163,12 +164,16 @@ def schedule(loan: dict) -> list[dict]:
         in_year = [r for r in rows if r["date"].year == year]
         if in_year:
             balance = in_year[-1]["balance"]
+        interest = round(sum(r["interest"] for r in in_year), 2)
+        paid = round(sum(r["payment"] for r in in_year), 2)
         out.append(
             {
                 "year": year,
                 "balance_end_eur": balance,
-                "interest_paid_eur": round(sum(r["interest"] for r in in_year), 2),
-                "payments_eur": round(sum(r["payment"] for r in in_year), 2),
+                "interest_paid_eur": interest,
+                "principal_paid_eur": round(paid - interest, 2),
+                "payments_eur": paid,
+                "payments_count": len(in_year),
             }
         )
     return out
@@ -179,3 +184,175 @@ def payments_in_year(loan: dict, year: int) -> float:
     return round(
         sum(r["payment"] for r in _payments(loan) if r["date"].year == year), 2
     )
+
+
+def payment_rows(loan: dict) -> list[dict]:
+    """Return every scheduled payment: date, payment, interest, principal, balance.
+
+    ``balance`` is the balance after the payment. The anchor is the loan start
+    or, with a recorded balance and rate date, that date.
+    """
+    return [
+        {**r, "principal": round(r["payment"] - r["interest"], 2)}
+        for r in _payments(loan)
+    ]
+
+
+def payment_split(loan: dict, month: str) -> Optional[dict]:
+    """Return the scheduled payment falling in ``month`` (``YYYY-MM``).
+
+    Returns:
+        ``{"date", "payment", "interest", "principal"}``, or None when no
+        payment falls in that month (before the anchor, after the end).
+    """
+    for r in payment_rows(loan):
+        if r["date"].strftime("%Y-%m") == month:
+            return r
+    return None
+
+
+def anchor_info(loan: dict) -> dict:
+    """Return the anchor of the schedule and whether it replaces the start.
+
+    ``anchored`` is true when the schedule runs from a recorded balance, so
+    the history before ``date`` is not known.
+    """
+    anchor, balance, remaining = _anchor(loan)
+    return {
+        "date": anchor,
+        "balance_eur": balance,
+        "payments_left_at_anchor": remaining,
+        "anchored": anchor != _to_date(loan["start_date"]),
+    }
+
+
+def _simulate(
+    balance: float, annual_rate_pct: float, payment: float, dates: list[date]
+) -> list[dict]:
+    """Pay ``balance`` down with a level ``payment`` on the given dates."""
+    rate = annual_rate_pct / 1200
+    rows = []
+    for k, day in enumerate(dates, start=1):
+        if balance <= 0.005:
+            break
+        interest = round(balance * rate, 2)
+        due = balance + interest
+        paid = due if (k == len(dates) or payment >= due) else payment
+        balance = round(due - paid, 2)
+        rows.append(
+            {
+                "date": day,
+                "payment": round(paid, 2),
+                "interest": interest,
+                "balance": max(balance, 0.0),
+            }
+        )
+    return rows
+
+
+def _outcome(rows: list[dict], payment: float) -> dict:
+    return {
+        "end_date": rows[-1]["date"].isoformat() if rows else None,
+        "months_left": len(rows),
+        "monthly_payment_eur": round(payment, 2),
+        "interest_remaining_eur": round(sum(r["interest"] for r in rows), 2),
+    }
+
+
+def what_if(
+    loan: dict,
+    lump_sum: float = 0.0,
+    lump_date: Optional[DateLike] = None,
+    extra_monthly: float = 0.0,
+    mode: str = "term",
+    invest_return_pct: Optional[float] = None,
+    today: Optional[date] = None,
+) -> dict:
+    """Compare the loan as scheduled with a lump-sum and/or extra payments.
+
+    The lump sum is applied to the balance as of ``lump_date`` (the last
+    scheduled payment on or before it); later payments keep their dates.
+
+    Args:
+        loan: Loan dict.
+        lump_sum: One-off extra repayment.
+        lump_date: When it is paid; default today.
+        extra_monthly: Extra on every later payment (``term`` mode only).
+        mode: ``term`` keeps the payment and shortens the term; ``payment``
+            keeps the end date and lowers the payment.
+        invest_return_pct: Optional yearly return; adds the value of putting
+            the same money in an investment until the baseline end date.
+        today: Injectable clock.
+
+    Returns:
+        ``{"baseline", "scenario", "interest_saved_eur", "months_saved",
+        "invest"}``; ``invest`` is None without a return.
+
+    Raises:
+        ValueError: for a negative amount, an unknown mode, a lump sum above
+            the balance, extra monthly in ``payment`` mode, or a loan that has
+            no payments left on ``lump_date``.
+    """
+    today = today or date.today()
+    if mode not in ("term", "payment"):
+        raise ValueError("mode must be 'term' or 'payment'")
+    if lump_sum < 0 or extra_monthly < 0:
+        raise ValueError("lump_sum and extra_monthly cannot be negative")
+    if mode == "payment" and extra_monthly:
+        raise ValueError("extra_monthly applies to mode 'term' only")
+    day = _to_date(lump_date) if lump_date else today
+    balance = balance_on(loan, day)
+    if lump_sum > balance + 0.005:
+        raise ValueError("lump_sum is above the balance on that date")
+    future = [r for r in _payments(loan) if r["date"] > day]
+    if not future:
+        raise ValueError("The loan has no payments left after that date")
+    dates = [r["date"] for r in future]
+    rate = float(loan["annual_rate_pct"])
+    base_pay = payment_of(loan)
+    baseline = _outcome(future, base_pay)
+
+    start = round(balance - lump_sum, 2)
+    if mode == "term":
+        pay = base_pay + extra_monthly
+        rows = _simulate(start, rate, pay, dates)
+    else:
+        extra_fixed = float(loan.get("extra_payment_eur") or 0)
+        pay = round(monthly_payment(start, rate, len(dates)), 2) + extra_fixed
+        rows = _simulate(start, rate, pay, dates)
+    scenario = _outcome(rows, pay)
+
+    invest = None
+    if invest_return_pct is not None:
+        n = len(dates)
+        r = (1 + invest_return_pct / 100) ** (1 / 12) - 1
+        contributed_months = len(rows) if mode == "term" else 0
+        value = lump_sum * (1 + r) ** n
+        for j in range(1, contributed_months + 1):
+            value += extra_monthly * (1 + r) ** (n - j)
+        contributed = lump_sum + extra_monthly * contributed_months
+        saved = round(
+            baseline["interest_remaining_eur"] - scenario["interest_remaining_eur"], 2
+        )
+        invest = {
+            "return_pct": invest_return_pct,
+            "contributed_eur": round(contributed, 2),
+            "value_at_baseline_end_eur": round(value, 2),
+            "gain_eur": round(value - contributed, 2),
+            "gain_minus_interest_saved_eur": round(value - contributed - saved, 2),
+            "note": (
+                "Before tax, costs and risk; not advice. The payment freed after "
+                "an earlier end date is not invested."
+            ),
+        }
+    return {
+        "lump_date": day.isoformat(),
+        "mode": mode,
+        "baseline": baseline,
+        "scenario": scenario,
+        "interest_saved_eur": round(
+            baseline["interest_remaining_eur"] - scenario["interest_remaining_eur"], 2
+        ),
+        "months_saved": baseline["months_left"] - scenario["months_left"],
+        "invest": invest,
+    }

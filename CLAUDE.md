@@ -68,7 +68,7 @@ remote_gateway/server.py".
 ### Database
 SQLite by default (`portfolio.db`), PostgreSQL via `DATABASE_URL` env var. Use `portf_manager/database.py` for SQLite, `database_factory.py` for auto-detection.
 
-**Current schema version: 43.** Migrations run automatically on startup.
+**Current schema version: 44.** Migrations run automatically on startup.
 
 Migration history (condensed — see `_migrate_to_vN` for full schema detail):
 - v5: `bookings` table (deposits/withdrawals); `tax` on `transactions`
@@ -99,6 +99,7 @@ Migration history (condensed — see `_migrate_to_vN` for full schema detail):
 - v41: `spending_transactions.transfer_source` (`match`|`pattern`|`manual`|`rejected`, nullable) — how a row became a transfer; backfills flagged rows (`match` if linked, else `manual`) and sets rows with category `Transfer` but no flag back to `uncategorized`. See `docs/features/spending.md`.
 - v42: `spending_categories.essentiality` (`fixed`|`flexible`|`optional`, nullable, nothing backfilled) — drives the what-if scenarios' cut order; `reports` (id, title, content_md, source_session_id, created_at, updated_at) — Markdown reports saved from the AI chat. See `docs/features/scenarios.md` and `llm.md`.
 - v43: `spending_transactions.one_off` (INTEGER NOT NULL DEFAULT 0 — counts in every total, left out of every average/baseline), `budget_lines.period` (`monthly`|`yearly`, default monthly; on a yearly line `monthly_amount` stores the YEARLY figure) and `budget_lines.rollover` (0/1) — nothing backfilled. See `docs/features/spending.md`, `budgeting.md`, `cashflow-forecast.md`.
+- v44: `budget_lines.link_type` (`manual`|`loan`, default manual — what a debt line's `link_id` points at: a `manual_assets` liability or a `loans` row; a dangling link returns `link_broken: true`, never an error). See `docs/features/budgeting.md`.
 
 ⚠️ **New tables must appear in BOTH `_create_all_tables` (fresh DBs) AND `_migrate_to_vN` (existing DBs)** — migration-only adds break fresh installs/tests with "no such table".
 ⚠️ **CHECK constraint rebuilds** require `PRAGMA legacy_alter_table=ON` around the `RENAME` — see `_migrate_to_v13`.
@@ -261,7 +262,7 @@ Full reference (dashboard layout, chart helpers, page-by-page wiring):
 - Pre-push hook runs the full unit suite. F541 fixer:
   `uv run python scripts/fix_f541.py`. Reset the LLM singleton with
   `portf_manager.llm_client.reset_llm_client()`.
-- DB version bump: update every `== 43` assertion in `tests/test_database.py`, and check `tests/unit/test_schema_v*.py` — a per-version module may pin the number too (v37's did, and failed on the v38 bump); new ones compare with `DATABASE_VERSION`.
+- DB version bump: update every `== 44` assertion in `tests/test_database.py`, and check `tests/unit/test_schema_v*.py` — a per-version module may pin the number too (v37's did, and failed on the v38 bump); new ones compare with `DATABASE_VERSION`.
 
 ## Documentation (Default Behaviour)
 When adding or changing a feature, always update:

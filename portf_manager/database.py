@@ -16,7 +16,7 @@ from pathlib import Path
 from portf_manager.services.merchant import fold_for_search, normalize_merchant
 
 # Database version for migration tracking
-DATABASE_VERSION = 43
+DATABASE_VERSION = 44
 
 
 # black
@@ -867,6 +867,8 @@ class Database:
                 period         TEXT NOT NULL DEFAULT 'monthly'
                                    CHECK (period IN ('monthly', 'yearly')),
                 rollover       INTEGER NOT NULL DEFAULT 0,
+                link_type      TEXT NOT NULL DEFAULT 'manual'
+                                   CHECK (link_type IN ('manual', 'loan')),
                 created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE (budget_id, line_type, ref_key)
             )
@@ -1025,6 +1027,8 @@ class Database:
             self._migrate_to_v42(conn)
         if current_version < 43:
             self._migrate_to_v43(conn)
+        if current_version < 44:
+            self._migrate_to_v44(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -2206,6 +2210,22 @@ class Database:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_decisions_review "
             "ON decisions (reviewed_at, review_on)"
+        )
+        conn.commit()
+
+    def _migrate_to_v44(self, conn: sqlite3.Connection) -> None:
+        """Migrate from v43 to v44 — a budget debt line can link to a loan.
+
+        ``budget_lines.link_type`` (``manual`` | ``loan``) says what
+        ``link_id`` points at: a manual liability (``manual_assets``) or a row
+        of ``loans``. Existing lines stay ``manual``; the step is guarded so a
+        rerun is harmless.
+        """
+        _add_column_if_missing(
+            conn,
+            "budget_lines",
+            "link_type",
+            "TEXT NOT NULL DEFAULT 'manual' " "CHECK (link_type IN ('manual', 'loan'))",
         )
         conn.commit()
 
@@ -6388,6 +6408,7 @@ class Database:
         notes: str = None,
         period: str = "monthly",
         rollover: bool = False,
+        link_type: str = "manual",
     ) -> int:
         """Create a budget line.
 
@@ -6403,8 +6424,9 @@ class Database:
             cursor = conn.execute(
                 """INSERT INTO budget_lines
                        (budget_id, line_type, ref_key, monthly_amount,
-                        overrides, link_id, notes, period, rollover)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        overrides, link_id, notes, period, rollover,
+                        link_type)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     budget_id,
                     line_type,
@@ -6415,6 +6437,7 @@ class Database:
                     notes,
                     period,
                     1 if rollover else 0,
+                    link_type or "manual",
                 ),
             )
             self._touch_budget(conn, budget_id)
@@ -6432,6 +6455,7 @@ class Database:
             "notes",
             "period",
             "rollover",
+            "link_type",
         }
         update_fields = {k: v for k, v in kwargs.items() if k in valid_fields}
         if "rollover" in update_fields:
@@ -6489,7 +6513,8 @@ class Database:
                            SET monthly_amount = ?, overrides = ?, link_id = ?,
                                notes = ?,
                                period = COALESCE(?, period),
-                               rollover = COALESCE(?, rollover)
+                               rollover = COALESCE(?, rollover),
+                               link_type = COALESCE(?, link_type)
                            WHERE id = ?""",
                         (
                             line.get("monthly_amount", 0),
@@ -6502,6 +6527,7 @@ class Database:
                                 if line.get("rollover") is None
                                 else int(bool(line["rollover"]))
                             ),
+                            line.get("link_type"),
                             existing[0],
                         ),
                     )
@@ -6510,8 +6536,9 @@ class Database:
                     conn.execute(
                         """INSERT INTO budget_lines
                                (budget_id, line_type, ref_key, monthly_amount,
-                                overrides, link_id, notes, period, rollover)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                                overrides, link_id, notes, period, rollover,
+                                link_type)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (
                             budget_id,
                             line["line_type"],
@@ -6522,6 +6549,7 @@ class Database:
                             line.get("notes"),
                             line.get("period") or "monthly",
                             1 if line.get("rollover") else 0,
+                            line.get("link_type") or "manual",
                         ),
                     )
                     created += 1

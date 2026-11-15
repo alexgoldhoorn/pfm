@@ -80,6 +80,9 @@ class BudgetLineBody(BaseModel):
     monthly_amount: float = 0
     overrides: Optional[Dict[str, float]] = None
     link_id: Optional[int] = None
+    # What link_id points at: a manual liability or a loan record. Left out, a
+    # bulk save keeps the stored value and a create uses 'manual'.
+    link_type: Optional[Literal["manual", "loan"]] = None
     notes: Optional[str] = None
     # Left out (None), a bulk save keeps what the line has and a create uses
     # monthly / no rollover.
@@ -92,6 +95,7 @@ class BudgetLineUpdateBody(BaseModel):
     monthly_amount: Optional[float] = None
     overrides: Optional[Dict[str, float]] = None
     link_id: Optional[int] = None
+    link_type: Optional[Literal["manual", "loan"]] = None
     notes: Optional[str] = None
     period: Optional[Literal["monthly", "yearly"]] = None
     rollover: Optional[bool] = None
@@ -108,6 +112,7 @@ class BudgetLineResponse(BaseModel):
     rollover: bool = False
     overrides: Dict[str, float] = {}
     link_id: Optional[int] = None
+    link_type: str = "manual"
     notes: Optional[str] = None
 
 
@@ -122,8 +127,14 @@ class BudgetVarianceLine(BaseModel):
     label: str
     notes: Optional[str] = None
     link_id: Optional[int] = None
+    link_type: str = "manual"
     link_label: Optional[str] = None
     link_amount_eur: Optional[float] = None
+    # the linked manual liability or loan no longer exists
+    link_broken: bool = False
+    # a loan link: this month's scheduled split of the payment
+    link_principal_eur: Optional[float] = None
+    link_interest_eur: Optional[float] = None
     monthly_amount: float
     period: str = "monthly"
     rollover: bool = False
@@ -229,6 +240,7 @@ def _serialize_line(db, line: Dict, tree: List[Dict] = None) -> BudgetLineRespon
         rollover=bool(line.get("rollover")),
         overrides=budget_service.parse_overrides(line.get("overrides")),
         link_id=line.get("link_id"),
+        link_type=line.get("link_type") or "manual",
         notes=line.get("notes"),
     )
 
@@ -389,6 +401,7 @@ async def create_budget(
             line.get("notes"),
             period=line.get("period") or "monthly",
             rollover=bool(line.get("rollover")),
+            link_type=line.get("link_type") or "manual",
         )
     created = db.get_budget(budget_id)
     return BudgetResponse(
@@ -528,6 +541,7 @@ async def create_budget_line(
         body.notes,
         period=body.period or "monthly",
         rollover=bool(body.rollover),
+        link_type=body.link_type or "manual",
     )
     return _serialize_line(db, db.get_budget_line(line_id))
 
@@ -584,6 +598,7 @@ async def bulk_upsert_budget_lines(
                 "monthly_amount": line.monthly_amount,
                 "overrides": budget_service.serialize_overrides(line.overrides),
                 "link_id": line.link_id,
+                "link_type": line.link_type,
                 "notes": line.notes,
                 # None keeps what the stored line has (the grid save sends
                 # neither key)
@@ -649,6 +664,10 @@ async def update_budget_line(
         # An omitted field means "unchanged", so 0 is the way to say "no
         # liability" -- normalize it to NULL rather than storing a sentinel.
         fields["link_id"] = body.link_id or None
+        if not body.link_id:
+            fields["link_type"] = "manual"
+    if body.link_type is not None and body.link_id != 0:
+        fields["link_type"] = body.link_type
     if body.notes is not None:
         fields["notes"] = body.notes
     if fields:

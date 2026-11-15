@@ -30,6 +30,7 @@ from portf_manager.services.cashflow_forecast import (
     baseline_month_list,
     everyday_outflows,
 )
+from portf_manager.services import loans as loan_calc
 from portf_manager.services.life_scenarios import UNCLASSIFIED, tier_of
 from portf_manager.services.recurring import (
     last_import_dates,
@@ -743,6 +744,61 @@ def _pace_context(
     )
 
 
+def _link_info(
+    line: Dict,
+    link_type: str,
+    liabilities: Dict[int, Dict],
+    loans_by_id: Dict[int, Dict],
+    fx: Callable[[str], float],
+    today: date,
+    month: str,
+) -> Dict[str, Any]:
+    """What a line's ``link_id`` points at, for display next to the line.
+
+    A link to a deleted manual liability or loan is not an error: the line
+    comes back with a null balance and ``link_broken`` true. Only a debt line
+    carries a link in the UI, but a stored one is always resolved.
+    """
+    link_id = line.get("link_id")
+    info: Dict[str, Any] = {
+        "link_id": link_id,
+        "link_type": link_type,
+        "link_label": None,
+        "link_amount_eur": None,
+        "link_broken": False,
+    }
+    if link_id is None:
+        return info
+    if link_type == "loan":
+        loan = loans_by_id.get(link_id)
+        if loan is None:
+            info["link_broken"] = True
+            return info
+        info["link_label"] = loan["name"]
+        try:
+            info["link_amount_eur"] = round(
+                loan_calc.balance_on(loan, today) * fx(loan.get("currency") or "EUR"),
+                2,
+            )
+            split = loan_calc.payment_split(loan, month)
+        except Exception:  # a loan with an unreadable date must not break the page
+            return info
+        if split:
+            rate = fx(loan.get("currency") or "EUR")
+            info["link_principal_eur"] = round(split["principal"] * rate, 2)
+            info["link_interest_eur"] = round(split["interest"] * rate, 2)
+        return info
+    liability = liabilities.get(link_id)
+    if liability is None:
+        info["link_broken"] = True
+        return info
+    info["link_label"] = liability.get("name")
+    info["link_amount_eur"] = round(
+        float(liability["amount"] or 0) * fx(liability.get("currency") or "EUR"), 2
+    )
+    return info
+
+
 def compute_budget_variance(
     db,
     budget_id: int,
@@ -867,6 +923,9 @@ def compute_budget_variance(
     liabilities = {
         item["id"]: item for item in db.get_manual_assets() if item["is_liability"]
     }
+    # ... or at a loan record, whose balance and this month's split come from
+    # its schedule (link_type 'loan')
+    loans_by_id = {loan["id"]: loan for loan in db.get_loans()}
 
     # Every category any line covers — shared by spending and debt, which both
     # live under the Spend root, so an uncovered charge is only ever reported
@@ -1004,7 +1063,10 @@ def compute_budget_variance(
                     fund_balance_eur={m: round(stored - spent12[m], 2) for m in months},
                 )
 
-            liability = liabilities.get(line.get("link_id"))
+            link_type = line.get("link_type") or "manual"
+            link_info = _link_info(
+                line, link_type, liabilities, loans_by_id, fx, today, current
+            )
             pace = None
             if (
                 pace_ctx is not None
@@ -1020,17 +1082,7 @@ def compute_budget_variance(
                     "ref_key": line["ref_key"],
                     "label": label,
                     "notes": line.get("notes"),
-                    "link_id": line.get("link_id"),
-                    "link_label": (liability or {}).get("name"),
-                    "link_amount_eur": (
-                        round(
-                            float(liability["amount"] or 0)
-                            * fx(liability.get("currency") or "EUR"),
-                            2,
-                        )
-                        if liability
-                        else None
-                    ),
+                    **link_info,
                     "monthly_amount": round(stored, 2),
                     "period": period,
                     "rollover": bool(line.get("rollover")),

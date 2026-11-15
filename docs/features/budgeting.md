@@ -31,7 +31,7 @@ source. Design: `docs/superpowers/specs/2026-09-03-budgeting-design.md`.
   line's category will also surface as unbudgeted *spending*, doubling it. `overrides` is a JSON object of per-month exceptions
   (`{"2026-03": 450.0}`), parsed by the service (`parse_overrides`, tolerant
   of `NULL`/malformed) — never by the DB layer, which passes the text through.
-  `link_id` is an optional `manual_assets.id` on a debt line, display only.
+  `link_id` is an optional link on a debt line, display only; `link_type` (`manual` default | `loan`, schema v44) says whether it is a `manual_assets.id` or a `loans.id`.
 - `is_active` exclusivity lives in `db.set_active_budget()` (clears every other
   row in the same transaction), **not** in a constraint.
 - **Endpoints** — `GET|POST /api/v1/budgets/`, `GET /summary`,
@@ -110,14 +110,20 @@ source. Design: `docs/superpowers/specs/2026-09-03-budgeting-design.md`.
   (`kept` = investment contributions). **`kept` deliberately excludes debt**:
   mortgage principal is money kept too, but a bank statement can't say how much
   of a payment was principal and how much was interest, so it isn't guessed at.
-- **A debt line can link to the `manual_assets` liability it repays**, via
-  `budget_lines.link_id`; the variance response resolves it into `link_label` +
+- **A debt line can link to the `manual_assets` liability it repays or to a loan record**, via
+  `budget_lines.link_id` + `link_type` (`manual` | `loan`, v44); the variance response resolves it into `link_label` +
   `link_amount_eur` so the Overview can print "against X outstanding" under the
-  line, and the Edit tab renders a liability picker on debt rows only. This is
+  line, and the Edit tab renders a picker on debt rows only (value `manual:<id>` /
+  `loan:<id>`, `parseBudgetLink`). A loan link takes the balance from
+  `loans.balance_on` today and adds `link_principal_eur` / `link_interest_eur`,
+  the scheduled split of the payment falling in the current month (absent when
+  none falls there). This is
   **display only — the balance never enters any total**, for the same
-  principal/interest reason. A `link_id` pointing at a deleted liability
-  degrades to nulls, never a 500. On `PUT`, `link_id: 0` means "clear the
-  link" (an omitted field means "unchanged") and is normalized to NULL.
+  principal/interest reason. A link pointing at a deleted liability or loan
+  degrades to nulls plus `link_broken: true` (the UI says "Linked item no
+  longer exists"), never a 500. On `PUT`, `link_id: 0` means "clear the
+  link" (an omitted field means "unchanged"), is normalized to NULL and resets
+  `link_type` to `manual`. A bulk save without `link_type` keeps the stored one.
 - Debt lines share the Spend tree with spending lines, so the **Debt section's
   `unbudgeted` list is always empty by design** — uncovered charges are
   reported once, in the Spending section.

@@ -10517,7 +10517,7 @@ async function _refreshBudgetData() {
     if (!window._bgSelectedId) return;
     _bgStatus('Loading…');
     try {
-        const [variance, lines, tree, portfolios, networth] = await Promise.all([
+        const [variance, lines, tree, portfolios, networth, loans] = await Promise.all([
             window.apiClient.getBudgetVariance(window._bgSelectedId, _bgSelectedMonths()),
             window.apiClient.getBudgetLines(window._bgSelectedId),
             window.apiClient.getSpendingCategoryTree(),
@@ -10525,12 +10525,14 @@ async function _refreshBudgetData() {
             // Best-effort: a debt line can be linked to the liability it repays,
             // but the page must still render if Net Worth is unavailable.
             window.apiClient.getNetworth().catch(() => ({ items: [] })),
+            window.apiClient.getLoans().catch(() => []),
         ]);
         window._bgVariance = variance;
         window._bgLines = lines;
         window._bgCategoryTree = tree;
         window._bgPortfolios = portfolios;
         window._bgLiabilities = ((networth && networth.items) || []).filter(i => i.is_liability);
+        window._bgLoans = Array.isArray(loans) ? loans : [];
         _bgStatus('');
         _renderBgKpis();
         _renderBgVariance();
@@ -10634,7 +10636,8 @@ function _renderBgVariance() {
                         ${line.rollover && line.period !== 'yearly' ? ` <span class="badge text-bg-info" title="${escapeForAttr((window.METRIC_HELP || {}).budgetRollover || '')}">carry over</span>` : ''}
                     </div>
                     ${line.notes ? `<div class="text-muted small">${esc(line.notes)}</div>` : ''}
-                    ${line.link_label ? `<div class="text-muted small">against ${_bgEur(line.link_amount_eur)} outstanding on ${esc(line.link_label)}</div>` : ''}
+                    ${line.link_label ? `<div class="text-muted small">against ${_bgEur(line.link_amount_eur)} outstanding on ${esc(line.link_label)}${line.link_principal_eur !== undefined && line.link_principal_eur !== null ? ` (this month: ${_bgEur(line.link_principal_eur)} principal, ${_bgEur(line.link_interest_eur)} interest)` : ''}</div>` : ''}
+                    ${line.link_broken ? `<div class="text-warning small"><i class="bi bi-exclamation-triangle me-1"></i>Linked item no longer exists</div>` : ''}
                     ${fund ? `<div class="text-muted small"><i class="bi bi-piggy-bank me-1"></i>${esc(fund)}</div>` : ''}
                     ${pace ? `<div class="small d-md-none"><span class="badge ${pace.badge}">${esc(pace.label)}</span> ${esc(pace.text)}</div>` : ''}
                     ${_bgProgressBar(budgetLinePlan(line), line.actual_total, section.favourable_when_under)}
@@ -10835,28 +10838,58 @@ function _wireBgLineTypeSelects() {
 }
 
 /**
- * Liability picker for a debt line.
+ * Link picker for a debt line.
  *
  * A debt line measures the payments leaving your bank account; the outstanding
- * balance lives on the Net Worth page as a manual liability. Linking the two
- * puts the payment next to the balance it is chipping away at. It is display
- * only — the balance never enters any budget total, because a bank statement
- * can't say how much of a payment was principal and how much was interest.
+ * balance lives on the Net Worth page as a manual liability or as a loan
+ * record. Linking the two puts the payment next to the balance it is chipping
+ * away at (a loan also shows this month's principal/interest split). It is
+ * display only — the balance never enters any budget total, because a bank
+ * statement can't say how much of a payment was principal and how much was
+ * interest.
  */
+function budgetLinkValue(type, id) {
+    return id ? `${type === 'loan' ? 'loan' : 'manual'}:${id}` : '';
+}
+window.budgetLinkValue = budgetLinkValue;
+
+/** Parse a picker value back into {link_id, link_type}; '' clears the link. */
+function parseBudgetLink(value) {
+    const m = /^(manual|loan):(\d+)$/.exec(String(value || ''));
+    if (!m) return { link_id: 0, link_type: 'manual' };
+    return { link_id: parseInt(m[2], 10), link_type: m[1] };
+}
+window.parseBudgetLink = parseBudgetLink;
+
+/**
+ * Options for the picker: manual liabilities, loans, and the current link
+ * when it no longer resolves (so the select shows it instead of "none").
+ */
+function budgetLinkOptions(liabilities, loans, line) {
+    const opts = [{ value: '', label: 'Not linked' }];
+    (liabilities || []).forEach(l => opts.push({ value: budgetLinkValue('manual', l.id), label: `Repays ${l.name}` }));
+    (loans || []).forEach(l => opts.push({ value: budgetLinkValue('loan', l.id), label: `Loan: ${l.name}` }));
+    const current = budgetLinkValue(line.link_type, line.link_id);
+    if (current && !opts.some(o => o.value === current)) {
+        opts.push({ value: current, label: 'Linked item no longer exists' });
+    }
+    return opts;
+}
+window.budgetLinkOptions = budgetLinkOptions;
+
 function _bgLiabilitySelect(line) {
-    const liabilities = window._bgLiabilities || [];
-    if (!liabilities.length) return '';
+    const opts = budgetLinkOptions(window._bgLiabilities, window._bgLoans, line);
+    if (opts.length === 1) return '';
+    const current = budgetLinkValue(line.link_type, line.link_id);
     return `<select class="form-select form-select-sm mt-1 bg-line-link" data-line-id="${line.id}" style="max-width:16rem;">
-        <option value="">Not linked to a liability</option>
-        ${liabilities.map(l => `<option value="${l.id}" ${l.id === line.link_id ? 'selected' : ''}>Repays ${esc(l.name)}</option>`).join('')}
-    </select>`;
+        ${opts.map(o => `<option value="${esc(o.value)}" ${o.value === current ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}
+    </select>${line.link_broken ? '<div class="text-warning small"><i class="bi bi-exclamation-triangle me-1"></i>The linked item no longer exists.</div>' : ''}`;
 }
 
-async function setBudgetLineLink(lineId, linkId) {
+async function setBudgetLineLink(lineId, value) {
     try {
-        // null clears the link; the API treats an omitted field as "unchanged",
-        // so send 0 and let the backend store it as "no liability".
-        await window.apiClient.updateBudgetLine(window._bgSelectedId, lineId, { link_id: linkId || 0 });
+        // link_id 0 clears the link; the API treats an omitted field as "unchanged".
+        await window.apiClient.updateBudgetLine(window._bgSelectedId, lineId, parseBudgetLink(value));
         await _refreshBudgetData();
     } catch (err) {
         _bgStatus(err.message, 'danger');
@@ -10869,7 +10902,7 @@ function _wireBgLineLinkSelects() {
         if (select.dataset.wired) return;
         select.dataset.wired = '1';
         select.addEventListener('change', e =>
-            setBudgetLineLink(parseInt(e.target.dataset.lineId, 10), parseInt(e.target.value, 10) || null));
+            setBudgetLineLink(parseInt(e.target.dataset.lineId, 10), e.target.value));
     });
 }
 
