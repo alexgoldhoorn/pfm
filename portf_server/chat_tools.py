@@ -634,9 +634,14 @@ def _budget_digest(b: dict) -> dict:
             "Variance is against available_total (plan plus anything carried "
             "in from earlier months), not planned_total. A yearly line sets "
             "aside a twelfth a month: its planned_total is only that "
-            "set-aside, and the fund shows what is built up and left. pace is "
-            "a projection of the month in progress up to data_through, an "
-            "estimate; it is absent for a month with nothing imported."
+            "set-aside; the limit is a rolling 12 months and the fund shows "
+            "what was spent in the last 12 months and what is left of the "
+            "yearly amount. pace is a projection of the month in progress up "
+            "to data_through (the date the least up-to-date account reaches), "
+            "an estimate; it is absent for a month with nothing imported, and "
+            "status too_early (projected_month_end_eur null) means there is "
+            "no baseline yet and little of the month has passed: do not "
+            "invent a projection for it."
         ),
     }
 

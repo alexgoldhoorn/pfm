@@ -369,7 +369,7 @@ def test_cost_control_views_render_against_real_data(page, server_url):
         # the yearly line is labelled as such on the Overview, with its fund
         overview = page.locator("#bgVarianceArea").inner_text()
         assert "yearly" in overview
-        assert "Fund" in overview
+        assert "Last 12 months" in overview
         assert page.errors == []
     finally:
         httpx.delete(f"{server_url}/api/v1/budgets/{bid}", headers=headers)

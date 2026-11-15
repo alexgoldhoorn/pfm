@@ -704,3 +704,33 @@ def test_household_finances_budget_reports_available_pace_and_fund(cost_db):
     assert digest["yearly_funds"][0]["yearly_amount_eur"] == 1200.0
     assert digest["lines_at_risk_or_over"][0]["status"] == "at_risk"
     assert digest["data_through"] == "2026-07-10"
+
+
+def test_budget_digest_keeps_too_early_pace_and_tells_the_model_not_to_guess(cost_db):
+    from portf_server.chat_tools import _budget_digest
+
+    digest = _budget_digest(
+        {
+            "sections": [
+                {
+                    "key": "spending",
+                    "label": "Spending",
+                    "lines": [
+                        {
+                            "label": "Groceries",
+                            "pace": {
+                                "status": "too_early",
+                                "limit_eur": 400.0,
+                                "actual_to_date_eur": 90.0,
+                                "projected_month_end_eur": None,
+                            },
+                        }
+                    ],
+                    "pace": {"status": "too_early", "projected_month_end_eur": None},
+                }
+            ]
+        }
+    )
+    assert digest["sections"][0]["pace"]["projected_month_end_eur"] is None
+    assert digest["lines_at_risk_or_over"] == []
+    assert "too_early" in digest["notes"] and "rolling 12 months" in digest["notes"]

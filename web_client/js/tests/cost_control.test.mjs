@@ -137,7 +137,14 @@ test("anomalyOneOffIds / label: a category spike has no rows to flag", () => {
     assert.equal(w.anomalyOneOffIds({}).length, 0);
     assert.deepEqual(plain(w.anomalyOneOffIds({ transaction_ids: [4, 9] })), [4, 9]);
     assert.equal(w.anomalyOneOffLabel({ transaction_ids: [4] }), "Mark one-off");
-    assert.equal(w.anomalyOneOffLabel({ transaction_ids: [4, 9] }), "Mark both one-off");
+});
+
+test("anomalyCanMarkOneOff: not for a possible duplicate, not without rows", () => {
+    assert.equal(w.anomalyCanMarkOneOff({ kind: "large_charge", transaction_ids: [4] }), true);
+    assert.equal(w.anomalyCanMarkOneOff({ kind: "new_merchant", transaction_ids: [4] }), true);
+    assert.equal(w.anomalyCanMarkOneOff({ kind: "possible_duplicate", transaction_ids: [4, 9] }), false);
+    assert.equal(w.anomalyCanMarkOneOff({ kind: "category_spike", transaction_ids: [] }), false);
+    assert.equal(w.anomalyCanMarkOneOff(null), false);
 });
 
 // ── tiers ───────────────────────────────────────────────────────────────────
@@ -196,15 +203,24 @@ test("paceMeta: null without a pace, a status badge and sentence with one", () =
     assert.match(over.text, /Already over/);
 });
 
+test("paceMeta: too_early has no projection and says so", () => {
+    const m = w.paceMeta({ status: "too_early", projected_month_end_eur: null, limit_eur: 400, actual_to_date_eur: 150, data_through: "2026-11-03" });
+    assert.equal(m.label, "Too early");
+    assert.match(m.badge, /secondary/);
+    assert.equal(m.projected, "—");
+    assert.match(m.text, /Too early to project: .*150 spent so far of .*400/);
+    assert.doesNotMatch(m.text, /Heading for/);
+});
+
 test("paceMeta: an unknown projection reads 'not available'", () => {
     const m = w.paceMeta({ status: "on_track", projected_month_end_eur: null, limit_eur: 400 });
     assert.match(m.text, /not available/);
 });
 
-test("fundText: year, set aside, spent and left; null without a fund", () => {
+test("fundText: the rolling 12 months, spent of the yearly amount and what is left", () => {
     assert.equal(w.fundText(null), null);
-    const t = w.fundText({ year: 2026, set_aside_eur: 500, spent_eur: 200, remaining_eur: 300 });
-    assert.match(t, /^2026: set aside .*500.*spent .*200.*left .*300/);
+    const t = w.fundText({ yearly_amount_eur: 500, spent_eur: 200, remaining_eur: 300, window_start: "2025-12", window_end: "2026-11" });
+    assert.match(t, /^Last 12 months: spent .*200.* of .*500.*, .*300.* left$/);
 });
 
 test("budgetLinePlan: available when the line carries, planned otherwise", () => {

@@ -10635,7 +10635,7 @@ function _renderBgVariance() {
                     </div>
                     ${line.notes ? `<div class="text-muted small">${esc(line.notes)}</div>` : ''}
                     ${line.link_label ? `<div class="text-muted small">against ${_bgEur(line.link_amount_eur)} outstanding on ${esc(line.link_label)}</div>` : ''}
-                    ${fund ? `<div class="text-muted small"><i class="bi bi-piggy-bank me-1"></i>Fund ${esc(fund)} (yearly figure ${_bgEur(line.monthly_amount)})</div>` : ''}
+                    ${fund ? `<div class="text-muted small"><i class="bi bi-piggy-bank me-1"></i>${esc(fund)}</div>` : ''}
                     ${pace ? `<div class="small d-md-none"><span class="badge ${pace.badge}">${esc(pace.label)}</span> ${esc(pace.text)}</div>` : ''}
                     ${_bgProgressBar(budgetLinePlan(line), line.actual_total, section.favourable_when_under)}
                 </td>
@@ -10762,7 +10762,7 @@ function _bgFundControlsHtml(line) {
             <option value="monthly" ${yearly ? '' : 'selected'}>per month</option>
             <option value="yearly" ${yearly ? 'selected' : ''}>per year</option>
         </select>
-        ${yearly ? '<span class="small text-muted">fund carries over</span>' : `<label class="small mb-0 text-nowrap"><input type="checkbox" class="form-check-input bg-line-rollover me-1" data-line-id="${line.id}" ${line.rollover ? 'checked' : ''}>carry over</label>`}
+        ${yearly ? '<span class="small text-muted">rolling 12 months</span>' : `<label class="small mb-0 text-nowrap"><input type="checkbox" class="form-check-input bg-line-rollover me-1" data-line-id="${line.id}" ${line.rollover ? 'checked' : ''}>carry over</label>`}
     </div>`;
 }
 
@@ -11558,8 +11558,18 @@ function anomalyOneOffIds(item) {
     return ids.filter(id => Number.isInteger(id));
 }
 
-function anomalyOneOffLabel(item) {
-    return anomalyOneOffIds(item).length > 1 ? 'Mark both one-off' : 'Mark one-off';
+/**
+ * Marking one-off is offered for the kinds that flag a payment as unusual. A
+ * possible duplicate says "this may have been charged twice": calling it
+ * one-off would hide a double charge instead of settling it, so it only has
+ * Dismiss.
+ */
+function anomalyCanMarkOneOff(item) {
+    return !!item && item.kind !== 'possible_duplicate' && anomalyOneOffIds(item).length > 0;
+}
+
+function anomalyOneOffLabel() {
+    return 'Mark one-off';
 }
 
 // ── Tiers ───────────────────────────────────────────────────────────────────
@@ -11655,6 +11665,7 @@ const CC_PACE_STATUS = {
     on_track: { label: 'On track', badge: 'text-bg-success' },
     at_risk: { label: 'At risk', badge: 'text-bg-warning' },
     over: { label: 'Over', badge: 'text-bg-danger' },
+    too_early: { label: 'Too early', badge: 'text-bg-secondary' },
 };
 
 /** Badge and sentence for a line's (or the section's) pace; null when there is none. */
@@ -11664,16 +11675,24 @@ function paceMeta(pace) {
     const projected = ccMoney(pace.projected_month_end_eur);
     const limit = ccMoney(pace.limit_eur);
     const through = pace.data_through ? ` Data through ${Fmt.date(pace.data_through)}.` : '';
+    // No projection this early in the month and without a baseline: say so
+    // instead of printing a figure that would only be a guess.
+    if (pace.status === 'too_early') {
+        return {
+            status: pace.status, label: meta.label, badge: meta.badge, projected: '—', limit,
+            text: `Too early to project: ${ccMoney(pace.actual_to_date_eur)} spent so far of ${limit}.${through}`,
+        };
+    }
     const text = pace.status === 'over'
         ? `Already over: ${ccMoney(pace.actual_to_date_eur)} spent of ${limit}, heading for ${projected} by month end.${through}`
         : `Heading for ${projected} of ${limit} by month end.${through}`;
     return { status: pace.status, label: meta.label, badge: meta.badge, projected, limit, text };
 }
 
-/** "2026: set aside €x, spent €y, left €z", or null for a line without a fund. */
+/** "Last 12 months: spent €y of €x, €z left", or null for a line without a fund. */
 function fundText(fund) {
     if (!fund) return null;
-    return `${fund.year}: set aside ${ccMoney(fund.set_aside_eur)}, spent ${ccMoney(fund.spent_eur)}, left ${ccMoney(fund.remaining_eur)}`;
+    return `Last 12 months: spent ${ccMoney(fund.spent_eur)} of ${ccMoney(fund.yearly_amount_eur)}, ${ccMoney(fund.remaining_eur)} left`;
 }
 
 /** What a line's variance is measured against: available when it carries over. */
@@ -11819,6 +11838,7 @@ window.tierBadgeHtml = tierBadgeHtml;
 window.tierChartModel = tierChartModel;
 window.tierTopModel = tierTopModel;
 window.tierTotalsModel = tierTotalsModel;
+window.anomalyCanMarkOneOff = anomalyCanMarkOneOff;
 window.paceMeta = paceMeta;
 window.fundText = fundText;
 window.budgetLinePlan = budgetLinePlan;
@@ -11960,7 +11980,7 @@ async function loadSpAnomalies() {
         }
         body.innerHTML = '<div class="list-group list-group-flush">' + items.map(item => {
             const kind = anomalyKindMeta(item.kind);
-            const canOneOff = anomalyOneOffIds(item).length > 0;
+            const canOneOff = anomalyCanMarkOneOff(item);
             return `<div class="list-group-item d-flex flex-wrap justify-content-between align-items-start gap-2" data-anomaly-id="${escapeForAttr(item.id)}">
                 <div style="min-width:0;">
                     <span class="badge ${kind.badge} me-2">${esc(kind.label)}</span><span class="text-muted small">${esc(Fmt.date(item.date))}</span>

@@ -38,6 +38,13 @@ def _pace_text(pace: Optional[dict]) -> str:
     if not pace:
         return ""
     status = (pace.get("status") or "?").replace("_", " ")
+    if pace.get("status") == "too_early":
+        return (
+            f"too early to project (no baseline yet and little of the month has"
+            f" passed); spent {_na(pace.get('actual_to_date_eur'), _fmt_currency)}"
+            f" to {pace.get('data_through') or 'n/a'}"
+            f" against {_na(pace.get('limit_eur'), _fmt_currency)}"
+        )
     return (
         f"{status}; spent {_na(pace.get('actual_to_date_eur'), _fmt_currency)}"
         f" to {pace.get('data_through') or 'n/a'},"
@@ -55,10 +62,9 @@ def _budget_line_notes(line: dict) -> list[str]:
             out.append(
                 f"    yearly {_fmt_currency(float(fund.get('yearly_amount_eur') or 0))}"
                 f" ({_fmt_currency(float(line.get('set_aside_eur') or 0))} a month"
-                f" set aside; planned is only the set-aside): fund"
-                f" {fund.get('year')} set aside"
-                f" {_fmt_currency(float(fund.get('set_aside_eur') or 0))},"
-                f" spent {_fmt_currency(float(fund.get('spent_eur') or 0))},"
+                f" set aside; planned is only the set-aside): last 12 months"
+                f" ({fund.get('window_start')} to {fund.get('window_end')}) spent"
+                f" {_fmt_currency(float(fund.get('spent_eur') or 0))},"
                 f" left {_fmt_currency(float(fund.get('remaining_eur') or 0))}"
             )
         else:

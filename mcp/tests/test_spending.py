@@ -315,10 +315,10 @@ def test_budget_summary_prints_available_pace_fund_and_data_through():
         available_total=500.0,
         pace=None,
         fund={
-            "year": 2026,
             "yearly_amount_eur": 1200.0,
-            "set_aside_eur": 900.0,
-            "spent_eur": 400.0,
+            "window_start": "2025-10",
+            "window_end": "2026-09",
+            "spent_eur": 700.0,
             "remaining_eur": 500.0,
         },
     )
@@ -333,8 +333,31 @@ def test_budget_summary_prints_available_pace_fund_and_data_through():
     assert "at risk; spent 300.00 EUR to 2026-09-10" in result
     assert "projected month end 900.00 EUR (estimate)" in result
     assert "yearly 1,200.00 EUR" in result and "left 500.00 EUR" in result
+    assert "last 12 months (2025-10 to 2026-09) spent 700.00 EUR" in result
     assert "Data through: 2026-09-10." in result
     assert "⚠️ Example warning." in result
+
+
+def test_budget_summary_says_too_early_instead_of_a_projection():
+    from datetime import date
+
+    payload = _budget_payload()
+    spending_section = next(s for s in payload["sections"] if s["key"] == "spending")
+    spending_section["pace"] = {
+        "status": "too_early",
+        "actual_to_date_eur": 600.0,
+        "projected_month_end_eur": None,
+        "limit_eur": 400.0,
+        "data_through": "2026-09-02",
+    }
+    with (
+        patch("pfm_mcp.client._get", return_value=reply(payload)),
+        patch("pfm_mcp.client._today", return_value=date(2026, 9, 3)),
+    ):
+        result = spending.budget_summary()
+    assert "too early to project" in result
+    assert "projected month end" not in result
+    assert "spent 600.00 EUR to 2026-09-02 against 400.00 EUR" in result
 
 
 _COMPARE = {

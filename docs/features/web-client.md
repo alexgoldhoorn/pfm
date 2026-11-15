@@ -241,13 +241,16 @@ API calls: `getSpendingCompare/Anomalies/Tiers`, `getCashflowForecast`,
   (`check_spending_anomalies`), so *Dismiss* uses the existing server-side
   follow-up state (`setFindingStatus(id, 'checked')`, hidden by
   `anomalyVisibleItems` with `ackIsActive`), not `localStorage`. *Mark
-  one-off* sends `one_off: true` for the item's `transaction_ids` and reloads
-  the comparison, anomalies and tiers; a `category_spike` has no rows, so only
-  Dismiss is offered.
+  one-off* (`anomalyCanMarkOneOff`) sends `one_off: true` for the item's
+  `transaction_ids` and reloads the comparison, anomalies and tiers; a
+  `category_spike` has no rows and a `possible_duplicate` is a possible double
+  charge (calling it one-off would hide it instead of settling it), so those
+  only offer Dismiss.
 - **Budget › Overview:** a Pace column (badge plus projected month end, also
-  a line under the label on phones), a section banner for the spending pace,
+  a line under the label on phones; `too_early` shows a grey "Too early" badge
+  and a dash, never a figure), a section banner for the spending pace,
   tier badges on lines, a tier totals strip under the spending section, the
-  yearly fund line ("Fund 2026: set aside, spent, left") and "available" under
+  yearly fund line ("Last 12 months: spent X of Y, Z left", `fundText`) and "available" under
   Planned for any line whose plan differs from `planned_total`. The progress
   bar and the KPI tile use `available_total` when present (that is what the
   variance is measured against). `variance.warnings` and `data_through` are
