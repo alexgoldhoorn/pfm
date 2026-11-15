@@ -205,3 +205,56 @@ larger and lumpier than day-to-day spending (and include moves between your
 own accounts), so folding them in buries the comparison the chart exists to
 make. This matches the KPI tiles, which are also spending-only; investment
 lines still appear in their own section of the variance table.
+
+### Pace, yearly lines, rollover and tiers (2026-11-15, schema v43)
+
+`budget_lines.period` (`monthly` | `yearly`) and `rollover` (0/1) are new; both
+are valid only on `spending` and `debt` lines (400 otherwise). Actual totals
+are unchanged, so variance still reconciles with `/spending/trend` to the cent.
+
+- ⚠️ **On a yearly line `monthly_amount` stores the YEARLY figure.** Each month
+  sets aside a twelfth (`set_aside_eur`; a per-month override replaces the
+  twelfth). `planned_total` of such a line is therefore only the set-aside over
+  the window, not the bill. The line behaves as a rollover line whose carry is
+  the fund built up since January: the month the bill lands is measured
+  against `available`, not against one twelfth. `fund` reports the calendar
+  year's `set_aside_eur`, `spent_eur` and `remaining_eur` (only months with
+  imports take part). **A bill larger than the fund built so far is genuinely
+  over** (the fund starts empty in January and fills a twelfth per imported
+  month).
+- **Rollover** (`rollover=1`, spending and debt). What earlier months of the
+  same calendar year left over or overspent carries into the month:
+  `carried_eur`, `available_eur` per month and `carried_total`. Months without
+  imports do not take part (carrying an empty month would invent a surplus).
+  **Carry-over resets in January**; what was left at the end of December is
+  forfeited.
+- ⚠️ **Variance on rollover and fund lines is against `available_total`**
+  (`planned_total` plus the carry brought into the window, less what a January
+  reset dropped inside it), and the section and net figures follow. Every
+  other line has `available_total == planned_total`. Clients must show
+  "available" next to the plan where they differ; the Action Item and the
+  MCP/chat output do.
+- **Pace** (month in progress only). Each cost line, and the spending section,
+  gains `pace`: `elapsed_share` (measured to the data-through date, not
+  today), `actual_to_date_eur`, `limit_eur` (the line's available amount),
+  `expected_recurring_remaining_eur` (recurring charges not yet arrived, per
+  account after its own last import), `everyday_remaining_eur`,
+  `projected_month_end_eur`, `projected_over_eur` and `status`: `over` (more
+  than the limit is already spent), `at_risk` (projected past the limit by both
+  50 EUR and 10 %, the overrun check's thresholds) or `on_track`. Recurring
+  charges that already arrived and one-off rows are not extrapolated; the
+  elapsed share has a floor of 10 % so day 1 does not explode a projection.
+  **No pace for a month with nothing imported** (zero spent would read as on
+  track). The pace is an estimate; say so wherever it is shown.
+- **Tiers.** Spending and debt lines carry `tier` (the category's inherited
+  essentiality; null for broker-keyed or non-category lines, `unclassified`
+  stays unclassified), unbudgeted spending rows too, and the spending section
+  has `tier_totals` (`planned_eur`/`actual_eur` per tier; the actuals add up
+  to the section's `actual_total`).
+- **Action Item:** `budget:pace:<line_id>:<YYYY-MM>` ("On pace to exceed"),
+  low severity, one per line and month, never together with the
+  `budget:line:<id>` overrun item of the same line. See `action-items.md`.
+- The response also has `data_through` (the latest imported row) and
+  `warnings`. MCP `budget_summary` and the chat's `get_household_finances`
+  print available totals, the fund, the carry, the pace and the data-through
+  date. Web: `web-client.md` → Cost control.

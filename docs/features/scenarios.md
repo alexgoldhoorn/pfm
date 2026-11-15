@@ -27,6 +27,7 @@ input is a 422.
   transfers excluded. Money moved into savings (categories `Invest` and
   `House purchase` and their children) is not spending; it is reported as
   `savings_transfers_monthly_eur`.
+- **One-off rows.** A spending row marked `one_off` is left out of the averages and reported as `one_off_spend_monthly_eur` / `one_off_income_monthly_eur` (with a warning naming the amount), so a renovation marked once no longer needs `exclude_categories` every time. The same flag feeds the comparison, anomaly and forecast baselines (`spending.md`).
 - **Work income** is the income rows from the merchants ticked in the allocator
   settings (`work_income_merchants`). With none ticked every income row counts
   as work income, and a warning says so.

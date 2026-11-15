@@ -225,3 +225,69 @@ category is never cut. `GET /spending/categories/tree` returns it,
 400 for a root) and `POST /spending/categories/suggest-essentiality` returns
 LLM suggestions for unmarked Spend categories without saving them. Full
 description: `scenarios.md` → Spending tiers.
+
+### Cost control: one-offs, comparison, anomalies, tiers, review (2026-11-15, schema v43)
+
+All of it is deterministic (no LLM) and lives in `services/spending_insights.py`
+(maths) and `services/spending_review.py` (assembly); the routes are in
+`routers/spending.py`. Rows come from `load_rows` (EUR at today's rate,
+transfers kept in so "has this month imports" can see them; every function
+filters `is_transfer` itself).
+
+- **Shared rules.** Only complete calendar months that have imported rows form
+  a baseline; the month in progress never counts in an average. "Data through"
+  is the date of the latest imported row, not today. Money moved to `Invest` /
+  `House purchase` is not spending: it is reported apart as `savings_eur`.
+- **One-off flag (`spending_transactions.one_off`).** `PUT /spending/{id}`
+  accepts `one_off` (alone it is a valid body), the list endpoint returns it
+  and filters on `one_off=true|false`, and `/trend` adds `one_off_eur` per
+  month (already inside `spent_eur`). A one-off row **still counts in every
+  total** (summary, trend, budget actuals, the comparison's actual); it is left
+  out only of what means "normal": the comparison baseline, the anomaly
+  history, the forecast baseline, the budget pace's everyday projection,
+  budget seeding and `household_baseline` (which reports what it left out).
+- **`GET /spending/compare?month=&baseline_months=6&group_by=category|merchant&portfolio_id=`.**
+  Per group: `actual_eur`, `baseline_eur` (average of up to N complete earlier
+  months with imports), `last_year_eur` (null when the account has no rows that
+  month), `delta_eur`/`delta_pct`, `one_off_eur` and, for categories, the
+  `tier`. `month` defaults to the last complete month. `status` is `complete`,
+  `in_progress`, `partial` (the data stops before the month ends) or
+  `no_imports`; **the deltas are null unless the month is complete**, because
+  comparing a part-month or an empty month with a full average flatters the
+  result. A baseline of fewer months than asked for says so in `warnings`.
+- **`GET /spending/anomalies?days=60`.** Four kinds, each with a stable `id`
+  (the same id is the Action Item id, so a "checked" state sticks):
+  `large_charge` (at least 3x the merchant's median and 1.5x its largest earlier
+  charge, from 50 EUR, after 3 earlier charges), `new_merchant` (a first charge
+  from 200 EUR, only when the data reaches back 90 days before it),
+  `category_spike` (a complete month's category total at least 50 % and 75 EUR
+  over its baseline, with 3 baseline months; `date` is the `YYYY-MM`) and
+  `possible_duplicate` (same account, merchant and amount within 3 days, from
+  20 EUR). One-off rows are never flagged. The thresholds are module constants
+  in `spending_insights.py`. These are flags, not verdicts.
+- **`GET /spending/tiers?months=12`.** Per month the fixed / flexible / optional
+  / unclassified totals, `savings_eur`, `one_off_eur` and the top categories per
+  tier, using the inherited-essentiality resolver (`tier_of`). Every outflow
+  counts, so `total_eur + savings_eur` equals `spent_eur` of `/trend` for the
+  same month. A month without imports is all zero with `has_imports: false`.
+- **`GET /spending/review?month=&portfolio_id=`** (`spending_review.build_review`,
+  also the chat tool `get_spending_review` and MCP `spending_review`): one
+  payload assembled only from the services above, no maths of its own. Fields:
+  `month`, `as_of`, `data_through`, `status`, `totals` (the comparison's status,
+  baseline months and totals), `movers` (top 5 categories and top 5 merchants by
+  size of move), `anomalies` (those dated inside the month, max 10), `tiers`
+  (`month` and `previous`), `recurring` (`new`, `ended`, `missed`,
+  `price_change`), `budget` (the active budget's result for the month: section
+  totals against `available_total`, tier totals and the lines over budget, or
+  null without an active budget), `forecast` (this month's projection, the next
+  month's line, the known bills due in the next 45 days, `first_below_zero`),
+  `freshness` (data-through per account) and `warnings` (all parts merged).
+  Each part is built on its own: one that fails is null with a warning, never a
+  5xx. A recurring series is "new" or "ended" when it started or stopped in the
+  review month or the two before it (a series needs three charges before it is
+  detected), "missed" when its status is `missed` with the due date on or before
+  the month's end, and "price_change" when its latest charge fell in the month.
+  `month` after the month in progress is a 400. Plain `def` (FX lookups).
+- **Action Item:** `check_spending_anomalies` (low severity, last 14 days, max
+  8), see `action-items.md`. Web: `web-client.md` → Cost control. The forecast
+  is `cashflow-forecast.md`.
