@@ -9,7 +9,7 @@ from pathlib import Path
 from pfm_mcp.server import mcp
 
 ROOT = Path(__file__).resolve().parent.parent
-EXPECTED_TOOLS = 42
+EXPECTED_TOOLS = 46
 
 
 def test_registers_every_tool():

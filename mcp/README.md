@@ -92,9 +92,13 @@ Never print to stdout from a tool: stdout is the protocol channel.
 | `tax_report` | Spanish IRPF summary with realised lots |
 | `tax_estimate` | Quick IRPF estimate for a year |
 | `wash_sale_check` | Antiaplicación (wash-sale) windows and blocked losses |
-| `budget_summary` | Active budget, planned vs actual |
+| `budget_summary` | Active budget: available vs actual, pace, yearly funds |
 | `spending_summary` | Bank spending, income and trend |
 | `spending_transactions` | Individual bank transactions |
+| `spending_compare` | One month against its normal and last year |
+| `spending_anomalies` | Unusual charges in the last N days |
+| `cashflow_forecast` | This month's end and the next N months, with bills |
+| `spending_review` | Monthly spending review in one call |
 | `networth` | Total net worth with accounts and balance sheet |
 | `goals` | Financial goals and progress |
 | `retirement_readiness` | Retirement scenarios in today's euros |

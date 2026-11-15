@@ -291,3 +291,247 @@ def test_spending_transactions_reports_error_on_failure():
     with patch("pfm_mcp.client._get", side_effect=urllib.error.URLError("boom")):
         result = spending.spending_transactions()
     assert "Error fetching spending transactions:" in result
+
+
+# ── cost control: pace, funds, comparison, anomalies, forecast, review ─────
+
+
+def test_budget_summary_prints_available_pace_fund_and_data_through():
+    from datetime import date
+
+    payload = _budget_payload()
+    spending_section = next(s for s in payload["sections"] if s["key"] == "spending")
+    spending_section["available_total"] = 800.0
+    spending_section["pace"] = {
+        "status": "at_risk",
+        "actual_to_date_eur": 300.0,
+        "projected_month_end_eur": 900.0,
+        "limit_eur": 800.0,
+        "data_through": "2026-09-10",
+    }
+    spending_section["lines"][0].update(
+        period="yearly",
+        set_aside_eur=100.0,
+        available_total=500.0,
+        pace=None,
+        fund={
+            "year": 2026,
+            "yearly_amount_eur": 1200.0,
+            "set_aside_eur": 900.0,
+            "spent_eur": 400.0,
+            "remaining_eur": 500.0,
+        },
+    )
+    payload["data_through"] = "2026-09-10"
+    payload["warnings"] = ["Example warning."]
+    with (
+        patch("pfm_mcp.client._get", return_value=reply(payload)),
+        patch("pfm_mcp.client._today", return_value=date(2026, 9, 30)),
+    ):
+        result = spending.budget_summary()
+    assert "available 800.00 EUR" in result
+    assert "at risk; spent 300.00 EUR to 2026-09-10" in result
+    assert "projected month end 900.00 EUR (estimate)" in result
+    assert "yearly 1,200.00 EUR" in result and "left 500.00 EUR" in result
+    assert "Data through: 2026-09-10." in result
+    assert "⚠️ Example warning." in result
+
+
+_COMPARE = {
+    "month": "2026-06",
+    "status": "complete",
+    "data_through": "2026-07-05",
+    "baseline_months": ["2026-04", "2026-05"],
+    "group_by": "category",
+    "totals": {
+        "actual_eur": 1700.0,
+        "baseline_eur": 1200.0,
+        "last_year_eur": None,
+        "delta_eur": 500.0,
+        "delta_pct": 41.7,
+        "one_off_eur": 0.0,
+        "savings_eur": 0.0,
+    },
+    "items": [
+        {
+            "name": "Groceries",
+            "actual_eur": 700.0,
+            "baseline_eur": 200.0,
+            "last_year_eur": None,
+            "delta_eur": 500.0,
+            "delta_pct": 250.0,
+            "tier": "flexible",
+        }
+    ],
+    "warnings": ["Only 2 of the 6 months before 2026-06 have imports."],
+}
+
+
+def test_spending_compare_prints_deltas_and_never_zero_for_missing():
+    with patch("pfm_mcp.client._get", return_value=reply(_COMPARE)) as get:
+        result = spending.spending_compare(month="2026-06", group_by="category")
+    url = requested_url(get)
+    assert url.startswith("/api/v1/spending/compare?")
+    assert "month=2026-06" in url and "group_by=category" in url
+    assert "data through 2026-07-05" in result
+    assert "Last year: n/a" in result
+    assert "+500.00 EUR (+41.7%)" in result
+    assert "[flexible]" in result
+    assert "⚠️ Only 2 of the 6 months" in result
+
+
+def test_spending_compare_without_deltas_prints_na():
+    payload = dict(_COMPARE, status="in_progress")
+    payload["totals"] = dict(_COMPARE["totals"], delta_eur=None, delta_pct=None)
+    payload["items"] = [dict(_COMPARE["items"][0], delta_eur=None, delta_pct=None)]
+    with patch("pfm_mcp.client._get", return_value=reply(payload)):
+        result = spending.spending_compare()
+    assert "Change:    n/a EUR" in result
+    assert "change        n/a" in result
+
+
+def test_spending_compare_rejects_a_bad_month_and_reports_api_errors():
+    assert "month must look like" in spending.spending_compare(month="June")
+    with patch("pfm_mcp.client._get", side_effect=urllib.error.URLError("boom")):
+        assert "Error fetching spending comparison:" in spending.spending_compare()
+
+
+def test_spending_anomalies_lists_flags_without_descriptions():
+    payload = {
+        "days": 30,
+        "data_through": "2026-07-05",
+        "items": [
+            {
+                "id": "anomaly:large:7",
+                "kind": "large_charge",
+                "date": "2026-07-02",
+                "merchant": "Example Market",
+                "category": "Groceries",
+                "amount_eur": 500.0,
+                "usual_eur": 100.0,
+                "detail": "500.00 EUR at Example Market; the usual charge is 100.00 EUR.",
+            }
+        ],
+    }
+    with patch("pfm_mcp.client._get", return_value=reply(payload)) as get:
+        result = spending.spending_anomalies(days=30)
+    assert requested_url(get) == "/api/v1/spending/anomalies?days=30"
+    assert "data through 2026-07-05): 1 flagged" in result
+    assert "large_charge" in result and "Example Market" in result
+    assert "not verdicts" in result
+    with patch("pfm_mcp.client._get", return_value=reply({"items": []})):
+        assert "Nothing unusual." in spending.spending_anomalies()
+
+
+_FORECAST = {
+    "as_of": "2026-07-15",
+    "data_through": "2026-07-10",
+    "accounts": [
+        {
+            "name": "Example Bank",
+            "data_through": "2026-07-10",
+            "stale": True,
+            "balance_eur": None,
+        }
+    ],
+    "this_month": {
+        "month": "2026-07",
+        "status": "ok",
+        "spent_to_date_eur": 500.0,
+        "recurring_remaining_eur": 100.0,
+        "variable_remaining_eur": None,
+        "projected_spending_eur": None,
+        "projected_income_eur": 3000.0,
+        "projected_net_eur": None,
+        "range": {"spending_low_eur": None, "spending_high_eur": None},
+        "projected_balance_end_eur": None,
+    },
+    "next_months": [
+        {
+            "month": "2026-08",
+            "income_eur": 3000.0,
+            "recurring_eur": 1000.0,
+            "variable_eur": 800.0,
+            "net_eur": 1200.0,
+            "projected_balance_eur": -50.0,
+            "balance_below_zero": True,
+        }
+    ],
+    "known_bills": [
+        {"date": "2026-07-20", "merchant": "Example Gym", "amount_eur": 30.0}
+    ],
+    "first_below_zero": "2026-08",
+    "assumptions": ["Income is the average income of the complete months below."],
+    "warnings": ["Example Bank: the latest import is old."],
+}
+
+
+def test_cashflow_forecast_prints_data_through_estimates_and_na():
+    with patch("pfm_mcp.client._get", return_value=reply(_FORECAST)) as get:
+        result = spending.cashflow_forecast(months=3)
+    assert requested_url(get) == "/api/v1/spending/forecast?months=3"
+    assert "data through 2026-07-10 (all figures are estimates)" in result
+    assert "Projected spending:  n/a" in result
+    assert "Balance at month end: n/a" in result
+    assert "balance, n/a" not in result and "balance n/a" in result
+    assert "STALE" in result and "BELOW ZERO" in result
+    assert "first goes below zero in 2026-08" in result
+    assert "2026-07-20" in result and "Example Gym" in result
+    assert "Assumptions:" in result and "⚠️ Example Bank" in result
+
+
+def test_spending_review_prints_parts_and_degrades_per_part():
+    payload = {
+        "month": "2026-06",
+        "status": "complete",
+        "data_through": "2026-07-05",
+        "totals": {"totals": _COMPARE["totals"]},
+        "movers": {"categories": _COMPARE["items"], "merchants": []},
+        "anomalies": {"count": 0, "items": []},
+        "tiers": {
+            "month": {
+                "fixed_eur": 1000.0,
+                "flexible_eur": 700.0,
+                "optional_eur": 0.0,
+                "unclassified_eur": None,
+                "savings_eur": 0.0,
+            }
+        },
+        "recurring": {
+            "new": [
+                {
+                    "merchant": "Example Streaming",
+                    "typical_eur": 10.0,
+                    "cadence": "monthly",
+                }
+            ],
+            "ended": [],
+            "missed": [],
+            "price_change": [
+                {
+                    "merchant": "Example Gym",
+                    "typical_eur": 30.0,
+                    "cadence": "monthly",
+                    "price_change_pct": 33.3,
+                    "last_eur": 40.0,
+                }
+            ],
+        },
+        "budget": None,
+        "forecast": None,
+        "freshness": [
+            {"name": "Example Bank", "data_through": "2026-07-05", "stale": False}
+        ],
+        "warnings": ["Forecast could not be built: boom"],
+    }
+    with patch("pfm_mcp.client._get", return_value=reply(payload)) as get:
+        result = spending.spending_review(month="2026-06")
+    assert requested_url(get) == "/api/v1/spending/review?month=2026-06"
+    assert "data through 2026-07-05" in result
+    assert "change +500.00 EUR (+41.7%)" in result
+    assert "unclassified n/a" in result
+    assert "Example Streaming" in result and "+33.3% (now 40.00 EUR)" in result
+    assert "Budget: no active budget." in result
+    assert "Forecast: n/a" in result
+    assert "Data freshness: Example Bank through 2026-07-05" in result
+    assert "⚠️ Forecast could not be built: boom" in result
