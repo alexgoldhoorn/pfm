@@ -5,9 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-11-14
+Last updated: 2026-11-15
 
-**Recent (v2.5.98):** **Yahoo Finance data in the AI chat.** New chat tool `get_market_data` (43 tools): profile, price ranges, valuation, financials, dividends, analyst targets, fund facts and composition, and news for any ticker, from the cached market service (`mkt:profile:{SYM}`, 6 h). No schema or API change. Docs `llm.md`, `prices-market.md`.
+**Recent (v2.5.98):** **Yahoo Finance data in the AI chat.** New chat tool `get_market_data` (43 tools): profile, price ranges, valuation, financials, dividends, analyst targets, fund facts and composition, and news for any ticker, from the cached market service (`mkt:profile:{SYM}`, 6 h). Held coins resolve to their Yahoo pair, UK dividends are stated in pounds, and the data's age is given in hours. No schema or API change. Docs `llm.md`, `prices-market.md`.
 
 **Recent (v2.5.97):** **AI chat readable on phones.** Under 576px the chat panel runs edge to edge and answers use the full width (text column 267px → 351px on a 390px screen); tables keep figures on one line and scroll sideways instead of breaking numbers; the thread list is now reachable on phones as a drawer. The chat now fills the screen height: on phones no page title, a one-row header and composer (thread 487px → 692px of 844px); on desktop the panel grows to the window. Web client only, no API or schema change. Docs `web-client.md`.
 

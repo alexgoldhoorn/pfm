@@ -387,6 +387,8 @@ _PROFILE_GROUPS: dict[str, dict[str, str]] = {
 
 # Per-share figures Yahoo reports in pence for a GBp listing (see
 # research._GBP_PENCE_FIELDS for why totals such as market cap are left alone).
+# dividendRate is not one of them: it comes in pounds, like EPS (checked on five
+# LSE shares, where dividendRate / price in pounds equals dividendYield).
 _PROFILE_PENCE_KEYS = {
     "price",
     "regular_market_price",
@@ -449,7 +451,7 @@ def _profile_from_info(symbol: str, info: dict) -> dict:
     if pence:
         out["note"] = (
             "Yahoo quotes this listing in pence; prices and targets are converted "
-            "to GBP. dividend_rate is as Yahoo reports it and may be in pence."
+            "to GBP. dividend_rate and EPS already come in pounds."
         )
     return out
 

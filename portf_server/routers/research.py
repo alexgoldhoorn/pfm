@@ -28,7 +28,7 @@ from portf_manager.positions import (
     managed_portfolio_ids,
     self_managed_held_asset_ids,
 )
-from portf_manager.services.price_updater import _CRYPTO_YF_OVERRIDES
+from portf_manager.services.price_updater import yahoo_symbol_for
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
@@ -161,15 +161,7 @@ def _yf_symbol(asset: Optional[dict], symbol: str) -> str:
     ``price_updater.run_price_update``: SUI's stored ticker (``SUI-EUR``) has no
     yfinance data, while the override (``SUI20947-USD``) does.
     """
-    if asset and asset.get("asset_type") == "crypto":
-        # Derive the pair from the ASSET's symbol, never the caller's string:
-        # callers may already pass a Yahoo pair ("BTC-EUR"), which would
-        # otherwise become "BTC-EUR-EUR".
-        base = (asset.get("symbol") or symbol).upper()
-        return _CRYPTO_YF_OVERRIDES.get(base, (f"{base}-EUR", "EUR"))[0]
-    if asset:
-        return (asset.get("ticker") or "").strip() or symbol
-    return symbol
+    return yahoo_symbol_for(asset, symbol)
 
 
 def _current_price(db, asset: Optional[dict], symbol: str) -> tuple[float, str]:

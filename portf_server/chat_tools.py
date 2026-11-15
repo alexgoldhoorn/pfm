@@ -265,16 +265,25 @@ def _get_quote(db: Database, symbol: str) -> str:
 def _get_market_data(db: Database, symbol: str, include_news: bool = True) -> str:
     """The Yahoo Finance picture of one instrument, from the cached service."""
     from portf_manager.market import get_fund_composition, get_market_profile
+    from portf_manager.services.price_updater import yahoo_symbol_for
     from portf_manager.services.research import fetch_recent_news
 
     asked = (symbol or "").strip()
     if not asked:
         return "Error: symbol is required"
-    # A held asset may be stored under its ISIN with the Yahoo ticker alongside.
+    # A held asset may be stored under its ISIN, and a held coin's bare symbol
+    # is another security on Yahoo: resolve it the way the price updater does.
     asset = db.get_asset_by_symbol(asked)
-    yahoo_symbol = ((asset or {}).get("ticker") or asked).strip().upper()
+    yahoo_symbol = yahoo_symbol_for(asset, asked).strip().upper()
     result = get_market_profile(db, yahoo_symbol)
     result["requested_symbol"] = asked
+    # The cache stores an epoch; the model gets a readable time and an age.
+    fetched = result.get("fetched_at")
+    if isinstance(fetched, (int, float)):
+        when = datetime.fromtimestamp(fetched, tz=timezone.utc)
+        result["fetched_at"] = when.strftime("%Y-%m-%d %H:%M UTC")
+        age = (datetime.now(timezone.utc) - when).total_seconds()
+        result["age_hours"] = round(max(age, 0) / 3600, 1)
     if asset:
         result["held_asset"] = {
             "symbol": asset.get("symbol"),
@@ -1321,7 +1330,7 @@ TOOLS: list[ToolDefinition] = [
             "valuation ratios, revenue, margins and debt, dividends, analyst "
             "rating and price targets, fund facts (assets, costs, returns, sector "
             "and asset-class split) and recent news headlines with links. Cached "
-            "for 6 hours (news 30 minutes); check 'stale' and 'fetched_at'. Use it "
+            "for 6 hours (news 30 minutes); check 'stale' and 'age_hours'. Use it "
             "for questions about a company, ETF or fund itself; use get_quote for "
             "just the price."
         ),

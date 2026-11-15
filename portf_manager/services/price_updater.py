@@ -19,6 +19,30 @@ _CRYPTO_YF_OVERRIDES: dict[str, tuple[str, str]] = {
 }
 
 
+def yahoo_symbol_for(asset: Optional[dict], symbol: str) -> str:
+    """The Yahoo ticker to query for *symbol*, as the price updater resolves it.
+
+    An asset's ``symbol`` can be an ISIN, with the Yahoo symbol in ``ticker``.
+    For crypto the bare symbol is a different security on Yahoo (``SUI`` is Sun
+    Communities), so the pair comes from the override map, which also wins over
+    a stored ``ticker``. The pair is built from the asset's own symbol, never
+    the caller's string, which may already be a pair such as ``BTC-EUR``.
+
+    Args:
+        asset: The stored asset row, or None when the symbol is not held.
+        symbol: The symbol as the caller gave it.
+
+    Returns:
+        The ticker to pass to yfinance.
+    """
+    if asset and asset.get("asset_type") == "crypto":
+        base = (asset.get("symbol") or symbol).upper()
+        return _CRYPTO_YF_OVERRIDES.get(base, (f"{base}-EUR", "EUR"))[0]
+    if asset:
+        return (asset.get("ticker") or "").strip() or symbol
+    return symbol
+
+
 def _today() -> date:
     """Today's date; a seam so tests can move the clock."""
     return date.today()

@@ -508,12 +508,19 @@ def test_market_profile_groups_fields_and_serves_the_cache(db):
 def test_market_profile_converts_pence_prices_only(db):
     from portf_manager import market
 
-    info = {"currency": "GBp", "currentPrice": 18400.0, "marketCap": 6_000_000_000}
+    info = {
+        "currency": "GBp",
+        "currentPrice": 18400.0,
+        "marketCap": 6_000_000_000,
+        "dividendRate": 4.0,
+    }
     with patch.object(market, "_fetch_info_live", lambda s: info):
         out = market.get_market_profile(db, "EXCO.L")
     assert out["currency"] == "GBP"
     assert out["price"] == {"price": 184.0, "market_cap": 6_000_000_000}
-    assert "pence" in out["note"]
+    # Yahoo reports the dividend per share in pounds already.
+    assert out["dividends"] == {"dividend_rate": 4.0}
+    assert "already come in pounds" in out["note"]
 
 
 def test_market_profile_failure_is_an_error_not_an_empty_profile(db):
@@ -562,7 +569,29 @@ def test_get_market_data_tool_uses_the_held_assets_ticker_and_adds_news(db):
         )
     assert seen == ["AAPL.XY"]
     assert data["requested_symbol"] == "AAPL"
+    # A readable time and an age, not the cache's epoch number.
+    assert data["fetched_at"].endswith(" UTC")
+    assert data["age_hours"] == 0.0
     assert data["held_asset"]["symbol"] == "AAPL"
     assert data["composition"] == comp
     assert data["news"] == news
     assert "news" not in quiet
+
+
+def test_get_market_data_tool_resolves_a_held_coin_to_its_yahoo_pair(db):
+    from portf_manager import market
+    from portf_server.chat_tools import execute_tool
+
+    db.create_asset(symbol="SUI", name="Example Coin", asset_type="crypto")
+    db.create_asset(symbol="EXC", name="Other Coin", asset_type="crypto")
+    seen = []
+
+    def fake(symbol):
+        seen.append(symbol)
+        return dict(_INFO)
+
+    with patch.object(market, "_fetch_info_live", fake):
+        for sym in ("SUI", "EXC"):
+            execute_tool("get_market_data", {"symbol": sym, "include_news": False}, db)
+    # The override map wins; any other coin is the plain EUR pair.
+    assert seen == ["SUI20947-USD", "EXC-EUR"]
