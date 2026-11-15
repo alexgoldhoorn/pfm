@@ -935,12 +935,24 @@ def check_spending_anomalies(db, today: date = None) -> list[dict]:
     """
     from portf_manager.services import exposure, spending_insights
 
+    from portf_manager.services.action_item_acks import ack_is_active, list_acks
+
     today = today or date.today()
     found = spending_insights.load_anomalies(
         db, exposure._default_fx, today, ANOMALY_ITEM_DAYS
     )
+    # The cap counts only items nobody has checked or snoozed: with the filter
+    # after it, eight acknowledged items would hide every newer one. Checked
+    # and snoozed items are still returned (after the open ones, outside the
+    # cap) so the "all" view can show them.
+    acks = list_acks(db)
+    open_items, acked_items = [], []
+    for a in found["items"]:
+        (acked_items if ack_is_active(acks.get(a["id"]), today) else open_items).append(
+            a
+        )
     items = []
-    for a in found["items"][:ANOMALY_ITEM_MAX]:
+    for a in open_items[:ANOMALY_ITEM_MAX] + acked_items:
         title = {
             "large_charge": f"Unusually large charge at {a['merchant']}",
             "new_merchant": f"Large charge from a new merchant: {a['merchant']}",

@@ -235,8 +235,17 @@ transfers kept in so "has this month imports" can see them; every function
 filters `is_transfer` itself).
 
 - **Shared rules.** Only complete calendar months that have imported rows form
-  a baseline; the month in progress never counts in an average. "Data through"
-  is the date of the latest imported row, not today. Money moved to `Invest` /
+  a baseline; the month in progress never counts in an average. **"Data
+  through" is kept per bank account** (the date of its latest imported row, not
+  today), and completeness is judged against the **earliest** of those dates
+  over the accounts that have rows in the window (one helper:
+  `spending_insights.account_data_through` / `effective_data_through`; an
+  account with no row since the window start, say a closed one, is ignored
+  rather than treated as stale forever; with a `portfolio_id` filter only that
+  account counts). It decides whether a month is complete or `partial` (the
+  warning names the lagging account), which months are baseline months (a
+  month ending after it is not complete), and the elapsed share of the month
+  in progress in the forecast and the budget pace. Money moved to `Invest` /
   `House purchase` is not spending: it is reported apart as `savings_eur`.
 - **One-off flag (`spending_transactions.one_off`).** `PUT /spending/{id}`
   accepts `one_off` (alone it is a valid body), the list endpoint returns it
@@ -251,8 +260,9 @@ filters `is_transfer` itself).
   months with imports), `last_year_eur` (null when the account has no rows that
   month), `delta_eur`/`delta_pct`, `one_off_eur` and, for categories, the
   `tier`. `month` defaults to the last complete month. `status` is `complete`,
-  `in_progress`, `partial` (the data stops before the month ends) or
-  `no_imports`; **the deltas are null unless the month is complete**, because
+  `in_progress`, `partial` (the data of any account stops before the month ends)
+  or `no_imports`; `data_through` is the effective (earliest) date and
+  `accounts` lists each account's own; **the deltas are null unless the month is complete**, because
   comparing a part-month or an empty month with a full average flatters the
   result. A baseline of fewer months than asked for says so in `warnings`.
 - **`GET /spending/anomalies?days=60`.** Four kinds, each with a stable `id`

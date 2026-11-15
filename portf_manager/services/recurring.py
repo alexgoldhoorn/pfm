@@ -253,8 +253,8 @@ def load_recurring(db, portfolio_id: Optional[int] = None) -> List[RecurringSeri
 def due_dates(series: RecurringSeries, after: date, until: date) -> List[date]:
     """Dates the series' next charges fall due in ``(after, until]``.
 
-    Counted from ``next_expected`` in whole cadence steps (not by chaining
-    month-end-clamped dates, which drift), oldest first. An ``ended`` series
+    Counted from the last actual charge in whole cadence steps (not by
+    chaining month-end-clamped dates, which drift), oldest first. An ``ended`` series
     has no future charges. A ``missed`` series is expected to resume, so its
     later cycles count, but the charge that failed to arrive does not: it is
     on or before the account's last import.
@@ -266,13 +266,16 @@ def due_dates(series: RecurringSeries, after: date, until: date) -> List[date]:
     """
     if series.status == "ended" or until <= after:
         return []
-    anchor = date.fromisoformat(series.next_expected)
+    # Every cycle is counted from the last actual charge, never from the
+    # already-clamped ``next_expected``: a charge on the 31st would otherwise
+    # slide to the 28th for good once February clamped it.
+    last = date.fromisoformat(series.last_date)
     out: List[date] = []
-    for k in range(0, 5000):
+    for k in range(1, 5000):
         if series.cadence == "weekly":
-            due = anchor + timedelta(days=7 * k)
+            due = last + timedelta(days=7 * k)
         else:
-            due = _add_months(anchor, k * _MONTHS_AHEAD[series.cadence])
+            due = _add_months(last, k * _MONTHS_AHEAD[series.cadence])
         if due > until:
             break
         if due > after:

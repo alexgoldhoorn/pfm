@@ -41,6 +41,7 @@ from portf_manager.services.recurring import (
 )
 from portf_manager.services.spending_insights import (
     data_through,
+    effective_data_through,
     load_rows,
     savings_names,
     shift_month,
@@ -105,6 +106,57 @@ def _add(*values: Optional[float]) -> Optional[float]:
 # ── baseline ────────────────────────────────────────────────────────────────
 
 
+def baseline_month_list(
+    rows: List[dict], through: Optional[date], today: date
+) -> List[str]:
+    """Baseline months: complete, with imported rows, and covered by the data.
+
+    ``through`` is the effective data-through date (the earliest last import
+    over the accounts in the window); a month ending after it is partial.
+    The month in progress never counts. Shared by the forecast and the budget
+    pace so both read the same months.
+    """
+    return [
+        m
+        for m in complete_months(rows, today, BASELINE_MONTHS)
+        if through is not None and _month_end(m) <= through
+    ]
+
+
+def everyday_outflows(
+    rows: List[dict],
+    tree: Dict[str, dict],
+    recurring_ids: set,
+    months: List[str],
+) -> Dict[str, Dict[str, float]]:
+    """Everyday spending per month and category: the baseline rule, once.
+
+    Non-transfer outflows outside the savings categories, with one-off rows
+    and rows that belong to a recurring series left out (recurring charges are
+    added back on the dates they fall due, so counting them here too would
+    count them twice).
+
+    Returns:
+        ``{month: {category: amount}}`` for each of ``months``.
+    """
+    saved = savings_names(tree)
+    out: Dict[str, Dict[str, float]] = {m: {} for m in months}
+    for r in rows:
+        m = r["date"][:7]
+        if (
+            m not in out
+            or r["is_transfer"]
+            or r["one_off"]
+            or r["amount_eur"] >= 0
+            or r["id"] in recurring_ids
+            or r["category"] in saved
+        ):
+            continue
+        cats = out[m]
+        cats[r["category"]] = cats.get(r["category"], 0.0) - r["amount_eur"]
+    return out
+
+
 def baseline(
     rows: List[dict],
     tree: Dict[str, dict],
@@ -118,7 +170,7 @@ def baseline(
         rows: ``load_rows`` output (transfers included).
         tree: ``{name: row}`` category tree.
         recurring_ids: ids of every row that belongs to a recurring series.
-        through: latest imported date; a month ending after it is partial.
+        through: effective data-through date (see ``baseline_month_list``).
         today: reference date; the month in progress never counts.
 
     Returns:
@@ -127,30 +179,26 @@ def baseline(
         and largest single month), or ``None`` for each when no month
         qualifies.
     """
-    used = [
-        m
-        for m in complete_months(rows, today, BASELINE_MONTHS)
-        if through is not None and _month_end(m) <= through
-    ]
+    used = baseline_month_list(rows, through, today)
     if not used:
         return {"months": [], "variable": None, "income": None, "savings": None}
     saved = savings_names(tree)
-    variable = {m: 0.0 for m in used}
+    variable = {
+        m: sum(cats.values())
+        for m, cats in everyday_outflows(rows, tree, recurring_ids, used).items()
+    }
     income = {m: 0.0 for m in used}
     savings = {m: 0.0 for m in used}
     for r in rows:
         m = r["date"][:7]
-        if m not in variable or r["is_transfer"] or r["one_off"]:
+        if m not in income or r["is_transfer"] or r["one_off"]:
             continue
         amount = r["amount_eur"]
         if amount > 0:
             if not _is_refund(tree, r["category"]):
                 income[m] += amount
-        elif r["id"] not in recurring_ids:
-            if r["category"] in saved:
-                savings[m] += -amount
-            else:
-                variable[m] += -amount
+        elif r["id"] not in recurring_ids and r["category"] in saved:
+            savings[m] += -amount
 
     def stat(values: Dict[str, float]) -> Dict[str, float]:
         vals = list(values.values())
@@ -260,12 +308,36 @@ def compute_forecast(
                 f"{a['name']}: the latest import is from {t.isoformat()}, "
                 f"{behind} days ago; the forecast starts from there."
             )
-    through = max(through_by_account.values(), default=None)
+    # The data reaches only as far as the account that imported least: the
+    # earliest last-import date over the accounts that have rows in the
+    # baseline window (an account with none there is ignored).
+    window_start = f"{shift_month(month, -BASELINE_MONTHS)}-01"
+    with_rows = (
+        None
+        if rows is None
+        else {r["portfolio_id"] for r in rows if r["date"] >= window_start}
+    )
+    counted = {
+        pid: t.isoformat()
+        for pid, t in through_by_account.items()
+        if with_rows is None or pid in with_rows
+    }
+    eff = effective_data_through(counted, window_start)
+    through = date.fromisoformat(eff["effective"]) if eff["effective"] else None
+    if through is None and through_by_account:
+        through = max(through_by_account.values())
     if through is None and rows is not None:
         found = data_through(rows)
         through = date.fromisoformat(found) if found else None
     if through is None:
         warnings.append("No bank statement is imported: nothing to project from.")
+    elif eff["lagging"] is not None:
+        names = {a["portfolio_id"]: a["name"] for a in accounts or []}
+        warnings.append(
+            f"{names.get(eff['lagging'], 'One account')} has imported only "
+            f"through {through.isoformat()}, behind the others: the rest of the "
+            "month and the baseline months are measured from there."
+        )
 
     # ── recurring bills ──
     bills: Optional[List[Dict[str, Any]]] = None
@@ -352,17 +424,21 @@ def compute_forecast(
         else:
             spent += -a
 
-    rec_spend = rec_save = None
+    # Bills dated before this month (the latest import is in the previous
+    # month) still move the balance but are not this month's spending.
+    month_start = f"{month}-01"
+    rec_spend = rec_spend_all = rec_save_all = prior_bills = None
     if bills is not None:
-        rec_spend = sum(
+        until = month_end.isoformat()
+        due = [b for b in bills if b["date"] <= until]
+        in_this = [b for b in due if b["date"] >= month_start]
+        rec_spend = sum(b["amount_eur"] for b in in_this if b["kind"] == "spending")
+        rec_spend_all = sum(b["amount_eur"] for b in due if b["kind"] == "spending")
+        rec_save_all = sum(b["amount_eur"] for b in due if b["kind"] == "savings")
+        prior_bills = sum(
             b["amount_eur"]
-            for b in bills
-            if b["kind"] == "spending" and b["date"] <= month_end.isoformat()
-        )
-        rec_save = sum(
-            b["amount_eur"]
-            for b in bills
-            if b["kind"] == "savings" and b["date"] <= month_end.isoformat()
+            for b in due
+            if b["date"] < month_start and b["kind"] == "spending"
         )
 
     def scaled(stat: Optional[Dict[str, float]], key: str) -> Optional[float]:
@@ -393,7 +469,7 @@ def compute_forecast(
     spend_high = _add(spent, rec_spend, scaled(avg_var, "high"))
     # what is still to happen between the data-through date and month end
     remaining_change = _add(
-        inc_rem, _neg(rec_spend), _neg(var_rem), _neg(rec_save), _neg(sav_rem)
+        inc_rem, _neg(rec_spend_all), _neg(var_rem), _neg(rec_save_all), _neg(sav_rem)
     )
     end_balance = (
         None
@@ -408,6 +484,7 @@ def compute_forecast(
         "spent_to_date_eur": _r(spent) if has_imports else None,
         "income_to_date_eur": _r(income_in) if has_imports else None,
         "recurring_remaining_eur": _r(rec_spend),
+        "prior_month_bills_eur": _r(prior_bills),
         "variable_remaining_eur": _r(var_rem),
         "income_remaining_eur": _r(inc_rem),
         "projected_spending_eur": _r(proj_spend),

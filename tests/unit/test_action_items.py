@@ -704,6 +704,41 @@ class TestSpendingAnomalyItems:
         assert done[0]["status"] == "checked"
         assert done[0]["id"] == f"anomaly:large:{big}"
 
+    def test_checked_items_do_not_use_up_the_cap(self, tmp_path):
+        from portf_manager.services.action_item_acks import (
+            ack_is_active,
+            list_acks,
+            set_ack,
+        )
+
+        db, pid = self._db(tmp_path)
+        ids = []
+        names = "Alpha Bravo Charlie Delta Echo Foxtrot Golf Hotel India Juliet".split()
+        for day in range(1, 11):
+            ids.append(
+                db.create_spending_transaction(
+                    pid,
+                    f"2026-07-{day:02d}",
+                    f"Example {names[day - 1]} Shop",
+                    -300.0,
+                    category="Groceries",
+                )
+            )
+        today = date(2026, 7, 12)
+        first = check_spending_anomalies(db, today=today)
+        assert len(first) == 8
+        # check off the eight newest: the two older ones must now show up
+        for item in first:
+            set_ack(db, item["id"], "checked")
+        again = check_spending_anomalies(db, today=today)
+        acks = list_acks(db)
+        still_open = [
+            i["id"] for i in again if not ack_is_active(acks.get(i["id"]), today)
+        ]
+        assert sorted(still_open) == sorted(
+            f"anomaly:new_merchant:{ids[n]}" for n in (0, 1)
+        )
+
 
 class TestHeldPriceItems:
     def test_is_registered(self):

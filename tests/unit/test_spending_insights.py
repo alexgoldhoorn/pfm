@@ -352,3 +352,98 @@ def test_load_rows_filters_by_account(db):
     db.create_spending_transaction(other, "2026-06-06", "Elsewhere", -5.0)
     rows = si.load_rows(db, lambda c: 1.0, portfolio_id=other)
     assert [r["description"] for r in rows] == ["Elsewhere"]
+
+
+# ── per-account data-through, case-insensitive merchants (review round) ─────
+
+
+def _two_banks():
+    """Bank A imported to Oct 31, Bank B only to Oct 10."""
+    rows, rid = [], 1
+    for m in range(4, 11):
+        rows.append(_row(rid, f"2026-{m:02d}-28", -200.0, account="Bank A"))
+        rid += 1
+        rows.append(_row(rid, f"2026-{m:02d}-05", -300.0, "Fun", portfolio_id=2))
+        rows[-1]["account"] = "Bank B"
+        rid += 1
+        if m < 10:
+            rows.append(_row(rid, f"2026-{m:02d}-20", -300.0, "Fun", portfolio_id=2))
+            rows[-1]["account"] = "Bank B"
+            rid += 1
+    rows.append(_row(rid, "2026-10-31", -1.0, account="Bank A"))
+    return rows
+
+
+def test_a_lagging_account_makes_the_month_partial_and_is_named():
+    rows = _two_banks()
+    out = si.compare_month(rows, _tree(), "2026-10", date(2026, 11, 15))
+    assert out["status"] == "partial"
+    assert out["data_through"] == "2026-10-05"
+    assert out["totals"]["delta_eur"] is None and out["totals"]["delta_pct"] is None
+    assert all(i["delta_eur"] is None for i in out["items"])
+    assert any("Bank B" in w for w in out["warnings"])
+
+
+def test_with_a_portfolio_filter_only_that_account_counts():
+    rows = [r for r in _two_banks() if r["portfolio_id"] == 1]
+    out = si.compare_month(rows, _tree(), "2026-10", date(2026, 11, 15))
+    assert out["status"] == "complete"
+    assert out["data_through"] == "2026-10-31"
+
+
+def test_baseline_months_the_lagging_account_has_not_covered_are_dropped():
+    rows = _two_banks()
+    # Bank B imported to Sep 10 only: September is not a complete month
+    rows = [
+        r for r in rows if not (r["portfolio_id"] == 2 and r["date"] > "2026-09-10")
+    ]
+    out = si.compare_month(rows, _tree(), "2026-08", date(2026, 11, 15))
+    assert "2026-09" not in out["baseline_months"]
+    assert out["status"] == "complete"
+
+
+def test_an_account_with_no_rows_in_the_window_is_ignored():
+    rows = [_row(1, "2024-01-05", -10.0, portfolio_id=9)]
+    rows[0]["account"] = "Closed"
+    rows += [r for r in _two_banks() if r["portfolio_id"] == 1]
+    info = si.account_data_through(rows, start="2026-04-01")
+    assert info["effective"] == "2026-10-31"
+    assert info["lagging"] is None
+
+
+def test_new_merchant_history_is_judged_per_account():
+    rows = [
+        _row(1, "2026-01-01", -10.0, merchant="Example Cafe"),
+        _row(2, "2026-06-20", -10.0, merchant="Example Cafe"),
+    ]
+    # a second account whose first import is last week: its merchants are
+    # not "new" just because that account has no history before it
+    rows.append(
+        _row(3, "2026-07-10", -300.0, "Gadgets", "Example Store", portfolio_id=2)
+    )
+    rows.append(_row(4, "2026-07-11", -5.0, "Gadgets", "Example Store", portfolio_id=2))
+    out = si.find_anomalies(rows, _tree(), TODAY, days=60)
+    assert [i for i in out["items"] if i["kind"] == "new_merchant"] == []
+
+
+def test_new_merchant_still_flagged_on_an_account_with_history():
+    rows = [
+        _row(1, "2026-01-01", -10.0, merchant="Example Cafe"),
+        _row(2, "2026-07-10", -300.0, "Gadgets", "Example Store"),
+    ]
+    out = si.find_anomalies(rows, _tree(), TODAY, days=60)
+    assert [i["merchant"] for i in out["items"] if i["kind"] == "new_merchant"] == [
+        "Example Store"
+    ]
+
+
+def test_merchant_comparison_ignores_case_and_shows_the_common_spelling():
+    rows = _months(None)
+    rows.append(_row(950, "2026-05-12", -20.0, merchant="EXAMPLE MARKET"))
+    rows.append(_row(951, "2026-05-13", -20.0, merchant="example market"))
+    out = si.compare_month(rows, _tree(), "2026-05", TODAY, group_by="merchant")
+    names = [i["name"] for i in out["items"]]
+    assert names.count("Example Market") == 1
+    assert len(names) == 2
+    market = next(i for i in out["items"] if i["name"] == "Example Market")
+    assert market["actual_eur"] == 140.0

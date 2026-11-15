@@ -10,7 +10,10 @@ estimate built from past months**.
 ## Method
 
 - **Baseline.** The last up to 6 complete calendar months that have imported
-  rows and end on or before the data-through date (`baseline`). Per month it
+  rows and end on or before the data-through date (`baseline`; the effective
+  date, see Freshness). The rule that picks the months and the everyday
+  spending per category (`baseline_month_list`, `everyday_outflows`) is shared
+  with the budget pace. Per month it
   sums income, everyday spending and savings; the forecast uses the average,
   and the smallest and largest single month give the low/high range. One-off
   rows and transfers are left out. Fewer than 3 months gives a "rough baseline"
@@ -31,8 +34,12 @@ estimate built from past months**.
 - **This month.** Spent and income so far, the recurring charges still to
   arrive, a variable estimate for the days left and a projected month end
   (spending, income, net, balance, with a range). The days left are measured
-  from the **data-through date** of the data (latest imported row), not from
-  today: a statement that stops on the 10th is projected from the 10th. Income
+  from the **data-through date** of the data (the earliest last-import date
+  over the accounts with rows in the baseline window), not from today: a
+  statement that stops on the 10th is projected from the 10th. When the latest
+  import is in the previous month, bills dated before the 1st still move the
+  balance (`prior_month_bills_eur`) but only bills dated on or after the 1st
+  count in this month's projected spending and `recurring_remaining_eur`. Income
   still to arrive = the baseline average minus the regular income already seen,
   never negative.
 - **Next months.** Per month: `income_eur`, `recurring_eur` (bills due that
@@ -69,7 +76,9 @@ baseline months are listed too.
 - `accounts` lists each bank account with `data_through`, `days_behind`,
   `stale` (no import for more than 7 days, or none at all), `balance_eur` and
   `balance_date`; a stale or empty account adds a warning. `data_through` of
-  the forecast is the newest of them.
+  the forecast is the **earliest** of them over the accounts that have rows in
+  the baseline window (an account with none there is ignored); a warning names
+  the account that lags behind the others.
 - Each source (bank rows, category tree, recurring series, accounts) is loaded
   on its own. One that fails becomes a warning and null in the figures that need
   it, never a zero and never a 5xx: without the tree or the series there is no

@@ -169,3 +169,42 @@ def test_no_database_content_at_all_still_answers(db):
     assert review["status"] == "no_imports"
     assert review["data_through"] is None
     assert review["budget"] is None
+
+
+def test_a_complete_review_month_is_not_marked_in_progress(db, bank):
+    _history(db, bank)
+    tiers = sr.build_review(db, _fx, TODAY)["tiers"]
+    assert tiers["month"]["month"] == "2026-06"
+    assert tiers["month"]["in_progress"] is False
+    assert tiers["previous"]["in_progress"] is False
+
+
+def test_tiers_for_an_older_month_come_out_of_a_longer_window(db, bank):
+    _history(db, bank)
+    tiers = sr.build_review(db, _fx, TODAY, month="2026-03")["tiers"]
+    assert tiers["month"]["month"] == "2026-03"
+    assert tiers["month"]["in_progress"] is False
+    assert tiers["previous"]["month"] == "2026-02"
+    assert tiers["month"]["fixed_eur"] == 1000.0
+
+
+def test_the_month_in_progress_is_marked_in_progress(db, bank):
+    _history(db, bank)
+    tiers = sr.build_review(db, _fx, TODAY, month="2026-07")["tiers"]
+    assert tiers["month"]["in_progress"] is True
+    assert tiers["previous"]["month"] == "2026-06"
+
+
+def test_a_budget_for_a_month_with_nothing_imported_has_no_variances(db, bank):
+    _history(db, bank)
+    budget = db.create_budget("Base", is_active=True)
+    db.create_budget_line(budget, "spending", "Groceries", 300.0)
+    review = sr.build_review(db, _fx, TODAY, month="2025-03")
+    part = review["budget"]
+    assert part["no_activity"] is True
+    for section in part["sections"]:
+        assert section["variance_eur"] is None
+        assert section["variance_pct"] is None
+        assert section["favourable"] is None
+    assert part["net"]["variance_eur"] is None
+    assert part["net"]["favourable"] is None

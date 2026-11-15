@@ -333,3 +333,101 @@ def test_load_forecast_reads_the_database_and_tolerates_a_broken_source(tmp_path
     out = cf.load_forecast(db, _fx, TODAY, months=2)
     assert any("tree down" in w for w in out["warnings"])
     assert out["accounts"][0]["name"] == "Example Bank"
+
+
+# ── per-account data-through and bills of the previous month (review round) ─
+
+
+def test_a_lagging_second_account_sets_the_data_through_date():
+    rows = _rows()
+    rows.append(_row("2026-06-05", -40, "Groceries", "Example Shop", pid=2))
+    rows.append(_row("2026-07-02", -40, "Groceries", "Example Shop", pid=2))
+    accounts = [
+        _account(),
+        _account(name="Second Bank", pid=2, through=date(2026, 7, 2)),
+    ]
+    out = _forecast(rows=rows, accounts=accounts)
+    assert out["data_through"] == "2026-07-02"
+    assert out["this_month"]["data_through"] == "2026-07-02"
+    # measured from the 2nd of 31 days, not from the 10th
+    assert out["this_month"]["elapsed_share"] == pytest.approx(2 / 31, abs=0.001)
+    assert any("Second Bank" in w and "2026-07-02" in w for w in out["warnings"])
+
+
+def test_an_account_with_no_rows_in_the_window_is_ignored_for_data_through():
+    accounts = [
+        _account(),
+        _account(name="Old Bank", pid=2, through=date(2024, 1, 5)),
+    ]
+    out = _forecast(accounts=accounts)
+    assert out["data_through"] == "2026-07-10"
+
+
+def test_baseline_months_wait_for_the_lagging_account():
+    rows = _rows()
+    # the second account reaches only Jun 10: June is not a complete month
+    rows.append(_row("2026-06-03", -40, "Groceries", "Example Shop", pid=2))
+    accounts = [
+        _account(),
+        _account(name="Second Bank", pid=2, through=date(2026, 6, 10)),
+    ]
+    out = _forecast(rows=rows, accounts=accounts)
+    assert "2026-06" not in out["baseline"]["months"]
+    assert "2026-05" in out["baseline"]["months"]
+
+
+def test_bills_of_the_previous_month_move_the_balance_but_not_this_months_spending():
+    today = date(2026, 8, 5)
+    through = date(2026, 7, 20)
+    rows = [
+        _row(f"2026-{m:02d}-{d:02d}", -100, "Gym", "Example Gym")
+        for m, d in ((5, 25), (6, 25), (7, 15))
+    ]
+    rows += [_row("2026-07-01", -10, "Groceries", "Example Market")]
+    # the gym is expected on Aug 15 (this month) after Jul 15; add a bill due
+    # Jul 25 for a different series so it falls in the gap after the import
+    rows += [
+        _row(f"2026-{m:02d}-28", -60, "Insurance", "Example Insurer") for m in (4, 5, 6)
+    ]
+    plain = [
+        {
+            "id": r["id"],
+            "portfolio_id": 1,
+            "date": r["date"],
+            "amount": r["amount_eur"],
+            "currency": "EUR",
+            "merchant": r["merchant"],
+            "description": r["merchant"],
+            "category": r["category"],
+            "is_transfer": 0,
+        }
+        for r in rows
+        if r["amount_eur"] < 0
+    ]
+    series = detect_recurring(plain, {1: through})
+    acct = _account(through=through)
+    out = cf.compute_forecast(rows, _tree(), series, [acct], _fx, today, 1)
+    bills = out["known_bills"]
+    prior = [b for b in bills if b["date"] < "2026-08-01"]
+    assert prior, "the fixture needs a bill dated in July after the import"
+    prior_total = sum(b["amount_eur"] for b in prior)
+    tm = out["this_month"]
+    assert tm["prior_month_bills_eur"] == round(prior_total, 2)
+    in_august = sum(
+        b["amount_eur"]
+        for b in bills
+        if "2026-08-01" <= b["date"] <= "2026-08-31" and b["kind"] == "spending"
+    )
+    assert tm["recurring_remaining_eur"] == round(in_august, 2)
+    assert tm["projected_spending_eur"] == round(
+        (tm["spent_to_date_eur"] or 0) + in_august + tm["variable_remaining_eur"], 2
+    )
+    # the balance still pays the July bill
+    expected = (
+        5000.0
+        + (tm["income_remaining_eur"] or 0)
+        - prior_total
+        - in_august
+        - tm["variable_remaining_eur"]
+    )
+    assert tm["projected_balance_end_eur"] == pytest.approx(expected, abs=0.02)

@@ -261,10 +261,10 @@ def _series(rows, last_import):
     return detect_recurring(rows, {1: last_import})
 
 
-def test_due_dates_count_whole_steps_from_the_anchor():
+def test_due_dates_count_whole_steps_from_the_last_charge():
     from portf_manager.services.recurring import due_dates
 
-    # charged on the 31st: later cycles must not drift to the 28th
+    # charged on the 31st: later cycles must not drift to the 28th or 30th
     rows = [
         _tx("2026-01-31", -20.0),
         _tx("2026-02-28", -20.0),
@@ -273,7 +273,27 @@ def test_due_dates_count_whole_steps_from_the_anchor():
     [s] = _series(rows, date(2026, 3, 31))
     assert s.next_expected == "2026-04-30"
     got = due_dates(s, date(2026, 3, 31), date(2026, 6, 30))
-    assert got == [date(2026, 4, 30), date(2026, 5, 30), date(2026, 6, 30)]
+    # every cycle is counted from the last charge (Mar 31), so May is the 31st
+    assert got == [date(2026, 4, 30), date(2026, 5, 31), date(2026, 6, 30)]
+
+
+def test_due_dates_do_not_drift_after_a_short_month():
+    from portf_manager.services.recurring import due_dates
+
+    rows = [
+        _tx("2025-11-30", -50.0),
+        _tx("2025-12-31", -50.0),
+        _tx("2026-01-31", -50.0),
+    ]
+    [s] = _series(rows, date(2026, 2, 10))
+    got = due_dates(s, date(2026, 2, 10), date(2026, 6, 30))
+    assert got == [
+        date(2026, 2, 28),
+        date(2026, 3, 31),
+        date(2026, 4, 30),
+        date(2026, 5, 31),
+        date(2026, 6, 30),
+    ]
 
 
 def test_due_dates_skip_the_charge_a_statement_already_covers():

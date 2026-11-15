@@ -89,11 +89,18 @@ def _anomalies_part(rows, tree, month, today):
 
 
 def _tiers_part(rows, tree, month, today):
-    _, end = _month_bounds(month)
-    ref = min(today, end)
-    window = spending_insights.tier_breakdown(rows, tree, ref, months=2)
+    # The real "today" decides which month is in progress; the window reaches
+    # back far enough to hold the review month and the one before it.
+    current = today.strftime("%Y-%m")
+    back = (int(current[:4]) * 12 + int(current[5:7])) - (
+        int(month[:4]) * 12 + int(month[5:7])
+    )
+    window = spending_insights.tier_breakdown(rows, tree, today, months=back + 2)
     by_month = {e["month"]: e for e in window}
-    return {"month": by_month.get(month), "previous": by_month.get(window[0]["month"])}
+    return {
+        "month": by_month.get(month),
+        "previous": by_month.get(spending_insights.shift_month(month, -1)),
+    }
 
 
 def _recurring_part(db, fx, month, portfolio_id):
@@ -148,6 +155,7 @@ def _budget_part(db, fx, month, today):
     if active is None:
         return None, []
     data = budget_service.compute_budget_variance(db, active["id"], [month], fx, today)
+    no_activity = budget_service.months_without_activity(data) == [month]
     sections = []
     for sec in data["sections"]:
         lines = [
@@ -163,9 +171,11 @@ def _budget_part(db, fx, month, today):
                 "planned_total": sec["planned_total"],
                 "available_total": sec["available_total"],
                 "actual_total": sec["actual_total"],
-                "variance_eur": sec["variance_eur"],
-                "variance_pct": sec["variance_pct"],
-                "favourable": sec["favourable"],
+                # a month nothing was imported for has no verdict, not a
+                # flattering one
+                "variance_eur": None if no_activity else sec["variance_eur"],
+                "variance_pct": None if no_activity else sec["variance_pct"],
+                "favourable": None if no_activity else sec["favourable"],
                 "tier_totals": sec.get("tier_totals"),
                 "over_lines": [
                     {
@@ -186,8 +196,17 @@ def _budget_part(db, fx, month, today):
         "budget_id": data["budget_id"],
         "budget_name": data["budget_name"],
         "sections": sections,
-        "net": data["net"],
-        "no_activity": budget_service.months_without_activity(data) == [month],
+        "net": (
+            {
+                **data["net"],
+                "variance_eur": None,
+                "variance_pct": None,
+                "favourable": None,
+            }
+            if no_activity
+            else data["net"]
+        ),
+        "no_activity": no_activity,
     }
     return result, list(data["warnings"])
 

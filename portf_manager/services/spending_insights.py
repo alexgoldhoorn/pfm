@@ -12,10 +12,14 @@ Shared rules:
 - A row marked ``one_off`` still counts in every actual total. It is left out
   of baselines, "usual amount" statistics and anomaly detection, because the
   user already said it is not normal.
-- "Data through" is the date of the latest imported row, not today.
+- "Data through" is kept per bank account (the date of its latest imported
+  row, not today). Whether a month is complete, and how much of the month in
+  progress has elapsed, is judged against the **earliest** of those dates over
+  the accounts that have rows in the window: one account that stopped
+  importing early makes the month partial however fresh the others are.
 """
 
-from collections import defaultdict
+from collections import Counter, defaultdict
 from datetime import date, timedelta
 from statistics import median
 from typing import Any, Callable, Dict, List, Optional
@@ -90,6 +94,7 @@ def load_rows(
             {
                 "id": r["id"],
                 "portfolio_id": r["portfolio_id"],
+                "account": r.get("portfolio_name"),
                 "date": str(r["date"])[:10],
                 "description": r.get("description") or "",
                 "merchant": r.get("merchant"),
@@ -137,6 +142,86 @@ def data_through(rows: List[dict]) -> Optional[str]:
     return max((r["date"] for r in rows), default=None)
 
 
+def effective_data_through(
+    last_by_account: Dict[int, str], start: Optional[str] = None
+) -> Dict[str, Any]:
+    """The date every account's data reaches: the earliest last-import date.
+
+    An account whose last import is before ``start`` has no row in the window
+    (it was closed or never used in it) and is ignored rather than treated as
+    stale forever. This is the single rule behind "complete month",
+    "elapsed share of the month" and the baseline months.
+
+    Args:
+        last_by_account: ``{portfolio_id: ISO date of the latest imported row}``.
+        start: first day of the window (ISO), or None for every account.
+
+    Returns:
+        ``{effective, latest, lagging, accounts}``: the earliest date over the
+        accounts in the window (None when there is none), the latest, the id
+        of the account that sets the earliest date when others are ahead of it
+        (else None), and the ids that were counted.
+    """
+    counted = {
+        pid: d
+        for pid, d in last_by_account.items()
+        if d and (start is None or d >= start)
+    }
+    if not counted:
+        return {"effective": None, "latest": None, "lagging": None, "accounts": []}
+    effective = min(counted.values())
+    latest = max(counted.values())
+    lagging = None
+    if effective < latest:
+        lagging = min(
+            (pid for pid, d in counted.items() if d == effective), default=None
+        )
+    return {
+        "effective": effective,
+        "latest": latest,
+        "lagging": lagging,
+        "accounts": sorted(counted),
+    }
+
+
+def account_data_through(
+    rows: List[dict],
+    start: Optional[str] = None,
+    portfolio_id: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Per-account data-through dates from ``load_rows`` output.
+
+    Args:
+        rows: ``load_rows`` output (transfers count as imported).
+        start: first day of the window (ISO); see ``effective_data_through``.
+        portfolio_id: when given, only that account counts.
+
+    Returns:
+        ``effective_data_through``'s dict plus ``by_account`` (``{id: {name,
+        data_through}}`` for every account seen) and ``lagging_name``.
+    """
+    last: Dict[int, str] = {}
+    names: Dict[int, str] = {}
+    for r in rows:
+        pid = r["portfolio_id"]
+        if portfolio_id is not None and pid != portfolio_id:
+            continue
+        if r["date"] > last.get(pid, ""):
+            last[pid] = r["date"]
+        if r.get("account"):
+            names[pid] = r["account"]
+    info = effective_data_through(last, start)
+    info["by_account"] = {
+        pid: {"name": names.get(pid) or f"account {pid}", "data_through": d}
+        for pid, d in last.items()
+    }
+    lagging = info["lagging"]
+    info["lagging_name"] = (
+        info["by_account"][lagging]["name"] if lagging is not None else None
+    )
+    return info
+
+
 def _spend_rows(rows: List[dict], tree: Dict[str, dict]):
     """Non-transfer outflows outside the savings categories."""
     saved = savings_names(tree)
@@ -178,9 +263,12 @@ def compare_month(
         group_by: ``category`` or ``merchant``.
 
     Returns:
-        ``{month, status, data_through, baseline_months, group_by, totals,
-        items, warnings}``. ``status`` is ``complete``, ``in_progress``,
-        ``partial`` (data ends before the month does) or ``no_imports``. Only
+        ``{month, status, data_through, accounts, baseline_months, group_by,
+        totals, items, warnings}``. ``data_through`` is the earliest
+        last-import date over the accounts that have rows in the month or its
+        baseline months (``accounts`` lists each). ``status`` is ``complete``,
+        ``in_progress``, ``partial`` (any account's data ends before the month
+        does; the warning names it) or ``no_imports``. Only
         a complete month gets deltas: comparing part of a month with a full
         average, or an empty month with one, would flatter the result.
         Items are ordered by the size of their move.
@@ -197,7 +285,11 @@ def compare_month(
         raise ValueError("baseline_months must be at least 1")
 
     warnings: List[str] = []
-    through = data_through(rows)
+    # Each account's own last import, over the accounts that have rows in the
+    # month or its baseline months; the earliest of them decides completeness.
+    window_start = f"{shift_month(month, -baseline_months)}-01"
+    info = account_data_through(rows, start=window_start)
+    through = info["effective"]
     in_month = [r for r in rows if r["date"][:7] == month]
     if not in_month:
         status = "no_imports"
@@ -210,15 +302,24 @@ def compare_month(
         )
     elif through and through < _month_end(month).isoformat():
         status = "partial"
+        who = info["lagging_name"]
         warnings.append(
-            f"Imported data ends on {through}, before the end of {month}: "
-            "no comparison is made."
+            f"{who + ': imported' if who else 'Imported data'} "
+            f"{'only ' if who else ''}through {through}, before the end of "
+            f"{month}: no comparison is made."
         )
     else:
         status = "complete"
 
-    # Complete months before `month` that have rows, newest `baseline_months`.
-    used = complete_months(rows, date.fromisoformat(f"{month}-01"), baseline_months)
+    # Complete months before `month` that have rows, newest `baseline_months`;
+    # a month the data of any account stops short of is not complete.
+    used = [
+        m
+        for m in complete_months(
+            rows, date.fromisoformat(f"{month}-01"), baseline_months
+        )
+        if through and _month_end(m).isoformat() <= through
+    ]
     if status == "complete" and not used:
         warnings.append("No earlier month with imports: there is no baseline.")
     elif status == "complete" and len(used) < baseline_months:
@@ -232,8 +333,21 @@ def compare_month(
     spend = _spend_rows(rows, tree)
     saved = savings_names(tree)
 
+    # Merchants group without regard to case; the spelling shown is the most
+    # common one among the rows of the group.
+    spellings: Dict[str, Counter] = defaultdict(Counter)
+
     def key_of(row: dict) -> str:
-        return row["category"] if group_by == "category" else _merchant_name(row)
+        if group_by == "category":
+            return row["category"]
+        spellings[_merchant_key(row)][_merchant_name(row)] += 1
+        return _merchant_key(row)
+
+    def display(key: str) -> str:
+        if group_by == "category" or key not in spellings:
+            return key
+        ranked = sorted(spellings[key].items(), key=lambda kv: (-kv[1], kv[0]))
+        return ranked[0][0]
 
     actual: Dict[str, float] = defaultdict(float)
     one_off: Dict[str, float] = defaultdict(float)
@@ -270,7 +384,7 @@ def compare_month(
         b = round(base.get(name, 0.0) / divisor, 2)
         d, pct = _delta(a, b) if status == "complete" and used else (None, None)
         item = {
-            "name": name,
+            "name": display(name),
             "actual_eur": a,
             "baseline_eur": b,
             "last_year_eur": (round(last.get(name, 0.0), 2) if has_last_year else None),
@@ -302,6 +416,11 @@ def compare_month(
         "status": status,
         "in_progress": status == "in_progress",
         "data_through": through,
+        "accounts": [
+            {"name": v["name"], "data_through": v["data_through"]}
+            for pid, v in info["by_account"].items()
+            if pid in info["accounts"]
+        ],
         "baseline_months": used,
         "group_by": group_by,
         "totals": {
@@ -419,7 +538,14 @@ def find_anomalies(
     by_merchant: Dict[str, List[dict]] = defaultdict(list)
     for r in usual_rows:
         by_merchant[_merchant_key(r)].append(r)
-    earliest = min((r["date"] for r in rows), default=None)
+    # "Is the data long enough for a merchant to count as new" is a question
+    # about the charge's own account: a freshly imported second account must
+    # not make every merchant it holds look new.
+    earliest_by_account: Dict[Any, str] = {}
+    for r in rows:
+        pid = r["portfolio_id"]
+        if r["date"] < earliest_by_account.get(pid, "9999-12-31"):
+            earliest_by_account[pid] = r["date"]
 
     items: List[dict] = []
     for r in usual_rows:
@@ -460,8 +586,11 @@ def find_anomalies(
         elif (
             not prior
             and amount >= NEW_MERCHANT_MIN_EUR
-            and earliest is not None
-            and (date.fromisoformat(r["date"]) - date.fromisoformat(earliest)).days
+            and r["portfolio_id"] in earliest_by_account
+            and (
+                date.fromisoformat(r["date"])
+                - date.fromisoformat(earliest_by_account[r["portfolio_id"]])
+            ).days
             >= NEW_MERCHANT_MIN_HISTORY_DAYS
         ):
             items.append(
