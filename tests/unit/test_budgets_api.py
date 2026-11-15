@@ -838,3 +838,236 @@ def test_every_budget_endpoint_requires_auth(tmp_path):
     assert client.get("/api/v1/budgets/").status_code in (401, 403)
     assert client.get("/api/v1/budgets/summary").status_code in (401, 403)
     assert client.post("/api/v1/budgets/", json={"name": "X"}).status_code in (401, 403)
+
+
+# ── yearly lines, rollover, pace in the responses (cost-control batch B) ────
+
+
+def _active_budget(client):
+    return client.post(
+        "/api/v1/budgets/", json={"name": "Base", "is_active": True}, headers=HEADERS
+    ).json()["id"]
+
+
+def test_line_period_and_rollover_round_trip_through_create_update_bulk(tmp_path):
+    client, db = _make_client(tmp_path)
+    _seed_tree(db)
+    bid = _active_budget(client)
+    made = client.post(
+        f"/api/v1/budgets/{bid}/lines",
+        json={
+            "line_type": "spending",
+            "ref_key": "Groceries",
+            "monthly_amount": 1200,
+            "period": "yearly",
+            "rollover": True,
+        },
+        headers=HEADERS,
+    )
+    assert made.status_code == 201
+    assert made.json()["period"] == "yearly" and made.json()["rollover"] is True
+    line_id = made.json()["id"]
+
+    # a line created without the keys is monthly and does not roll over
+    plain = client.post(
+        f"/api/v1/budgets/{bid}/lines",
+        json={"line_type": "spending", "ref_key": "Rent", "monthly_amount": 900},
+        headers=HEADERS,
+    ).json()
+    assert plain["period"] == "monthly" and plain["rollover"] is False
+
+    # a grid save that omits the keys leaves them alone
+    client.post(
+        f"/api/v1/budgets/{bid}/lines/bulk",
+        json={
+            "lines": [
+                {"line_type": "spending", "ref_key": "Groceries", "monthly_amount": 600}
+            ]
+        },
+        headers=HEADERS,
+    )
+    got = {
+        x["ref_key"]: x
+        for x in client.get(f"/api/v1/budgets/{bid}/lines", headers=HEADERS).json()
+    }
+    assert got["Groceries"]["period"] == "yearly" and got["Groceries"]["rollover"]
+    assert got["Groceries"]["monthly_amount"] == 600
+
+    # a bulk save can set them explicitly
+    client.post(
+        f"/api/v1/budgets/{bid}/lines/bulk",
+        json={
+            "lines": [
+                {
+                    "line_type": "spending",
+                    "ref_key": "Rent",
+                    "monthly_amount": 900,
+                    "period": "yearly",
+                }
+            ]
+        },
+        headers=HEADERS,
+    )
+    rent = client.get(f"/api/v1/budgets/{bid}/lines", headers=HEADERS).json()
+    assert next(x for x in rent if x["ref_key"] == "Rent")["period"] == "yearly"
+
+    updated = client.put(
+        f"/api/v1/budgets/{bid}/lines/{line_id}",
+        json={"period": "monthly", "rollover": False},
+        headers=HEADERS,
+    )
+    assert updated.json()["period"] == "monthly" and updated.json()["rollover"] is False
+
+    # a copied budget keeps both
+    copy = client.post(
+        "/api/v1/budgets/",
+        json={"name": "Copy", "copy_from_budget_id": bid},
+        headers=HEADERS,
+    ).json()
+    copied = client.get(f"/api/v1/budgets/{copy['id']}/lines", headers=HEADERS).json()
+    assert next(x for x in copied if x["ref_key"] == "Rent")["period"] == "yearly"
+
+
+def test_yearly_and_rollover_are_refused_on_income_and_investment_lines(tmp_path):
+    client, db = _make_client(tmp_path)
+    _seed_tree(db)
+    bid = _active_budget(client)
+    for body in ({"period": "yearly"}, {"rollover": True}):
+        r = client.post(
+            f"/api/v1/budgets/{bid}/lines",
+            json={
+                "line_type": "income",
+                "ref_key": "Salary",
+                "monthly_amount": 1,
+                **body,
+            },
+            headers=HEADERS,
+        )
+        assert r.status_code == 400
+    bulk = client.post(
+        f"/api/v1/budgets/{bid}/lines/bulk",
+        json={
+            "lines": [{"line_type": "income", "ref_key": "Salary", "rollover": True}]
+        },
+        headers=HEADERS,
+    )
+    assert bulk.status_code == 400
+    assert (
+        client.post(
+            f"/api/v1/budgets/{bid}/lines",
+            json={"line_type": "spending", "ref_key": "Rent", "period": "weekly"},
+            headers=HEADERS,
+        ).status_code
+        == 422
+    )
+
+
+def test_reclassifying_a_yearly_line_to_debt_is_allowed_but_not_to_income(tmp_path):
+    client, db = _make_client(tmp_path)
+    _seed_tree(db)
+    bid = _active_budget(client)
+    line = client.post(
+        f"/api/v1/budgets/{bid}/lines",
+        json={
+            "line_type": "spending",
+            "ref_key": "Rent",
+            "monthly_amount": 1200,
+            "period": "yearly",
+        },
+        headers=HEADERS,
+    ).json()
+    ok = client.put(
+        f"/api/v1/budgets/{bid}/lines/{line['id']}",
+        json={"line_type": "debt"},
+        headers=HEADERS,
+    )
+    assert ok.status_code == 200 and ok.json()["period"] == "yearly"
+
+
+def test_variance_and_summary_expose_pace_tier_and_fund_fields(tmp_path):
+    client, db = _make_client(tmp_path)
+    _seed_tree(db)
+    db.set_spending_category_essentiality("Groceries", "flexible")
+    bank = db.get_or_create_portfolio("Example Bank", account_type="bank")
+    db.create_spending_transaction(
+        bank, _this_month("01"), "Example Market", -100.0, category="Groceries"
+    )
+    bid = _active_budget(client)
+    client.post(
+        f"/api/v1/budgets/{bid}/lines",
+        json={
+            "line_type": "spending",
+            "ref_key": "Groceries",
+            "monthly_amount": 1200,
+            "period": "yearly",
+        },
+        headers=HEADERS,
+    )
+    summary = client.get("/api/v1/budgets/summary", headers=HEADERS).json()
+    assert summary["as_of"] == date.today().isoformat()
+    assert summary["data_through"] == _this_month("01")
+    spending = next(s for s in summary["sections"] if s["key"] == "spending")
+    line = spending["lines"][0]
+    assert line["tier"] == "flexible" and line["period"] == "yearly"
+    assert line["fund"]["yearly_amount_eur"] == 1200.0
+    assert line["pace"]["status"] in ("on_track", "at_risk", "over")
+    assert spending["pace"]["month"] == date.today().strftime("%Y-%m")
+    assert spending["tier_totals"]["flexible"]["actual_eur"] == 100.0
+    variance = client.get(f"/api/v1/budgets/{bid}/variance?months=2", headers=HEADERS)
+    assert variance.status_code == 200
+    section = next(s for s in variance.json()["sections"] if s["key"] == "spending")
+    assert section["lines"][0]["available_total"] is not None
+
+
+def test_variance_still_reconciles_with_the_trend_to_the_cent(tmp_path):
+    """Pace, yearly funds, rollover and one-offs add fields, not euros."""
+    client, db = _make_client(tmp_path)
+    _seed_tree(db)
+    bank = db.get_or_create_portfolio("Example Bank", account_type="bank")
+    today = date.today()
+    for back in range(3):
+        index = today.year * 12 + today.month - 1 - back
+        month = f"{index // 12:04d}-{index % 12 + 1:02d}"
+        db.create_spending_transaction(
+            bank, f"{month}-01", "Example Market", -123.45, category="Groceries"
+        )
+        db.create_spending_transaction(
+            bank, f"{month}-01", "Example Landlord", -900.10, category="Rent"
+        )
+        db.create_spending_transaction(
+            bank, f"{month}-01", "Example Employer", 2500.0, category="Salary"
+        )
+        sofa = db.create_spending_transaction(
+            bank, f"{month}-01", "Example Sofa", -77.77, category="Utilities"
+        )
+        db.update_spending_transaction(sofa, one_off=True)
+    bid = _active_budget(client)
+    client.post(
+        f"/api/v1/budgets/{bid}/lines",
+        json={
+            "line_type": "spending",
+            "ref_key": "Groceries",
+            "monthly_amount": 1200,
+            "period": "yearly",
+        },
+        headers=HEADERS,
+    )
+    client.post(
+        f"/api/v1/budgets/{bid}/lines",
+        json={
+            "line_type": "spending",
+            "ref_key": "Rent",
+            "monthly_amount": 900,
+            "rollover": True,
+        },
+        headers=HEADERS,
+    )
+    variance = client.get(f"/api/v1/budgets/{bid}/variance?months=3", headers=HEADERS)
+    trend = client.get("/api/v1/spending/trend?months=3", headers=HEADERS).json()
+    spending = next(s for s in variance.json()["sections"] if s["key"] == "spending")
+    for entry in trend:
+        month = entry["month"]
+        actual = sum(item["actual_eur"][month] for item in spending["lines"]) + sum(
+            item["actual_eur"][month] for item in spending["unbudgeted"]
+        )
+        assert round(actual, 2) == entry["spent_eur"]

@@ -13,7 +13,7 @@ HTTP shape, and wiring.
 """
 
 import logging
-from typing import Dict, List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -75,10 +75,16 @@ class BudgetResponse(BaseModel):
 class BudgetLineBody(BaseModel):
     line_type: Literal["income", "spending", "debt", "investment"]
     ref_key: str
+    # For a yearly line this is the YEARLY figure; each month sets aside a
+    # twelfth of it.
     monthly_amount: float = 0
     overrides: Optional[Dict[str, float]] = None
     link_id: Optional[int] = None
     notes: Optional[str] = None
+    # Left out (None), a bulk save keeps what the line has and a create uses
+    # monthly / no rollover.
+    period: Optional[Literal["monthly", "yearly"]] = None
+    rollover: Optional[bool] = None
 
 
 class BudgetLineUpdateBody(BaseModel):
@@ -87,6 +93,8 @@ class BudgetLineUpdateBody(BaseModel):
     overrides: Optional[Dict[str, float]] = None
     link_id: Optional[int] = None
     notes: Optional[str] = None
+    period: Optional[Literal["monthly", "yearly"]] = None
+    rollover: Optional[bool] = None
 
 
 class BudgetLineResponse(BaseModel):
@@ -96,9 +104,13 @@ class BudgetLineResponse(BaseModel):
     ref_key: str
     label: str
     monthly_amount: float
+    period: str = "monthly"
+    rollover: bool = False
     overrides: Dict[str, float] = {}
     link_id: Optional[int] = None
     notes: Optional[str] = None
+    period: str = "monthly"
+    rollover: bool = False
 
 
 class BudgetLinesBulkBody(BaseModel):
@@ -115,10 +127,21 @@ class BudgetVarianceLine(BaseModel):
     link_label: Optional[str] = None
     link_amount_eur: Optional[float] = None
     monthly_amount: float
+    period: str = "monthly"
+    rollover: bool = False
+    set_aside_eur: Optional[float] = None
+    tier: Optional[str] = None
     planned_eur: Dict[str, float]
     actual_eur: Dict[str, float]
     planned_total: float
     actual_total: float
+    available_total: Optional[float] = None
+    carried_eur: Optional[Dict[str, float]] = None
+    available_eur: Optional[Dict[str, float]] = None
+    carried_total: Optional[float] = None
+    fund: Optional[Dict[str, Any]] = None
+    fund_balance_eur: Optional[Dict[str, float]] = None
+    pace: Optional[Dict[str, Any]] = None
     variance_eur: float
     variance_pct: Optional[float] = None
     favourable: bool
@@ -129,6 +152,7 @@ class BudgetVarianceUnbudgeted(BaseModel):
     label: str
     actual_eur: Dict[str, float]
     actual_total: float
+    tier: Optional[str] = None
 
 
 class BudgetVarianceSection(BaseModel):
@@ -139,7 +163,10 @@ class BudgetVarianceSection(BaseModel):
     unbudgeted: List[BudgetVarianceUnbudgeted]
     unbudgeted_suppressed: bool = False
     planned_total: float
+    available_total: Optional[float] = None
     actual_total: float
+    tier_totals: Optional[Dict[str, Dict[str, float]]] = None
+    pace: Optional[Dict[str, Any]] = None
     variance_eur: float
     variance_pct: Optional[float] = None
     favourable: bool
@@ -158,8 +185,11 @@ class BudgetVarianceResponse(BaseModel):
     budget_name: str
     is_active: bool
     months: List[str]
+    as_of: Optional[str] = None
+    data_through: Optional[str] = None
     sections: List[BudgetVarianceSection]
     net: BudgetVarianceNet
+    warnings: List[str] = []
 
 
 class BudgetSeedProposal(BaseModel):
@@ -197,10 +227,32 @@ def _serialize_line(db, line: Dict, tree: List[Dict] = None) -> BudgetLineRespon
         ref_key=line["ref_key"],
         label=_line_label(db, line, tree),
         monthly_amount=float(line["monthly_amount"] or 0),
+        period=line.get("period") or "monthly",
+        rollover=bool(line.get("rollover")),
         overrides=budget_service.parse_overrides(line.get("overrides")),
         link_id=line.get("link_id"),
         notes=line.get("notes"),
     )
+
+
+def _validate_fund_options(
+    line_type: str, period: Optional[str], rollover: Optional[bool]
+) -> None:
+    """Yearly lines and rollover only make sense for costs.
+
+    A yearly line sets a twelfth aside each month and a rollover line carries
+    what is left; for income and investment lines either would invent a
+    surplus or a shortfall, so they are refused rather than ignored.
+    """
+    wants_fund = period == "yearly" or bool(rollover)
+    if wants_fund and line_type not in budget_service.FUND_LINE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"A {line_type} line cannot be yearly or roll over; only "
+                f"{' and '.join(budget_service.FUND_LINE_TYPES)} lines can"
+            ),
+        )
 
 
 def _require_budget(db, budget_id: int) -> Dict:
@@ -337,6 +389,8 @@ async def create_budget(
             line.get("overrides"),
             line.get("link_id"),
             line.get("notes"),
+            period=line.get("period") or "monthly",
+            rollover=bool(line.get("rollover")),
         )
     created = db.get_budget(budget_id)
     return BudgetResponse(
@@ -465,6 +519,7 @@ async def create_budget_line(
     _validate_ref_key(
         db, body.line_type, ref_key, _category_ref_keys(db, budget_id) - {ref_key}
     )
+    _validate_fund_options(body.line_type, body.period, body.rollover)
     line_id = db.create_budget_line(
         budget_id,
         body.line_type,
@@ -473,6 +528,8 @@ async def create_budget_line(
         budget_service.serialize_overrides(body.overrides),
         body.link_id,
         body.notes,
+        period=body.period or "monthly",
+        rollover=bool(body.rollover),
     )
     return _serialize_line(db, db.get_budget_line(line_id))
 
@@ -521,6 +578,7 @@ async def bulk_upsert_budget_lines(
     for line in body.lines:
         ref_key = line.ref_key.strip()
         _validate_ref_key(db, line.line_type, ref_key, final_keys - {ref_key})
+        _validate_fund_options(line.line_type, line.period, line.rollover)
         prepared.append(
             {
                 "line_type": line.line_type,
@@ -529,6 +587,10 @@ async def bulk_upsert_budget_lines(
                 "overrides": budget_service.serialize_overrides(line.overrides),
                 "link_id": line.link_id,
                 "notes": line.notes,
+                # None keeps what the stored line has (the grid save sends
+                # neither key)
+                "period": line.period,
+                "rollover": line.rollover,
             }
         )
     return db.upsert_budget_lines(budget_id, prepared)
@@ -542,7 +604,8 @@ async def update_budget_line(
     db=Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
-    """Update a line's type, monthly amount, per-month overrides, link or notes.
+    """Update a line's type, amount, per-month overrides, link, notes, period
+    (``monthly`` / ``yearly``) or rollover flag.
 
     ``line_type`` IS editable — reclassifying an outflow as Debt or Investment
     is how spending stops counting money you merely moved. ``ref_key`` is not:
@@ -569,6 +632,17 @@ async def update_budget_line(
             _category_ref_keys(db, budget_id) - {line["ref_key"]},
         )
         fields["line_type"] = body.line_type
+    final_type = fields.get("line_type", line["line_type"])
+    final_period = body.period if body.period is not None else line.get("period")
+    final_rollover = (
+        body.rollover if body.rollover is not None else bool(line.get("rollover"))
+    )
+    # also catches reclassifying a yearly / rollover line to income
+    _validate_fund_options(final_type, final_period, final_rollover)
+    if body.period is not None:
+        fields["period"] = body.period
+    if body.rollover is not None:
+        fields["rollover"] = body.rollover
     if body.monthly_amount is not None:
         fields["monthly_amount"] = body.monthly_amount
     if body.overrides is not None:

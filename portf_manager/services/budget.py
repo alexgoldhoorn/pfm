@@ -19,9 +19,17 @@ Each line also carries an explicit ``favourable`` flag so callers never have to
 re-derive the direction.
 """
 
+import calendar
 import json
 from datetime import date, timedelta
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
+
+from portf_manager.services.life_scenarios import UNCLASSIFIED, tier_of
+from portf_manager.services.recurring import (
+    last_import_dates,
+    load_recurring,
+    upcoming_charges,
+)
 
 # Line types, and the section each one reports under.
 LINE_TYPES = ("income", "spending", "debt", "investment")
@@ -32,6 +40,22 @@ SECTION_LABELS = {
     "debt": "Debt",
     "investment": "Investments",
 }
+
+# A line is "over" when it misses plan by both of these, whether measured on
+# what has been spent (the overrun check) or on where the month is heading (the
+# pace). One definition, so the two Action Items agree.
+OVERRUN_PCT = 10.0
+OVERRUN_EUR = 50.0
+
+# Share of the month that must have elapsed before the everyday-spending
+# run rate is trusted at face value. Below it the run rate is divided by this
+# floor instead of the real share, so day one of a month (a few early
+# purchases) does not project a month four times too large.
+PACE_MIN_ELAPSED_SHARE = 0.1
+
+PERIODS = ("monthly", "yearly")
+# Only cost lines can be yearly (a sinking fund) or roll over.
+FUND_LINE_TYPES = ("spending", "debt")
 
 # Which tree root a category-keyed line must live under. Investment lines are
 # keyed by portfolio id, not by a category, so they have no root.
@@ -126,9 +150,14 @@ def month_key(value: str) -> str:
     return str(value)[:7]
 
 
+def _today() -> date:
+    """Today; the one place tests patch to fix the clock."""
+    return date.today()
+
+
 def current_month() -> str:
     """This calendar month as ``YYYY-MM``."""
-    return date.today().strftime("%Y-%m")
+    return _today().strftime("%Y-%m")
 
 
 def month_range(end_month: str, count: int) -> List[str]:
@@ -403,11 +432,212 @@ def months_without_activity(variance: Dict) -> List[str]:
     return out
 
 
+def history_months(months: List[str]) -> List[str]:
+    """``months`` plus every earlier month of the same calendar years.
+
+    Yearly funds and rollover start over every January, so a window that
+    starts in July still needs January to June to know what has been set aside
+    and spent.
+    """
+    out = set(months)
+    for month in months:
+        for k in range(1, int(month[5:7]) + 1):
+            out.add(f"{month[:4]}-{k:02d}")
+    return sorted(out)
+
+
+def rollover_ledger(
+    planned: Dict[str, float],
+    actual: Dict[str, float],
+    imported: set,
+    months: List[str],
+) -> Dict[str, Dict[str, float]]:
+    """Carry under- and overspend from month to month within a calendar year.
+
+    Walks ``months`` oldest first. What a month leaves over (planned minus
+    actual) carries into the next month of the same year; a negative carry is
+    an overspend that later months have to make up. Only months that have
+    imported rows take part: a month nobody has imported reads as zero spent,
+    and carrying that forward would invent a surplus. The balance starts over
+    in January, and what was left at the end of December is forfeited.
+
+    Args:
+        planned: month -> planned (or set-aside) amount.
+        actual: month -> actual spend.
+        imported: months that have imported rows.
+        months: the calendar months to walk, oldest first.
+
+    Returns:
+        ``{"carried": {m: x}, "available": {m: planned + carried},
+        "closing": {m: balance after the month}, "forfeited": {m: x}}``
+        where ``forfeited[m]`` is the balance dropped when ``m`` is the first
+        month of a new year in the walk.
+    """
+    carried: Dict[str, float] = {}
+    available: Dict[str, float] = {}
+    closing: Dict[str, float] = {}
+    forfeited: Dict[str, float] = {}
+    balance = 0.0
+    previous_year = None
+    for month in months:
+        if previous_year is not None and month[:4] != previous_year:
+            forfeited[month] = balance
+            balance = 0.0
+        previous_year = month[:4]
+        carried[month] = balance
+        available[month] = planned.get(month, 0.0) + balance
+        if month in imported:
+            balance += planned.get(month, 0.0) - actual.get(month, 0.0)
+        closing[month] = balance
+    return {
+        "carried": carried,
+        "available": available,
+        "closing": closing,
+        "forfeited": forfeited,
+    }
+
+
+def pace_status(
+    actual_to_date: float, projected: float, limit: float
+) -> Dict[str, Any]:
+    """Where a cost is heading against what it may spend this month.
+
+    ``over`` means more than the limit is already spent. ``at_risk`` means the
+    month is projected past the limit by both ``OVERRUN_EUR`` and
+    ``OVERRUN_PCT`` (the thresholds of the overrun check). Anything else is
+    ``on_track``; a projection a few euros over is not a warning.
+    """
+    over_eur = max(0.0, projected - limit)
+    meaningful = over_eur >= OVERRUN_EUR and (
+        limit <= 0 or over_eur / limit * 100 >= OVERRUN_PCT
+    )
+    if actual_to_date > limit:
+        status = "over"
+    elif meaningful:
+        status = "at_risk"
+    else:
+        status = "on_track"
+    return {
+        "status": status,
+        "projected_over_eur": round(over_eur, 2),
+        "meaningful_overshoot": meaningful,
+    }
+
+
+class _PaceContext:
+    """What the month in progress needs to project a cost line to month end.
+
+    Elapsed share is measured to the date the data runs to, not to today, so a
+    statement that stops on the 10th is projected from the 10th. Recurring
+    charges are kept apart from everyday spending: those that already arrived
+    are not extrapolated, and those still to arrive (per account, after its own
+    last import) are added once.
+    """
+
+    def __init__(self, month, through, rows, recurring_ids, upcoming):
+        self.month = month
+        self.through = through
+        year, mon = int(month[:4]), int(month[5:7])
+        self.days = calendar.monthrange(year, mon)[1]
+        self.elapsed = min(1.0, through.day / self.days)
+        self.rows = rows
+        self.recurring_ids = recurring_ids
+        self.upcoming = upcoming
+
+    def project(self, names: set, limit: float) -> Dict[str, Any]:
+        spent = arrived = one_off = 0.0
+        for r in self.rows:
+            if r["category"] not in names or r["amount_eur"] >= 0:
+                continue
+            amount = -r["amount_eur"]
+            spent += amount
+            if r["id"] in self.recurring_ids:
+                arrived += amount
+            elif r["one_off"]:
+                one_off += amount
+        remaining_recurring = sum(
+            amount for category, amount in self.upcoming if category in names
+        )
+        everyday = spent - arrived - one_off
+        floor = max(self.elapsed, PACE_MIN_ELAPSED_SHARE)
+        everyday_left = (
+            0.0 if self.elapsed >= 1.0 else everyday * (1.0 - self.elapsed) / floor
+        )
+        projected = spent + remaining_recurring + everyday_left
+        out = {
+            "month": self.month,
+            "data_through": self.through.isoformat(),
+            "elapsed_share": round(self.elapsed, 3),
+            "actual_to_date_eur": round(spent, 2),
+            "limit_eur": round(limit, 2),
+            "expected_recurring_remaining_eur": round(remaining_recurring, 2),
+            "everyday_remaining_eur": round(everyday_left, 2),
+            "projected_month_end_eur": round(projected, 2),
+        }
+        out.update(pace_status(spent, projected, limit))
+        return out
+
+
+def _pace_context(
+    db, rows: List[Dict], months: List[str], fx, today: date, warnings: List[str]
+) -> Optional[_PaceContext]:
+    """The pace context for the month in progress, or None.
+
+    None when that month is not in the window or has nothing imported: with no
+    statement for it, zero spent reads as a month on track, which is the
+    flattering number the pace must never show.
+    """
+    month = today.strftime("%Y-%m")
+    if month not in months:
+        return None
+    in_month = [r for r in rows if month_key(r["date"]) == month]
+    if not in_month:
+        return None
+    month_end = date.fromisoformat(_month_end(month))
+    through = max(date.fromisoformat(str(r["date"])[:10]) for r in in_month)
+    try:
+        latest = [
+            d["last_spending_date"]
+            for d in db.get_portfolio_date_ranges().values()
+            if d and d.get("last_spending_date")
+        ]
+        if latest:
+            through = max(through, date.fromisoformat(max(latest)[:10]))
+    except Exception as e:
+        warnings.append(f"Data-through date could not be read: {e}")
+    through = min(through, month_end)
+
+    series = []
+    last_import: Dict[int, date] = {}
+    try:
+        series = load_recurring(db)
+        last_import = last_import_dates(db)
+    except Exception as e:
+        warnings.append(f"Recurring charges could not be read for the pace: {e}")
+    month_start = date(int(month[:4]), int(month[5:7]), 1)
+    upcoming = []
+    for s, due in upcoming_charges(series, last_import, month_end):
+        if due >= month_start:
+            upcoming.append((s.category, s.typical_amount * fx(s.currency)))
+    pace_rows = [
+        {
+            "id": r["id"],
+            "category": r["category"],
+            "amount_eur": float(r["amount"]) * fx(r.get("currency") or "EUR"),
+            "one_off": bool(r.get("one_off")),
+        }
+        for r in in_month
+    ]
+    recurring_ids = {i for s in series for i in s.transaction_ids}
+    return _PaceContext(month, through, pace_rows, recurring_ids, upcoming)
+
+
 def compute_budget_variance(
     db,
     budget_id: int,
     months: List[str],
     fx: Callable[[str], float],
+    today: Optional[date] = None,
 ) -> Dict:
     """Planned vs actual for one budget over a list of calendar months.
 
@@ -416,19 +646,49 @@ def compute_budget_variance(
     today's FX rate, bucketed by ``date[:7]``. Investment lines instead read net
     ``bookings`` (Deposits minus Withdrawals) for their portfolio — transfers
     into a broker are already excluded on the spending side, so the same euros
-    are never counted twice.
+    are never counted twice. Actual totals never depend on anything below:
+    pace, fund and rollover are extra fields, so the variance still reconciles
+    with ``/spending/trend`` to the cent.
+
+    **Yearly lines** (``period='yearly'``, spending and debt only). The stored
+    ``monthly_amount`` is the *yearly* figure. Each month sets aside a twelfth
+    of it (``planned_eur`` per month; a per-month override replaces the
+    twelfth), so ``planned_total`` is the set-aside over the window, not the
+    yearly figure. The line behaves as a rollover line (below) whose carry is
+    the fund built up since January: the month a bill lands is measured
+    against ``available`` (set-aside plus fund), not against one twelfth.
+    ``fund`` reports the calendar year's set-aside, what was spent from it and
+    what is left. A bill larger than the fund built so far is genuinely over.
+
+    **Rollover** (``rollover=1``, spending and debt only). What earlier months
+    of the same calendar year left over (or overspent) carries into the month:
+    ``carried_eur`` and ``available_eur`` per month. Months without imports do
+    not take part, and everything resets in January. Variance for such a line
+    is against ``available_total`` (``planned_total`` plus the carry brought
+    into the window, less what a January reset dropped inside it), and the
+    section and net figures follow. Every other line has ``available_total ==
+    planned_total``, so nothing changes for a budget without these features.
+
+    **Pace**. For the month in progress each cost line (and the spending
+    section) gains ``pace``; see ``_PaceContext``. No pace for a month with
+    nothing imported.
 
     Args:
         db: Database handle.
         budget_id: Which budget to report on.
         months: Calendar months, oldest first (see ``month_range``).
         fx: Currency code -> EUR rate.
+        today: Reference date (default: today); fixes "the month in progress".
 
     Returns:
-        A dict with ``budget_id``, ``budget_name``, ``months``, ``sections``
-        (one per line type, each with ``lines``, ``unbudgeted`` and totals) and
-        an overall ``net`` block.
+        A dict with ``budget_id``, ``budget_name``, ``months``, ``as_of``,
+        ``data_through``, ``sections`` (one per line type, each with
+        ``lines``, ``unbudgeted`` and totals; the spending section also has
+        ``tier_totals`` and ``pace``), an overall ``net`` block and
+        ``warnings``.
     """
+    today = today or _today()
+    warnings: List[str] = []
     budget = db.get_budget(budget_id)
     if budget is None:
         raise ValueError(f"Budget {budget_id} not found")
@@ -437,15 +697,39 @@ def compute_budget_variance(
     tree = db.list_spending_categories_tree()
     by_name = {node["name"]: node for node in tree}
     children_by_parent = build_children_index(tree)
-    month_set = set(months)
 
-    start_date = f"{months[0]}-01" if months else None
+    def _is_fund(line: Dict) -> bool:
+        return line["line_type"] in FUND_LINE_TYPES and (
+            (line.get("period") or "monthly") == "yearly" or bool(line.get("rollover"))
+        )
+
+    calc_months = (
+        history_months(months) if any(_is_fund(line) for line in lines) else months
+    )
+    month_set = set(months)
+    calc_set = set(calc_months)
+
+    start_date = f"{calc_months[0]}-01" if calc_months else None
     end_date = _month_end(months[-1]) if months else None
     rows = db.list_spending_transactions(
         start_date=start_date, end_date=end_date, is_transfer=False
     )
-    category_actuals = _collect_category_actuals(rows, month_set, fx)
-    booking_actuals = _collect_booking_actuals(db.get_all_bookings(), month_set, fx)
+    category_actuals = _collect_category_actuals(rows, calc_set, fx)
+    booking_actuals = _collect_booking_actuals(db.get_all_bookings(), calc_set, fx)
+    imported = {month_key(r["date"]) for r in rows}
+
+    pace_ctx = _pace_context(db, rows, months, fx, today, warnings)
+    through_all: Optional[str] = None
+    try:
+        latest = [
+            d["last_spending_date"]
+            for d in db.get_portfolio_date_ranges().values()
+            if d and d.get("last_spending_date")
+        ]
+        through_all = max(latest)[:10] if latest else None
+    except Exception:
+        through_all = pace_ctx.through.isoformat() if pace_ctx else None
+    current = today.strftime("%Y-%m")
 
     portfolio_names = {str(p["id"]): p["name"] for p in db.get_all_portfolios()}
     # A debt line can point at the manual liability it repays, so the payment
@@ -460,6 +744,7 @@ def compute_budget_variance(
     # live under the Spend root, so an uncovered charge is only ever reported
     # once.
     covered_by_type: Dict[str, set] = {"income": set(), "spend": set()}
+    non_spending_covered: set = set()
     for line in lines:
         # A category-keyed investment line covers its category on the SPEND
         # side even though it reports under Investments — otherwise the same
@@ -467,9 +752,10 @@ def compute_budget_variance(
         if not line_uses_category(line["line_type"], line["ref_key"]):
             continue
         bucket = "income" if line["line_type"] == "income" else "spend"
-        covered_by_type[bucket].update(
-            subtree_names(children_by_parent, line["ref_key"])
-        )
+        names = subtree_names(children_by_parent, line["ref_key"])
+        covered_by_type[bucket].update(names)
+        if line["line_type"] in ("debt", "investment"):
+            non_spending_covered.update(names)
 
     # An investment line can be measured from the bank side (a category's
     # outflows) or the broker side (Deposit bookings). A section must report ONE
@@ -489,19 +775,26 @@ def compute_budget_variance(
         favourable_when_under = line_type in FAVOURABLE_WHEN_UNDER
         section_lines = []
         for line in [line for line in lines if line["line_type"] == line_type]:
-            planned = planned_for_months(
-                line["monthly_amount"], parse_overrides(line.get("overrides")), months
+            period = line.get("period") or "monthly"
+            yearly = line_type in FUND_LINE_TYPES and period == "yearly"
+            carries = _is_fund(line)
+            stored = float(line["monthly_amount"] or 0)
+            planned_all = planned_for_months(
+                stored / 12 if yearly else stored,
+                parse_overrides(line.get("overrides")),
+                calc_months,
             )
-            actual = {}
+            planned = {m: planned_all[m] for m in months}
+            actual_all = {}
             broker_keyed = line_type == "investment" and is_broker_ref(line["ref_key"])
             names = (
                 []
                 if broker_keyed
                 else subtree_names(children_by_parent, line["ref_key"])
             )
-            for month in months:
+            for month in calc_months:
                 if broker_keyed:
-                    actual[month] = max(
+                    actual_all[month] = max(
                         0.0, booking_actuals.get(month, {}).get(line["ref_key"], 0.0)
                     )
                 else:
@@ -509,18 +802,67 @@ def compute_budget_variance(
                     # exactly like a spending line — it's the same bank rows,
                     # just reported as money kept rather than money spent.
                     field = "income" if line_type == "income" else "spend"
-                    actual[month] = sum(
+                    actual_all[month] = sum(
                         category_actuals.get(month, {}).get(name, {}).get(field, 0.0)
                         for name in names
                     )
+            actual = {m: actual_all[m] for m in months}
             planned_total = sum(planned.values())
             actual_total = sum(actual.values())
+
+            extra: Dict[str, Any] = {
+                "carried_eur": None,
+                "available_eur": None,
+                "carried_total": None,
+                "fund": None,
+                "fund_balance_eur": None,
+            }
+            available = dict(planned)
+            available_total = planned_total
+            if carries and months:
+                ledger = rollover_ledger(planned_all, actual_all, imported, calc_months)
+                carried = {m: ledger["carried"][m] for m in months}
+                available = {m: planned[m] + carried[m] for m in months}
+                dropped = sum(ledger["forfeited"].get(m, 0.0) for m in months[1:])
+                available_total = planned_total + carried[months[0]] - dropped
+                extra.update(
+                    carried_eur={m: round(v, 2) for m, v in carried.items()},
+                    available_eur={m: round(v, 2) for m, v in available.items()},
+                    carried_total=round(carried[months[0]], 2),
+                )
+                if yearly:
+                    year = months[-1][:4]
+                    in_fund = [
+                        m for m in calc_months if m[:4] == year and m <= months[-1]
+                    ]
+                    taking_part = [m for m in in_fund if m in imported]
+                    set_aside = sum(planned_all[m] for m in taking_part)
+                    spent = sum(actual_all[m] for m in taking_part)
+                    extra["fund"] = {
+                        "year": int(year),
+                        "yearly_amount_eur": round(stored, 2),
+                        "set_aside_eur": round(set_aside, 2),
+                        "spent_eur": round(spent, 2),
+                        "remaining_eur": round(ledger["closing"][months[-1]], 2),
+                    }
+                    extra["fund_balance_eur"] = {
+                        m: round(ledger["closing"][m], 2) for m in months
+                    }
+
             label = (
                 portfolio_names.get(line["ref_key"], f"Portfolio {line['ref_key']}")
                 if broker_keyed
                 else category_path(tree, line["ref_key"])
             )
             liability = liabilities.get(line.get("link_id"))
+            pace = None
+            if (
+                pace_ctx is not None
+                and favourable_when_under
+                and current in available
+                and not broker_keyed
+            ):
+                pace = pace_ctx.project(set(names), available[current])
             section_lines.append(
                 {
                     "line_id": line["id"],
@@ -539,12 +881,24 @@ def compute_budget_variance(
                         if liability
                         else None
                     ),
-                    "monthly_amount": round(float(line["monthly_amount"] or 0), 2),
+                    "monthly_amount": round(stored, 2),
+                    "period": period,
+                    "rollover": bool(line.get("rollover")),
+                    "set_aside_eur": round(stored / 12 if yearly else stored, 2),
+                    "tier": (
+                        tier_of(line["ref_key"], by_name)
+                        if favourable_when_under
+                        and line_uses_category(line_type, line["ref_key"])
+                        else None
+                    ),
                     "planned_eur": {m: round(v, 2) for m, v in planned.items()},
                     "actual_eur": {m: round(v, 2) for m, v in actual.items()},
                     "planned_total": round(planned_total, 2),
                     "actual_total": round(actual_total, 2),
-                    **variance(planned_total, actual_total, favourable_when_under),
+                    "available_total": round(available_total, 2),
+                    "pace": pace,
+                    **extra,
+                    **variance(available_total, actual_total, favourable_when_under),
                 }
             )
         section_lines.sort(key=lambda item: -item["planned_total"])
@@ -565,28 +919,49 @@ def compute_budget_variance(
             tree,
             bank_basis,
         )
+        for item in unbudgeted:
+            item["tier"] = (
+                tier_of(item["ref_key"], by_name) if line_type == "spending" else None
+            )
 
         planned_total = sum(item["planned_total"] for item in section_lines)
+        available_total = sum(item["available_total"] for item in section_lines)
         actual_total = sum(item["actual_total"] for item in section_lines) + sum(
             item["actual_total"] for item in unbudgeted
         )
         section_totals[line_type] = {
-            "planned": planned_total,
+            "planned": available_total,
             "actual": actual_total,
         }
-        sections.append(
-            {
-                "key": line_type,
-                "label": SECTION_LABELS[line_type],
-                "favourable_when_under": favourable_when_under,
-                "lines": section_lines,
-                "unbudgeted": unbudgeted,
-                "unbudgeted_suppressed": bool(line_type == "investment" and bank_basis),
-                "planned_total": round(planned_total, 2),
-                "actual_total": round(actual_total, 2),
-                **variance(planned_total, actual_total, favourable_when_under),
-            }
-        )
+        section: Dict[str, Any] = {
+            "key": line_type,
+            "label": SECTION_LABELS[line_type],
+            "favourable_when_under": favourable_when_under,
+            "lines": section_lines,
+            "unbudgeted": unbudgeted,
+            "unbudgeted_suppressed": bool(line_type == "investment" and bank_basis),
+            "planned_total": round(planned_total, 2),
+            "available_total": round(available_total, 2),
+            "actual_total": round(actual_total, 2),
+            "tier_totals": None,
+            "pace": None,
+            **variance(available_total, actual_total, favourable_when_under),
+        }
+        if line_type == "spending":
+            section["tier_totals"] = _tier_totals(section_lines, unbudgeted)
+            if pace_ctx is not None and current in month_set:
+                # categories with spending so far, plus those with a recurring
+                # charge still to arrive (no row yet, but money to come)
+                spend_names = {
+                    r["category"] for r in pace_ctx.rows if r["amount_eur"] < 0
+                } | {category for category, _ in pace_ctx.upcoming}
+                spend_names -= non_spending_covered
+                limit = sum(
+                    (item["available_eur"] or item["planned_eur"]).get(current, 0.0)
+                    for item in section_lines
+                )
+                section["pace"] = pace_ctx.project(spend_names, limit)
+        sections.append(section)
 
     outflow_planned = sum(
         section_totals[t]["planned"] for t in ("spending", "debt", "investment")
@@ -602,6 +977,8 @@ def compute_budget_variance(
         "budget_name": budget["name"],
         "is_active": bool(budget["is_active"]),
         "months": months,
+        "as_of": today.isoformat(),
+        "data_through": through_all,
         "sections": sections,
         "net": {
             "planned_total": round(net_planned, 2),
@@ -609,6 +986,31 @@ def compute_budget_variance(
             # A bigger net than planned is the good outcome, like income.
             **variance(net_planned, net_actual, False),
         },
+        "warnings": warnings,
+    }
+
+
+def _tier_totals(section_lines: List[Dict], unbudgeted: List[Dict]) -> Dict:
+    """Planned and actual spending per essentiality tier.
+
+    A line takes its category's (inherited) tier; a child category with a
+    mark of its own is not split out of its parent's line. The actuals add up
+    to the section's ``actual_total``.
+    """
+    from portf_manager.services.life_scenarios import TIERS
+
+    totals = {
+        t: {"planned_eur": 0.0, "actual_eur": 0.0} for t in (*TIERS, UNCLASSIFIED)
+    }
+    for item in section_lines:
+        tier = item["tier"] or UNCLASSIFIED
+        totals[tier]["planned_eur"] += item["planned_total"]
+        totals[tier]["actual_eur"] += item["actual_total"]
+    for item in unbudgeted:
+        tier = item["tier"] or UNCLASSIFIED
+        totals[tier]["actual_eur"] += item["actual_total"]
+    return {
+        tier: {k: round(v, 2) for k, v in vals.items()} for tier, vals in totals.items()
     }
 
 
