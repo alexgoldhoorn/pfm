@@ -1220,3 +1220,60 @@ def test_wealth_scenario_check_only_flags_a_primary_that_is_behind(tmp_path):
         return_value=106000.0,
     ):
         assert check_wealth_scenario(db, today) == []
+
+
+class TestBudgetPaceItems:
+    """'On pace to exceed' (batch B), with the clock fixed to mid-July."""
+
+    @pytest.fixture(autouse=True)
+    def _july(self, monkeypatch):
+        from portf_manager.services import budget as budget_service
+
+        monkeypatch.setattr(budget_service, "_today", lambda: date(2026, 7, 15))
+
+    def _line(self, db, planned, spent_by_day, category="Groceries"):
+        spend_id = db.find_spending_category_by_name("Spend")["id"]
+        if db.find_spending_category_by_name(category) is None:
+            db.create_spending_category(category, parent_id=spend_id)
+        bank = db.get_or_create_portfolio("Example Bank", account_type="bank")
+        for day, amount in spent_by_day.items():
+            db.create_spending_transaction(
+                bank, f"2026-07-{day:02d}", "Shop", -amount, category=category
+            )
+        budget_id = db.create_budget("Base", is_active=True)
+        return db.create_budget_line(budget_id, "spending", category, planned)
+
+    def test_flags_a_line_heading_past_its_limit(self, test_database):
+        line_id = self._line(test_database, 400, {3: 100, 10: 100})
+        items = check_budget_overruns(test_database)
+        (pace,) = [i for i in items if i["id"].startswith("budget:pace:")]
+        assert pace["id"] == f"budget:pace:{line_id}:2026-07"
+        assert pace["severity"] == "low" and pace["category"] == "budget"
+        assert "On pace to exceed" in pace["title"]
+        assert "2026-07-10" in pace["detail"]
+        # nothing is over yet, so there is no overrun item
+        assert not [i for i in items if i["id"].startswith("budget:line:")]
+
+    def test_a_line_already_over_gets_the_overrun_item_only(self, test_database):
+        line_id = self._line(test_database, 400, {3: 300, 10: 200})
+        ids = [i["id"] for i in check_budget_overruns(test_database)]
+        assert f"budget:line:{line_id}" in ids
+        assert not [i for i in ids if i.startswith("budget:pace:")]
+
+    def test_a_line_on_track_is_quiet(self, test_database):
+        self._line(test_database, 1000, {3: 100, 10: 100})
+        ids = [i["id"] for i in check_budget_overruns(test_database)]
+        assert not [i for i in ids if i.startswith("budget:pace:")]
+
+    def test_quiet_for_a_month_with_nothing_imported(self, test_database, monkeypatch):
+        from portf_manager.services import budget as budget_service
+
+        self._line(test_database, 400, {3: 100, 10: 100})
+        monkeypatch.setattr(budget_service, "_today", lambda: date(2026, 8, 3))
+        assert check_budget_overruns(test_database) == []
+
+    def test_id_is_stable_so_an_acknowledgement_sticks(self, test_database):
+        self._line(test_database, 400, {3: 100, 10: 100})
+        first = [i["id"] for i in check_budget_overruns(test_database)]
+        second = [i["id"] for i in check_budget_overruns(test_database)]
+        assert first == second

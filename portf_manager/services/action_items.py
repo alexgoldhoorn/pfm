@@ -16,6 +16,7 @@ same displayed list. See docs/superpowers/specs/2026-07-16-action-items-design.m
 import re
 from datetime import date, datetime, timedelta
 
+from portf_manager.services import budget as budget_service
 from portf_manager.services.caps import check_position_caps
 from portf_manager.services.year_end_tax import check_year_end_tax
 
@@ -627,12 +628,59 @@ def check_price_alerts(db) -> list[dict]:
 # A budget line has to miss plan by BOTH of these before it's worth a nudge --
 # a percentage alone spams on small lines, an absolute alone spams on large
 # ones. "Miss" means over plan on a cost, short of plan on a contribution.
-BUDGET_OVERRUN_PCT = 10.0
-BUDGET_OVERRUN_EUR = 50.0
+BUDGET_OVERRUN_PCT = budget_service.OVERRUN_PCT
+BUDGET_OVERRUN_EUR = budget_service.OVERRUN_EUR
 
 # Share of a month's spending that can sit outside the budget before the budget
 # stops describing reality.
 BUDGET_UNBUDGETED_SHARE = 0.15
+
+
+def _budget_pace_items(summary: dict, overrun_ids: set) -> list[dict]:
+    """Cost lines heading past their limit before the month is out.
+
+    One item per line and month (``budget:pace:<line>:<YYYY-MM>``), low
+    severity, using the overrun check's thresholds on the *projected* overage.
+    A line the overrun check already flags for this month gets no pace item:
+    one nudge per line, and the overrun is the stronger one. No pace exists for
+    a month with nothing imported, so there is nothing to flag then.
+    """
+    items = []
+    for section in summary["sections"]:
+        if not section["favourable_when_under"]:
+            continue
+        for line in section["lines"]:
+            pace = line.get("pace")
+            if not pace or not pace.get("meaningful_overshoot"):
+                continue
+            if f"budget:line:{line['line_id']}" in overrun_ids:
+                continue
+            projected = pace["projected_month_end_eur"]
+            limit = pace["limit_eur"]
+            items.append(
+                {
+                    "id": f"budget:pace:{line['line_id']}:{pace['month']}",
+                    "category": "budget",
+                    "severity": "low",
+                    "title": f"On pace to exceed {line['label']}",
+                    "detail": (
+                        f"{pace['actual_to_date_eur']:,.0f} EUR spent so far "
+                        f"(data through {pace['data_through']}); the month is "
+                        f"heading for {projected:,.0f} EUR against "
+                        f"{limit:,.0f} EUR available "
+                        f"({pace['projected_over_eur']:,.0f} EUR over) in "
+                        f"budget \"{summary['budget_name']}\"."
+                    ),
+                    "link_page": "budget",
+                    "context": {
+                        "budget_id": summary["budget_id"],
+                        "line_id": line["line_id"],
+                        "ref_key": line["ref_key"],
+                        "month": pace["month"],
+                    },
+                }
+            )
+    return items
 
 
 def check_budget_overruns(db) -> list[dict]:
@@ -672,7 +720,8 @@ def check_budget_overruns(db) -> list[dict]:
                 title = f"Over budget on {line['label']}"
                 detail = (
                     f"{line['actual_total']:,.0f} EUR spent this month vs "
-                    f"{line['planned_total']:,.0f} EUR planned "
+                    f"{line.get('available_total', line['planned_total']):,.0f} "
+                    f"EUR available "
                     f"({missed:,.0f} EUR over)"
                 )
             else:
@@ -697,6 +746,8 @@ def check_budget_overruns(db) -> list[dict]:
                     },
                 }
             )
+
+    items.extend(_budget_pace_items(summary, {i["id"] for i in items}))
 
     spending = next(s for s in summary["sections"] if s["key"] == "spending")
     unbudgeted_total = sum(u["actual_total"] for u in spending["unbudgeted"])
