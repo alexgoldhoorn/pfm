@@ -89,7 +89,7 @@ def _anomalies_part(rows, tree, month, today):
 
 
 def _tiers_part(rows, tree, month, today):
-    start, end = _month_bounds(month)
+    _, end = _month_bounds(month)
     ref = min(today, end)
     window = spending_insights.tier_breakdown(rows, tree, ref, months=2)
     by_month = {e["month"]: e for e in window}
@@ -295,7 +295,6 @@ def build_review(
     recurring = guard(
         "Recurring changes", lambda: _recurring_part(db, fx, month, portfolio_id)
     )
-    budget = None
 
     def build_budget():
         result, budget_warnings = _budget_part(db, fx, month, today)

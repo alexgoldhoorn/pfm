@@ -1522,8 +1522,8 @@ def compare_spending(
     today = date.today()
     if month is None:
         month = spending_insights.previous_month(today)
-    year, mon = int(month[:4]), int(month[5:7])
-    start = date(year - 1, mon, 1).isoformat()
+    # far enough back for the same month last year and for every baseline month
+    start = f"{spending_insights.shift_month(month, -max(12, baseline_months))}-01"
     rows = spending_insights.load_rows(
         db, _fx, start_date=start, portfolio_id=portfolio_id
     )

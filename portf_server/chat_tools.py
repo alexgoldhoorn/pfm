@@ -2470,7 +2470,7 @@ def _compare_spending(
     today = date.today()
     month = month or spending_insights.previous_month(today)
     baseline_months = max(1, min(int(baseline_months), 24))
-    start = f"{int(month[:4]) - 1}-{month[5:7]}-01"
+    start = f"{spending_insights.shift_month(month, -max(12, baseline_months))}-01"
     rows, tree = _insight_rows(db, start)
     res = spending_insights.compare_month(
         rows, tree, month, today, baseline_months, group_by

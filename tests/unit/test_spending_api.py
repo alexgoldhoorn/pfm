@@ -3005,3 +3005,20 @@ def test_review_endpoint_with_an_account(tmp_path):
     assert body["month"] == month[:7]
     assert body["totals"]["totals"]["actual_eur"] == 100.0
     assert body["freshness"][0]["name"] == "Example Bank"
+
+
+def test_compare_endpoint_loads_enough_history_for_a_long_baseline(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    # eighteen complete months before the compared one, 100 EUR each
+    for ago in range(2, 20):
+        db.create_spending_transaction(
+            pid, _month_day(ago, 10), "Example Market", -100.0, category="Groceries"
+        )
+    db.create_spending_transaction(
+        pid, _month_day(1, 10), "Example Market", -100.0, category="Groceries"
+    )
+    body = client.get(
+        "/api/v1/spending/compare?baseline_months=18", headers=HEADERS
+    ).json()
+    assert len(body["baseline_months"]) == 18
