@@ -246,3 +246,131 @@ def test_goals_render_on_their_page_and_the_dashboard(page, server_url):
     finally:
         for gid in created:
             httpx.delete(f"{server_url}/api/v1/goals/{gid}", headers=headers)
+
+
+def _month_back(today, k: int):
+    """First day of the month ``k`` months before ``today``."""
+    from datetime import date
+
+    y, m = today.year, today.month - k
+    while m <= 0:
+        m += 12
+        y -= 1
+    return date(y, m, 1)
+
+
+def test_cost_control_views_render_against_real_data(page, server_url):
+    """Forecast tab, comparison, unusual charges and tiers load without errors."""
+    from datetime import date
+
+    headers = {"X-API-Key": API_KEY}
+    today = date.today()
+    pf = httpx.post(
+        f"{server_url}/api/v1/portfolios/",
+        json={"name": "Example Bank", "base_currency": "EUR", "account_type": "bank"},
+        headers=headers,
+    )
+    assert pf.status_code in (200, 201), pf.text
+    pid = pf.json()["id"]
+    for cat in ("Groceries", "Insurance"):
+        c = httpx.post(
+            f"{server_url}/api/v1/spending/categories",
+            json={"name": cat, "parent_name": "Spend"},
+            headers=headers,
+        )
+        assert c.status_code in (201, 409), c.text
+    rows = []
+    # four complete months of invented, round-numbered rows
+    for k in range(1, 5):
+        first = _month_back(today, k)
+        d = lambda day: first.replace(day=day).isoformat()  # noqa: E731
+        rows += [
+            {
+                "date": d(1),
+                "description": "EXAMPLE EMPLOYER",
+                "amount": 3000,
+                "category": "Salary",
+                "balance": 5000.0,
+            },
+            {
+                "date": d(5),
+                "description": "EXAMPLE GROCER",
+                "amount": -400,
+                "category": "Groceries",
+                "merchant": "EXAMPLE GROCER",
+            },
+            {
+                "date": d(10),
+                "description": "EXAMPLE LANDLORD",
+                "amount": -900,
+                "category": "uncategorized",
+                "merchant": "EXAMPLE LANDLORD",
+            },
+        ]
+    saved = httpx.post(
+        f"{server_url}/api/v1/spending/save",
+        json={"account_portfolio_id": pid, "rows": rows, "duplicate_action": "add"},
+        headers=headers,
+    )
+    assert saved.status_code == 200, saved.text
+    budget = httpx.post(
+        f"{server_url}/api/v1/budgets/",
+        json={"name": "Example Budget", "is_active": True},
+        headers=headers,
+    )
+    assert budget.status_code in (200, 201), budget.text
+    bid = budget.json()["id"]
+    # a monthly line and a yearly line (the amount is the YEARLY figure)
+    for line in (
+        {"line_type": "spending", "ref_key": "Groceries", "monthly_amount": 450},
+        {
+            "line_type": "spending",
+            "ref_key": "Insurance",
+            "monthly_amount": 1200,
+            "period": "yearly",
+        },
+    ):
+        r = httpx.post(
+            f"{server_url}/api/v1/budgets/{bid}/lines", json=line, headers=headers
+        )
+        assert r.status_code in (200, 201), r.text
+    try:
+        page.goto(f"{server_url}/index.html")
+        page.wait_for_load_state("networkidle")
+
+        # Budget page, then the forecast tab (tab events are stubbed: call the loader)
+        page.locator(
+            "#appShell .sidebar-nav-link[data-page='budget']"
+        ).first.dispatch_event("click")
+        page.wait_for_function(
+            "document.querySelectorAll('#bgVarianceArea .card').length > 0"
+        )
+        page.evaluate("loadCashflowForecast()")
+        page.wait_for_function(
+            "document.getElementById('bgFcStatus').textContent.startsWith('As of')"
+        )
+        assert "This month" in page.locator("#bgFcThisMonth").inner_text()
+        assert page.locator("#bgFcTableBody tr").count() == 12
+        assert page.locator("#bgFcAssumptions li").count() > 0
+
+        # Spending analytics cards
+        page.locator(
+            "#appShell .sidebar-nav-link[data-page='spending']"
+        ).first.dispatch_event("click")
+        page.wait_for_load_state("networkidle")
+        page.evaluate("loadSpCostControl()")
+        page.wait_for_function(
+            "!document.getElementById('spCmpBody').textContent.includes('Loading')"
+            " && !document.getElementById('spAnomBody').textContent.includes('Loading')"
+        )
+        cmp_text = page.locator("#spCmpBody").inner_text()
+        assert "Groceries" in cmp_text
+        assert "Failed" not in cmp_text
+        # the yearly line is labelled as such on the Overview, with its fund
+        overview = page.locator("#bgVarianceArea").inner_text()
+        assert "yearly" in overview
+        assert "Fund" in overview
+        assert page.errors == []
+    finally:
+        httpx.delete(f"{server_url}/api/v1/budgets/{bid}", headers=headers)
+        httpx.delete(f"{server_url}/api/v1/portfolios/{pid}", headers=headers)

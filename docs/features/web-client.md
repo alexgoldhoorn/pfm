@@ -211,3 +211,68 @@ once web search can bring outside text into an answer) and gives http(s) links
 `target="_blank" rel="noopener noreferrer"`, removing any other `href`. Without
 DOMPurify (CDN blocked) the text is shown escaped. Chart placeholders survive
 because `class` and `data-*` attributes are allowed.
+
+## Cost control (2026-11-15)
+
+Web side of `feat/cost-control` (backend: `spending_insights.py`,
+`cashflow_forecast.py`, budget pace/fund/rollover). Pure helpers sit in a
+"Cost control" block of `pfm_features.js` (before the Dashboard budget card
+code), are `window.`-exported and tested in `js/tests/cost_control.test.mjs`.
+API calls: `getSpendingCompare/Anomalies/Tiers`, `getCashflowForecast`,
+`setSpendingOneOff` in `pfm_core.js`.
+
+- **Rule for every figure:** a `null` from the backend is shown as "not
+  available" (`ccMoney`/`ccSignedMoney`), never `0`, and a delta that is `null`
+  is a dash in a neutral colour, never green. `compareRowsModel` keeps the
+  backend's `warnings` as the visible reason when the month is `in_progress`,
+  `partial` or `no_imports`.
+- **Spending › Transactions:** a flag button per row (`.sp-oneoff-btn`) toggles
+  `one_off` through `PUT /spending/{id}`, a "one-off" badge in the description,
+  the `#spOneOffFilter` select (`one_off=true|false`) and the bulk buttons
+  `#spBulkMarkOneOffBtn` / `#spBulkUnmarkOneOffBtn`.
+- **Spending › Analytics** (`loadSpCostControl`, run when the tab is shown):
+  `#spCmpCard` month vs normal (month picker, 3/6/12 month normal, category /
+  merchant toggle; savings are reported apart), `#spAnomCard` unusual charges
+  (`loadSpAnomalies`), `#spTierCard` stacked fixed / flexible / optional /
+  unclassified bars (`loadSpTiers`). Tier colours are fixed per tier
+  (`CC_TIER_COLOR`: `--viz-1`, `--viz-3`, `--viz-4`, `--viz-neutral`); a month
+  with no imports is a gap, not a zero bar.
+- **Anomalies:** an anomaly's `id` is also its Action Item id
+  (`check_spending_anomalies`), so *Dismiss* uses the existing server-side
+  follow-up state (`setFindingStatus(id, 'checked')`, hidden by
+  `anomalyVisibleItems` with `ackIsActive`), not `localStorage`. *Mark
+  one-off* sends `one_off: true` for the item's `transaction_ids` and reloads
+  the comparison, anomalies and tiers; a `category_spike` has no rows, so only
+  Dismiss is offered.
+- **Budget › Overview:** a Pace column (badge plus projected month end, also
+  a line under the label on phones), a section banner for the spending pace,
+  tier badges on lines, a tier totals strip under the spending section, the
+  yearly fund line ("Fund 2026: set aside, spent, left") and "available" under
+  Planned for any line whose plan differs from `planned_total`. The progress
+  bar and the KPI tile use `available_total` when present (that is what the
+  variance is measured against). `variance.warnings` and `data_through` are
+  printed above the sections. The existing no-activity alert is unchanged.
+- **Budget › Edit:** the Add form has a period select and a carry-over
+  checkbox (`#bgNewLineFundRow`, hidden for income and investment: the server
+  returns 400 there); the amount label becomes "€ / year" for a yearly line.
+  Each spending/debt row has a period select and, for monthly lines, a
+  carry-over checkbox (`.bg-line-period`, `.bg-line-rollover`). A yearly line's
+  stored amount is the YEARLY figure; the override grid and the Scenarios
+  totals use a twelfth (`budgetMonthlyShare`, `expandBudgetLineMonths`).
+- **Budget › Forecast** (`#bgPaneForecast`, `loadCashflowForecast`): data
+  freshness per account (stale badge), warnings and a below-zero banner, the
+  this-month projection (with the `no_imports` / `no_baseline` banners and the
+  spending range), a projected-balance line chart (null balances are gaps), the
+  month-by-month table, the known-bills list (15, then "Show all") and the
+  assumptions. The Overview and Edit tabs are hidden while no budget exists
+  (`_bgShowBudgetTabs`); the tab bar stays so the Forecast works without one.
+- **Dashboard budget card:** one pace line for the spending section, only when
+  the backend sent a `pace` and the no-activity rule is not active.
+- **Help:** `METRIC_HELP` keys `costCompare`, `costAnomalies`, `costTiers`,
+  `oneOff`, `budgetPace`, `budgetYearly`, `budgetRollover`, `cashflowForecast`,
+  `cashflowRange`; `PAGE_HELP` budget and spending gained list items.
+- **Tests:** `make test-js` (the Makefile runs every `*.test.mjs`);
+  `tests/e2e/test_web_client_e2e.py::test_cost_control_views_render_against_real_data`
+  seeds invented rows, a monthly and a yearly line, and loads the Forecast,
+  comparison, anomalies and tiers. The e2e harness stubs Bootstrap's CSS, so
+  layout (390px overflow) cannot be checked there.
