@@ -250,3 +250,66 @@ def test_non_eur_currency_is_kept():
     rows = _monthly([9.99, 9.99, 9.99], currency="USD")
     [s] = detect_recurring(rows, {1: date(2026, 3, 20)})
     assert s.currency == "USD"
+
+
+# ── upcoming charges (cash-flow forecast, budget pace) ──────────────────────
+
+
+def _series(rows, last_import):
+    from portf_manager.services.recurring import detect_recurring
+
+    return detect_recurring(rows, {1: last_import})
+
+
+def test_due_dates_count_whole_steps_from_the_anchor():
+    from portf_manager.services.recurring import due_dates
+
+    # charged on the 31st: later cycles must not drift to the 28th
+    rows = [
+        _tx("2026-01-31", -20.0),
+        _tx("2026-02-28", -20.0),
+        _tx("2026-03-31", -20.0),
+    ]
+    [s] = _series(rows, date(2026, 3, 31))
+    assert s.next_expected == "2026-04-30"
+    got = due_dates(s, date(2026, 3, 31), date(2026, 6, 30))
+    assert got == [date(2026, 4, 30), date(2026, 5, 30), date(2026, 6, 30)]
+
+
+def test_due_dates_skip_the_charge_a_statement_already_covers():
+    from portf_manager.services.recurring import due_dates
+
+    [s] = _series(_monthly([10.0, 10.0, 10.0]), date(2026, 3, 20))
+    assert s.next_expected == "2026-04-15"
+    assert due_dates(s, date(2026, 4, 20), date(2026, 6, 30)) == [
+        date(2026, 5, 15),
+        date(2026, 6, 15),
+    ]
+    # nothing due when the window is empty
+    assert due_dates(s, date(2026, 6, 30), date(2026, 6, 30)) == []
+
+
+def test_due_dates_weekly_and_ended():
+    from portf_manager.services.recurring import due_dates
+
+    rows = [_tx(f"2026-03-{d:02d}", -5.0, merchant="WEEKLY") for d in (2, 9, 16, 23)]
+    [s] = _series(rows, date(2026, 3, 24))
+    assert due_dates(s, date(2026, 3, 24), date(2026, 4, 13)) == [
+        date(2026, 3, 30),
+        date(2026, 4, 6),
+        date(2026, 4, 13),
+    ]
+    s.status = "ended"
+    assert due_dates(s, date(2026, 3, 24), date(2026, 4, 13)) == []
+
+
+def test_upcoming_charges_use_each_accounts_own_last_import():
+    from portf_manager.services.recurring import upcoming_charges
+
+    [s] = _series(_monthly([10.0, 10.0, 10.0]), date(2026, 3, 20))
+    # account 1 imported through 20 April: the 15 April charge is "missed",
+    # not upcoming; with no import date the series' own last charge is used
+    got = upcoming_charges([s], {1: date(2026, 4, 20)}, date(2026, 5, 31))
+    assert [d for _, d in got] == [date(2026, 5, 15)]
+    got = upcoming_charges([s], {}, date(2026, 4, 30))
+    assert [d for _, d in got] == [date(2026, 4, 15)]

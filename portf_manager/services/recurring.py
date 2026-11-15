@@ -232,14 +232,68 @@ def detect_recurring(
     return found
 
 
+def last_import_dates(db) -> Dict[int, date]:
+    """Latest imported spending date per account (transfers count)."""
+    last_import: Dict[int, date] = {}
+    for pid, dates in db.get_portfolio_date_ranges().items():
+        last = (dates or {}).get("last_spending_date")
+        if last:
+            last_import[pid] = date.fromisoformat(str(last)[:10])
+    return last_import
+
+
 def load_recurring(db, portfolio_id: Optional[int] = None) -> List[RecurringSeries]:
     """detect_recurring over the database's bank outflows."""
     rows = db.list_spending_transactions(
         portfolio_id=portfolio_id, is_transfer=False, amount_sign="negative"
     )
-    last_import = {}
-    for pid, dates in db.get_portfolio_date_ranges().items():
-        last = (dates or {}).get("last_spending_date")
-        if last:
-            last_import[pid] = date.fromisoformat(str(last)[:10])
-    return detect_recurring(rows, last_import)
+    return detect_recurring(rows, last_import_dates(db))
+
+
+def due_dates(series: RecurringSeries, after: date, until: date) -> List[date]:
+    """Dates the series' next charges fall due in ``(after, until]``.
+
+    Counted from ``next_expected`` in whole cadence steps (not by chaining
+    month-end-clamped dates, which drift), oldest first. An ``ended`` series
+    has no future charges. A ``missed`` series is expected to resume, so its
+    later cycles count, but the charge that failed to arrive does not: it is
+    on or before the account's last import.
+
+    Args:
+        series: a detected series.
+        after: exclusive lower bound, normally the account's last import.
+        until: inclusive upper bound.
+    """
+    if series.status == "ended" or until <= after:
+        return []
+    anchor = date.fromisoformat(series.next_expected)
+    out: List[date] = []
+    for k in range(0, 5000):
+        if series.cadence == "weekly":
+            due = anchor + timedelta(days=7 * k)
+        else:
+            due = _add_months(anchor, k * _MONTHS_AHEAD[series.cadence])
+        if due > until:
+            break
+        if due > after:
+            out.append(due)
+    return out
+
+
+def upcoming_charges(
+    series: List[RecurringSeries],
+    last_import: Dict[int, date],
+    until: date,
+) -> List[tuple]:
+    """Charges still to arrive up to ``until``, as ``(series, due_date)``.
+
+    A charge is "still to arrive" when it falls due after its own account's
+    last import: a statement past the due date would already hold it.
+    """
+    out = []
+    for s in series:
+        after = last_import.get(s.portfolio_id) or date.fromisoformat(s.last_date)
+        for due in due_dates(s, after, until):
+            out.append((s, due))
+    out.sort(key=lambda pair: (pair[1], pair[0].merchant))
+    return out

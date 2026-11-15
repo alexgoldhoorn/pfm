@@ -40,7 +40,7 @@ from portf_manager.services.transfer_linking import (
 from portf_manager.services.budget import build_children_index, subtree_names
 from portf_manager.services.merchant import normalize_merchant
 from portf_manager.services.recurring import load_recurring
-from portf_manager.services import spending_insights
+from portf_manager.services import cashflow_forecast, spending_insights
 from portf_manager.services.spending_rules import (
     TRANSFER_CATEGORY,
     pick_category,
@@ -1572,6 +1572,40 @@ def get_spending_tiers(
         db, _fx, start_date=f"{first}-01", portfolio_id=portfolio_id
     )
     return spending_insights.tier_breakdown(rows, _category_tree(db), today, months)
+
+
+@router.get("/forecast", response_model=dict)
+def get_cashflow_forecast(
+    months: int = Query(
+        default=cashflow_forecast.DEFAULT_FORECAST_MONTHS,
+        ge=1,
+        le=cashflow_forecast.MAX_FORECAST_MONTHS,
+    ),
+    portfolio_id: Optional[int] = None,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Where this month ends and the next ``months`` months (default 12).
+
+    Deterministic, no LLM. ``this_month`` is month-to-date plus the recurring
+    charges still to arrive plus an everyday-spending estimate for the days
+    left (measured from the date the data runs to, ``data_through``, not from
+    today), with a low/high range from the spread of past months.
+    ``next_months`` places recurring charges (quarterly and yearly included)
+    on their due months next to the income and everyday-spending baseline and
+    projects the bank balance from the latest stored balances; a month whose
+    balance falls below zero is flagged. ``known_bills`` lists every expected
+    charge. Recurring charges never overlap the baseline, rows marked one-off
+    are left out of it, and money moved to Invest / House purchase is
+    ``savings_eur``, not spending. A source that cannot be read becomes a
+    warning and ``null`` figures, never a zero or a 5xx. Plain ``def`` because
+    of the FX lookups.
+    """
+    from datetime import date
+
+    return cashflow_forecast.load_forecast(
+        db, _fx, date.today(), months, portfolio_id=portfolio_id
+    )
 
 
 class SuggestCategoriesRequest(BaseModel):

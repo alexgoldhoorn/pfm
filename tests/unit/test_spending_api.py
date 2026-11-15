@@ -2933,3 +2933,38 @@ def test_tiers_endpoint_splits_by_essentiality(tmp_path):
     assert second["in_progress"] is True and second["has_imports"] is False
     spent = client.get("/api/v1/spending/trend?months=2", headers=HEADERS).json()[0]
     assert round(first["total_eur"] + first["savings_eur"], 2) == spent["spent_eur"]
+
+
+def test_forecast_endpoint_is_routed_and_degrades_not_errors(tmp_path):
+    client, db = _make_client(tmp_path)
+    r = client.get("/api/v1/spending/forecast?months=3", headers=HEADERS)
+    assert r.status_code == 200
+    body = r.json()
+    assert len(body["next_months"]) == 3
+    assert body["data_through"] is None
+    assert any("No bank statement" in w for w in body["warnings"])
+    assert body["this_month"]["projected_spending_eur"] is None
+    assert (
+        client.get("/api/v1/spending/forecast?months=0", headers=HEADERS).status_code
+        == 422
+    )
+    assert (
+        client.get("/api/v1/spending/forecast?months=99", headers=HEADERS).status_code
+        == 422
+    )
+
+
+def test_forecast_endpoint_with_an_account_and_a_balance(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    today = date.today()
+    db.create_spending_transaction(
+        pid, today.isoformat(), "Example Market", -20.0, balance=1234.5
+    )
+    body = client.get(
+        f"/api/v1/spending/forecast?portfolio_id={pid}", headers=HEADERS
+    ).json()
+    assert body["balance"]["start_eur"] == 1234.5
+    assert body["accounts"][0]["data_through"] == today.isoformat()
+    assert body["accounts"][0]["stale"] is False
+    assert len(body["next_months"]) == 12
