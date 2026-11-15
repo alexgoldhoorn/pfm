@@ -3395,9 +3395,15 @@ function createAPIClient() {
             if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to delete loan');
             return resp.json().catch(() => ({}));
         },
-        async getLoanSchedule(id) {
-            const resp = await fetch(this.baseURL + '/api/v1/networth/loans/' + id + '/schedule', { headers: { 'X-API-Key': this.apiKey } });
-            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to load schedule');
+        async getLoanOverview(id, category) {
+            const q = category ? '?category=' + encodeURIComponent(category) : '';
+            const resp = await fetch(this.baseURL + '/api/v1/networth/loans/' + id + '/overview' + q, { headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to load loan overview');
+            return resp.json().catch(() => ({}));
+        },
+        async getLoanWhatIf(id, query) {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/loans/' + id + '/what-if' + (query ? '?' + query : ''), { headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to calculate');
             return resp.json().catch(() => ({}));
         },
         async getValuations() {

@@ -171,6 +171,7 @@
                     <a class="sidebar-nav-link" href="#" data-page="goals"><i class="bi bi-bullseye me-2"></i>Goals</a>
                     <a class="sidebar-nav-link" href="#" data-page="forecast"><i class="bi bi-graph-up-arrow me-2"></i>Wealth Simulator</a>
                     <a class="sidebar-nav-link" href="#" data-page="networth"><i class="bi bi-piggy-bank me-2"></i>Net Worth</a>
+                    <a class="sidebar-nav-link" href="#" data-page="loans"><i class="bi bi-house-door me-2"></i>Loans &amp; Mortgage</a>
                 </div>
 
                 <button type="button" class="sidebar-section-toggle" data-sect="tools"><span>Tools</span><i class="bi bi-chevron-down sect-chevron"></i></button>
@@ -242,6 +243,7 @@
                     <a class="sidebar-nav-link" href="#" data-page="goals"><i class="bi bi-bullseye me-2"></i>Goals</a>
                     <a class="sidebar-nav-link" href="#" data-page="forecast"><i class="bi bi-graph-up-arrow me-2"></i>Wealth Simulator</a>
                     <a class="sidebar-nav-link" href="#" data-page="networth"><i class="bi bi-piggy-bank me-2"></i>Net Worth</a>
+                    <a class="sidebar-nav-link" href="#" data-page="loans"><i class="bi bi-house-door me-2"></i>Loans &amp; Mortgage</a>
                 </div>
 
                 <button type="button" class="sidebar-section-toggle" data-sect="tools"><span>Tools</span><i class="bi bi-chevron-down sect-chevron"></i></button>
@@ -1687,6 +1689,107 @@
                 </div>
 
                 <!-- Reports Page -->
+                <div id="loansPage" class="page-content" style="display: none;">
+                    <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
+                        <div>
+                            <h4 class="mb-0"><i class="bi bi-house-door me-2 text-primary"></i>Loans &amp; Mortgage<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('loans')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
+                            <p class="text-muted small mb-0">Where each loan stands, what is left to pay, whether the bank charges what the schedule says, and what an extra repayment would change.</p>
+                        </div>
+                        <div class="d-flex gap-2 align-items-center flex-wrap">
+                            <div class="d-flex align-items-center gap-1 d-none" id="lmPicker">
+                                <label class="small text-muted mb-0" for="lmLoanSelect">Loan</label>
+                                <select class="form-select form-select-sm" id="lmLoanSelect" style="width:auto;max-width:14rem;"></select>
+                            </div>
+                            <a href="#" class="btn btn-sm btn-outline-secondary" data-page="networth"><i class="bi bi-pencil-square me-1"></i>Add or edit loans</a>
+                        </div>
+                    </div>
+                    <div id="lmStatus" class="small text-muted mb-2"></div>
+
+                    <div id="lmEmpty" class="card mb-3" style="display:none;">
+                        <div class="card-body text-center py-4">
+                            <i class="bi bi-house-door fs-1 text-muted"></i>
+                            <p class="mt-2 mb-1">No loan yet.</p>
+                            <p class="text-muted small mb-3">Add your mortgage or another loan on the Net Worth page and it shows up here.</p>
+                            <a href="#" class="btn btn-sm btn-primary" data-page="networth">Add a loan on Net Worth</a>
+                        </div>
+                    </div>
+
+                    <div id="lmContent" style="display:none;">
+                        <div class="row g-2 mb-3" id="lmCards"></div>
+                        <div id="lmAnchorNote" class="alert alert-info small py-2" style="display:none;"></div>
+
+                        <div class="card mb-3">
+                            <div class="card-header fw-semibold"><i class="bi bi-graph-down me-2"></i>Amortisation</div>
+                            <div class="card-body">
+                                <div class="small text-muted mb-1">Balance at the end of each year</div>
+                                <div id="lmBalanceChart" class="w-100"><svg id="lmBalanceSvg" width="100%" role="img" aria-label="Loan balance by year"></svg></div>
+                                <div class="small text-muted mt-3 mb-1 d-flex flex-wrap gap-3">
+                                    <span>Paid each year</span>
+                                    <span><span class="pfm-swatch" style="background:var(--viz-1)"></span> Principal</span>
+                                    <span><span class="pfm-swatch" style="background:var(--viz-2)"></span> Interest</span>
+                                </div>
+                                <div id="lmPaidChart" class="w-100"><svg id="lmPaidSvg" width="100%" role="img" aria-label="Principal and interest paid by year"></svg></div>
+                                <details id="lmScheduleDetails" class="mt-3">
+                                    <summary class="small fw-semibold">Yearly table</summary>
+                                    <div class="table-responsive mt-2">
+                                        <table class="table table-sm mb-0">
+                                            <thead><tr><th>Year</th><th class="text-end">Payments</th><th class="text-end">Principal</th><th class="text-end">Interest</th><th class="text-end">Balance at year end</th></tr></thead>
+                                            <tbody id="lmScheduleBody"></tbody>
+                                        </table>
+                                    </div>
+                                </details>
+                            </div>
+                        </div>
+
+                        <div class="card mb-3">
+                            <div class="card-header fw-semibold d-flex justify-content-between align-items-center flex-wrap gap-2">
+                                <span><i class="bi bi-bank me-2"></i>Payments vs bank <span class="text-muted fw-normal small">(last 12 months)</span></span>
+                                <span class="d-flex align-items-center gap-1">
+                                    <label class="small text-muted fw-normal mb-0" for="lmCategory">Bank category</label>
+                                    <input type="text" class="form-control form-control-sm" id="lmCategory" list="lmCategoryList" style="width:10rem;" placeholder="automatic">
+                                    <datalist id="lmCategoryList"></datalist>
+                                </span>
+                            </div>
+                            <div class="card-body">
+                                <div id="lmReconHint" class="alert alert-warning small py-2" style="display:none;"></div>
+                                <div id="lmReconBody"></div>
+                            </div>
+                        </div>
+
+                        <div class="card mb-3">
+                            <div class="card-header fw-semibold"><i class="bi bi-calculator me-2"></i>What if I pay extra?</div>
+                            <div class="card-body">
+                                <div class="row g-2 mb-3">
+                                    <div class="col-6 col-md-3">
+                                        <label class="form-label small mb-0" for="lmWiLump">Lump sum (€)</label>
+                                        <input type="number" class="form-control form-control-sm" id="lmWiLump" min="0" step="100" placeholder="0">
+                                    </div>
+                                    <div class="col-6 col-md-3">
+                                        <label class="form-label small mb-0" for="lmWiDate">Paid on</label>
+                                        <input type="date" class="form-control form-control-sm" id="lmWiDate">
+                                    </div>
+                                    <div class="col-6 col-md-3">
+                                        <label class="form-label small mb-0" for="lmWiExtra">Extra per month (€)</label>
+                                        <input type="number" class="form-control form-control-sm" id="lmWiExtra" min="0" step="10" placeholder="0">
+                                    </div>
+                                    <div class="col-6 col-md-3">
+                                        <label class="form-label small mb-0" for="lmWiMode">Use it to</label>
+                                        <select class="form-select form-select-sm" id="lmWiMode">
+                                            <option value="term">Finish sooner</option>
+                                            <option value="payment">Lower the payment</option>
+                                        </select>
+                                    </div>
+                                    <div class="col-12 col-md-6">
+                                        <label class="form-label small mb-0" for="lmWiReturn">Compare with investing it at (% a year, optional)</label>
+                                        <input type="number" class="form-control form-control-sm" id="lmWiReturn" min="-50" max="50" step="0.5" placeholder="e.g. 5">
+                                    </div>
+                                </div>
+                                <div id="lmWiResult" class="small text-muted">Enter an amount to see the effect.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="reportsPage" class="page-content" style="display: none;">
                     <div class="d-flex align-items-start justify-content-between flex-wrap gap-2 mb-3">
                         <div>
@@ -3899,7 +4002,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         <!-- Loans -->
                         <div class="col-12 mt-2">
                             <div class="card">
-                                <div class="card-header fw-semibold"><i class="bi bi-cash-coin me-2"></i>Loans</div>
+                                <div class="card-header fw-semibold d-flex justify-content-between align-items-center"><span><i class="bi bi-cash-coin me-2"></i>Loans</span><a href="#" class="small fw-normal" data-page="loans">Loans &amp; Mortgage page <i class="bi bi-arrow-right"></i></a></div>
                                 <div class="card-body border-bottom">
                                     <form id="nwLoanForm" class="row g-2">
                                         <input type="hidden" id="nwLoanId">

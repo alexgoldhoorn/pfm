@@ -4093,3 +4093,321 @@ window.deleteWatchlistRow = async function(symbol) {
         notify('Error removing from watchlist: ' + err.message);
     }
 };
+
+// ── Loans & Mortgage page ─────────────────────────────────────────────────
+// Read-only view of one loan (overview, payments vs bank, what-if). Loans are
+// added and edited on the Net Worth page. The helpers below are pure so the
+// DOM-free tests can import them.
+
+const LM_STATUS = {
+    ok: { cls: 'text-bg-success', label: 'OK' },
+    differs: { cls: 'text-bg-warning', label: 'Differs' },
+    missing: { cls: 'text-bg-danger', label: 'Not charged' },
+    pending: { cls: 'text-bg-secondary', label: 'Pending' },
+};
+
+function loanStatusBadge(status) {
+    const m = LM_STATUS[status] || LM_STATUS.pending;
+    return `<span class="badge ${m.cls}">${esc(m.label)}</span>`;
+}
+window.loanStatusBadge = loanStatusBadge;
+
+/** The last n reconciliation rows, newest first. */
+function loanRecentRows(rows, n) {
+    return (rows || []).slice(-(n || 12)).reverse();
+}
+window.loanRecentRows = loanRecentRows;
+
+/** Query string for the what-if endpoint; null when nothing was entered. */
+function loanWhatIfQuery(v) {
+    const num = x => (x === '' || x === null || x === undefined ? null : Number(x));
+    const lump = num(v.lump), extra = num(v.extra), ret = num(v.returnPct);
+    const lumpOk = lump !== null && !isNaN(lump) && lump > 0;
+    const extraOk = extra !== null && !isNaN(extra) && extra > 0 && v.mode !== 'payment';
+    if (!lumpOk && !extraOk) return null;
+    const parts = [];
+    const add = (k, val) => parts.push(k + '=' + encodeURIComponent(val));
+    if (lumpOk) {
+        add('lump_sum', String(lump));
+        if (v.date) add('lump_date', v.date);
+    }
+    if (extraOk) add('extra_monthly', String(extra));
+    add('mode', v.mode === 'payment' ? 'payment' : 'term');
+    if (ret !== null && !isNaN(ret)) add('invest_return_pct', String(ret));
+    return parts.join('&');
+}
+window.loanWhatIfQuery = loanWhatIfQuery;
+
+/** Months as "N y M m" for the before/after table. */
+function loanMonthsText(months) {
+    const m = Math.max(0, Math.round(months || 0));
+    const y = Math.floor(m / 12), r = m % 12;
+    return (y ? `${y} y ` : '') + `${r} m`;
+}
+window.loanMonthsText = loanMonthsText;
+
+/** Before/after rows of a what-if result. */
+function loanWhatIfRows(res) {
+    const b = res.baseline, s = res.scenario;
+    return [
+        { label: 'Ends', before: Fmt.date(b.end_date), after: Fmt.date(s.end_date),
+          delta: res.months_saved > 0 ? `${loanMonthsText(res.months_saved)} sooner` : '' },
+        { label: 'Monthly payment', before: fmtEurCents(b.monthly_payment_eur), after: fmtEurCents(s.monthly_payment_eur),
+          delta: s.monthly_payment_eur === b.monthly_payment_eur ? '' :
+              `${s.monthly_payment_eur < b.monthly_payment_eur ? '−' : '+'}${fmtEurCents(Math.abs(s.monthly_payment_eur - b.monthly_payment_eur))}` },
+        { label: 'Interest still to pay', before: fmtEurWhole(b.interest_remaining_eur), after: fmtEurWhole(s.interest_remaining_eur),
+          delta: res.interest_saved_eur ? `−${fmtEurWhole(res.interest_saved_eur)}` : '' },
+    ];
+}
+window.loanWhatIfRows = loanWhatIfRows;
+
+function loanWhatIfHtml(res) {
+    const rows = loanWhatIfRows(res).map(r => `<tr><td>${esc(r.label)}</td><td class="text-end">${esc(r.before)}</td><td class="text-end">${esc(r.after)}</td><td class="text-end text-success">${esc(r.delta)}</td></tr>`).join('');
+    let html = `<div class="table-responsive"><table class="table table-sm mb-2"><thead><tr><th></th><th class="text-end">As scheduled</th><th class="text-end">With extra</th><th class="text-end">Change</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    const inv = res.invest;
+    if (inv) {
+        const diff = inv.gain_minus_interest_saved_eur;
+        html += `<div class="border rounded p-2"><div class="fw-semibold">Investing it instead at ${esc(Fmt.num(inv.return_pct, 1, 1))}% a year</div>
+            <div>Worth ${fmtEurWhole(inv.value_at_baseline_end_eur)} on ${esc(Fmt.date(res.baseline.end_date))}, a gain of ${fmtEurWhole(inv.gain_eur)} on ${fmtEurWhole(inv.contributed_eur)}.
+            That is ${diff >= 0 ? `${fmtEurWhole(diff)} more` : `${fmtEurWhole(-diff)} less`} than the interest saved.</div>
+            <div class="text-muted">${esc(inv.note)}</div></div>`;
+    }
+    return html;
+}
+window.loanWhatIfHtml = loanWhatIfHtml;
+
+/** Summary cards: [{label, value, sub, help}]. */
+function loanCards(overview) {
+    const s = overview.summary, eq = overview.equity || {};
+    const cards = [
+        { label: 'Balance today', value: fmtEurWhole(s.balance_eur),
+          sub: `${s.months_left} payments left` },
+        { label: 'Rate', value: `${Fmt.num(s.annual_rate_pct, 2, 2)}%`,
+          sub: s.rate_as_of ? `as of ${Fmt.date(s.rate_as_of)}` : 'since the start' },
+        { label: 'Monthly payment', value: fmtEurCents(s.monthly_payment_eur),
+          sub: `this year so far: ${fmtEurWhole(s.principal_paid_this_year_eur)} principal, ${fmtEurWhole(s.interest_paid_this_year_eur)} interest` },
+        { label: 'Ends', value: Fmt.date(s.end_date),
+          sub: `${fmtEurWhole(s.interest_remaining_eur)} interest to pay`, help: 'loanInterestLeft' },
+    ];
+    if (eq.equity_eur === null || eq.equity_eur === undefined) {
+        cards.push({ label: 'Equity', value: '—', sub: eq.reason || 'No property value', help: 'loanEquity' });
+    } else {
+        const asOf = (eq.property || []).map(p => p.as_of).filter(Boolean).sort()[0];
+        cards.push({ label: 'Equity', value: fmtEurWhole(eq.equity_eur),
+            sub: `${eq.ltv_pct === null ? '' : `${Fmt.num(eq.ltv_pct, 1, 1)}% loan-to-value`}${asOf ? `, property as of ${Fmt.date(asOf)}` : ''}${eq.note ? `. ${eq.note}` : ''}`,
+            help: 'loanLtv' });
+    }
+    return cards;
+}
+window.loanCards = loanCards;
+
+/** Series for the two charts from the yearly schedule. */
+function loanChartModel(schedule) {
+    const rows = schedule || [];
+    return {
+        years: rows.map(r => r.year),
+        balance: rows.map(r => r.balance_end_eur),
+        principal: rows.map(r => r.principal_paid_eur),
+        interest: rows.map(r => r.interest_paid_eur),
+    };
+}
+window.loanChartModel = loanChartModel;
+
+function _lmChartFrame(W, H, PAD, hi, ticks, step, years, xOf) {
+    const innerH = H - PAD.top - PAD.bottom;
+    const yOf = v => PAD.top + innerH - (v / (hi || 1)) * innerH;
+    const every = Math.max(1, Math.ceil(years.length / (W < 480 ? 6 : 10)));
+    return {
+        yOf,
+        axes: `${ticks.map(v => `<line x1="${PAD.left}" y1="${yOf(v).toFixed(1)}" x2="${W - PAD.right}" y2="${yOf(v).toFixed(1)}" ${SVG_GRID}/><text x="${PAD.left - 6}" y="${(yOf(v) + 4).toFixed(1)}" text-anchor="end" font-size="10" ${SVG_LABEL}>${fmtEurTick(v, step)}</text>`).join('')}
+            ${years.map((y, i) => (i % every === 0 ? `<text x="${xOf(i).toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="10" ${SVG_LABEL}>${y}</text>` : '')).join('')}
+            <line x1="${PAD.left}" y1="${yOf(0).toFixed(1)}" x2="${W - PAD.right}" y2="${yOf(0).toFixed(1)}" ${SVG_AXIS}/>`,
+    };
+}
+
+/** SVG markup of the balance line. */
+function loanBalanceSvg(model, W) {
+    const n = model.years.length;
+    if (!n) return '';
+    W = W || 560;
+    const H = 200, PAD = { top: 10, right: 12, bottom: 24, left: 52 };
+    const innerW = W - PAD.left - PAD.right;
+    const nt = niceTicks(0, Math.max(...model.balance, 1), 4);
+    const xOf = i => PAD.left + (n === 1 ? innerW / 2 : (i / (n - 1)) * innerW);
+    const f = _lmChartFrame(W, H, PAD, nt.hi, nt.ticks, nt.step, model.years, xOf);
+    const path = model.balance.map((v, i) => `${i ? 'L' : 'M'}${xOf(i).toFixed(1)},${f.yOf(v).toFixed(1)}`).join(' ');
+    const dots = model.balance.map((v, i) => {
+        const tip = chartTipHtml(String(model.years[i]), [{ label: 'Balance at year end', value: fmtEurWhole(v), color: 'var(--viz-1)' }]);
+        return `<g data-chart-tip="${esc(tip)}"><circle cx="${xOf(i).toFixed(1)}" cy="${f.yOf(v).toFixed(1)}" r="9" fill="transparent"/><circle cx="${xOf(i).toFixed(1)}" cy="${f.yOf(v).toFixed(1)}" r="${n > 25 ? 2 : 3}" style="fill:var(--viz-1)"/></g>`;
+    }).join('');
+    return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Loan balance by year" style="overflow:visible">${f.axes}<path d="${path}" fill="none" style="stroke:var(--viz-1)" stroke-width="2" stroke-linejoin="round"/>${dots}</svg>`;
+}
+window.loanBalanceSvg = loanBalanceSvg;
+
+/** SVG markup of the stacked principal/interest bars. */
+function loanPaidSvg(model, W) {
+    const n = model.years.length;
+    if (!n) return '';
+    W = W || 560;
+    const H = 200, PAD = { top: 10, right: 12, bottom: 24, left: 52 };
+    const innerW = W - PAD.left - PAD.right;
+    const totals = model.principal.map((p, i) => p + model.interest[i]);
+    const nt = niceTicks(0, Math.max(...totals, 1), 4);
+    const slot = innerW / n;
+    const barW = Math.max(3, slot - 2);
+    const xOf = i => PAD.left + i * slot + slot / 2;
+    const f = _lmChartFrame(W, H, PAD, nt.hi, nt.ticks, nt.step, model.years, xOf);
+    const bars = model.years.map((y, i) => {
+        const x = xOf(i) - barW / 2;
+        const yP = f.yOf(model.principal[i]), yTop = f.yOf(totals[i]), base = f.yOf(0);
+        const tip = chartTipHtml(String(y), [
+            { label: 'Principal', value: fmtEurWhole(model.principal[i]), color: 'var(--viz-1)' },
+            { label: 'Interest', value: fmtEurWhole(model.interest[i]), color: 'var(--viz-2)' },
+        ]);
+        return `<g data-chart-tip="${esc(tip)}"><rect x="${(PAD.left + i * slot).toFixed(1)}" y="${PAD.top}" width="${slot.toFixed(1)}" height="${H - PAD.top - PAD.bottom}" fill="transparent"/>
+            <rect x="${x.toFixed(1)}" y="${yP.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(0, base - yP).toFixed(1)}" style="fill:var(--viz-1)"/>
+            <rect x="${x.toFixed(1)}" y="${yTop.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(0, yP - yTop).toFixed(1)}" style="fill:var(--viz-2)"/></g>`;
+    }).join('');
+    return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Principal and interest paid by year" style="overflow:visible">${f.axes}${bars}</svg>`;
+}
+window.loanPaidSvg = loanPaidSvg;
+
+function loanReconHtml(recon) {
+    if (!recon || !recon.rows) {
+        return `<p class="text-muted small mb-0">${esc((recon && recon.reason) || 'No bank data to compare with.')}</p>`;
+    }
+    const rows = loanRecentRows(recon.rows, 12);
+    if (!rows.length) return '<p class="text-muted small mb-0">No scheduled payment has fallen due yet.</p>';
+    let html = `<div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>Month</th><th class="text-end">Scheduled</th><th class="text-end">Bank</th><th class="text-end">Difference</th><th>Status</th></tr></thead><tbody>${rows.map(r => `
+        <tr><td>${esc(r.month)}</td><td class="text-end">${fmtEurCents(r.scheduled_eur)}</td>
+        <td class="text-end">${r.actual_eur ? fmtEurCents(r.actual_eur) : '—'}</td>
+        <td class="text-end">${r.actual_eur ? `${r.difference_eur > 0 ? '+' : r.difference_eur < 0 ? '−' : ''}${fmtEurCents(Math.abs(r.difference_eur))}` : '—'}</td>
+        <td>${loanStatusBadge(r.status)}</td></tr>`).join('')}</tbody></table></div>`;
+    html += `<p class="text-muted small mb-0 mt-2">Debits in the category <strong>${esc(recon.category)}</strong>${recon.data_through ? `; statements reach ${esc(Fmt.date(recon.data_through))}` : ''}.</p>`;
+    if ((recon.before_anchor || []).length) {
+        html += `<p class="text-muted small mb-0">Before the schedule's start: ${recon.before_anchor.map(b => `${esc(b.month)} ${fmtEurWhole(b.actual_eur)}`).join(', ')} (no scheduled payment to compare).</p>`;
+    }
+    return html;
+}
+window.loanReconHtml = loanReconHtml;
+
+let _lmLoans = [];
+let _lmLoanId = null;
+let _lmWiTimer = null;
+let _lmWiSeq = 0;
+
+async function loadLoansPage() {
+    const $ = id => document.getElementById(id);
+    _lmWire();
+    $('lmStatus').textContent = 'Loading…';
+    try {
+        _lmLoans = await window.apiClient.getLoans();
+    } catch (err) {
+        $('lmStatus').innerHTML = `<span class="text-danger">${esc(err.message)}</span>`;
+        return;
+    }
+    $('lmStatus').textContent = '';
+    const has = _lmLoans.length > 0;
+    $('lmEmpty').style.display = has ? 'none' : 'block';
+    $('lmContent').style.display = has ? 'block' : 'none';
+    $('lmPicker').classList.toggle('d-none', _lmLoans.length <= 1);
+    if (!has) return;
+    if (!_lmLoans.some(l => l.id === _lmLoanId)) _lmLoanId = _lmLoans[0].id;
+    $('lmLoanSelect').innerHTML = _lmLoans.map(l => `<option value="${Number(l.id)}" ${l.id === _lmLoanId ? 'selected' : ''}>${esc(l.name)}</option>`).join('');
+    await _lmLoadOverview();
+}
+window.loadLoansPage = loadLoansPage;
+
+function _lmWire() {
+    const $ = id => document.getElementById(id);
+    if ($('lmLoanSelect').dataset.wired) return;
+    $('lmLoanSelect').dataset.wired = '1';
+    $('lmLoanSelect').addEventListener('change', e => {
+        _lmLoanId = parseInt(e.target.value, 10);
+        $('lmCategory').value = '';
+        _lmLoadOverview();
+    });
+    $('lmCategory').addEventListener('change', () => _lmLoadOverview());
+    ['lmWiLump', 'lmWiDate', 'lmWiExtra', 'lmWiMode', 'lmWiReturn'].forEach(id => {
+        const el = $(id);
+        el.addEventListener('input', _lmScheduleWhatIf);
+        el.addEventListener('change', _lmScheduleWhatIf);
+    });
+}
+
+async function _lmLoadOverview() {
+    const $ = id => document.getElementById(id);
+    const id = _lmLoanId;
+    $('lmStatus').textContent = 'Loading…';
+    try {
+        const ov = await window.apiClient.getLoanOverview(id, $('lmCategory').value.trim());
+        if (id !== _lmLoanId) return;
+        $('lmStatus').textContent = '';
+        $('lmCards').innerHTML = loanCards(ov).map(c => `
+            <div class="col-6 col-lg"><div class="card h-100"><div class="card-body py-2">
+                <div class="text-muted small">${esc(c.label)}${c.help ? ` <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="${escapeForAttr((window.METRIC_HELP || {})[c.help] || '')}"></i>` : ''}</div>
+                <div class="fs-5 fw-semibold">${esc(c.value)}</div>
+                <div class="text-muted small">${esc(c.sub)}</div>
+            </div></div></div>`).join('');
+        const note = $('lmAnchorNote');
+        note.textContent = ov.summary.anchor_note || '';
+        note.style.display = ov.summary.anchor_note ? 'block' : 'none';
+        const model = loanChartModel(ov.schedule);
+        const W = Math.max(320, Math.min(900, $('lmBalanceChart').clientWidth || 560));
+        $('lmBalanceChart').innerHTML = loanBalanceSvg(model, W);
+        $('lmPaidChart').innerHTML = loanPaidSvg(model, W);
+        $('lmScheduleBody').innerHTML = (ov.schedule || []).map(r => `<tr><td>${r.year}</td><td class="text-end">${fmtEurWhole(r.payments_eur)}</td><td class="text-end">${fmtEurWhole(r.principal_paid_eur)}</td><td class="text-end">${fmtEurWhole(r.interest_paid_eur)}</td><td class="text-end">${fmtEurWhole(r.balance_end_eur)}</td></tr>`).join('');
+        // the yearly table starts collapsed on a phone
+        $('lmScheduleDetails').open = window.innerWidth >= 768;
+        const recon = ov.reconciliation;
+        $('lmReconBody').innerHTML = loanReconHtml(recon);
+        const hint = $('lmReconHint');
+        hint.textContent = (recon && recon.hint) || '';
+        hint.style.display = recon && recon.hint ? 'block' : 'none';
+        if (recon && recon.category && !$('lmCategory').value) $('lmCategory').placeholder = recon.category;
+        initTooltips();
+        _lmFillCategories();
+        _lmScheduleWhatIf();
+    } catch (err) {
+        $('lmStatus').innerHTML = `<span class="text-danger">${esc(err.message)}</span>`;
+    }
+}
+
+async function _lmFillCategories() {
+    const list = document.getElementById('lmCategoryList');
+    if (!list || list.dataset.filled) return;
+    try {
+        const cats = await window.apiClient.getSpendingCategories();
+        list.innerHTML = (Array.isArray(cats) ? cats : []).map(c => `<option value="${escapeForAttr(typeof c === 'string' ? c : c.name)}">`).join('');
+        list.dataset.filled = '1';
+    } catch (err) { /* the field still works as free text */ }
+}
+
+function _lmScheduleWhatIf() {
+    clearTimeout(_lmWiTimer);
+    const mode = document.getElementById('lmWiMode').value;
+    // extra per month only applies when finishing sooner
+    document.getElementById('lmWiExtra').disabled = mode === 'payment';
+    _lmWiTimer = setTimeout(_lmRunWhatIf, 350);
+}
+
+async function _lmRunWhatIf() {
+    const $ = id => document.getElementById(id);
+    const q = loanWhatIfQuery({
+        lump: $('lmWiLump').value, date: $('lmWiDate').value, extra: $('lmWiExtra').value,
+        mode: $('lmWiMode').value, returnPct: $('lmWiReturn').value,
+    });
+    const out = $('lmWiResult');
+    if (!q) { out.className = 'small text-muted'; out.textContent = 'Enter an amount to see the effect.'; return; }
+    const seq = ++_lmWiSeq;
+    try {
+        const res = await window.apiClient.getLoanWhatIf(_lmLoanId, q);
+        if (seq !== _lmWiSeq) return;
+        out.className = 'small';
+        out.innerHTML = loanWhatIfHtml(res);
+    } catch (err) {
+        if (seq !== _lmWiSeq) return;
+        out.className = 'small text-danger';
+        out.textContent = err.message;
+    }
+}

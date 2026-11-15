@@ -8,12 +8,13 @@ net worth reflects the whole picture, not just investments.
 
 import logging
 from datetime import date, datetime
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from portf_manager.services import loans as loan_calc
+from portf_manager.services import mortgage as mortgage_calc
 from portf_manager.services.balance_sheet import build_balance_sheet
 from portf_manager.services.indexa import refresh_account_valuations
 
@@ -145,6 +146,37 @@ class LoanBody(BaseModel):
         return data
 
 
+_LOAN_NULLABLE = ("lender", "rate_as_of", "balance_as_of", "notes")
+
+
+class LoanUpdateBody(BaseModel):
+    """Partial loan update: an omitted field stays, an explicit null clears a
+    nullable one (lender, rate_as_of, balance_as_of, notes)."""
+
+    name: Optional[str] = None
+    principal: Optional[float] = Field(default=None, gt=0)
+    annual_rate_pct: Optional[float] = Field(default=None, ge=0)
+    start_date: Optional[date] = None
+    term_months: Optional[int] = Field(default=None, gt=0)
+    currency: Optional[str] = None
+    lender: Optional[str] = None
+    rate_as_of: Optional[date] = None
+    balance_as_of: Optional[float] = None
+    extra_payment_eur: Optional[float] = None
+    notes: Optional[str] = None
+
+    def fields(self) -> dict:
+        """Only the fields the client sent; dates as ISO strings."""
+        sent = self.model_dump(exclude_unset=True)
+        for key, value in sent.items():
+            if value is None and key not in _LOAN_NULLABLE:
+                raise HTTPException(status_code=422, detail=f"{key} cannot be null")
+        for key in ("start_date", "rate_as_of"):
+            if sent.get(key) is not None:
+                sent[key] = sent[key].isoformat()
+        return sent
+
+
 class ValuationBody(BaseModel):
     portfolio_id: int
     provider: str
@@ -184,11 +216,11 @@ def create_loan(
 @router.put("/loans/{loan_id}")
 def update_loan(
     loan_id: int,
-    body: LoanBody,
+    body: LoanUpdateBody,
     db=Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
-    """Replace a loan's fields."""
+    """Update the loan fields sent; an explicit null clears a nullable field."""
     _get_loan_or_404(db, loan_id)
     db.update_loan(loan_id, **body.fields())
     return {"ok": True}
@@ -210,6 +242,48 @@ def loan_schedule(
 ):
     """Yearly amortisation rows of one loan."""
     return loan_calc.schedule(_get_loan_or_404(db, loan_id))
+
+
+@router.get("/loans/{loan_id}/overview")
+def loan_overview(
+    loan_id: int,
+    category: Optional[str] = None,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Summary, equity, yearly schedule and payments-versus-bank of one loan.
+
+    ``category`` names the spending category holding the loan's debits
+    (default: the one named like the loan, else ``Mortgage``).
+    """
+    loan = _get_loan_or_404(db, loan_id)
+    return mortgage_calc.overview(db, loan, _fx, category=category)
+
+
+@router.get("/loans/{loan_id}/what-if")
+def loan_what_if(
+    loan_id: int,
+    lump_sum: float = 0.0,
+    lump_date: Optional[date] = None,
+    extra_monthly: float = 0.0,
+    mode: Literal["term", "payment"] = "term",
+    invest_return_pct: Optional[float] = None,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """The loan as scheduled against a lump sum and/or extra monthly payments."""
+    loan = _get_loan_or_404(db, loan_id)
+    try:
+        return loan_calc.what_if(
+            loan,
+            lump_sum=lump_sum,
+            lump_date=lump_date,
+            extra_monthly=extra_monthly,
+            mode=mode,
+            invest_return_pct=invest_return_pct,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
 
 
 @router.get("/valuations")

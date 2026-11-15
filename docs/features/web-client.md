@@ -279,3 +279,8 @@ API calls: `getSpendingCompare/Anomalies/Tiers`, `getCashflowForecast`,
   seeds invented rows, a monthly and a yearly line, and loads the Forecast,
   comparison, anomalies and tiers. The e2e harness stubs Bootstrap's CSS, so
   layout (390px overflow) cannot be checked there.
+
+
+## Loans & Mortgage page (2026-11-15)
+
+Sidebar page `loans` (`#loansPage`, `loadLoansPage` in `pfm_analytics.js`): summary cards, two hand-drawn SVG charts (balance line, stacked principal/interest bars, `data-chart-tip` hover), a collapsible yearly table, the payments-vs-bank table and a debounced what-if panel. The budget editor's link picker (`budgetLinkOptions`, `parseBudgetLink` in `pfm_features.js`) offers manual liabilities and loans. Details: `mortgage.md`.

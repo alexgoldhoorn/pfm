@@ -111,7 +111,9 @@ def test_schedule_zero_rate_totals():
         "year": 2026,
         "balance_end_eur": 1000,
         "interest_paid_eur": 0,
+        "principal_paid_eur": 11000,
         "payments_eur": 11000,
+        "payments_count": 11,
     }
     assert rows[1]["balance_end_eur"] == 0
     assert rows[1]["payments_eur"] == 1000
@@ -133,7 +135,9 @@ def test_anchor_at_term_end_means_loan_ended():
             "year": 2046,
             "balance_end_eur": 0,
             "interest_paid_eur": 0,
+            "principal_paid_eur": 0,
             "payments_eur": 0,
+            "payments_count": 0,
         }
     ]
 

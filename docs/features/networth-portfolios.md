@@ -98,3 +98,8 @@ Answers one question: if the household keeps living at today's financial level, 
 - Returns are deterministic real rates, not a Monte Carlo; a bad sequence of early returns is not modelled.
 
 **Managed portfolios (`portfolios.is_managed`, schema v38, 2026-11-01).** A portfolio where someone else makes the trades (Indexa) is flagged managed in the Portfolios form ("Managed by the broker"), on create or update (`PortfolioCreate`/`PortfolioUpdate.is_managed`; list rows carry `is_managed`). Its holdings still count in net worth, exposure and attribution, but raise no price-target alerts and no stale-research nags (`research-rebalance.md`). The MCP `list_portfolios` prints `[managed: no price signals]` on such rows. The rebalance planner never trades them (`research-rebalance.md`, Rebalance API).
+
+
+## Loans & Mortgage page (2026-11-15)
+
+A read-only page per loan (overview, equity, payments vs bank, what-if) now sits on top of the loans described above, and `PUT /networth/loans/{id}` takes a partial body. Reference: `mortgage.md`.

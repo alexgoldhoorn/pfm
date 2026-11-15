@@ -1046,7 +1046,7 @@ function createNavigationManager() {
     return {
         currentPage: 'dashboard',
         showPage: function(pageName) {
-            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage', 'helpPage', 'versionPage', 'aboutPage', 'resourcesPage', 'networthPage', 'diagnosticsPage', 'actionitemsPage', 'spendingPage', 'budgetPage', 'decisionsPage', 'reportsPage'];
+            const pages = ['dashboardPage', 'assetsPage', 'transactionsPage', 'analyticsPage', 'watchlistPage', 'goalsPage', 'researchPage', 'chatPage', 'importexportPage', 'portfoliosPage', 'forecastPage', 'helpPage', 'versionPage', 'aboutPage', 'resourcesPage', 'networthPage', 'diagnosticsPage', 'actionitemsPage', 'spendingPage', 'budgetPage', 'decisionsPage', 'reportsPage', 'loansPage'];
             pages.forEach(pageId => {
                 const page = document.getElementById(pageId);
                 if (page) page.style.display = 'none';
@@ -1081,6 +1081,7 @@ function createNavigationManager() {
                 networth: 'Net Worth', diagnostics: 'Diagnostics',
                 actionitems: 'Action Items', spending: 'Spending',
                 budget: 'Budget', decisions: 'Decisions', reports: 'Reports',
+                loans: 'Loans & Mortgage',
             };
             const titleEl = document.getElementById('mobilePageTitle');
             if (titleEl) titleEl.textContent = PAGE_TITLES[pageName] || pageName;
@@ -1107,6 +1108,7 @@ function createNavigationManager() {
                 case 'about':        break;
                 case 'resources':    if (window.renderResourcesPage) window.renderResourcesPage(); break;
                 case 'networth':     if (window.loadNetworthPage) window.loadNetworthPage(); break;
+                case 'loans':        if (window.loadLoansPage) window.loadLoansPage(); break;
                 case 'diagnostics':  if (window.loadDiagnosticsPage) window.loadDiagnosticsPage(); break;
                 case 'actionitems':  if (window.loadActionItemsPage) window.loadActionItemsPage(); break;
                 case 'spending':     if (window.loadSpendingPage) window.loadSpendingPage(); break;

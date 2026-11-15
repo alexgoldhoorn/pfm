@@ -13,6 +13,7 @@ pfm_analytics.js, already unit-tested) and the frontend merges it into the
 same displayed list. See docs/superpowers/specs/2026-07-16-action-items-design.md.
 """
 
+import logging
 import re
 from datetime import date, datetime, timedelta
 
@@ -425,6 +426,53 @@ def check_balance_sheet_freshness(db, today: date | None = None) -> list[dict]:
                         "context": {"line_id": line["id"]},
                     }
                 )
+    return items
+
+
+def check_mortgage_payment(db, today: date | None = None) -> list[dict]:
+    """One item per loan whose latest complete month's debit differs.
+
+    Compares the schedule with the bank debits in the loan's category; a
+    changed payment usually means the rate was revised, so the loan's rate and
+    balance need updating.
+    """
+    from portf_manager.services import mortgage
+
+    today = today or date.today()
+    items = []
+    for loan in db.get_loans():
+        try:
+            recon = mortgage.reconciliation(db, loan, today)
+            row = mortgage.latest_complete_row(recon)
+        except Exception:
+            logging.getLogger(__name__).exception(
+                "Mortgage reconciliation failed for loan %s", loan.get("id")
+            )
+            continue
+        if not row or row["status"] != "differs":
+            continue
+        items.append(
+            {
+                "id": f"mortgage:payment-differs:{loan['id']}",
+                "category": "networth",
+                "severity": "medium",
+                "title": (
+                    "Mortgage payment differs from the schedule: update the rate "
+                    "and balance"
+                ),
+                "detail": (
+                    f"{loan['name']}: {row['month']} the bank shows "
+                    f"{row['actual_eur']:.2f} against {row['scheduled_eur']:.2f} "
+                    "scheduled." + (f" {recon['hint']}." if recon.get("hint") else "")
+                ),
+                "link_page": "loans",
+                "context": {
+                    "loan_id": loan["id"],
+                    "month": row["month"],
+                    "difference_eur": row["difference_eur"],
+                },
+            }
+        )
     return items
 
 
@@ -1083,6 +1131,7 @@ _CHECKS = (
     check_goals_off_track,
     check_balance_sheet_freshness,
     check_retirement_readiness,
+    check_mortgage_payment,
     check_wealth_scenario,
     check_allocation,
     check_price_alerts,
