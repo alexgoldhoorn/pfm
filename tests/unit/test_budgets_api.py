@@ -1010,7 +1010,9 @@ def test_variance_and_summary_expose_pace_tier_and_fund_fields(tmp_path):
     line = spending["lines"][0]
     assert line["tier"] == "flexible" and line["period"] == "yearly"
     assert line["fund"]["yearly_amount_eur"] == 1200.0
-    assert line["pace"]["status"] in ("on_track", "at_risk", "over")
+    # one row on the 1st and no earlier month: too early to project
+    assert line["pace"]["status"] == "too_early"
+    assert line["pace"]["projected_month_end_eur"] is None
     assert spending["pace"]["month"] == date.today().strftime("%Y-%m")
     assert spending["tier_totals"]["flexible"]["actual_eur"] == 100.0
     variance = client.get(f"/api/v1/budgets/{bid}/variance?months=2", headers=HEADERS)

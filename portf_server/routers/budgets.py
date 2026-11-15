@@ -109,8 +109,6 @@ class BudgetLineResponse(BaseModel):
     overrides: Dict[str, float] = {}
     link_id: Optional[int] = None
     notes: Optional[str] = None
-    period: str = "monthly"
-    rollover: bool = False
 
 
 class BudgetLinesBulkBody(BaseModel):

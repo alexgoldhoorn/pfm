@@ -24,11 +24,22 @@ import json
 from datetime import date, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
+from portf_manager.services.cashflow_forecast import (
+    BASELINE_MONTHS,
+    MIN_RELIABLE_BASELINE_MONTHS,
+    baseline_month_list,
+    everyday_outflows,
+)
 from portf_manager.services.life_scenarios import UNCLASSIFIED, tier_of
 from portf_manager.services.recurring import (
     last_import_dates,
     load_recurring,
     upcoming_charges,
+)
+from portf_manager.services.spending_insights import (
+    effective_data_through,
+    load_rows,
+    shift_month,
 )
 
 # Line types, and the section each one reports under.
@@ -47,11 +58,11 @@ SECTION_LABELS = {
 OVERRUN_PCT = 10.0
 OVERRUN_EUR = 50.0
 
-# Share of the month that must have elapsed before the everyday-spending
-# run rate is trusted at face value. Below it the run rate is divided by this
-# floor instead of the real share, so day one of a month (a few early
-# purchases) does not project a month four times too large.
-PACE_MIN_ELAPSED_SHARE = 0.1
+# Share of the month that must have elapsed before a month-to-date run rate is
+# trusted. It is only the fallback for a cost with no reliable baseline (fewer
+# than MIN_RELIABLE_BASELINE_MONTHS complete months): below this share the
+# pace says ``too_early`` instead of projecting a few early purchases.
+PACE_MIN_ELAPSED_SHARE = 0.25
 
 PERIODS = ("monthly", "yearly")
 # Only cost lines can be yearly (a sinking fund) or roll over.
@@ -446,6 +457,22 @@ def history_months(months: List[str]) -> List[str]:
     return sorted(out)
 
 
+def rolling_months(months: List[str], length: int = 12) -> List[str]:
+    """``months`` plus the ``length - 1`` months before the first one.
+
+    A yearly line looks at the 12 months ending at each month, so the window
+    needs the 11 months that precede it.
+    """
+    if not months:
+        return []
+    count = _month_index(months[-1]) - _month_index(months[0]) + length
+    return month_range(months[-1], count)
+
+
+def _month_index(month: str) -> int:
+    return int(month[:4]) * 12 + int(month[5:7])
+
+
 def rollover_ledger(
     planned: Dict[str, float],
     actual: Dict[str, float],
@@ -527,22 +554,61 @@ def pace_status(
 class _PaceContext:
     """What the month in progress needs to project a cost line to month end.
 
-    Elapsed share is measured to the date the data runs to, not to today, so a
-    statement that stops on the 10th is projected from the 10th. Recurring
-    charges are kept apart from everyday spending: those that already arrived
-    are not extrapolated, and those still to arrive (per account, after its own
-    last import) are added once.
+    Projected month end = actual to date + recurring charges still due this
+    month + the line's baseline everyday average x the share of the month
+    still to come. The baseline everyday average is what the line's categories
+    cost per month over the baseline months, with one-off rows and rows of a
+    recurring series left out (``cashflow_forecast.everyday_outflows``, the
+    rule the forecast uses): a lump sum paid early in the month is neither
+    extrapolated nor double counted.
+
+    Without a reliable baseline (fewer than ``MIN_RELIABLE_BASELINE_MONTHS``
+    complete months) the month-to-date run rate stands in once at least
+    ``PACE_MIN_ELAPSED_SHARE`` of the month has elapsed; before that the pace
+    says ``too_early``.
+
+    Elapsed share is measured to the date the data runs to: the earliest
+    last-import date over the accounts, not today. Recurring charges still to
+    arrive are counted per account, after its own last import.
     """
 
-    def __init__(self, month, through, rows, recurring_ids, upcoming):
+    def __init__(
+        self, month, through, rows, recurring_ids, upcoming, base_months, base_by_month
+    ):
         self.month = month
         self.through = through
         year, mon = int(month[:4]), int(month[5:7])
         self.days = calendar.monthrange(year, mon)[1]
-        self.elapsed = min(1.0, through.day / self.days)
+        start = date(year, mon, 1)
+        self.elapsed = 0.0 if through < start else min(1.0, through.day / self.days)
         self.rows = rows
         self.recurring_ids = recurring_ids
         self.upcoming = upcoming
+        self.base_months = base_months
+        self.base_by_month = base_by_month
+
+    @property
+    def reliable(self) -> bool:
+        return len(self.base_months) >= MIN_RELIABLE_BASELINE_MONTHS
+
+    def categories(self) -> set:
+        """Every category with spending this month or in the baseline months."""
+        out = {r["category"] for r in self.rows if r["amount_eur"] < 0}
+        for cats in self.base_by_month.values():
+            out.update(cats)
+        return out
+
+    def baseline_everyday(self, names: set) -> Optional[float]:
+        """Average monthly everyday spending of ``names``; None if unreliable."""
+        if not self.reliable:
+            return None
+        total = sum(
+            amount
+            for m in self.base_months
+            for category, amount in self.base_by_month.get(m, {}).items()
+            if category in names
+        )
+        return total / len(self.base_months)
 
     def project(self, names: set, limit: float) -> Dict[str, Any]:
         spent = arrived = one_off = 0.0
@@ -558,28 +624,70 @@ class _PaceContext:
         remaining_recurring = sum(
             amount for category, amount in self.upcoming if category in names
         )
-        everyday = spent - arrived - one_off
-        floor = max(self.elapsed, PACE_MIN_ELAPSED_SHARE)
-        everyday_left = (
-            0.0 if self.elapsed >= 1.0 else everyday * (1.0 - self.elapsed) / floor
-        )
-        projected = spent + remaining_recurring + everyday_left
+        base_avg = self.baseline_everyday(names)
+        everyday_left: Optional[float]
+        if self.elapsed >= 1.0:
+            everyday_left, method = 0.0, "month_complete"
+        elif base_avg is not None:
+            everyday_left, method = base_avg * (1.0 - self.elapsed), "baseline"
+        elif self.elapsed >= PACE_MIN_ELAPSED_SHARE:
+            everyday = spent - arrived - one_off
+            everyday_left = everyday * (1.0 - self.elapsed) / self.elapsed
+            method = "run_rate"
+        else:
+            everyday_left, method = None, None
         out = {
             "month": self.month,
             "data_through": self.through.isoformat(),
             "elapsed_share": round(self.elapsed, 3),
             "actual_to_date_eur": round(spent, 2),
             "limit_eur": round(limit, 2),
+            "method": method,
+            "baseline_everyday_eur": None if base_avg is None else round(base_avg, 2),
+            "baseline_months": len(self.base_months),
             "expected_recurring_remaining_eur": round(remaining_recurring, 2),
-            "everyday_remaining_eur": round(everyday_left, 2),
-            "projected_month_end_eur": round(projected, 2),
+            "everyday_remaining_eur": (
+                None if everyday_left is None else round(everyday_left, 2)
+            ),
         }
+        if everyday_left is None:
+            out.update(
+                projected_month_end_eur=None,
+                status="too_early",
+                projected_over_eur=None,
+                meaningful_overshoot=False,
+            )
+            return out
+        projected = spent + remaining_recurring + everyday_left
+        out["projected_month_end_eur"] = round(projected, 2)
         out.update(pace_status(spent, projected, limit))
         return out
 
 
+def data_through_by_account(db, start: Optional[str]) -> Dict[str, Any]:
+    """``effective_data_through`` over the database's bank accounts.
+
+    An account's last import is the date of its latest spending row (the
+    window rule of ``effective_data_through`` then drops accounts with no row
+    since ``start``).
+    """
+    last = {
+        pid: str(d["last_spending_date"])[:10]
+        for pid, d in db.get_portfolio_date_ranges().items()
+        if d and d.get("last_spending_date")
+    }
+    info = effective_data_through(last, start)
+    info["last_by_account"] = last
+    return info
+
+
 def _pace_context(
-    db, rows: List[Dict], months: List[str], fx, today: date, warnings: List[str]
+    db,
+    by_name: Dict[str, dict],
+    months: List[str],
+    fx,
+    today: date,
+    warnings: List[str],
 ) -> Optional[_PaceContext]:
     """The pace context for the month in progress, or None.
 
@@ -590,19 +698,17 @@ def _pace_context(
     month = today.strftime("%Y-%m")
     if month not in months:
         return None
-    in_month = [r for r in rows if month_key(r["date"]) == month]
+    start = f"{shift_month(month, -BASELINE_MONTHS)}-01"
+    rows = load_rows(db, fx, start_date=start)
+    in_month = [r for r in rows if r["date"][:7] == month and not r["is_transfer"]]
     if not in_month:
         return None
     month_end = date.fromisoformat(_month_end(month))
-    through = max(date.fromisoformat(str(r["date"])[:10]) for r in in_month)
+    through = max(date.fromisoformat(r["date"]) for r in rows if r["date"][:7] == month)
     try:
-        latest = [
-            d["last_spending_date"]
-            for d in db.get_portfolio_date_ranges().values()
-            if d and d.get("last_spending_date")
-        ]
-        if latest:
-            through = max(through, date.fromisoformat(max(latest)[:10]))
+        info = data_through_by_account(db, start)
+        if info["effective"]:
+            through = date.fromisoformat(info["effective"])
     except Exception as e:
         warnings.append(f"Data-through date could not be read: {e}")
     through = min(through, month_end)
@@ -619,17 +725,22 @@ def _pace_context(
     for s, due in upcoming_charges(series, last_import, month_end):
         if due >= month_start:
             upcoming.append((s.category, s.typical_amount * fx(s.currency)))
-    pace_rows = [
-        {
-            "id": r["id"],
-            "category": r["category"],
-            "amount_eur": float(r["amount"]) * fx(r.get("currency") or "EUR"),
-            "one_off": bool(r.get("one_off")),
-        }
-        for r in in_month
-    ]
     recurring_ids = {i for s in series for i in s.transaction_ids}
-    return _PaceContext(month, through, pace_rows, recurring_ids, upcoming)
+    base_months = baseline_month_list(rows, through, today)
+    base_by_month = (
+        everyday_outflows(rows, by_name, recurring_ids, base_months)
+        if base_months
+        else {}
+    )
+    return _PaceContext(
+        month,
+        through,
+        in_month,
+        recurring_ids,
+        upcoming,
+        base_months,
+        base_by_month,
+    )
 
 
 def compute_budget_variance(
@@ -653,20 +764,25 @@ def compute_budget_variance(
     **Yearly lines** (``period='yearly'``, spending and debt only). The stored
     ``monthly_amount`` is the *yearly* figure. Each month sets aside a twelfth
     of it (``planned_eur`` per month; a per-month override replaces the
-    twelfth), so ``planned_total`` is the set-aside over the window, not the
-    yearly figure. The line behaves as a rollover line (below) whose carry is
-    the fund built up since January: the month a bill lands is measured
-    against ``available`` (set-aside plus fund), not against one twelfth.
-    ``fund`` reports the calendar year's set-aside, what was spent from it and
-    what is left. A bill larger than the fund built so far is genuinely over.
+    twelfth): that is the cash to put aside, not a limit. The limit is a
+    rolling 12 months: in month m, ``available_eur`` is the yearly amount less
+    what the line spent in the 11 months before m, so a bill is covered
+    whenever the 12 months ending at it stay within the yearly amount, and the
+    line is over only when they do not. There is no January reset.
+    ``carried_eur`` is ``available`` less that month's twelfth. For a window,
+    ``available_total`` is set so that the variance is the fund left at the
+    window's last month. ``fund`` describes those 12 months (``window_start``,
+    ``window_end``, ``spent_eur``, ``remaining_eur``). A month of the span
+    without imports cannot be known and is named in a warning.
 
     **Rollover** (``rollover=1``, spending and debt only). What earlier months
     of the same calendar year left over (or overspent) carries into the month:
     ``carried_eur`` and ``available_eur`` per month. Months without imports do
-    not take part, and everything resets in January. Variance for such a line
-    is against ``available_total`` (``planned_total`` plus the carry brought
-    into the window, less what a January reset dropped inside it), and the
-    section and net figures follow. Every other line has ``available_total ==
+    not take part, and the balance starts over in January for the per-month
+    figures. The variance of a window is ``carried into its first month +
+    sum(planned) - sum(actual)``: the January reset never changes the window
+    total, so a December overspend (or an underspend built inside the window)
+    is neither hidden nor lost. Every other line has ``available_total ==
     planned_total``, so nothing changes for a budget without these features.
 
     **Pace**. For the month in progress each cost line (and the spending
@@ -698,14 +814,27 @@ def compute_budget_variance(
     by_name = {node["name"]: node for node in tree}
     children_by_parent = build_children_index(tree)
 
-    def _is_fund(line: Dict) -> bool:
-        return line["line_type"] in FUND_LINE_TYPES and (
-            (line.get("period") or "monthly") == "yearly" or bool(line.get("rollover"))
+    def _is_yearly(line: Dict) -> bool:
+        return (
+            line["line_type"] in FUND_LINE_TYPES
+            and (line.get("period") or "monthly") == "yearly"
         )
 
-    calc_months = (
-        history_months(months) if any(_is_fund(line) for line in lines) else months
-    )
+    def _is_rollover(line: Dict) -> bool:
+        return (
+            line["line_type"] in FUND_LINE_TYPES
+            and bool(line.get("rollover"))
+            and not _is_yearly(line)
+        )
+
+    # Rollover needs every earlier month of the calendar year; a yearly line
+    # needs the 11 months before the window.
+    needed = set(months)
+    if any(_is_rollover(line) for line in lines):
+        needed.update(history_months(months))
+    if any(_is_yearly(line) for line in lines):
+        needed.update(rolling_months(months))
+    calc_months = sorted(needed)
     month_set = set(months)
     calc_set = set(calc_months)
 
@@ -718,15 +847,14 @@ def compute_budget_variance(
     booking_actuals = _collect_booking_actuals(db.get_all_bookings(), calc_set, fx)
     imported = {month_key(r["date"]) for r in rows}
 
-    pace_ctx = _pace_context(db, rows, months, fx, today, warnings)
+    pace_ctx = _pace_context(db, by_name, months, fx, today, warnings)
+    # the date every account's data reaches: the earliest last import over the
+    # accounts that have rows in the window
     through_all: Optional[str] = None
     try:
-        latest = [
-            d["last_spending_date"]
-            for d in db.get_portfolio_date_ranges().values()
-            if d and d.get("last_spending_date")
-        ]
-        through_all = max(latest)[:10] if latest else None
+        info = data_through_by_account(db, f"{months[0]}-01" if months else None)
+        last_dates = info["last_by_account"].values()
+        through_all = info["effective"] or (max(last_dates) if last_dates else None)
     except Exception:
         through_all = pace_ctx.through.isoformat() if pace_ctx else None
     current = today.strftime("%Y-%m")
@@ -776,8 +904,8 @@ def compute_budget_variance(
         section_lines = []
         for line in [line for line in lines if line["line_type"] == line_type]:
             period = line.get("period") or "monthly"
-            yearly = line_type in FUND_LINE_TYPES and period == "yearly"
-            carries = _is_fund(line)
+            yearly = _is_yearly(line)
+            carries = _is_rollover(line)
             stored = float(line["monthly_amount"] or 0)
             planned_all = planned_for_months(
                 stored / 12 if yearly else stored,
@@ -817,43 +945,65 @@ def compute_budget_variance(
                 "fund": None,
                 "fund_balance_eur": None,
             }
+            label = (
+                portfolio_names.get(line["ref_key"], f"Portfolio {line['ref_key']}")
+                if broker_keyed
+                else category_path(tree, line["ref_key"])
+            )
             available = dict(planned)
             available_total = planned_total
             if carries and months:
                 ledger = rollover_ledger(planned_all, actual_all, imported, calc_months)
                 carried = {m: ledger["carried"][m] for m in months}
                 available = {m: planned[m] + carried[m] for m in months}
-                dropped = sum(ledger["forfeited"].get(m, 0.0) for m in months[1:])
-                available_total = planned_total + carried[months[0]] - dropped
+                # What was carried into the first month, plus the whole
+                # window's plan, less its spend. The January reset belongs to
+                # the per-month figures only: applying it to the total hid a
+                # December overspend.
+                available_total = planned_total + carried[months[0]]
                 extra.update(
                     carried_eur={m: round(v, 2) for m, v in carried.items()},
                     available_eur={m: round(v, 2) for m, v in available.items()},
                     carried_total=round(carried[months[0]], 2),
                 )
-                if yearly:
-                    year = months[-1][:4]
-                    in_fund = [
-                        m for m in calc_months if m[:4] == year and m <= months[-1]
-                    ]
-                    taking_part = [m for m in in_fund if m in imported]
-                    set_aside = sum(planned_all[m] for m in taking_part)
-                    spent = sum(actual_all[m] for m in taking_part)
-                    extra["fund"] = {
-                        "year": int(year),
-                        "yearly_amount_eur": round(stored, 2),
-                        "set_aside_eur": round(set_aside, 2),
-                        "spent_eur": round(spent, 2),
-                        "remaining_eur": round(ledger["closing"][months[-1]], 2),
-                    }
-                    extra["fund_balance_eur"] = {
-                        m: round(ledger["closing"][m], 2) for m in months
-                    }
+            elif yearly and months:
+                # rolling 12 months: what is left of the yearly amount after
+                # the 11 months before each month
+                def spent_in(end: str) -> float:
+                    return sum(actual_all.get(x, 0.0) for x in month_range(end, 12))
 
-            label = (
-                portfolio_names.get(line["ref_key"], f"Portfolio {line['ref_key']}")
-                if broker_keyed
-                else category_path(tree, line["ref_key"])
-            )
+                spent12 = {m: spent_in(m) for m in months}
+                available = {
+                    m: stored - (spent12[m] - actual_all.get(m, 0.0)) for m in months
+                }
+                carried = {m: available[m] - planned[m] for m in months}
+                last = months[-1]
+                remaining_last = stored - spent12[last]
+                # variance = the fund left at the window's last month
+                available_total = actual_total + remaining_last
+                span = month_range(last, 12)
+                unknown = [x for x in span if x not in imported]
+                if unknown:
+                    warnings.append(
+                        f"Yearly line {label}: no statement is imported for "
+                        f"{', '.join(unknown)}, so what was spent in "
+                        "those months is not known and the amount left may be "
+                        "overstated."
+                    )
+                extra.update(
+                    carried_eur={m: round(v, 2) for m, v in carried.items()},
+                    available_eur={m: round(v, 2) for m, v in available.items()},
+                    carried_total=round(carried[months[0]], 2),
+                    fund={
+                        "yearly_amount_eur": round(stored, 2),
+                        "window_start": span[0],
+                        "window_end": span[-1],
+                        "spent_eur": round(spent12[last], 2),
+                        "remaining_eur": round(remaining_last, 2),
+                    },
+                    fund_balance_eur={m: round(stored - spent12[m], 2) for m in months},
+                )
+
             liability = liabilities.get(line.get("link_id"))
             pace = None
             if (
@@ -952,9 +1102,9 @@ def compute_budget_variance(
             if pace_ctx is not None and current in month_set:
                 # categories with spending so far, plus those with a recurring
                 # charge still to arrive (no row yet, but money to come)
-                spend_names = {
-                    r["category"] for r in pace_ctx.rows if r["amount_eur"] < 0
-                } | {category for category, _ in pace_ctx.upcoming}
+                spend_names = pace_ctx.categories() | {
+                    category for category, _ in pace_ctx.upcoming
+                }
                 spend_names -= non_spending_covered
                 limit = sum(
                     (item["available_eur"] or item["planned_eur"]).get(current, 0.0)

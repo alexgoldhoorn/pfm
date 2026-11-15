@@ -42,7 +42,11 @@ cut. This work adds those answers on top of the data that is already there.
 - Complete calendar months with imported rows are the only baseline months.
   The month in progress never counts in an average.
 - "Data through" for a bank account is the date of its latest imported row.
-  Elapsed share of a month is measured to that date, not to today.
+  The date the data reaches is the **earliest** of these over the accounts that
+  have rows in the relevant window (an account with none there is ignored).
+  Completeness of a month, the baseline months and the elapsed share of a
+  month are all measured to that date, not to today and not to the freshest
+  account.
 - Transfers are excluded everywhere, as today. Money moved to `Invest` /
   `House purchase` is not spending (same as `household_baseline`).
 - EUR at today's rate, same as `/spending/trend`.
@@ -108,15 +112,28 @@ New `portf_manager/services/cashflow_forecast.py`;
 Budget (`services/budget.py`, `routers/budgets.py`):
 
 - **Pace.** For the month in progress each cost line gains
-  `pace: {elapsed_share, projected_month_end_eur, expected_recurring_remaining_eur, status}`
-  with status `on_track` | `at_risk` | `over`. No pace for a month without imports.
+  `pace: {elapsed_share, projected_month_end_eur, expected_recurring_remaining_eur, status, ...}`
+  with status `on_track` | `at_risk` | `over` | `too_early`. Projected month
+  end = actual to date + recurring charges still due this month + the line's
+  baseline everyday average (its categories' average monthly spend over the
+  baseline months, one-offs and recurring-series rows left out, the forecast's
+  rule) x the share of the month still to come, so a lump sum is not
+  extrapolated. With fewer than 3 baseline months the month-to-date run rate
+  is used once 25 % of the month has elapsed; before that the pace is
+  `too_early` with a null projection and no Action Item. No pace for a month
+  without imports.
 - **Yearly lines** (`period='yearly'`). The amount is a yearly figure; each
-  month sets aside a twelfth. The line reports the fund built up this calendar
-  year, what was spent from it and what is left, so the month the bill lands
-  is not "over budget" while the fund covers it.
+  month sets aside a twelfth (the cash to put aside, not a limit). The limit is
+  a **rolling 12 months**: in month m the line may still spend the yearly
+  amount less what it spent in the 11 months before m, and it is over only
+  when the 12 months ending at m exceed the yearly amount. There is no January
+  reset. `fund` is `{yearly_amount_eur, window_start, window_end, spent_eur,
+  remaining_eur}`. Months of that span without imports are named in a warning.
 - **Rollover** (`rollover=1`). Under- or overspend from earlier months of the
   same calendar year (months with imports only) carries into the month:
-  `carried_eur`, `available_eur`, variance against available. Resets in January.
+  `carried_eur`, `available_eur`, variance against available. The per-month carry
+  resets in January; the variance of a window is carry-in + sum(planned) -
+  sum(actual), so the reset never hides an overspend.
 - Spending lines and the spending section carry the essentiality tier and tier totals.
 - **Action Item.** "On pace to exceed" for the month in progress, same
   thresholds as the overrun check, one deterministic id per line and month,
