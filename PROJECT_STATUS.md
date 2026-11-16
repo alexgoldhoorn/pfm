@@ -5,7 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-11-15
+Last updated: 2026-11-16
+
+**Recent (v2.5.101):** **Loan rate history, rate-change what-if, loan detection, agent tools.** Schema v45 (`loan_rate_periods`): rebuild a loan's past from its rates (history years in the schedule, interest/principal paid to date, pre-anchor bank debits compared); the forward projection is unchanged. What-if gains a rate change (not combinable with a lump sum/extra); `GET /networth/loans/detect` proposes a loan from recurring bank debits and the Net Worth loan form can fill from it; MCP `loans`/`loan_what_if` (48 tools) and chat `get_loans`/`loan_what_if` (50 tools). Docs `mortgage.md`. The migration changes the live database on merge.
 
 **Recent (v2.5.100):** **Loans & Mortgage page and budget loan link.** New sidebar page (summary, equity and loan-to-value, amortisation charts, payments vs bank, what-if for a lump sum or extra payments with an optional investment comparison), `GET /networth/loans/{id}/overview` and `/what-if`, partial `PUT /networth/loans/{id}`, Action Item when the bank payment differs from the schedule. Docs `mortgage.md`. **Budget debt line can link to a loan.** Schema v44 (`budget_lines.link_type` `manual`|`loan`): a debt line linked to a loan shows its balance and this month's principal/interest split; a link to a deleted item returns `link_broken` instead of an error. Docs `budgeting.md`.
 

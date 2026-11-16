@@ -374,3 +374,88 @@ def test_cost_control_views_render_against_real_data(page, server_url):
     finally:
         httpx.delete(f"{server_url}/api/v1/budgets/{bid}", headers=headers)
         httpx.delete(f"{server_url}/api/v1/portfolios/{pid}", headers=headers)
+
+
+def test_loans_page_rate_history_whatif_and_detect_at_phone_width(page, server_url):
+    """Rate history, rate-change what-if and bank detection, at 390px wide."""
+    headers = {"X-API-Key": API_KEY}
+    base = f"{server_url}/api/v1/networth/loans"
+    loan = httpx.post(
+        base,
+        headers=headers,
+        json={
+            "name": "Example Mortgage",
+            "principal": 100000,
+            "annual_rate_pct": 3.0,
+            "start_date": "2020-01-01",
+            "term_months": 240,
+            "rate_as_of": "2025-01-01",
+            "balance_as_of": 80000,
+        },
+    )
+    assert loan.status_code == 200, loan.text
+    lid = loan.json()["id"]
+    first = httpx.post(
+        f"{base}/{lid}/rate-periods",
+        headers=headers,
+        json={"from_date": "2020-01-01", "annual_rate_pct": 2.4},
+    )
+    assert first.status_code == 200, first.text
+    try:
+        page.set_viewport_size({"width": 390, "height": 800})
+        page.goto(f"{server_url}/index.html")
+        page.wait_for_load_state("networkidle")
+        page.locator(
+            "#appShell .sidebar-nav-link[data-page='loans']"
+        ).first.dispatch_event("click")
+        page.wait_for_function(
+            "document.querySelectorAll('#lmPeriodsBody tr').length >= 1 "
+            "&& !document.getElementById('lmPeriodsBody').textContent.includes('No earlier')"
+        )
+        assert "2.400%" in page.locator("#lmPeriodsBody").inner_text()
+        assert "Paid since" in page.locator("#lmPaidToDate").inner_text()
+        # history years show in the yearly table, marked and muted
+        page.evaluate("document.getElementById('lmScheduleDetails').open = true")
+        assert page.locator("#lmScheduleBody .badge").count() == 5
+        assert page.locator("#lmHistoryLegend").is_visible()
+
+        # add a second period through the form
+        page.fill("#lmPeriodFrom", "2023-01-01")
+        page.fill("#lmPeriodRate", "3.6")
+        page.click("#lmPeriodSubmit")
+        page.wait_for_function(
+            "document.getElementById('lmPeriodsBody').textContent.includes('3.600%')"
+        )
+        # a duplicate date is refused with the server's message
+        page.fill("#lmPeriodFrom", "2023-01-01")
+        page.fill("#lmPeriodRate", "4")
+        page.click("#lmPeriodSubmit")
+        page.wait_for_function(
+            "document.getElementById('lmPeriodStatus').textContent.includes('exists')"
+        )
+
+        # a rate change on its own; the repayment options step aside
+        page.fill("#lmWiNewRate", "4.5")
+        page.wait_for_function(
+            "document.getElementById('lmWiResult').textContent.includes('With new rate')"
+        )
+        assert page.locator("#lmWiLump").is_disabled()
+        assert "Costs" in page.locator("#lmWiResult").inner_text()
+
+        overflow = page.evaluate(
+            "document.documentElement.scrollWidth - document.documentElement.clientWidth"
+        )
+        assert overflow <= 0, f"horizontal overflow of {overflow}px at 390px"
+
+        # detect from bank on Net Worth: no bank rows gives a reason, not an error
+        page.locator(
+            "#appShell .sidebar-nav-link[data-page='networth']"
+        ).first.dispatch_event("click")
+        page.wait_for_selector("#nwLoanDetect")
+        page.click("#nwLoanDetect")
+        page.wait_for_function(
+            "document.getElementById('nwLoanStatus').textContent.includes('category')"
+        )
+        assert page.errors == []
+    finally:
+        httpx.delete(f"{base}/{lid}", headers=headers)

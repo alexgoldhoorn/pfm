@@ -5,6 +5,8 @@
 window.METRIC_HELP = {
   loanLtv: "Loan-to-value: the loan balance as a share of the value of your property assets on Net Worth. Lower is safer; the property value is only as fresh as its 'as of' date.",
   loanEquity: "Property value less the loan balance. Only as good as the property value you entered.",
+  loanPaidToDate: "Principal and interest paid since the loan started, rebuilt from the rate history plus the schedule from the recorded balance. Only shown when the history makes it complete.",
+  loanRateHistory: "The rates the loan had before its recorded balance. Each one recalculates the payment over the remaining term. The first covers any time before it.",
   loanInterestLeft: "Interest still to pay until the last scheduled payment, if the rate stays as entered.",
   irr: "Money-Weighted IRR: the yearly interest rate that makes all your purchases, sales, dividends and today's value balance out — the return you earned on your money, including the effect of when you added it. Source: CFA Institute, GIPS 2020 (money-weighted return).",
   totalReturn: "Total Return: total gain (price changes on what you hold, gains on what you sold, dividends and interest) divided by everything you've spent on purchases, all in EUR at the rates on the day. Lifetime, not annualised.",
@@ -169,12 +171,14 @@ window.PAGE_HELP = {
   loans: {
     title: "Loans & Mortgage",
     body: `
-      <p>One page for each loan you entered on Net Worth: where it stands, what is left to pay, whether the bank charges what the schedule says, and what an extra repayment would change. Nothing here changes data; add or edit loans on Net Worth.</p>
+      <p>One page for each loan you entered on Net Worth: where it stands, what is left to pay, whether the bank charges what the schedule says, and what an extra repayment would change. Add or edit loans on Net Worth; the only thing you change here is the rate history.</p>
       <ul>
         <li><strong>Cards.</strong> Balance today, rate (with the date it applies from), the monthly payment, the end date and the interest still to pay. <em>Equity</em> is the value of your <code>property</code> assets on Net Worth less the loan balance; with several loans the balance of all of them is used.</li>
-        <li><strong>Amortisation.</strong> Balance at the end of each year, and how much of what you pay each year is principal and how much is interest. The yearly table is under the charts. If the loan has a recorded balance and rate date, the schedule starts there and earlier history is unknown.</li>
+        <li><strong>Amortisation.</strong> Balance at the end of each year, and how much of what you pay each year is principal and how much is interest. The yearly table is under the charts. If the loan has a recorded balance and rate date, the schedule starts there; add the rates it had before under <em>Rate history</em> and the earlier years appear dashed and lighter, marked <em>history</em>.</li>
+        <li><strong>Rate history.</strong> The rates the loan had before its recorded balance (a first period from the loan start, then one per revision, optionally with the lender's balance on that date). Each period recalculates the payment over the remaining term. It adds what you paid so far, past years in the table, and compares the bank debits of those years with the rebuilt payment. The balance today, the end date and the interest still to pay do not change.</li>
         <li><strong>Payments vs bank.</strong> The scheduled payment against the debits in a bank category (the one named like the loan, else <em>Mortgage</em>; type another to override). <em>Differs</em> means the bank charged another amount; two months in a row with the same difference usually means the rate was revised, so update the rate and balance on Net Worth. <em>Not charged</em> appears only when a statement reaches past the month; <em>Pending</em> means the statement does not cover the month yet.</li>
-        <li><strong>What if I pay extra?</strong> A lump sum and/or an extra amount each month, used either to finish sooner (same payment) or to lower the payment (same end date). The optional investment comparison is a simple compound return before tax and costs. It is not advice.</li>
+        <li><strong>What if I pay extra?</strong> A lump sum and/or an extra amount each month, used either to finish sooner (same payment) or to lower the payment (same end date). The optional investment comparison is a simple compound return before tax and costs. It is not advice. A <strong>rate change</strong> (a new rate, or a change in points, from a date) recalculates the payment over the payments that remain and shows the new payment and the interest difference; it is shown on its own, never combined with a repayment.</li>
+        <li><strong>Detect from bank.</strong> On Net Worth, the loan form can fill itself from a recurring monthly debit in your bank rows (enter the principal and months to get the rate). Nothing is saved until you save the form.</li>
       </ul>`
   },
   decisions: {

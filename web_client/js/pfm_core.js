@@ -3401,6 +3401,29 @@ function createAPIClient() {
             if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to load loan overview');
             return resp.json().catch(() => ({}));
         },
+        async detectLoan(query) {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/loans/detect' + (query ? '?' + query : ''), { headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to look at the bank rows');
+            return resp.json().catch(() => ({}));
+        },
+        async createLoanRatePeriod(loanId, body) {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/loans/' + loanId + '/rate-periods', {
+                method: 'POST', headers: { 'X-API-Key': this.apiKey, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to add the period');
+            return resp.json().catch(() => ({}));
+        },
+        async updateLoanRatePeriod(loanId, periodId, body) {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/loans/' + loanId + '/rate-periods/' + periodId, {
+                method: 'PUT', headers: { 'X-API-Key': this.apiKey, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to update the period');
+            return resp.json().catch(() => ({}));
+        },
+        async deleteLoanRatePeriod(loanId, periodId) {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/loans/' + loanId + '/rate-periods/' + periodId, {
+                method: 'DELETE', headers: { 'X-API-Key': this.apiKey } });
+            if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to delete the period');
+            return resp.json().catch(() => ({}));
+        },
         async getLoanWhatIf(id, query) {
             const resp = await fetch(this.baseURL + '/api/v1/networth/loans/' + id + '/what-if' + (query ? '?' + query : ''), { headers: { 'X-API-Key': this.apiKey } });
             if (!resp.ok) throw new Error((await resp.json().catch(() => ({}))).detail || 'Failed to calculate');

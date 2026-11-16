@@ -1,6 +1,6 @@
 # Loans & Mortgage page
 
-Read-only page (sidebar: Planning, "Loans & Mortgage", page id `loans`) for the loans entered on Net Worth. It works with zero loans (empty state linking to Net Worth), one, or several (a loan picker). Loans are still created and edited on Net Worth; this page changes nothing.
+Page (sidebar: Planning, "Loans & Mortgage", page id `loans`) for the loans entered on Net Worth. It works with zero loans (empty state linking to Net Worth), one, or several (a loan picker). Loans are still created and edited on Net Worth; the only data this page changes is the rate history (below).
 
 ## Maths
 
@@ -40,3 +40,25 @@ With `invest_return_pct`, the same money (the lump sum, plus the extra monthly a
 ## Budget link
 
 A budget debt line can point at a loan: see `budgeting.md` (schema v44, `budget_lines.link_type`).
+
+## Rate history (schema v45)
+
+- Table `loan_rate_periods` (id, loan_id FK ON DELETE CASCADE, from_date, annual_rate_pct, balance_eur nullable, note, created_at, updated_at; UNIQUE(loan_id, from_date)). Nothing is backfilled.
+- Periods describe the loan's past and need an anchored loan (`rate_as_of` + `balance_as_of`); a period must start between `start_date` and the anchor date (inclusive). Without usable periods everything behaves exactly as before, to the cent, and the yearly rows carry no `history` key.
+- `loans.history_rows`: runs from `start_date` with the original principal over the original term. A period's rate applies to every payment whose previous payment date is on or after its `from_date`; the earliest period's rate also covers any time before it. The payment is recalculated at each period start over the remaining term, and `balance_eur` re-anchors the balance there. `extra_payment_eur` is not applied to history. Payments stop at the anchor date.
+- The forward projection from the anchor is untouched (balance today, end date, remaining interest). History only adds: `history: true` yearly rows before the anchor year (the anchor year keeps its forward figures and gains `history_*` fields), `summary.paid_to_date` and `summary.has_history`, and `rate_periods` on the overview.
+- `paid_to_date`: interest, principal, total, `payments_count`, `from_date`, `complete` (true for an unanchored loan, or an anchored one with history; false for anchored without periods, where sums would start at the anchor), `anchor_gap_eur` (history balance at the anchor less the recorded balance: a big gap means the periods are off).
+- Reconciliation: with history, `before_anchor` entries carry `scheduled_eur`, `difference_eur`, `status`, `complete`, `compared` (months with no history payment have `compared: false`). Without periods they keep the old `{month, actual_eur}` shape. Forward `rows`, the hint and the action item are unchanged.
+- Endpoints: `GET/POST /{id}/rate-periods`, `PUT/DELETE /{id}/rate-periods/{period_id}`. 422 for an unanchored loan, a date before the start or after the anchor, a rate outside 0-50 or a balance above the principal; 409 for a duplicate date (checked before INSERT: `get_connection()` turns an `IntegrityError` into `DatabaseError`); 404 for a period of another loan. PUT is partial; null clears `balance_eur`/`note`.
+
+## Rate-change what-if
+
+`GET /{id}/what-if` also takes `new_rate_pct` or `rate_change_pts` (exactly one) and `rate_from` (default today). The balance is taken after the last scheduled payment on or before `rate_from`, the payment is recalculated over the remaining payments (the fixed extra payment stays on top). The reply is the usual shape plus `rate_change` (`previous_rate_pct`, `new_rate_pct`, `balance_eur`, `payment_before_eur`, `payment_after_eur`, `payment_diff_eur`, `interest_diff_eur`); `interest_saved_eur` is negative when the rate rises. A rate change is **rejected with 422** when combined with a lump sum, extra monthly, `mode=payment` or an investment return (their dates would interact): run them separately. Rate outside 0-100 % or `rate_from` with no rate: 422. The web panel disables the other fields while a rate is typed.
+
+## Detect a loan from bank rows
+
+`GET /networth/loans/detect?category=&description=&principal=&term_months=` (registered before the `{loan_id}` routes; read-only, creates nothing). Debits come from `category`, else the category `Mortgage`, else one named like an existing loan; `description` narrows by substring. Needs 3+ months with a debit covering 60 % of the span. Monthly sums are grouped into stretches of an unchanged amount (within a euro) lasting 2+ months; one-off months are dropped, equal neighbours merged. Reply: `found`, `reason`, `monthly_payment_eur` (latest stretch), `first_payment_date`, `stretches` (each with `annual_rate_pct` and `balance_at_start_eur` when solvable), `rate_periods` (candidates for every stretch but the last, dated the payment before the change), `form` (start date one month before the first payment, plus rate, `rate_as_of`/`balance_as_of` when the amount changed), `notes`. Rates need a principal and term (given, or a principal from an incoming row at least 20 times the payment under a description filter); they assume the first debit found is the loan's first payment and an annuity over the remaining term. Nothing found gives `found: false` and a reason, never a 5xx. The Net Worth loan form has a "Detect from bank" button that fills the fields; saving stays manual.
+
+## Agent tools
+
+MCP `loans` (per loan: balance, rate, payment, end, interest, paid to date, rate periods, equity/LTV, latest complete bank month) and `loan_what_if` wrap the overview and what-if endpoints. Chat `get_loans` (via `mortgage.digest`) and `loan_what_if` call the services directly. All read-only.

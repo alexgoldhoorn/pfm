@@ -1082,6 +1082,27 @@ function _wireLoanForm() {
     });
     const cancel = document.getElementById('nwLoanCancel');
     if (cancel) cancel.addEventListener('click', _resetLoanForm);
+    const detect = document.getElementById('nwLoanDetect');
+    if (detect) detect.addEventListener('click', _detectLoanFromBank);
+}
+
+// Fill the loan form from a recurring debit in the bank rows. Read-only: the
+// user still saves by hand.
+async function _detectLoanFromBank() {
+    const el = id => document.getElementById(id);
+    const status = el('nwLoanStatus');
+    status.className = 'small text-muted'; status.textContent = 'Looking at the bank rows…';
+    try {
+        const q = loanDetectQuery({ category: el('nwLoanDetectCategory').value.trim(),
+            principal: el('nwLoanPrincipal').value, term: el('nwLoanTerm').value });
+        const proposal = await window.apiClient.detectLoan(q);
+        const fill = loanDetectFill(proposal);
+        Object.entries(fill.fields).forEach(([id, value]) => { el(id).value = value; });
+        // the rate-change fields are hidden until used
+        if (fill.fields.nwLoanRateAsOf) el('nwLoanRateRow').classList.add('show');
+        status.className = fill.ok ? 'small text-success' : 'small text-warning';
+        status.textContent = fill.message;
+    } catch (err) { status.className = 'small text-danger'; status.textContent = err.message; }
 }
 
 function _renderValuations(rows, portfolios) {
@@ -4118,15 +4139,28 @@ function loanRecentRows(rows, n) {
 }
 window.loanRecentRows = loanRecentRows;
 
-/** Query string for the what-if endpoint; null when nothing was entered. */
+/**
+ * Query string for the what-if endpoint; null when nothing was entered.
+ * A rate change (a new rate, or points) replaces the other options: the
+ * server refuses to combine them.
+ */
 function loanWhatIfQuery(v) {
     const num = x => (x === '' || x === null || x === undefined ? null : Number(x));
+    const parts = [];
+    const add = (k, val) => parts.push(k + '=' + encodeURIComponent(val));
+    const newRate = num(v.newRate), pts = num(v.ratePts);
+    const rateOk = newRate !== null && !isNaN(newRate) && newRate >= 0;
+    const ptsOk = !rateOk && pts !== null && !isNaN(pts) && pts !== 0;
+    if (rateOk || ptsOk) {
+        if (rateOk) add('new_rate_pct', String(newRate));
+        else add('rate_change_pts', String(pts));
+        if (v.rateFrom) add('rate_from', v.rateFrom);
+        return parts.join('&');
+    }
     const lump = num(v.lump), extra = num(v.extra), ret = num(v.returnPct);
     const lumpOk = lump !== null && !isNaN(lump) && lump > 0;
     const extraOk = extra !== null && !isNaN(extra) && extra > 0 && v.mode !== 'payment';
     if (!lumpOk && !extraOk) return null;
-    const parts = [];
-    const add = (k, val) => parts.push(k + '=' + encodeURIComponent(val));
     if (lumpOk) {
         add('lump_sum', String(lump));
         if (v.date) add('lump_date', v.date);
@@ -4146,24 +4180,38 @@ function loanMonthsText(months) {
 }
 window.loanMonthsText = loanMonthsText;
 
-/** Before/after rows of a what-if result. */
+/** Before/after rows of a what-if result; `good` is true, false or null (no change). */
 function loanWhatIfRows(res) {
     const b = res.baseline, s = res.scenario;
-    return [
+    const payDiff = s.monthly_payment_eur - b.monthly_payment_eur;
+    const rows = [
         { label: 'Ends', before: Fmt.date(b.end_date), after: Fmt.date(s.end_date),
-          delta: res.months_saved > 0 ? `${loanMonthsText(res.months_saved)} sooner` : '' },
+          delta: res.months_saved > 0 ? `${loanMonthsText(res.months_saved)} sooner` : '',
+          good: res.months_saved > 0 ? true : null },
         { label: 'Monthly payment', before: fmtEurCents(b.monthly_payment_eur), after: fmtEurCents(s.monthly_payment_eur),
-          delta: s.monthly_payment_eur === b.monthly_payment_eur ? '' :
-              `${s.monthly_payment_eur < b.monthly_payment_eur ? '−' : '+'}${fmtEurCents(Math.abs(s.monthly_payment_eur - b.monthly_payment_eur))}` },
+          delta: payDiff === 0 ? '' : `${payDiff < 0 ? '−' : '+'}${fmtEurCents(Math.abs(payDiff))}`,
+          good: payDiff === 0 ? null : payDiff < 0 },
         { label: 'Interest still to pay', before: fmtEurWhole(b.interest_remaining_eur), after: fmtEurWhole(s.interest_remaining_eur),
-          delta: res.interest_saved_eur ? `−${fmtEurWhole(res.interest_saved_eur)}` : '' },
+          delta: res.interest_saved_eur ? `${res.interest_saved_eur > 0 ? '−' : '+'}${fmtEurWhole(Math.abs(res.interest_saved_eur))}` : '',
+          good: res.interest_saved_eur ? res.interest_saved_eur > 0 : null },
     ];
+    return rows;
 }
 window.loanWhatIfRows = loanWhatIfRows;
 
 function loanWhatIfHtml(res) {
-    const rows = loanWhatIfRows(res).map(r => `<tr><td>${esc(r.label)}</td><td class="text-end">${esc(r.before)}</td><td class="text-end">${esc(r.after)}</td><td class="text-end text-success">${esc(r.delta)}</td></tr>`).join('');
-    let html = `<div class="table-responsive"><table class="table table-sm mb-2"><thead><tr><th></th><th class="text-end">As scheduled</th><th class="text-end">With extra</th><th class="text-end">Change</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    const rc = res.rate_change;
+    const cls = g => (g === null ? '' : g ? 'text-success' : 'text-danger');
+    const rows = loanWhatIfRows(res).map(r => `<tr><td>${esc(r.label)}</td><td class="text-end">${esc(r.before)}</td><td class="text-end">${esc(r.after)}</td><td class="text-end ${cls(r.good)}">${esc(r.delta)}</td></tr>`).join('');
+    let html = '';
+    if (rc) {
+        html += `<div class="mb-2">Rate ${esc(Fmt.num(rc.previous_rate_pct, 2, 2))}% → <strong>${esc(Fmt.num(rc.new_rate_pct, 2, 2))}%</strong> from ${esc(Fmt.date(rc.from_date))}, on a balance of ${fmtEurWhole(rc.balance_eur)}. The payment is recalculated over the payments that remain.</div>`;
+    }
+    html += `<div class="table-responsive"><table class="table table-sm mb-2"><thead><tr><th></th><th class="text-end">As scheduled</th><th class="text-end">${rc ? 'With new rate' : 'With extra'}</th><th class="text-end">Change</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    if (rc) {
+        const more = rc.interest_diff_eur >= 0;
+        html += `<div class="mb-2">${more ? 'Costs' : 'Saves'} <strong>${fmtEurWhole(Math.abs(rc.interest_diff_eur))}</strong> in interest over the rest of the loan and ${rc.payment_diff_eur >= 0 ? 'adds' : 'takes off'} ${fmtEurCents(Math.abs(rc.payment_diff_eur))} a month.</div>`;
+    }
     const inv = res.invest;
     if (inv) {
         const diff = inv.gain_minus_interest_saved_eur;
@@ -4189,6 +4237,12 @@ function loanCards(overview) {
         { label: 'Ends', value: Fmt.date(s.end_date),
           sub: `${fmtEurWhole(s.interest_remaining_eur)} interest to pay`, help: 'loanInterestLeft' },
     ];
+    const paid = s.paid_to_date;
+    if (paid && paid.complete) {
+        cards.push({ label: 'Paid so far', value: fmtEurWhole(paid.total_eur),
+            sub: `${fmtEurWhole(paid.principal_eur)} principal, ${fmtEurWhole(paid.interest_eur)} interest since ${Fmt.date(paid.from_date)}`,
+            help: 'loanPaidToDate' });
+    }
     if (eq.equity_eur === null || eq.equity_eur === undefined) {
         cards.push({ label: 'Equity', value: '—', sub: eq.reason || 'No property value', help: 'loanEquity' });
     } else {
@@ -4209,6 +4263,8 @@ function loanChartModel(schedule) {
         balance: rows.map(r => r.balance_end_eur),
         principal: rows.map(r => r.principal_paid_eur),
         interest: rows.map(r => r.interest_paid_eur),
+        // years rebuilt from the rate history, drawn lighter than projected ones
+        history: rows.map(r => !!r.history),
     };
 }
 window.loanChartModel = loanChartModel;
@@ -4235,12 +4291,22 @@ function loanBalanceSvg(model, W) {
     const nt = niceTicks(0, Math.max(...model.balance, 1), 4);
     const xOf = i => PAD.left + (n === 1 ? innerW / 2 : (i / (n - 1)) * innerW);
     const f = _lmChartFrame(W, H, PAD, nt.hi, nt.ticks, nt.step, model.years, xOf);
-    const path = model.balance.map((v, i) => `${i ? 'L' : 'M'}${xOf(i).toFixed(1)},${f.yOf(v).toFixed(1)}`).join(' ');
+    const hist = model.history || [];
+    const firstForward = hist.findIndex(h => !h);
+    const edge = firstForward < 0 ? n : firstForward;
+    const seg = (from, to) => model.balance.slice(from, to).map((v, k) => `${k ? 'L' : 'M'}${xOf(from + k).toFixed(1)},${f.yOf(v).toFixed(1)}`).join(' ');
+    // the dashed history line runs up to and including the first projected year
+    const histPath = edge > 0 ? seg(0, Math.min(n, edge + 1)) : '';
+    const fwdPath = edge < n ? seg(edge, n) : '';
     const dots = model.balance.map((v, i) => {
-        const tip = chartTipHtml(String(model.years[i]), [{ label: 'Balance at year end', value: fmtEurWhole(v), color: 'var(--viz-1)' }]);
-        return `<g data-chart-tip="${esc(tip)}"><circle cx="${xOf(i).toFixed(1)}" cy="${f.yOf(v).toFixed(1)}" r="9" fill="transparent"/><circle cx="${xOf(i).toFixed(1)}" cy="${f.yOf(v).toFixed(1)}" r="${n > 25 ? 2 : 3}" style="fill:var(--viz-1)"/></g>`;
+        const isHist = !!hist[i];
+        const tip = chartTipHtml(String(model.years[i]) + (isHist ? ' (rate history)' : ''), [{ label: 'Balance at year end', value: fmtEurWhole(v), color: 'var(--viz-1)' }]);
+        const mark = isHist
+            ? `<circle cx="${xOf(i).toFixed(1)}" cy="${f.yOf(v).toFixed(1)}" r="${n > 25 ? 2 : 3}" fill="none" style="stroke:var(--viz-1)" stroke-width="1.5"/>`
+            : `<circle cx="${xOf(i).toFixed(1)}" cy="${f.yOf(v).toFixed(1)}" r="${n > 25 ? 2 : 3}" style="fill:var(--viz-1)"/>`;
+        return `<g data-chart-tip="${esc(tip)}"><circle cx="${xOf(i).toFixed(1)}" cy="${f.yOf(v).toFixed(1)}" r="9" fill="transparent"/>${mark}</g>`;
     }).join('');
-    return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Loan balance by year" style="overflow:visible">${f.axes}<path d="${path}" fill="none" style="stroke:var(--viz-1)" stroke-width="2" stroke-linejoin="round"/>${dots}</svg>`;
+    return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Loan balance by year" style="overflow:visible">${f.axes}${histPath ? `<path d="${histPath}" fill="none" style="stroke:var(--viz-1)" stroke-width="2" stroke-dasharray="4 3" stroke-linejoin="round" opacity="0.7"/>` : ''}${fwdPath ? `<path d="${fwdPath}" fill="none" style="stroke:var(--viz-1)" stroke-width="2" stroke-linejoin="round"/>` : ''}${dots}</svg>`;
 }
 window.loanBalanceSvg = loanBalanceSvg;
 
@@ -4260,11 +4326,12 @@ function loanPaidSvg(model, W) {
     const bars = model.years.map((y, i) => {
         const x = xOf(i) - barW / 2;
         const yP = f.yOf(model.principal[i]), yTop = f.yOf(totals[i]), base = f.yOf(0);
-        const tip = chartTipHtml(String(y), [
+        const isHist = !!(model.history || [])[i];
+        const tip = chartTipHtml(String(y) + (isHist ? ' (rate history)' : ''), [
             { label: 'Principal', value: fmtEurWhole(model.principal[i]), color: 'var(--viz-1)' },
             { label: 'Interest', value: fmtEurWhole(model.interest[i]), color: 'var(--viz-2)' },
         ]);
-        return `<g data-chart-tip="${esc(tip)}"><rect x="${(PAD.left + i * slot).toFixed(1)}" y="${PAD.top}" width="${slot.toFixed(1)}" height="${H - PAD.top - PAD.bottom}" fill="transparent"/>
+        return `<g data-chart-tip="${esc(tip)}"${isHist ? ' opacity="0.55"' : ''}><rect x="${(PAD.left + i * slot).toFixed(1)}" y="${PAD.top}" width="${slot.toFixed(1)}" height="${H - PAD.top - PAD.bottom}" fill="transparent"/>
             <rect x="${x.toFixed(1)}" y="${yP.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(0, base - yP).toFixed(1)}" style="fill:var(--viz-1)"/>
             <rect x="${x.toFixed(1)}" y="${yTop.toFixed(1)}" width="${barW.toFixed(1)}" height="${Math.max(0, yP - yTop).toFixed(1)}" style="fill:var(--viz-2)"/></g>`;
     }).join('');
@@ -4272,24 +4339,138 @@ function loanPaidSvg(model, W) {
 }
 window.loanPaidSvg = loanPaidSvg;
 
+/** Months before the recorded balance, compared with the rate-history payment. */
+function loanBeforeAnchorHtml(rows) {
+    const recent = loanRecentRows(rows, 12);
+    const differs = rows.filter(r => r.status === 'differs').length;
+    return `<details class="mt-2"><summary class="small fw-semibold">Before the recorded balance (from the rate history, ${rows.length} months${differs ? `, ${differs} differ` : ''})</summary>
+        <div class="table-responsive mt-1"><table class="table table-sm mb-0"><thead><tr><th>Month</th><th class="text-end">Rate history</th><th class="text-end">Bank</th><th class="text-end">Difference</th><th>Status</th></tr></thead><tbody>${recent.map(r => `
+        <tr><td>${esc(r.month)}</td><td class="text-end">${fmtEurCents(r.scheduled_eur)}</td>
+        <td class="text-end">${r.actual_eur ? fmtEurCents(r.actual_eur) : '—'}</td>
+        <td class="text-end">${r.actual_eur ? `${r.difference_eur > 0 ? '+' : r.difference_eur < 0 ? '−' : ''}${fmtEurCents(Math.abs(r.difference_eur))}` : '—'}</td>
+        <td>${loanStatusBadge(r.status)}</td></tr>`).join('')}</tbody></table></div>
+        <div class="text-muted small">Newest 12 shown. A difference usually means a period's rate or balance is a little off.</div></details>`;
+}
+window.loanBeforeAnchorHtml = loanBeforeAnchorHtml;
+
 function loanReconHtml(recon) {
     if (!recon || !recon.rows) {
         return `<p class="text-muted small mb-0">${esc((recon && recon.reason) || 'No bank data to compare with.')}</p>`;
     }
     const rows = loanRecentRows(recon.rows, 12);
-    if (!rows.length) return '<p class="text-muted small mb-0">No scheduled payment has fallen due yet.</p>';
-    let html = `<div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>Month</th><th class="text-end">Scheduled</th><th class="text-end">Bank</th><th class="text-end">Difference</th><th>Status</th></tr></thead><tbody>${rows.map(r => `
+    let html = !rows.length ? '<p class="text-muted small mb-0">No scheduled payment has fallen due yet.</p>' : `<div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th>Month</th><th class="text-end">Scheduled</th><th class="text-end">Bank</th><th class="text-end">Difference</th><th>Status</th></tr></thead><tbody>${rows.map(r => `
         <tr><td>${esc(r.month)}</td><td class="text-end">${fmtEurCents(r.scheduled_eur)}</td>
         <td class="text-end">${r.actual_eur ? fmtEurCents(r.actual_eur) : '—'}</td>
         <td class="text-end">${r.actual_eur ? `${r.difference_eur > 0 ? '+' : r.difference_eur < 0 ? '−' : ''}${fmtEurCents(Math.abs(r.difference_eur))}` : '—'}</td>
         <td>${loanStatusBadge(r.status)}</td></tr>`).join('')}</tbody></table></div>`;
     html += `<p class="text-muted small mb-0 mt-2">Debits in the category <strong>${esc(recon.category)}</strong>${recon.data_through ? `; statements reach ${esc(Fmt.date(recon.data_through))}` : ''}.</p>`;
-    if ((recon.before_anchor || []).length) {
-        html += `<p class="text-muted small mb-0">Before the schedule's start: ${recon.before_anchor.map(b => `${esc(b.month)} ${fmtEurWhole(b.actual_eur)}`).join(', ')} (no scheduled payment to compare).</p>`;
+    const before = recon.before_anchor || [];
+    const compared = before.filter(b => b.compared);
+    if (compared.length) {
+        html += loanBeforeAnchorHtml(compared);
+    }
+    const plain = before.filter(b => !b.compared);
+    if (plain.length) {
+        html += `<p class="text-muted small mb-0">Before the schedule's start: ${plain.map(b => `${esc(b.month)} ${fmtEurWhole(b.actual_eur)}`).join(', ')} (no scheduled payment to compare).</p>`;
     }
     return html;
 }
 window.loanReconHtml = loanReconHtml;
+
+/** Yearly table rows; history years are muted with a badge. */
+function loanScheduleRowsHtml(schedule) {
+    return (schedule || []).map(r => {
+        const hist = !!r.history;
+        const extra = r.history_payments_count
+            ? `<div class="text-muted small">incl. ${r.history_payments_count} before the recorded balance: ${fmtEurWhole(r.history_principal_paid_eur)} principal, ${fmtEurWhole(r.history_interest_paid_eur)} interest</div>`
+            : '';
+        return `<tr class="${hist ? 'table-secondary text-muted' : ''}"><td>${r.year}${hist ? ' <span class="badge text-bg-secondary">history</span>' : ''}${extra}</td><td class="text-end">${fmtEurWhole(r.payments_eur)}</td><td class="text-end">${fmtEurWhole(r.principal_paid_eur)}</td><td class="text-end">${fmtEurWhole(r.interest_paid_eur)}</td><td class="text-end">${fmtEurWhole(r.balance_end_eur)}</td></tr>`;
+    }).join('');
+}
+window.loanScheduleRowsHtml = loanScheduleRowsHtml;
+
+/** Rate-history table body. */
+function loanPeriodsHtml(periods) {
+    if (!(periods || []).length) {
+        return '<tr><td colspan="5" class="text-muted text-center py-2">No earlier rates yet.</td></tr>';
+    }
+    return periods.map(p => `<tr><td>${esc(Fmt.date(p.from_date))}</td><td class="text-end">${esc(Fmt.num(p.annual_rate_pct, 3, 3))}%</td>
+        <td class="text-end">${p.balance_eur === null || p.balance_eur === undefined ? '—' : fmtEurWhole(p.balance_eur)}</td>
+        <td class="small text-muted">${esc(p.note || '')}</td>
+        <td class="text-end text-nowrap"><button type="button" class="btn btn-sm btn-outline-secondary me-1" title="Edit" data-period-edit="${Number(p.id)}"><i class="bi bi-pencil"></i></button><button type="button" class="btn btn-sm btn-outline-danger" title="Delete" data-period-delete="${Number(p.id)}"><i class="bi bi-trash"></i></button></td></tr>`).join('');
+}
+window.loanPeriodsHtml = loanPeriodsHtml;
+
+/** What the rate-history card says about what has been paid so far. */
+function loanPaidToDateHtml(summary) {
+    const p = summary && summary.paid_to_date;
+    if (!summary || !summary.anchored) {
+        return '<span class="text-muted">The schedule already runs from the loan start, so nothing earlier is missing. Rate history applies once the loan has a recorded balance and rate date (Net Worth → Loans → Rate change).</span>';
+    }
+    if (!p || !p.complete) {
+        return `<span class="text-muted">The schedule runs from the balance recorded on ${esc(Fmt.date(summary.anchor_date))}; what was paid before is unknown. Add the rates the loan had since the start to rebuild it.</span>`;
+    }
+    let html = `Paid since ${esc(Fmt.date(p.from_date))}: <strong>${fmtEurWhole(p.principal_eur)}</strong> principal and <strong>${fmtEurWhole(p.interest_eur)}</strong> interest in ${p.payments_count} payments.`;
+    if (p.anchor_gap_eur !== null && p.anchor_gap_eur !== undefined && Math.abs(p.anchor_gap_eur) > 1) {
+        html += ` <span class="text-warning">The history ends ${fmtEurWhole(Math.abs(p.anchor_gap_eur))} ${p.anchor_gap_eur > 0 ? 'above' : 'below'} the recorded balance: check the rates or add a balance to a period.</span>`;
+    }
+    return html;
+}
+window.loanPaidToDateHtml = loanPaidToDateHtml;
+
+/** Request body of a rate period from the form values, or {error}. */
+function loanPeriodPayload(v) {
+    if (!v.from) return { error: 'Choose the date the rate applies from.' };
+    const rate = v.rate === '' || v.rate === null || v.rate === undefined ? NaN : Number(v.rate);
+    if (isNaN(rate) || rate < 0 || rate > 50) return { error: 'The rate must be between 0 and 50 %.' };
+    const body = { from_date: v.from, annual_rate_pct: rate, note: (v.note || '').trim() || null };
+    if (v.balance === '' || v.balance === null || v.balance === undefined) {
+        body.balance_eur = null;
+    } else {
+        const b = Number(v.balance);
+        if (isNaN(b) || b < 0) return { error: 'The balance cannot be negative.' };
+        body.balance_eur = b;
+    }
+    return { body };
+}
+window.loanPeriodPayload = loanPeriodPayload;
+
+/** Query string of the detect call from the loan form's current values. */
+function loanDetectQuery(v) {
+    const parts = [];
+    const add = (k, val) => parts.push(k + '=' + encodeURIComponent(val));
+    if (v.category) add('category', v.category);
+    if (v.description) add('description', v.description);
+    const principal = Number(v.principal), term = parseInt(v.term, 10);
+    if (principal > 0) add('principal', String(principal));
+    if (term > 0) add('term_months', String(term));
+    return parts.join('&');
+}
+window.loanDetectQuery = loanDetectQuery;
+
+/**
+ * Turn a detect proposal into form values and a message. Only keys the
+ * proposal knows are returned; the user still saves by hand.
+ */
+function loanDetectFill(proposal) {
+    if (!proposal || !proposal.found) {
+        return { fields: {}, message: (proposal && proposal.reason) || 'Nothing detected.', ok: false };
+    }
+    const f = proposal.form || {};
+    const fields = {};
+    const map = { start_date: 'nwLoanStart', annual_rate_pct: 'nwLoanRate', principal: 'nwLoanPrincipal',
+        term_months: 'nwLoanTerm', rate_as_of: 'nwLoanRateAsOf', balance_as_of: 'nwLoanBalanceAsOf' };
+    Object.entries(map).forEach(([key, id]) => { if (f[key] !== undefined && f[key] !== null) fields[id] = f[key]; });
+    let message = `Found a payment of ${fmtEurCents(proposal.monthly_payment_eur)} a month over ${proposal.months_observed} months, first on ${Fmt.date(proposal.first_payment_date)}.`;
+    const periods = proposal.rate_periods || [];
+    if (periods.length) {
+        message += ` Earlier rates to add under Rate history after saving: ${periods.map(p => `${Fmt.date(p.from_date)} ${Fmt.num(p.annual_rate_pct, 3, 3)}%`).join(', ')}.`;
+    }
+    if (proposal.rates_reason) message += ` ${proposal.rates_reason}`;
+    (proposal.notes || []).forEach(n => { message += ` ${n}`; });
+    return { fields, message, ok: true };
+}
+window.loanDetectFill = loanDetectFill;
 
 let _lmLoans = [];
 let _lmLoanId = null;
@@ -4328,7 +4509,15 @@ function _lmWire() {
         _lmLoadOverview();
     });
     $('lmCategory').addEventListener('change', () => _lmLoadOverview());
-    ['lmWiLump', 'lmWiDate', 'lmWiExtra', 'lmWiMode', 'lmWiReturn'].forEach(id => {
+    $('lmPeriodForm').addEventListener('submit', _lmSavePeriod);
+    $('lmPeriodCancel').addEventListener('click', _lmResetPeriodForm);
+    $('lmPeriodsBody').addEventListener('click', e => {
+        const edit = e.target.closest('[data-period-edit]');
+        const del = e.target.closest('[data-period-delete]');
+        if (edit) _lmEditPeriod(Number(edit.dataset.periodEdit));
+        if (del) _lmDeletePeriod(Number(del.dataset.periodDelete));
+    });
+    ['lmWiLump', 'lmWiDate', 'lmWiExtra', 'lmWiMode', 'lmWiReturn', 'lmWiNewRate', 'lmWiRatePts', 'lmWiRateFrom'].forEach(id => {
         const el = $(id);
         el.addEventListener('input', _lmScheduleWhatIf);
         el.addEventListener('change', _lmScheduleWhatIf);
@@ -4356,7 +4545,10 @@ async function _lmLoadOverview() {
         const W = Math.max(320, Math.min(900, $('lmBalanceChart').clientWidth || 560));
         $('lmBalanceChart').innerHTML = loanBalanceSvg(model, W);
         $('lmPaidChart').innerHTML = loanPaidSvg(model, W);
-        $('lmScheduleBody').innerHTML = (ov.schedule || []).map(r => `<tr><td>${r.year}</td><td class="text-end">${fmtEurWhole(r.payments_eur)}</td><td class="text-end">${fmtEurWhole(r.principal_paid_eur)}</td><td class="text-end">${fmtEurWhole(r.interest_paid_eur)}</td><td class="text-end">${fmtEurWhole(r.balance_end_eur)}</td></tr>`).join('');
+        $('lmScheduleBody').innerHTML = loanScheduleRowsHtml(ov.schedule);
+        const hasHistory = (ov.schedule || []).some(r => r.history);
+        $('lmHistoryLegend').style.display = hasHistory ? 'block' : 'none';
+        _lmRenderPeriods(ov);
         // the yearly table starts collapsed on a phone
         $('lmScheduleDetails').open = window.innerWidth >= 768;
         const recon = ov.reconciliation;
@@ -4373,6 +4565,68 @@ async function _lmLoadOverview() {
     }
 }
 
+let _lmPeriods = [];
+
+function _lmRenderPeriods(ov) {
+    const $ = id => document.getElementById(id);
+    _lmPeriods = ov.rate_periods || [];
+    $('lmRateHistoryHelp').setAttribute('title', (window.METRIC_HELP || {}).loanRateHistory || '');
+    $('lmPeriodsBody').innerHTML = loanPeriodsHtml(_lmPeriods);
+    $('lmPaidToDate').innerHTML = loanPaidToDateHtml(ov.summary);
+    // periods describe the time before the recorded balance, so they need one
+    const anchored = !!ov.summary.anchored;
+    $('lmPeriodForm').querySelectorAll('input,button').forEach(el => { el.disabled = !anchored; });
+    $('lmPeriodStatus').textContent = '';
+}
+
+function _lmResetPeriodForm() {
+    const $ = id => document.getElementById(id);
+    $('lmPeriodForm').reset();
+    $('lmPeriodId').value = '';
+    $('lmPeriodSubmit').textContent = 'Add period';
+}
+
+function _lmEditPeriod(id) {
+    const $ = id2 => document.getElementById(id2);
+    const p = _lmPeriods.find(x => Number(x.id) === id);
+    if (!p) return;
+    $('lmPeriodId').value = String(p.id);
+    $('lmPeriodFrom').value = p.from_date;
+    $('lmPeriodRate').value = p.annual_rate_pct;
+    $('lmPeriodBalance').value = p.balance_eur === null || p.balance_eur === undefined ? '' : p.balance_eur;
+    $('lmPeriodNote').value = p.note || '';
+    $('lmPeriodSubmit').textContent = 'Save period';
+    $('lmPeriodFrom').focus();
+}
+
+async function _lmSavePeriod(e) {
+    e.preventDefault();
+    const $ = id => document.getElementById(id);
+    const status = $('lmPeriodStatus');
+    const r = loanPeriodPayload({ from: $('lmPeriodFrom').value, rate: $('lmPeriodRate').value,
+        balance: $('lmPeriodBalance').value, note: $('lmPeriodNote').value });
+    if (r.error) { status.className = 'small text-danger'; status.textContent = r.error; return; }
+    status.className = 'small text-muted'; status.textContent = 'Saving…';
+    try {
+        const editing = $('lmPeriodId').value;
+        if (editing) await window.apiClient.updateLoanRatePeriod(_lmLoanId, editing, r.body);
+        else await window.apiClient.createLoanRatePeriod(_lmLoanId, r.body);
+        _lmResetPeriodForm();
+        await _lmLoadOverview();
+    } catch (err) { status.className = 'small text-danger'; status.textContent = err.message; }
+}
+
+async function _lmDeletePeriod(id) {
+    if (!(await confirmDialog({ title: 'Delete rate period', message: 'Remove this period from the rate history?', confirmLabel: 'Delete', danger: true }))) return;
+    try {
+        await window.apiClient.deleteLoanRatePeriod(_lmLoanId, id);
+        await _lmLoadOverview();
+    } catch (err) {
+        const status = document.getElementById('lmPeriodStatus');
+        status.className = 'small text-danger'; status.textContent = err.message;
+    }
+}
+
 async function _lmFillCategories() {
     const list = document.getElementById('lmCategoryList');
     if (!list || list.dataset.filled) return;
@@ -4385,9 +4639,15 @@ async function _lmFillCategories() {
 
 function _lmScheduleWhatIf() {
     clearTimeout(_lmWiTimer);
-    const mode = document.getElementById('lmWiMode').value;
+    const $ = id => document.getElementById(id);
+    const mode = $('lmWiMode').value;
+    // a rate change is run on its own, so the repayment options step aside
+    const rateSet = $('lmWiNewRate').value !== '' || $('lmWiRatePts').value !== '';
+    $('lmWiNewRate').disabled = $('lmWiRatePts').value !== '' && $('lmWiNewRate').value === '';
+    $('lmWiRatePts').disabled = $('lmWiNewRate').value !== '';
+    ['lmWiLump', 'lmWiDate', 'lmWiMode', 'lmWiReturn'].forEach(id => { $(id).disabled = rateSet; });
     // extra per month only applies when finishing sooner
-    document.getElementById('lmWiExtra').disabled = mode === 'payment';
+    $('lmWiExtra').disabled = rateSet || mode === 'payment';
     _lmWiTimer = setTimeout(_lmRunWhatIf, 350);
 }
 
@@ -4396,9 +4656,10 @@ async function _lmRunWhatIf() {
     const q = loanWhatIfQuery({
         lump: $('lmWiLump').value, date: $('lmWiDate').value, extra: $('lmWiExtra').value,
         mode: $('lmWiMode').value, returnPct: $('lmWiReturn').value,
+        newRate: $('lmWiNewRate').value, ratePts: $('lmWiRatePts').value, rateFrom: $('lmWiRateFrom').value,
     });
     const out = $('lmWiResult');
-    if (!q) { out.className = 'small text-muted'; out.textContent = 'Enter an amount to see the effect.'; return; }
+    if (!q) { out.className = 'small text-muted'; out.textContent = 'Enter an amount or a new rate to see the effect.'; return; }
     const seq = ++_lmWiSeq;
     try {
         const res = await window.apiClient.getLoanWhatIf(_lmLoanId, q);
