@@ -342,6 +342,48 @@ def _period_out(period: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def digest(
+    db, loan: Dict[str, Any], fx: Callable[[str], float], today: Optional[date] = None
+) -> Dict[str, Any]:
+    """One loan in a compact form for the chat and other readers.
+
+    The headline figures of ``overview`` without the yearly table and the
+    month-by-month reconciliation: the latest complete month only.
+    """
+    today = today or date.today()
+    ov = overview(db, loan, fx, today)
+    s, eq, recon = ov["summary"], ov["equity"], ov["reconciliation"]
+    latest = latest_complete_row(recon)
+    paid = s["paid_to_date"]
+    return {
+        "id": s["id"],
+        "name": s["name"],
+        "lender": s["lender"],
+        "balance_eur": s["balance_eur"],
+        "annual_rate_pct": s["annual_rate_pct"],
+        "rate_as_of": s["rate_as_of"],
+        "monthly_payment_eur": s["monthly_payment_eur"],
+        "end_date": s["end_date"],
+        "months_left": s["months_left"],
+        "interest_remaining_eur": s["interest_remaining_eur"],
+        "interest_paid_this_year_eur": s["interest_paid_this_year_eur"],
+        "interest_scheduled_this_year_eur": s["interest_scheduled_this_year_eur"],
+        "paid_to_date": paid if paid["complete"] else None,
+        "rate_periods": ov["rate_periods"],
+        "equity_eur": eq.get("equity_eur"),
+        "ltv_pct": eq.get("ltv_pct"),
+        "equity_note": eq.get("reason") or eq.get("note"),
+        "latest_bank_month": (
+            {k: latest[k] for k in ("month", "scheduled_eur", "actual_eur", "status")}
+            if latest
+            else None
+        ),
+        "bank_hint": (recon or {}).get("hint"),
+        "bank_reason": (recon or {}).get("reason"),
+        "anchor_note": s["anchor_note"],
+    }
+
+
 # ── Detect a loan from bank rows ───────────────────────────────────────────
 
 # months with debits needed before a payment counts as recurring

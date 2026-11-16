@@ -9,6 +9,7 @@ from pfm_mcp import TOOLS, config
 from pfm_mcp.tools import (  # noqa: F401  (importing registers the tools)
     allocate,
     analytics,
+    loans,
     networth,
     portfolio,
     research,

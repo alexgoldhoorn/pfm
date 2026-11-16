@@ -29,10 +29,10 @@ def db(tmp_path):
     return d
 
 
-def test_tools_list_has_48_entries():
+def test_tools_list_has_50_entries():
     from portf_server.chat_tools import TOOLS
 
-    assert len(TOOLS) == 48
+    assert len(TOOLS) == 50
 
 
 def test_every_tool_definition_has_a_handler():
@@ -734,3 +734,84 @@ def test_budget_digest_keeps_too_early_pace_and_tells_the_model_not_to_guess(cos
     assert digest["sections"][0]["pace"]["projected_month_end_eur"] is None
     assert digest["lines_at_risk_or_over"] == []
     assert "too_early" in digest["notes"] and "rolling 12 months" in digest["notes"]
+
+
+# ── loans ──────────────────────────────────────────────────────────────────
+
+
+def _loan_db(tmp_path, with_periods=True):
+    from portf_manager.database import Database
+
+    d = Database(str(tmp_path / "loans.db"))
+    lid = d.create_loan(
+        "Example Mortgage",
+        100000.0,
+        3.0,
+        "2020-01-01",
+        240,
+        rate_as_of="2025-01-01",
+        balance_as_of=80000.0,
+    )
+    if with_periods:
+        d.create_loan_rate_period(lid, "2020-01-01", 2.4)
+    return d
+
+
+def test_get_loans_reports_the_loan_and_the_history(tmp_path):
+    from portf_server.chat_tools import execute_tool
+
+    res = json.loads(execute_tool("get_loans", {}, _loan_db(tmp_path)))
+    loan = res["loans"][0]
+    assert loan["name"] == "Example Mortgage" and loan["annual_rate_pct"] == 3.0
+    assert loan["monthly_payment_eur"] > 0 and loan["balance_eur"] > 0
+    assert loan["paid_to_date"]["complete"] is True
+    assert [p["from_date"] for p in loan["rate_periods"]] == ["2020-01-01"]
+    assert loan["equity_eur"] is None and "property" in loan["equity_note"]
+    assert loan["latest_bank_month"] is None and "No spending category" in (
+        loan["bank_reason"]
+    )
+
+
+def test_get_loans_hides_an_incomplete_paid_to_date(tmp_path):
+    from portf_server.chat_tools import execute_tool
+
+    res = json.loads(
+        execute_tool("get_loans", {}, _loan_db(tmp_path, with_periods=False))
+    )
+    assert res["loans"][0]["paid_to_date"] is None
+
+
+def test_get_loans_with_no_loan(tmp_path):
+    from portf_manager.database import Database
+    from portf_server.chat_tools import execute_tool
+
+    res = json.loads(execute_tool("get_loans", {}, Database(str(tmp_path / "e.db"))))
+    assert res["loans"] == []
+
+
+def test_loan_what_if_lump_sum_and_rate_change(tmp_path):
+    from portf_server.chat_tools import execute_tool
+
+    d = _loan_db(tmp_path)
+    lump = json.loads(execute_tool("loan_what_if", {"lump_sum": 5000}, d))
+    assert lump["interest_saved_eur"] > 0 and lump["loan"]["name"]
+    rate = json.loads(
+        execute_tool(
+            "loan_what_if",
+            {"loan": "example mortgage", "rate_change_pts": 1.0},
+            d,
+        )
+    )
+    assert rate["rate_change"]["payment_diff_eur"] > 0
+    assert rate["interest_saved_eur"] < 0
+
+
+def test_loan_what_if_errors_are_text(tmp_path):
+    from portf_server.chat_tools import execute_tool
+
+    d = _loan_db(tmp_path)
+    out = execute_tool("loan_what_if", {"new_rate_pct": 4, "lump_sum": 100}, d)
+    assert out.startswith("Error:") and "cannot be combined" in out
+    assert execute_tool("loan_what_if", {"loan": "nope"}, d) == "Error: No such loan"
+    d.create_loan("Second", 1000, 3, "2020-01-01", 12)
+    assert "Several loans" in execute_tool("loan_what_if", {"lump_sum": 1}, d)

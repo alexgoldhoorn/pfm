@@ -163,6 +163,8 @@ class TestChatTurn:
             "get_spending_tiers",
             "get_cashflow_forecast",
             "get_spending_review",
+            "get_loans",
+            "loan_what_if",
         ):
             assert name in system
 

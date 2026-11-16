@@ -100,6 +100,8 @@ Never print to stdout from a tool: stdout is the protocol channel.
 | `cashflow_forecast` | This month's end and the next N months, with bills |
 | `spending_review` | Monthly spending review in one call |
 | `networth` | Total net worth with accounts and balance sheet |
+| `loans` | Every loan: balance, rate, payment, end date, interest, paid to date with the rate history, equity/LTV and whether the bank charged the scheduled payment |
+| `loan_what_if` | A lump sum, extra monthly payments or a rate change on one loan: new end date, payment and interest (read-only) |
 | `goals` | Financial goals and progress |
 | `retirement_readiness` | Retirement scenarios in today's euros |
 | `action_items` | Open items pfm has detected |

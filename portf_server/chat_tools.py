@@ -2193,6 +2193,89 @@ TOOLS: list[ToolDefinition] = [
         ],
     ),
     ToolDefinition(
+        name="get_loans",
+        description=(
+            "Every loan (mortgage, personal loan): balance today, rate, monthly "
+            "payment, end date, interest paid this year and still to pay, "
+            "principal and interest paid to date (only when the rate history "
+            "makes it complete), the rate periods, equity and loan-to-value "
+            "when a property asset exists, and whether the bank charged the "
+            "scheduled payment in the latest complete month. Use for 'how "
+            "much mortgage is left', 'what do I pay in interest', 'am I "
+            "being charged the right amount'. Read-only."
+        ),
+        parameters=[],
+    ),
+    ToolDefinition(
+        name="loan_what_if",
+        description=(
+            "What a lump-sum repayment, extra monthly payments, or a rate "
+            "change would do to one loan: baseline against scenario (end "
+            "date, monthly payment, interest still to pay), interest saved "
+            "(negative when it costs more) and, for a rate change, the new "
+            "payment and the monthly and total interest difference. A rate "
+            "change (new_rate_pct or rate_change_pts) cannot be combined "
+            "with a lump sum, extra payments or an investment comparison. "
+            "Never changes data; state the assumptions (the rate, the date)."
+        ),
+        parameters=[
+            {
+                "name": "loan",
+                "type": "string",
+                "description": "Loan id or name; optional when there is one loan.",
+                "required": False,
+            },
+            {
+                "name": "lump_sum",
+                "type": "number",
+                "description": "One-off extra repayment in euros.",
+                "required": False,
+            },
+            {
+                "name": "lump_date",
+                "type": "string",
+                "description": "YYYY-MM-DD of the lump sum (default today).",
+                "required": False,
+            },
+            {
+                "name": "extra_monthly",
+                "type": "number",
+                "description": "Extra euros on every later payment (mode term).",
+                "required": False,
+            },
+            {
+                "name": "mode",
+                "type": "string",
+                "description": "term (finish sooner, default) or payment (lower it).",
+                "required": False,
+            },
+            {
+                "name": "invest_return_pct",
+                "type": "number",
+                "description": "Yearly return to compare investing the same money.",
+                "required": False,
+            },
+            {
+                "name": "new_rate_pct",
+                "type": "number",
+                "description": "New annual rate in percent from rate_from.",
+                "required": False,
+            },
+            {
+                "name": "rate_change_pts",
+                "type": "number",
+                "description": "Rate change in percentage points instead of a rate.",
+                "required": False,
+            },
+            {
+                "name": "rate_from",
+                "type": "string",
+                "description": "YYYY-MM-DD the new rate starts (default today).",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
         name="get_cashflow_forecast",
         description=(
             "Where this month ends and the next N months: income, recurring "
@@ -2528,6 +2611,78 @@ def _get_spending_tiers(db: Database, months: int = 6) -> str:
             ),
         }
     )
+
+
+@_tool("get_loans")
+def _get_loans(db: Database) -> str:
+    from portf_manager.services import mortgage
+
+    today = date.today()
+    out = []
+    for loan in db.get_loans():
+        try:
+            out.append(mortgage.digest(db, loan, _fx, today))
+        except Exception as e:
+            out.append(
+                {"id": loan.get("id"), "name": loan.get("name"), "error": str(e)}
+            )
+    return _j(
+        {
+            "as_of": today.isoformat(),
+            "loans": out,
+            "notes": (
+                "Figures follow the schedule from the recorded balance and rate "
+                "date. paid_to_date is null when what was paid before that date "
+                "is unknown. Equity is only as good as the property value on Net "
+                "Worth. A null means missing, never zero."
+            ),
+        }
+    )
+
+
+@_tool("loan_what_if")
+def _loan_what_if(
+    db: Database,
+    loan: Optional[str] = None,
+    lump_sum: float = 0.0,
+    lump_date: Optional[str] = None,
+    extra_monthly: float = 0.0,
+    mode: str = "term",
+    invest_return_pct: Optional[float] = None,
+    new_rate_pct: Optional[float] = None,
+    rate_change_pts: Optional[float] = None,
+    rate_from: Optional[str] = None,
+) -> str:
+    from portf_manager.services import loans as loan_service
+
+    loans = db.get_loans()
+    if loan not in (None, ""):
+        wanted = str(loan).strip().casefold()
+        loans = [
+            ln
+            for ln in loans
+            if str(ln["id"]) == wanted or str(ln["name"]).casefold() == wanted
+        ]
+    if not loans:
+        raise ValueError("No such loan")
+    if len(loans) > 1:
+        names = ", ".join(f"{ln['id']}: {ln['name']}" for ln in loans)
+        raise ValueError(f"Several loans exist; name one of: {names}")
+    res = loan_service.what_if(
+        loans[0],
+        lump_sum=float(lump_sum or 0),
+        lump_date=lump_date,
+        extra_monthly=float(extra_monthly or 0),
+        mode=str(mode or "term"),
+        invest_return_pct=(
+            None if invest_return_pct is None else float(invest_return_pct)
+        ),
+        new_rate_pct=None if new_rate_pct is None else float(new_rate_pct),
+        rate_change_pts=None if rate_change_pts is None else float(rate_change_pts),
+        rate_from=rate_from,
+    )
+    res["loan"] = {"id": loans[0]["id"], "name": loans[0]["name"]}
+    return _j(res)
 
 
 @_tool("get_cashflow_forecast")

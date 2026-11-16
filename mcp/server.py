@@ -16,6 +16,7 @@ if _HERE not in sys.path:
 from pfm_mcp.server import main, mcp  # noqa: E402,F401
 from pfm_mcp.tools.allocate import *  # noqa: E402,F401,F403
 from pfm_mcp.tools.analytics import *  # noqa: E402,F401,F403
+from pfm_mcp.tools.loans import *  # noqa: E402,F401,F403
 from pfm_mcp.tools.networth import *  # noqa: E402,F401,F403
 from pfm_mcp.tools.portfolio import *  # noqa: E402,F401,F403
 from pfm_mcp.tools.research import *  # noqa: E402,F401,F403
