@@ -10,7 +10,7 @@ import logging
 from datetime import date, datetime
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from portf_manager.services import loans as loan_calc
@@ -199,6 +199,31 @@ def _get_loan_or_404(db, loan_id: int) -> dict:
     return loan
 
 
+@router.get("/loans/detect")
+def detect_loan(
+    category: Optional[str] = None,
+    description: Optional[str] = None,
+    principal: Optional[float] = Query(default=None, gt=0),
+    term_months: Optional[int] = Query(default=None, gt=0),
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Propose a loan from a recurring monthly debit in the bank rows.
+
+    Read-only. Needs ``category`` or ``description`` unless a category named
+    ``Mortgage`` (or like a loan) exists. With ``principal`` and
+    ``term_months`` the annual rate of each stretch of unchanged payment is
+    solved. A source that yields nothing returns ``found: false`` and a reason.
+    """
+    return mortgage_calc.detect(
+        db,
+        category=category,
+        description=description,
+        principal=principal,
+        term_months=term_months,
+    )
+
+
 @router.get("/loans")
 def list_loans(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
     """All loans with today's balance, monthly payment and end date."""
@@ -241,7 +266,8 @@ def loan_schedule(
     loan_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
 ):
     """Yearly amortisation rows of one loan."""
-    return loan_calc.schedule(_get_loan_or_404(db, loan_id))
+    loan = mortgage_calc.with_periods(db, _get_loan_or_404(db, loan_id))
+    return loan_calc.schedule(loan)
 
 
 @router.get("/loans/{loan_id}/overview")
@@ -268,10 +294,15 @@ def loan_what_if(
     extra_monthly: float = 0.0,
     mode: Literal["term", "payment"] = "term",
     invest_return_pct: Optional[float] = None,
+    new_rate_pct: Optional[float] = None,
+    rate_change_pts: Optional[float] = None,
+    rate_from: Optional[date] = None,
     db=Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
-    """The loan as scheduled against a lump sum and/or extra monthly payments."""
+    """The loan as scheduled against a lump sum and/or extra monthly payments,
+    or against a rate change (``new_rate_pct`` or ``rate_change_pts`` from
+    ``rate_from``; not combinable with the other options)."""
     loan = _get_loan_or_404(db, loan_id)
     try:
         return loan_calc.what_if(
@@ -281,9 +312,141 @@ def loan_what_if(
             extra_monthly=extra_monthly,
             mode=mode,
             invest_return_pct=invest_return_pct,
+            new_rate_pct=new_rate_pct,
+            rate_change_pts=rate_change_pts,
+            rate_from=rate_from,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+
+
+class RatePeriodBody(BaseModel):
+    from_date: date
+    annual_rate_pct: float = Field(ge=0, le=50)
+    balance_eur: Optional[float] = Field(default=None, ge=0)
+    note: Optional[str] = None
+
+
+class RatePeriodUpdateBody(BaseModel):
+    """Partial update: an omitted field stays, null clears balance_eur/note."""
+
+    from_date: Optional[date] = None
+    annual_rate_pct: Optional[float] = Field(default=None, ge=0, le=50)
+    balance_eur: Optional[float] = Field(default=None, ge=0)
+    note: Optional[str] = None
+
+
+def _check_period(db, loan: dict, from_date: date, balance, exclude_id=None) -> None:
+    """Raise 422/409 when a rate period does not fit the loan."""
+    info = loan_calc.anchor_info(loan)
+    if not info["anchored"]:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Set 'Rate changed on' and 'Balance on that date' on the loan "
+                "first: rate history describes the time before that date."
+            ),
+        )
+    start = date.fromisoformat(str(loan["start_date"])[:10])
+    if from_date < start:
+        raise HTTPException(
+            status_code=422,
+            detail=f"A period cannot start before the loan ({start.isoformat()}).",
+        )
+    if from_date > info["date"]:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"A period cannot start after the loan's own rate date "
+                f"({info['date'].isoformat()}): that is the present state."
+            ),
+        )
+    if balance is not None and balance > float(loan["principal"]):
+        raise HTTPException(
+            status_code=422, detail="The balance cannot exceed the principal."
+        )
+    # a UNIQUE violation would surface as DatabaseError, so check first
+    for other in db.get_loan_rate_periods(loan["id"]):
+        if other["from_date"] == from_date.isoformat() and other["id"] != exclude_id:
+            raise HTTPException(
+                status_code=409,
+                detail=f"A rate period starting on {from_date.isoformat()} exists.",
+            )
+
+
+def _get_period_or_404(db, loan_id: int, period_id: int) -> dict:
+    period = db.get_loan_rate_period(period_id)
+    if not period or period["loan_id"] != loan_id:
+        raise HTTPException(status_code=404, detail="Rate period not found")
+    return period
+
+
+@router.get("/loans/{loan_id}/rate-periods")
+def list_rate_periods(
+    loan_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+):
+    """Rate periods of a loan, oldest first."""
+    _get_loan_or_404(db, loan_id)
+    return [mortgage_calc._period_out(p) for p in db.get_loan_rate_periods(loan_id)]
+
+
+@router.post("/loans/{loan_id}/rate-periods")
+def create_rate_period(
+    loan_id: int,
+    body: RatePeriodBody,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Add a rate period (a rate the loan had before its recorded balance)."""
+    loan = _get_loan_or_404(db, loan_id)
+    _check_period(db, loan, body.from_date, body.balance_eur)
+    return {
+        "id": db.create_loan_rate_period(
+            loan_id,
+            body.from_date.isoformat(),
+            body.annual_rate_pct,
+            body.balance_eur,
+            body.note,
+        )
+    }
+
+
+@router.put("/loans/{loan_id}/rate-periods/{period_id}")
+def update_rate_period(
+    loan_id: int,
+    period_id: int,
+    body: RatePeriodUpdateBody,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Update the fields sent; an explicit null clears balance_eur or note."""
+    loan = _get_loan_or_404(db, loan_id)
+    current = _get_period_or_404(db, loan_id, period_id)
+    sent = body.model_dump(exclude_unset=True)
+    for key in ("from_date", "annual_rate_pct"):
+        if key in sent and sent[key] is None:
+            raise HTTPException(status_code=422, detail=f"{key} cannot be null")
+    from_date = sent.get("from_date") or date.fromisoformat(current["from_date"])
+    balance = sent["balance_eur"] if "balance_eur" in sent else current["balance_eur"]
+    _check_period(db, loan, from_date, balance, exclude_id=period_id)
+    if "from_date" in sent:
+        sent["from_date"] = sent["from_date"].isoformat()
+    db.update_loan_rate_period(period_id, **sent)
+    return {"ok": True}
+
+
+@router.delete("/loans/{loan_id}/rate-periods/{period_id}")
+def delete_rate_period(
+    loan_id: int,
+    period_id: int,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Delete a rate period."""
+    _get_loan_or_404(db, loan_id)
+    _get_period_or_404(db, loan_id, period_id)
+    db.delete_loan_rate_period(period_id)
+    return {"ok": True}
 
 
 @router.get("/valuations")

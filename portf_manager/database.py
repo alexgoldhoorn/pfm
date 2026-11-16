@@ -16,7 +16,7 @@ from pathlib import Path
 from portf_manager.services.merchant import fold_for_search, normalize_merchant
 
 # Database version for migration tracking
-DATABASE_VERSION = 44
+DATABASE_VERSION = 45
 
 
 # black
@@ -560,6 +560,23 @@ class Database:
 
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS loan_rate_periods (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                loan_id INTEGER NOT NULL
+                    REFERENCES loans(id) ON DELETE CASCADE,
+                from_date TEXT NOT NULL,
+                annual_rate_pct REAL NOT NULL,
+                balance_eur REAL,
+                note TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (loan_id, from_date)
+            )
+        """
+        )
+
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS account_valuations (
                 portfolio_id INTEGER PRIMARY KEY
                     REFERENCES portfolios(id) ON DELETE CASCADE,
@@ -1029,6 +1046,8 @@ class Database:
             self._migrate_to_v43(conn)
         if current_version < 44:
             self._migrate_to_v44(conn)
+        if current_version < 45:
+            self._migrate_to_v45(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -2213,6 +2232,32 @@ class Database:
         )
         conn.commit()
 
+    def _migrate_to_v45(self, conn: sqlite3.Connection) -> None:
+        """Migrate from v44 to v45 — loan rate history.
+
+        ``loan_rate_periods`` holds the rates a loan had before its anchor
+        (``rate_as_of`` + ``balance_as_of``), so the history can be rebuilt
+        from ``start_date``. Nothing is backfilled; the step is guarded so a
+        rerun is harmless.
+        """
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS loan_rate_periods (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                loan_id INTEGER NOT NULL
+                    REFERENCES loans(id) ON DELETE CASCADE,
+                from_date TEXT NOT NULL,
+                annual_rate_pct REAL NOT NULL,
+                balance_eur REAL,
+                note TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (loan_id, from_date)
+            )
+        """
+        )
+        conn.commit()
+
     def _migrate_to_v44(self, conn: sqlite3.Connection) -> None:
         """Migrate from v43 to v44 — a budget debt line can link to a loan.
 
@@ -2920,6 +2965,70 @@ class Database:
         """Delete a loan; True when a row was removed."""
         with self.get_connection() as conn:
             cur = conn.execute("DELETE FROM loans WHERE id = ?", (loan_id,))
+            conn.commit()
+            return cur.rowcount > 0
+
+    # ── Loan rate periods ───────────────────────────────────────────────────
+
+    _RATE_PERIOD_FIELDS = {"from_date", "annual_rate_pct", "balance_eur", "note"}
+
+    def get_loan_rate_periods(self, loan_id: int) -> List[Dict]:
+        """Rate periods of a loan, oldest first."""
+        with self.get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM loan_rate_periods WHERE loan_id = ? "
+                "ORDER BY from_date",
+                (loan_id,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def get_loan_rate_period(self, period_id: int) -> Optional[Dict]:
+        """One rate period, or None."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM loan_rate_periods WHERE id = ?", (period_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def create_loan_rate_period(
+        self,
+        loan_id: int,
+        from_date: str,
+        annual_rate_pct: float,
+        balance_eur: Optional[float] = None,
+        note: Optional[str] = None,
+    ) -> int:
+        """Create a rate period and return its id.
+
+        The caller checks for a duplicate ``from_date`` first: a violated
+        UNIQUE constraint surfaces as ``DatabaseError``.
+        """
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                "INSERT INTO loan_rate_periods "
+                "(loan_id, from_date, annual_rate_pct, balance_eur, note) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (loan_id, from_date, annual_rate_pct, balance_eur, note),
+            )
+            conn.commit()
+            return cur.lastrowid
+
+    def update_loan_rate_period(self, period_id: int, **fields) -> bool:
+        """Update rate-period columns; ``None`` clears ``balance_eur``/``note``."""
+        return self._update_row(
+            "loan_rate_periods",
+            period_id,
+            self._RATE_PERIOD_FIELDS,
+            fields,
+            nullable={"balance_eur", "note"},
+        )
+
+    def delete_loan_rate_period(self, period_id: int) -> bool:
+        """Delete a rate period; True when a row was removed."""
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                "DELETE FROM loan_rate_periods WHERE id = ?", (period_id,)
+            )
             conn.commit()
             return cur.rowcount > 0
 

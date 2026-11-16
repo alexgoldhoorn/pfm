@@ -176,7 +176,212 @@ def schedule(loan: dict) -> list[dict]:
                 "payments_count": len(in_year),
             }
         )
+    hist = history_rows(loan)
+    if hist:
+        out = _with_history_years(out, hist, anchor.year)
     return out
+
+
+def _with_history_years(forward: list[dict], hist: list[dict], anchor_year: int):
+    """Flag the forward years and put the history years in front.
+
+    Years before the anchor year are history rows. The anchor year keeps its
+    forward figures and gains ``history_*`` fields for the payments already
+    made that year before the anchor.
+    """
+    years = sorted({r["date"].year for r in hist})
+    rows: list[dict] = []
+    for year in years:
+        in_year = [r for r in hist if r["date"].year == year]
+        interest = round(sum(r["interest"] for r in in_year), 2)
+        paid = round(sum(r["payment"] for r in in_year), 2)
+        if year < anchor_year:
+            rows.append(
+                {
+                    "year": year,
+                    "balance_end_eur": in_year[-1]["balance"],
+                    "interest_paid_eur": interest,
+                    "principal_paid_eur": round(paid - interest, 2),
+                    "payments_eur": paid,
+                    "payments_count": len(in_year),
+                    "history": True,
+                }
+            )
+    for row in forward:
+        row = {**row, "history": False}
+        in_year = [r for r in hist if r["date"].year == row["year"]]
+        if in_year:
+            interest = round(sum(r["interest"] for r in in_year), 2)
+            paid = round(sum(r["payment"] for r in in_year), 2)
+            row["history_interest_paid_eur"] = interest
+            row["history_principal_paid_eur"] = round(paid - interest, 2)
+            row["history_payments_count"] = len(in_year)
+        rows.append(row)
+    return rows
+
+
+def _history_periods(loan: dict) -> list[dict]:
+    """Return the usable rate periods of an anchored loan, oldest first.
+
+    A period counts only when the loan is anchored (a recorded balance and
+    rate date) and the period starts on or before that anchor: periods
+    describe the time before it. Each entry has ``from_date`` (a date),
+    ``annual_rate_pct`` and ``balance_eur`` (None when unknown).
+    """
+    raw = loan.get("rate_periods") or []
+    if not raw:
+        return []
+    anchor, _, _ = _anchor(loan)
+    if anchor == _to_date(loan["start_date"]):
+        return []
+    out = [
+        {
+            "from_date": _to_date(p["from_date"]),
+            "annual_rate_pct": float(p["annual_rate_pct"]),
+            "balance_eur": (
+                None if p.get("balance_eur") is None else float(p["balance_eur"])
+            ),
+        }
+        for p in raw
+    ]
+    return sorted((p for p in out if p["from_date"] <= anchor), key=_period_key)
+
+
+def _period_key(period: dict) -> date:
+    return period["from_date"]
+
+
+def has_history(loan: dict) -> bool:
+    """True when the loan is anchored and has rate periods before the anchor."""
+    return bool(_history_periods(loan))
+
+
+def history_rows(loan: dict) -> list[dict]:
+    """Return the payments made before the anchor, derived from rate periods.
+
+    The history runs from ``start_date`` with the original principal. A
+    period's rate applies to the interest of every payment whose previous
+    payment date is on or after its ``from_date``; the earliest period's rate
+    also covers any time before it. The payment is recalculated at each
+    period start over the remaining term (a Spanish mortgage revision), and a
+    period with ``balance_eur`` re-anchors the balance there. The loan's
+    ``extra_payment_eur`` is not included: it describes the present.
+
+    Returns:
+        One entry per payment dated on or before the anchor (date, payment,
+        interest, principal, balance after); empty without usable periods.
+    """
+    pending = _history_periods(loan)
+    if not pending:
+        return []
+    anchor, _, _ = _anchor(loan)
+    start = _to_date(loan["start_date"])
+    term = int(loan["term_months"])
+    balance = float(loan["principal"])
+    rate_pct = pending[0]["annual_rate_pct"]
+    pay: Optional[float] = None
+    rows: list[dict] = []
+    for k in range(1, term + 1):
+        day = _add_months(start, k)
+        if day > anchor:
+            break
+        prev_day = _add_months(start, k - 1)
+        changed = pay is None
+        while pending and pending[0]["from_date"] <= prev_day:
+            period = pending.pop(0)
+            rate_pct = period["annual_rate_pct"]
+            if period["balance_eur"] is not None:
+                balance = period["balance_eur"]
+            changed = True
+        if changed:
+            pay = round(monthly_payment(balance, rate_pct, term - (k - 1)), 2)
+        interest = round(balance * rate_pct / 1200, 2)
+        due = balance + interest
+        paid = due if (k == term or pay >= due) else pay
+        balance = round(due - paid, 2)
+        rows.append(
+            {
+                "date": day,
+                "payment": round(paid, 2),
+                "interest": interest,
+                "principal": round(paid - interest, 2),
+                "balance": max(balance, 0.0),
+            }
+        )
+        if balance <= 0.005:
+            break
+    return rows
+
+
+def paid_to_date(loan: dict, today: date) -> dict:
+    """Interest and principal paid up to ``today``.
+
+    History rows (from rate periods) and scheduled rows from the anchor are
+    added. ``complete`` is false for an anchored loan without rate periods:
+    what was paid before the anchor is unknown, so the sums run from the
+    anchor only.
+
+    Returns:
+        ``{"interest_eur", "principal_eur", "total_eur", "payments_count",
+        "from_date", "complete", "history_payments", "anchor_gap_eur"}``.
+        ``anchor_gap_eur`` is the history balance at its last payment less the
+        recorded anchor balance (None without history): a large gap means the
+        periods do not describe the loan well.
+    """
+    hist = [r for r in history_rows(loan) if r["date"] <= today]
+    fwd = [r for r in payment_rows(loan) if r["date"] <= today]
+    rows = hist + fwd
+    anchored = anchor_info(loan)["anchored"]
+    gap = None
+    if hist:
+        gap = round(hist[-1]["balance"] - anchor_info(loan)["balance_eur"], 2)
+    interest = round(sum(r["interest"] for r in rows), 2)
+    principal = round(sum(r["principal"] for r in rows), 2)
+    return {
+        "interest_eur": interest,
+        "principal_eur": principal,
+        "total_eur": round(interest + principal, 2),
+        "payments_count": len(rows),
+        "from_date": rows[0]["date"].isoformat() if rows else None,
+        "complete": (not anchored) or bool(hist),
+        "history_payments": len(hist),
+        "anchor_gap_eur": gap,
+    }
+
+
+def balance_after(
+    balance: float, annual_rate_pct: float, payment: float, months: int
+) -> float:
+    """Balance left after ``months`` level payments (interest rounded to cents)."""
+    for _ in range(max(months, 0)):
+        if balance <= 0.005:
+            return 0.0
+        balance = round(balance + round(balance * annual_rate_pct / 1200, 2), 2)
+        balance = round(balance - min(payment, balance), 2)
+    return max(balance, 0.0)
+
+
+def solve_rate(balance: float, payment: float, months: int) -> Optional[float]:
+    """Return the annual rate (%) at which ``payment`` repays ``balance``.
+
+    Bisection on the annuity formula over 0-60 %. None when no rate in that
+    range fits (a payment below ``balance / months`` would need a negative
+    rate), or when an input is not positive.
+    """
+    if balance <= 0 or payment <= 0 or months <= 0:
+        return None
+    lo, hi = 0.0, 60.0
+    if payment < monthly_payment(balance, lo, months) - 0.005:
+        return None
+    if payment > monthly_payment(balance, hi, months):
+        return None
+    for _ in range(80):
+        mid = (lo + hi) / 2
+        if monthly_payment(balance, mid, months) < payment:
+            lo = mid
+        else:
+            hi = mid
+    return round((lo + hi) / 2, 4)
 
 
 def payments_in_year(loan: dict, year: int) -> float:
@@ -259,6 +464,64 @@ def _outcome(rows: list[dict], payment: float) -> dict:
     }
 
 
+def _rate_change_what_if(
+    loan: dict,
+    new_rate_pct: Optional[float],
+    rate_change_pts: Optional[float],
+    rate_from: DateLike,
+) -> dict:
+    """Compare the loan as scheduled with a new rate from ``rate_from``.
+
+    The balance is taken after the last scheduled payment on or before
+    ``rate_from``; the payment is recalculated over the payments that remain
+    (the loan's fixed extra payment stays on top), as a lender revises it.
+
+    Raises:
+        ValueError: when both or neither of rate and points are given, the new
+            rate is outside 0-100 %, or no payments remain after the date.
+    """
+    if (new_rate_pct is None) == (rate_change_pts is None):
+        raise ValueError("Give either new_rate_pct or rate_change_pts, not both")
+    day = _to_date(rate_from)
+    current = float(loan["annual_rate_pct"])
+    new = new_rate_pct if new_rate_pct is not None else current + rate_change_pts
+    if new < 0 or new > 100:
+        raise ValueError("The new rate must be between 0 and 100 %")
+    future = [r for r in _payments(loan) if r["date"] > day]
+    if not future:
+        raise ValueError("The loan has no payments left after that date")
+    dates = [r["date"] for r in future]
+    balance = balance_on(loan, day)
+    base_pay = payment_of(loan)
+    baseline = _outcome(future, base_pay)
+    extra_fixed = float(loan.get("extra_payment_eur") or 0)
+    pay = round(monthly_payment(balance, new, len(dates)), 2) + extra_fixed
+    rows = _simulate(balance, new, pay, dates)
+    scenario = _outcome(rows, pay)
+    interest_diff = round(
+        scenario["interest_remaining_eur"] - baseline["interest_remaining_eur"], 2
+    )
+    return {
+        "lump_date": day.isoformat(),
+        "mode": "term",
+        "baseline": baseline,
+        "scenario": scenario,
+        "interest_saved_eur": round(-interest_diff, 2),
+        "months_saved": baseline["months_left"] - scenario["months_left"],
+        "invest": None,
+        "rate_change": {
+            "from_date": day.isoformat(),
+            "previous_rate_pct": current,
+            "new_rate_pct": round(new, 4),
+            "balance_eur": round(balance, 2),
+            "payment_before_eur": round(base_pay, 2),
+            "payment_after_eur": round(pay, 2),
+            "payment_diff_eur": round(pay - base_pay, 2),
+            "interest_diff_eur": interest_diff,
+        },
+    }
+
+
 def what_if(
     loan: dict,
     lump_sum: float = 0.0,
@@ -267,8 +530,16 @@ def what_if(
     mode: str = "term",
     invest_return_pct: Optional[float] = None,
     today: Optional[date] = None,
+    new_rate_pct: Optional[float] = None,
+    rate_change_pts: Optional[float] = None,
+    rate_from: Optional[DateLike] = None,
 ) -> dict:
     """Compare the loan as scheduled with a lump-sum and/or extra payments.
+
+    Alternatively (``new_rate_pct`` or ``rate_change_pts``) compare it with a
+    rate change: see ``_rate_change_what_if``. A rate change is never combined
+    with a lump sum, extra payments, ``mode='payment'`` or the investment
+    comparison, because their dates and effects would interact.
 
     The lump sum is applied to the balance as of ``lump_date`` (the last
     scheduled payment on or before it); later payments keep their dates.
@@ -283,10 +554,14 @@ def what_if(
         invest_return_pct: Optional yearly return; adds the value of putting
             the same money in an investment until the baseline end date.
         today: Injectable clock.
+        new_rate_pct: New annual rate (%) from ``rate_from``.
+        rate_change_pts: Change in percentage points instead of a new rate.
+        rate_from: When the new rate starts; default today.
 
     Returns:
         ``{"baseline", "scenario", "interest_saved_eur", "months_saved",
-        "invest"}``; ``invest`` is None without a return.
+        "invest"}``; ``invest`` is None without a return. A rate change adds
+        ``rate_change`` (see ``_rate_change_what_if``).
 
     Raises:
         ValueError: for a negative amount, an unknown mode, a lump sum above
@@ -294,6 +569,18 @@ def what_if(
             no payments left on ``lump_date``.
     """
     today = today or date.today()
+    if new_rate_pct is not None or rate_change_pts is not None:
+        if lump_sum or extra_monthly or mode != "term" or invest_return_pct is not None:
+            raise ValueError(
+                "A rate change cannot be combined with a lump sum, extra "
+                "payments, mode 'payment' or an investment comparison: run "
+                "them separately"
+            )
+        return _rate_change_what_if(
+            loan, new_rate_pct, rate_change_pts, rate_from or today
+        )
+    if rate_from is not None:
+        raise ValueError("rate_from needs new_rate_pct or rate_change_pts")
     if mode not in ("term", "payment"):
         raise ValueError("mode must be 'term' or 'payment'")
     if lump_sum < 0 or extra_monthly < 0:
