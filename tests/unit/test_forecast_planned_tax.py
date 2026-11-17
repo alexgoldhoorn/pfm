@@ -361,3 +361,36 @@ def test_a_failing_tax_input_is_a_warning_not_an_error():
     assert out["tax_payments"] == []
     assert any("could not be estimated" in w for w in out["warnings"])
     assert out["this_month"]["projected_spending_eur"] is not None
+
+
+def test_unpaid_quarter_is_still_projected_when_the_account_lags():
+    rows = _rows() + _tax_rows()
+    # data through 2026-07-10, but "today" is 2026-08-25: Q2 (due 07-20) is
+    # not in the statements yet, so it is still owed from the balance's view
+    late = date(2026, 8, 25)
+    out = cf.compute_forecast(
+        rows,
+        _tree(),
+        _series(rows),
+        [_account()],
+        _fx,
+        late,
+        4,
+        tax={"settings": _settings(), "rows": rows},
+    )
+    pays = {p["quarter"]: p for p in out["tax_payments"]}
+    assert pays["2026-Q2"]["due"] == "2026-07-20"
+    assert pays["2026-Q2"]["amount_eur"] == 3049.59
+
+
+def test_only_quarterly_tax_series_are_replaced_by_the_estimate():
+    rows = _rows() + _tax_rows()
+    # a yearly charge in the tax category stays a known bill
+    rows += [
+        _row("2024-11-05", -400, "Income Tax", "Example Annual Levy"),
+        _row("2025-11-05", -400, "Income Tax", "Example Annual Levy"),
+    ]
+    on = _run(rows=rows, months=7, tax={"settings": _settings(), "rows": rows})
+    bills = [b for b in on["known_bills"] if b["category"] == "Income Tax"]
+    assert [b["merchant"] for b in bills] == ["Example Annual Levy"]
+    assert any("annual tax settlement is not estimated" in a for a in on["assumptions"])

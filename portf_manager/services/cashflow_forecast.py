@@ -28,9 +28,11 @@ Rules that keep it honest:
   the balance line is a bank-account projection, not a net-worth projection.
 - Planned items (entered by hand) and the estimated quarterly tax payments are
   placed on their dates, once each, and never enter a baseline. When the tax
-  estimate is in use, the recurring series and the rows in the allocator's
-  tax-paid categories are taken out of the known bills and of the forecast's
-  everyday baseline, so the tax is not counted twice.
+  estimate is in use, the quarterly recurring series in the allocator's
+  tax-paid categories are taken out of the known bills, and the rows of those
+  categories out of the forecast's everyday baseline, so the tax is not counted
+  twice. A yearly or other-cadence series in those categories stays a known
+  bill. A one-time annual tax settlement is not estimated.
 """
 
 import calendar
@@ -268,6 +270,9 @@ def estimated_tax_payments(
         date lies between ``through`` and ``horizon_end``.
     """
     start = through or today
+    # the past-due rule is judged at the data-through date: the balance starts
+    # there, so a quarter still unpaid in the statements is still owed
+    ref = start
     year, q = deployable.quarter_of(today)
     # a complete quarter counts only when every month of it has imported rows
     months_with_rows = {r["date"][:7] for r in rows}
@@ -284,7 +289,7 @@ def estimated_tax_payments(
         y, qq = _quarter_back(year, q, n)
         if covered(y, qq):
             history.append(
-                deployable.quarter_reserve(rows, tax_rows, y, qq, settings, today)
+                deployable.quarter_reserve(rows, tax_rows, y, qq, settings, ref)
             )
         if len(history) == 4:
             break
@@ -299,7 +304,7 @@ def estimated_tax_payments(
 
     out: List[Dict[str, Any]] = []
     py, pq = deployable._previous(year, q)
-    prev = deployable.quarter_reserve(rows, tax_rows, py, pq, settings, today)
+    prev = deployable.quarter_reserve(rows, tax_rows, py, pq, settings, ref)
     prev_due = date.fromisoformat(prev["due"])
     if start <= prev_due <= horizon_end and prev["remaining_eur"] > 0.005:
         out.append(
@@ -318,7 +323,7 @@ def estimated_tax_payments(
         if due >= start:
             amount, basis = average, "average"
             if (y, qq) == (year, q):
-                cur = deployable.quarter_reserve(rows, tax_rows, y, qq, settings, today)
+                cur = deployable.quarter_reserve(rows, tax_rows, y, qq, settings, ref)
                 if cur["accrued_eur"] >= average:
                     amount, basis = cur["accrued_eur"], "accrued"
             if amount > 0.005:
@@ -652,9 +657,14 @@ def _forecast(
             except Exception as e:
                 tax_payments = []
                 warnings.append(f"The quarterly tax could not be estimated: {e}")
-    # the estimate stands in for the recurring tax series
+    # the estimate stands in for the quarterly tax series (the pagos
+    # fraccionados) only; a yearly or other-cadence series stays a known bill
     if tax_cats and series is not None:
-        series = [s for s in series if s.category not in tax_cats]
+        series = [
+            s
+            for s in series
+            if not (s.category in tax_cats and s.cadence == "quarterly")
+        ]
 
     # ── planned items ──
     planned_proj, planned_list = _planned_entries(
@@ -961,8 +971,9 @@ def _forecast(
         assumptions.append(
             "Quarterly tax is an estimate from the allocator settings: "
             f"IVA {tax_settings['iva_pct']:g}%, IRPF {tax_settings['irpf_pct']:g}%. "
-            "The recurring tax charges and the tax-paid rows are left out of "
-            "the bills and the everyday baseline so it is not counted twice."
+            "The quarterly tax charges and the tax-paid rows are left out of "
+            "the bills and the everyday baseline so it is not counted twice. "
+            "A one-time annual tax settlement is not estimated."
         )
     return {
         "as_of": today.isoformat(),
