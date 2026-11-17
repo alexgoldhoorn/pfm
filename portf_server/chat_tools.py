@@ -2281,16 +2281,112 @@ TOOLS: list[ToolDefinition] = [
             "Where this month ends and the next N months: income, recurring "
             "bills on their due dates, everyday spending, net and the projected "
             "bank balance, the known upcoming bills, a low/high range and the "
-            "first month the balance goes below zero. Every figure is an "
+            "first month the balance goes below zero. It also places the "
+            "user's planned one-off items and the estimated quarterly tax "
+            "payments (planned_items, tax_payments), and with extra_amount "
+            "plus extra_date it tests one unsaved expense (what_if: lowest "
+            "balance with and without it). Every figure is an "
             "estimate built from past months; state the data_through date and "
             "the warnings. Use for 'will I run short', 'what bills are "
-            "coming', 'where will I end the month'."
+            "coming', 'where will I end the month', 'can I afford X in "
+            "March'."
         ),
         parameters=[
             {
                 "name": "months",
                 "type": "integer",
                 "description": "Months after the current one (default 6, max 24).",
+                "required": False,
+            },
+            {
+                "name": "extra_amount",
+                "type": "number",
+                "description": "What-if: a positive amount to test (not saved).",
+                "required": False,
+            },
+            {
+                "name": "extra_date",
+                "type": "string",
+                "description": "What-if date, YYYY-MM (the 15th) or YYYY-MM-DD.",
+                "required": False,
+            },
+            {
+                "name": "extra_kind",
+                "type": "string",
+                "description": "What-if kind: spending (default), savings or income.",
+                "required": False,
+            },
+            {
+                "name": "include_tax",
+                "type": "boolean",
+                "description": "Add the estimated quarterly tax (default true).",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="get_planned_items",
+        description=(
+            "The user's planned future one-off expenses, savings and income "
+            "(entered by hand, for example a holiday or a car repair), by "
+            "date, with their effect on the forecast. Read-only; the user "
+            "adds or edits them in the web client. Use for 'what have I "
+            "planned', 'what big expenses are coming'."
+        ),
+        parameters=[
+            {
+                "name": "include_done",
+                "type": "boolean",
+                "description": "Also list items already marked done (default false).",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="get_spending_year",
+        description=(
+            "One year of income, spending and savings against the year "
+            "before, like for like (a year in progress is compared through "
+            "its last complete month): totals, the month grid, categories, "
+            "biggest movers, merchants and one-off rows. Months without "
+            "imports are unknown, never zero. Use for 'how is this year "
+            "going', 'this year against last year'."
+        ),
+        parameters=[
+            {
+                "name": "year",
+                "type": "integer",
+                "description": "Calendar year (default the current one).",
+                "required": False,
+            },
+            {
+                "name": "depth",
+                "type": "integer",
+                "description": "1 = top-level categories, 2 = with children.",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="get_uncategorized_queue",
+        description=(
+            "Bank rows still marked uncategorized, grouped by merchant and "
+            "ordered by money, each group with a proposed rule pattern, plus "
+            "the share of spending they hide. Read-only: the user classifies "
+            "them in the web client. Use for 'what is uncategorised', 'what "
+            "should I categorise first'."
+        ),
+        parameters=[
+            {
+                "name": "limit",
+                "type": "integer",
+                "description": "Groups to return (default 20, max 50).",
+                "required": False,
+            },
+            {
+                "name": "months",
+                "type": "integer",
+                "description": "Look-back in calendar months (default 12).",
                 "required": False,
             },
         ],
@@ -2686,11 +2782,40 @@ def _loan_what_if(
 
 
 @_tool("get_cashflow_forecast")
-def _get_cashflow_forecast(db: Database, months: int = 6) -> str:
-    from portf_manager.services import cashflow_forecast
+def _get_cashflow_forecast(
+    db: Database,
+    months: int = 6,
+    extra_amount: Optional[float] = None,
+    extra_date: Optional[str] = None,
+    extra_kind: str = "spending",
+    include_tax: bool = True,
+) -> str:
+    from portf_manager.services import cashflow_forecast, planned_items
 
     months = max(1, min(int(months), 24))
-    res = cashflow_forecast.load_forecast(db, _fx, date.today(), months)
+    what_if = None
+    if extra_amount not in (None, "") or extra_date not in (None, ""):
+        if extra_amount in (None, "") or not extra_date:
+            raise ValueError("extra_amount and extra_date must be given together")
+        amount = float(extra_amount)
+        if amount <= 0:
+            raise ValueError("extra_amount is a positive magnitude")
+        if extra_kind not in planned_items.KINDS:
+            raise ValueError(f"extra_kind must be one of {list(planned_items.KINDS)}")
+        day = extra_date if len(extra_date) != 7 else f"{extra_date}-15"
+        try:
+            date.fromisoformat(day)
+        except ValueError:
+            raise ValueError("extra_date must be YYYY-MM or YYYY-MM-DD")
+        what_if = {"amount": amount, "date": day, "kind": extra_kind}
+    res = cashflow_forecast.load_forecast(
+        db,
+        _fx,
+        date.today(),
+        months,
+        include_tax=bool(include_tax),
+        what_if=what_if,
+    )
     res["next_months"] = [
         {
             k: m.get(k)
@@ -2699,6 +2824,10 @@ def _get_cashflow_forecast(db: Database, months: int = 6) -> str:
                 "income_eur",
                 "recurring_eur",
                 "variable_eur",
+                "planned_spending_eur",
+                "planned_savings_eur",
+                "planned_income_eur",
+                "tax_eur",
                 "savings_eur",
                 "net_eur",
                 "projected_balance_eur",
@@ -2710,10 +2839,86 @@ def _get_cashflow_forecast(db: Database, months: int = 6) -> str:
     res["known_bills"] = res["known_bills"][:25]
     res["notes"] = (
         "Every figure is an estimate: the average of complete past months "
-        "plus the recurring charges placed on their due dates. The balance is "
-        "bank accounts only (moves to a broker are not projected). The rest "
-        "of this month is measured from data_through, not from today. A null "
-        "means the source was missing; say so, never read it as zero."
+        "plus the recurring charges placed on their due dates. planned_items "
+        "are entered by hand and placed once on their dates (overdue ones are "
+        "not projected); tax_payments are an estimate from the allocator "
+        "settings (basis accrued or average), absent when no work-income "
+        "merchants are ticked. what_if is an unsaved test, not a plan. The "
+        "balance is bank accounts only (moves to a broker are not projected). "
+        "The rest of this month is measured from data_through, not from "
+        "today. A null means the source was missing; say so, never read it "
+        "as zero."
+    )
+    return _j(res)
+
+
+@_tool("get_planned_items")
+def _get_planned_items(db: Database, include_done: bool = False) -> str:
+    from portf_manager.services import cashflow_forecast
+
+    items = [
+        {**i, "done": bool(i["done"])}
+        for i in db.list_planned_items(include_done=bool(include_done))
+    ]
+    forecast = cashflow_forecast.load_forecast(db, _fx, date.today(), 12)
+    return _j(
+        {
+            "items": items,
+            "forecast_status": forecast.get("planned_items"),
+            "data_through": forecast.get("data_through"),
+            "warnings": forecast.get("warnings"),
+            "notes": (
+                "amount is signed (negative out, positive in) in the item's "
+                "currency. forecast_status gives each open item's status in "
+                "the forecast (projected, overdue, beyond_horizon) with its "
+                "EUR amount. Planned items are never part of an average. "
+                "They are written in the web client, not here."
+            ),
+        }
+    )
+
+
+@_tool("get_spending_year")
+def _get_spending_year(db: Database, year: Optional[int] = None, depth: int = 1) -> str:
+    from portf_manager.services import spending_year
+
+    today = date.today()
+    target = int(year) if year not in (None, "") else today.year
+    depth = 2 if int(depth or 1) >= 2 else 1
+    rows, tree = _insight_rows(db, f"{target - 1}-01-01")
+    try:
+        res = spending_year.build_year(
+            rows, tree, today, year=int(year) if year else None, depth=depth
+        )
+    except ValueError as e:
+        raise ValueError(str(e))
+    res["notes"] = (
+        "Like for like: only months that are complete and have imports in "
+        "both years are summed. totals.previous_full is the whole previous "
+        "year. A month without imports is unknown, never zero. One-off rows "
+        "count in the totals and are listed in one_offs. Deltas are null "
+        "when nothing can be compared. Say data_through and the warnings."
+    )
+    return _j(res)
+
+
+@_tool("get_uncategorized_queue")
+def _get_uncategorized_queue(db: Database, limit: int = 20, months: int = 12) -> str:
+    from portf_manager.services import spending_insights, spending_uncategorized
+
+    limit = max(1, min(int(limit), 50))
+    months = max(1, min(int(months), 60))
+    today = date.today()
+    first = spending_insights.shift_month(today.strftime("%Y-%m"), -max(months, 13))
+    rows, tree = _insight_rows(db, f"{first}-01")
+    res = spending_uncategorized.build_queue(
+        rows, tree, today, limit=limit, months=months
+    )
+    res["notes"] = (
+        "Groups are ordered by total money. proposed_pattern is a suggested "
+        "rule, or null. share_of_spending_pct and last_complete_month count "
+        "outflows only. The user classifies a group in the web client; "
+        "nothing is changed here."
     )
     return _j(res)
 

@@ -29,10 +29,10 @@ def db(tmp_path):
     return d
 
 
-def test_tools_list_has_50_entries():
+def test_tools_list_has_53_entries():
     from portf_server.chat_tools import TOOLS
 
-    assert len(TOOLS) == 50
+    assert len(TOOLS) == 53
 
 
 def test_every_tool_definition_has_a_handler():
@@ -655,6 +655,87 @@ def test_anomalies_tiers_forecast_and_review_tools(cost_db):
     assert execute_tool(
         "get_spending_review", {"month": "2999-01"}, cost_db
     ).startswith("Error:")
+
+
+def test_forecast_tool_what_if_planned_items_and_tax_fields(cost_db):
+    from portf_server.chat_tools import execute_tool
+
+    month = (date.today().replace(day=1) + timedelta(days=40)).strftime("%Y-%m")
+    cost_db.create_planned_item(
+        date=f"{month}-10",
+        description="Example Holiday",
+        amount=-1000.0,
+        kind="spending",
+    )
+    out = json.loads(
+        execute_tool(
+            "get_cashflow_forecast",
+            {"months": 3, "extra_amount": 500, "extra_date": month},
+            cost_db,
+        )
+    )
+    assert out["what_if"]["amount_eur"] == -500.0
+    assert out["what_if"]["date"] == f"{month}-15"
+    assert {"lowest_balance_eur", "lowest_balance_without_eur"} <= set(out["what_if"])
+    statuses = {i["description"]: i["status"] for i in out["planned_items"]}
+    assert statuses["Example Holiday"] == "projected"
+    assert out["tax_payments"] == []
+    assert "planned_spending_eur" in out["next_months"][0]
+    assert "tax_eur" in out["next_months"][0]
+    assert "what_if" not in json.loads(
+        execute_tool("get_cashflow_forecast", {"months": 2}, cost_db)
+    )
+    # one half of a what-if, a bad kind and a bad date are refused
+    for args in (
+        {"extra_amount": 100},
+        {"extra_amount": 100, "extra_date": month, "extra_kind": "x"},
+        {"extra_amount": 100, "extra_date": "2026-13"},
+        {"extra_amount": -5, "extra_date": month},
+    ):
+        assert execute_tool("get_cashflow_forecast", args, cost_db).startswith("Error:")
+
+
+def test_planned_items_tool_lists_open_and_done(cost_db):
+    from portf_server.chat_tools import execute_tool
+
+    day = (date.today() + timedelta(days=45)).isoformat()
+    cost_db.create_planned_item(
+        date=day, description="Example Repair", amount=-300.0, kind="spending"
+    )
+    done = cost_db.create_planned_item(
+        date=day, description="Example Gift", amount=-50.0, kind="spending"
+    )
+    cost_db.update_planned_item(done, done=1)
+    out = json.loads(execute_tool("get_planned_items", {}, cost_db))
+    assert [i["description"] for i in out["items"]] == ["Example Repair"]
+    assert out["items"][0]["done"] is False
+    assert out["forecast_status"][0]["status"] in ("projected", "beyond_horizon")
+    both = json.loads(
+        execute_tool("get_planned_items", {"include_done": True}, cost_db)
+    )
+    assert len(both["items"]) == 2 and "web client" in both["notes"]
+
+
+def test_spending_year_and_uncategorized_queue_tools(cost_db):
+    from portf_server.chat_tools import execute_tool
+
+    pid = cost_db.get_or_create_portfolio("Example Bank", account_type="bank")
+    cost_db.create_spending_transaction(
+        pid, date.today().isoformat(), "Example Kiosk", -75.0
+    )
+    year = json.loads(execute_tool("get_spending_year", {}, cost_db))
+    assert year["year"] == date.today().year
+    assert {"totals", "months", "categories", "warnings", "notes"} <= set(year)
+    assert len(year["months"]["this"]) == 12
+    assert execute_tool("get_spending_year", {"year": 1990}, cost_db).startswith(
+        "Error:"
+    )
+    queue = json.loads(execute_tool("get_uncategorized_queue", {"limit": 5}, cost_db))
+    assert {"groups", "total_count", "last_complete_month", "notes"} <= set(queue)
+    assert queue["groups"][0]["merchant"]
+    assert {"proposed_pattern", "transaction_ids", "total_eur"} <= set(
+        queue["groups"][0]
+    )
 
 
 def test_household_finances_budget_reports_available_pace_and_fund(cost_db):

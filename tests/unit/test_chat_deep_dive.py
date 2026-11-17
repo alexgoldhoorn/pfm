@@ -163,6 +163,9 @@ class TestChatTurn:
             "get_spending_tiers",
             "get_cashflow_forecast",
             "get_spending_review",
+            "get_planned_items",
+            "get_spending_year",
+            "get_uncategorized_queue",
             "get_loans",
             "loan_what_if",
         ):
