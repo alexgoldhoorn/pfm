@@ -357,8 +357,8 @@ filters `is_transfer` itself).
   judged only from the accounts that have rows in the year shown: an account
   closed in the previous year holds nothing back (its rows still count in the
   previous-year sums); an account that imported least is named in a warning.
-  An account whose first row falls in the previous year after January is named
-  too (the like-for-like change is then inflated). `compared_through` / `compared_months` say what was compared.
+  An account whose first row falls in the previous year after January, or in
+  the year shown, is named too (the like-for-like change is then inflated). `compared_through` / `compared_months` say what was compared.
   `categories` are the top-level Spend categories (children with `depth=2`),
   `movers` `{increases, decreases}` by leaf category, `merchants` the 10
   largest, `one_offs` the one-off rows of the whole year (they count in the

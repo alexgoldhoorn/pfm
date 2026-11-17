@@ -162,6 +162,13 @@ def build_year(
                 f"{previous_year} holds less than a full year of it, so the "
                 "like-for-like change is inflated."
             )
+        # an account first seen in the year shown has nothing to compare with
+        elif f"{year}-01-01" <= item["date"] <= f"{year}-12-31":
+            warnings.append(
+                f"{item['name']} has rows only from {item['date']}: "
+                f"{previous_year} holds none of it, so the like-for-like "
+                "change is inflated."
+            )
     by_month: Dict[str, List[dict]] = defaultdict(list)
     for r in rows:
         by_month[r["date"][:7]].append(r)

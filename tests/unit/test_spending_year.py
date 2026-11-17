@@ -221,6 +221,19 @@ def test_account_started_mid_previous_year_is_flagged(db):
     )
 
 
+def test_account_started_in_the_year_shown_is_flagged(db):
+    main = db.create_portfolio("Example Bank", account_type="bank")
+    new = db.create_portfolio("Example New Bank", account_type="bank")
+    _fill(db, main, 2025, range(1, 13), 350.0)
+    _fill(db, main, 2026, range(1, 11), 400.0)
+    _fill(db, new, 2026, range(4, 11), 50.0)
+    d = _build(db, date(2026, 11, 17), 2026)
+    assert any(
+        "Example New Bank" in w and "2025 holds none of it" in w for w in d["warnings"]
+    )
+    assert not any("Example Bank has rows only" in w for w in d["warnings"])
+
+
 def test_one_offs_cover_the_whole_year_not_only_compared_months(db):
     bank = db.create_portfolio("Example Bank", account_type="bank")
     _fill(db, bank, 2025, range(1, 13), 350.0)
