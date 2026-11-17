@@ -71,6 +71,56 @@ baseline months are listed too.
   lands on its due month in `recurring_eur` (the budget's fund view is
   `budgeting.md`).
 
+## Planned items, tax payments and the what-if (2026-11-17, schema v46)
+
+Code: `services/planned_items.py` (rules), the `planned_items` table, CRUD under
+`/api/v1/spending/planned` (`GET ?include_done=`, `POST`, partial `PUT /{id}`,
+`DELETE /{id}`; a rule violation is a 400 with the reason), and
+`cashflow_forecast.estimated_tax_payments`.
+
+- **Planned items** are future one-off expenses, savings or income entered by
+  hand. `amount` is signed like a bank row (negative out, positive in, never 0);
+  `kind` is `spending` | `savings` | `income` (`income` needs a positive amount,
+  the others a negative one). An open item dated on or after the data-through
+  date is placed once, in its month, and adds to that month's
+  `planned_spending_eur`, `planned_savings_eur` or `planned_income_eur` (also on
+  `this_month`); net, balance change, projected balance, the low/high range and
+  `first_below_zero` include them. **They never enter a baseline, the budget
+  pace or a comparison.**
+- `planned_items` in the response lists each open item with a `status`:
+  `projected`, `overdue` (dated before the data-through date: not projected, one
+  warning "mark them done or move their date"), `beyond_horizon`, `unconverted`
+  (no FX rate) or `what_if`. `amount_eur` is signed. An item tied to another
+  bank account than the `portfolio_id` filter is left out. Marking an item
+  `done` (the real row is now in a statement) stops it being projected.
+- **What-if without saving.** `GET /spending/forecast?extra_amount=&extra_date=&extra_kind=spending`
+  adds one unsaved item (`id: null`, status `what_if`) and returns
+  `what_if: {amount_eur (signed), date, lowest_balance_eur, lowest_balance_month,
+  lowest_balance_without_eur, goes_below_zero}`. `extra_amount` is a positive
+  magnitude, `extra_kind` gives the sign, `extra_date` is `YYYY-MM` (taken as
+  the 15th) or a full date; amount and date must come together (400). A
+  what-if dated before the data-through date or beyond the horizon is not
+  counted and says so in `warnings`. Chat: `get_cashflow_forecast` takes the
+  same arguments; MCP: `extra_amount`, `extra_month`, `extra_kind`.
+- **Estimated quarterly tax.** The reserve maths is the allocator's
+  (`services/deployable.py`: `quarter_reserve`, `due_date`, the settings loader),
+  not a copy. One entry per quarter whose due date lies between the data-through
+  date and the horizon: `{quarter, due, amount_eur, basis}`. The previous
+  quarter contributes what is still unpaid (`accrued`); the current quarter the
+  larger of its accrual so far and the average of the last up to 4 complete
+  quarters (`accrued` or `average`); later quarters that average. Each month
+  gains `tax_eur` (already inside `spending_eur`), the response `tax_payments`
+  and an assumption line naming the IVA and IRPF rates. **Only when the
+  allocator settings name work-income merchants**; with none ticked there is no
+  tax estimate and a warning says where to tick them (as does a history with no
+  complete quarter of work income). `include_tax=false` switches it off.
+- **No double counting.** When the estimate is in use, recurring series in one
+  of the allocator's tax-paid categories are dropped from the known bills, and
+  rows in those categories are left out of the everyday baseline **of the
+  forecast only** (`everyday_outflows` as the budget pace uses it is unchanged:
+  the new parameter defaults off). When the estimate is not in use, behaviour
+  is exactly as before.
+
 ## Freshness and degradation
 
 - `accounts` lists each bank account with `data_through`, `days_behind`,
@@ -93,5 +143,7 @@ baseline months are listed too.
 
 - A `null` is "not known", not zero: clients print "not available".
 - `months` outside 1..36 is a 422.
+- A planned item is not a bill: it never changes an average, and an item left open after its date stops counting (overdue) until it is marked done or moved.
+- Tax payments are an estimate with a `basis`; label them as such, and never add them to the recurring bills yourself.
 - Changing what counts as income or recurring changes the review and the chat
   figures at once, since they all call `load_forecast`.

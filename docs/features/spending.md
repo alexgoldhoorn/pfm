@@ -301,3 +301,55 @@ filters `is_transfer` itself).
 - **Action Item:** `check_spending_anomalies` (low severity, last 14 days, max
   8), see `action-items.md`. Web: `web-client.md` → Cost control. The forecast
   is `cashflow-forecast.md`.
+
+### Cost control 2: statement import, uncategorised queue, year view (2026-11-17, schema v46)
+
+- **`POST /spending/import-file`** (multipart `file`, `portfolio_id`): parse with
+  the auto-detection, drop rows already stored (the `/upload` duplicate rule,
+  against rows stored before the import, never twins inside the file), apply
+  rules and transfer matching, and save through the same `_save_rows` as
+  `/save`. Returns `{parsed, imported, duplicates, uncategorized, date_from,
+  date_to, data_through, warnings}`. 400, nothing written, for a portfolio that
+  is not a bank account or a file that parses to nothing (the parser's reason
+  is in `detail`). A host job can post statements with it.
+- **`GET /spending/uncategorized-queue?limit=20&months=12&portfolio_id=`**
+  (`services/spending_uncategorized.py`): non-transfer rows with category
+  `uncategorized`, grouped per merchant and direction (rows without a merchant
+  by normalised description), biggest total first. Group:
+  `{key, merchant, direction, count, total_eur, first_date, last_date,
+  sample_descriptions, transaction_ids, proposed_pattern, account_names}`;
+  `proposed_pattern` is the merchant, else the longest common description
+  prefix of at least 5 characters, else null. Top level: `groups`,
+  `total_count`, `total_eur`, `share_of_spending_pct`, `window_start`,
+  `last_complete_month: {month, count, total_eur, share_pct}`. The shares count
+  outflows only; `last_complete_month` is null without a complete month.
+- **`POST /spending/uncategorized-queue/classify`** `{transaction_ids, category,
+  create_rule, pattern}`: a thin wrapper over the row edit and the rules, with
+  the same sign/root check as editing one row. All-or-nothing validation (400
+  for an unknown id, a transfer, a wrong sign, `Transfer` as category, or
+  `create_rule` without a pattern); rows that already have a category are
+  counted in `skipped`. With `create_rule` an identical rule is reused, then
+  the rules re-scan the other uncategorised rows. Returns `{updated, skipped,
+  rule_id, rule_created, recategorized_by_rule}`.
+- **Review field.** `GET /spending/review` gains `uncategorized: {count,
+  total_eur, share_pct, highlight}` for the reviewed month (null when nothing
+  is imported); `highlight` is a line when the share is above 5%. Action Item:
+  `action-items.md`.
+- **`GET /spending/year?year=&depth=1|2&portfolio_id=`**
+  (`services/spending_year.py`). Like for like: only months that are complete
+  and have imports in **both** years are summed, on both sides. `totals` has
+  `this`, `previous` (cut to the same months) and `previous_full` (every
+  imported month of the previous year), each `{income_eur, spending_eur,
+  savings_eur, net_eur, savings_rate_pct (null without income), one_off_eur,
+  months}`. `months` is `{this, previous}`, 12 entries each with `has_imports`
+  and `complete`; a month without imports is unknown (named in a warning),
+  never zero. `compared_through` / `compared_months` say what was compared.
+  `categories` are the top-level Spend categories (children with `depth=2`),
+  `movers` `{increases, decreases}` by leaf category, `merchants` the 10
+  largest, `one_offs` the one-off rows of the compared months (they count in
+  the totals). With nothing comparable the totals, categories and deltas are
+  null/empty and a warning says so. Plain `def` (FX lookups).
+- Clients: chat `get_planned_items`, `get_spending_year`,
+  `get_uncategorized_queue`; MCP `planned_items`, `spending_year`,
+  `uncategorized_queue` (read-only; classifying and planned items are written in
+  the web client).

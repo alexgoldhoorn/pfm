@@ -34,3 +34,13 @@
 ### Cost control items (2026-11-15)
 - **`check_spending_anomalies`** (`spending` category, `low`) turns the unusual charges of the last 14 days (`ANOMALY_ITEM_DAYS`, newest first; the cap of 8 counts only items nobody has checked or snoozed, which are still returned after them so the `all` view shows them) into items. The item id is the anomaly's own deterministic id (`anomaly:large:<row>`, `anomaly:new_merchant:<row>`, `anomaly:category:<name>:<YYYY-MM>`, `anomaly:duplicate:<row>:<row>`), so the existing checked/snoozed state applies; marking the row(s) one-off makes the item go away for good. Details: `spending.md` → Cost control.
 - **On pace to exceed** (`budget` category, `low`, in `check_budget_overruns` via `_budget_pace_items`): `budget:pace:<line_id>:<YYYY-MM>` for a cost line whose month-end projection passes its available amount by both `BUDGET_OVERRUN_EUR` and `BUDGET_OVERRUN_PCT`. A line the overrun check already flags for the month gets no pace item. Nothing is raised for a month with nothing imported (no pace exists), for a `too_early` pace (no projection), or without an active budget. The detail names the data-through date, because the projection is an estimate. Details: `budgeting.md`.
+
+### Uncategorised spending (2026-11-17)
+- **`check_uncategorized_spending`** (`spending` category, `low`, id
+  `spending:uncategorized`): raised when the last complete month's uncategorised
+  outflows are above 5% of that month's spending or above 500 EUR
+  (`spending_uncategorized.SHARE_ALERT_PCT` / `TOTAL_ALERT_EUR`). The id is fixed,
+  so one checked/snoozed state covers it; the detail names the biggest groups
+  from the queue. A month with no imports, or one the data stops short of, is
+  never judged; none complete means no item. Links to the Spending page's To
+  classify card. Details: `spending.md` → Cost control 2.

@@ -288,3 +288,24 @@ are unchanged, so variance still reconciles with `/spending/trend` to the cent.
   accounts with rows in the window) and `warnings`. MCP `budget_summary` and the chat's `get_household_finances`
   print available totals, the fund, the carry, the pace (or "too early") and
   the data-through date. Web: `web-client.md` → Cost control.
+
+### Seed suggestions: yearly and carry-over (2026-11-17)
+
+`GET /budgets/{id}/seed-proposals` (`budget.propose_budget_lines`, writes
+nothing) keeps its fields. For **spending** lines it adds, over the last 12
+complete months with imports (one-off rows and transfers out):
+`months_with_activity`, `suggested_period`, `suggested_amount`,
+`suggested_rollover` and `reason`.
+
+- `yearly` when the category had spending in at most 4 of those months, or its
+  two largest months hold at least 70% of the total; `suggested_amount` is the
+  12-month total rounded up to the next 10 (**the YEARLY figure**, as the line
+  stores it). Otherwise `monthly`, amount as before.
+- `suggested_rollover: true` for a monthly suggestion with activity in at least
+  6 months and a coefficient of variation above 0.5, unless the category's
+  essentiality (own or inherited) is `fixed`.
+- Fewer than 6 complete months with imports: every suggestion stays `monthly`
+  and `reason` says the history is too short.
+- With a budget, a category that already has a line carries `existing_line_id`
+  and `change` (`to_yearly`, `add_rollover` or null). Applying a change uses the
+  existing bulk and line `PUT` endpoints; the proposal itself changes nothing.
