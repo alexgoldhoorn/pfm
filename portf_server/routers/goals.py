@@ -17,6 +17,7 @@ from portf_manager.services.goals import goals_summary, list_goals_with_progress
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
 from .networth import net_worth_eur
+from portf_manager.database import Database
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -42,7 +43,9 @@ async def _auth(
 
 
 @router.get("/")
-def list_goals(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def list_goals(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+):
     """List goals with progress, projection and saving pace.
 
     Sync (plain ``def``): net_worth_eur → _fx does blocking FX lookups that
@@ -52,7 +55,9 @@ def list_goals(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
 
 
 @router.get("/summary")
-def get_goals_summary(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def get_goals_summary(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+) -> dict:
     """Goals with a one-line summary (counts per status, planned monthly).
 
     One call for the dashboard card and the page's summary strip. There is
@@ -64,7 +69,9 @@ def get_goals_summary(db=Depends(get_database), api_key_info: dict = Depends(_au
 
 @router.post("/", status_code=201)
 def create_goal(
-    body: GoalCreate, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+    body: GoalCreate,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
 ):
     """Create a savings goal, recording today's net worth as its baseline."""
     start = body.start_networth_eur
@@ -86,7 +93,7 @@ def create_goal(
 def update_goal(
     goal_id: int,
     body: GoalCreate,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Update a savings goal. Omitted baseline/notes stay as they are."""
@@ -106,8 +113,10 @@ def update_goal(
 
 @router.delete("/{goal_id}")
 async def delete_goal(
-    goal_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+    goal_id: int,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+) -> dict:
     """Delete a goal."""
     if not db.delete_goal(goal_id):
         raise HTTPException(status_code=404, detail="Goal not found")

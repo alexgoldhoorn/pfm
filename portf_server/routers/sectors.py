@@ -24,7 +24,7 @@ async def get_all_sectors():
 
 
 @router.get("/{symbol}")
-async def get_asset_sector(symbol: str):
+async def get_asset_sector(symbol: str) -> dict:
     """
     Get the sector for a specific asset symbol.
 

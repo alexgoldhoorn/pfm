@@ -223,7 +223,8 @@ _INSTRUMENTED_METHODS = (
     "generate_with_search",
     "generate_with_tools",
     "complete_with_tool_result",
-    "run_tool_loop",  # a retry re-runs the read-only tools too
+    # a retry re-runs the read-only tools too
+    "run_tool_loop",
 )
 _call_depth = threading.local()
 
@@ -774,9 +775,12 @@ class OllamaLLMClient:
                 timeout=120,
             )
             resp.raise_for_status()
-            return resp.json().get("message", {}).get("content", "")
-        except Exception:
-            pass
+            content = resp.json().get("message", {}).get("content", "")
+            if content:
+                return content
+        except (requests.RequestException, ValueError) as e:
+            # Older Ollama builds have no /api/chat; fall back to /api/generate.
+            logger.warning("Ollama /api/chat failed (%s); trying /api/generate", e)
 
         body = "\n".join(
             f"{m['role'].upper()}: {m['content']}"
@@ -793,7 +797,10 @@ class OllamaLLMClient:
             timeout=120,
         )
         resp.raise_for_status()
-        return resp.json().get("response", "")
+        text = resp.json().get("response", "")
+        if not text:
+            raise LLMResponseError("Ollama returned an empty answer after a tool")
+        return text
 
 
 class OpenRouterLLMClient:
@@ -1102,7 +1109,8 @@ class AnthropicLLMClient:
         messages = [{"role": "user", "content": prompt}]
         tools = [{"type": search_type, "name": "web_search", "max_uses": 5}]
         msg = None
-        for _ in range(4):  # a long server-tool turn can pause; resume it
+        # a long server-tool turn can pause; resume it
+        for _ in range(4):
             msg = self._create(messages=messages, tools=tools)
             if msg.stop_reason != "pause_turn":
                 break

@@ -1,5 +1,7 @@
 """Small helpers shared by the tool tests."""
 
+import urllib.parse
+
 
 def reply(payload):
     """Stand in for the JSON body of an API reply (``_get`` returns it parsed)."""
@@ -18,5 +20,8 @@ def requested_url(mock_get) -> str:
     args, kwargs = mock_get.call_args
     path = args[0]
     params = args[1] if len(args) > 1 else kwargs.get("params")
-    query = "&".join(f"{k}={v}" for k, v in (params or {}).items() if v is not None)
+    query = urllib.parse.urlencode(
+        {k: v for k, v in (params or {}).items() if v is not None},
+        quote_via=urllib.parse.quote,
+    )
     return f"{path}?{query}" if query else path

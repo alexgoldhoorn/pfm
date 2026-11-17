@@ -18,7 +18,7 @@ import csv
 import io
 import logging
 from datetime import date
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 
@@ -60,7 +60,7 @@ def _fetch_estr(start: str, end: str) -> Optional[list[float]]:
     return values or None
 
 
-def risk_free_rate(db, start: date, end: date) -> tuple[float, str]:
+def risk_free_rate(db: Any, start: date, end: date) -> tuple[float, str]:
     """Average annual risk-free rate over ``[start, end]`` as a fraction.
 
     Args:

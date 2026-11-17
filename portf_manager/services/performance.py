@@ -240,7 +240,7 @@ def lifetime_twr(
 
 
 def compute_performance(
-    db,
+    db: Any,
     fx_now: Callable[[str], float],
     fx_on: FxOn,
     portfolio_id: Optional[int] = None,

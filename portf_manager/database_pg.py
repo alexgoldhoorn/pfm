@@ -46,7 +46,7 @@ class PostgreSQLDatabase:
     Implements the DatabaseAdapter protocol for use with domain models.
     """
 
-    def __init__(self, database_url: str = None):
+    def __init__(self, database_url: Optional[str] = None):
         """
         Initialize PostgreSQL database manager.
 
@@ -64,10 +64,12 @@ class PostgreSQLDatabase:
         # Create SQLAlchemy engine
         self.engine = create_engine(
             database_url,
-            echo=False,  # Set to True for SQL debugging
+            # Set to True for SQL debugging
+            echo=False,
             pool_size=10,
             max_overflow=20,
-            pool_pre_ping=True,  # Verify connections before use
+            # Verify connections before use
+            pool_pre_ping=True,
         )
 
         # Create session factory
@@ -179,7 +181,7 @@ class PostgreSQLDatabase:
         email: str,
         password_hash: str,
         salt: str,
-        full_name: str = None,
+        full_name: Optional[str] = None,
     ) -> int:
         """Create a new user."""
         with self.get_session() as session:
@@ -232,7 +234,7 @@ class PostgreSQLDatabase:
             )
             return result > 0
 
-    def update_user(self, user_id: int, **kwargs) -> bool:
+    def update_user(self, user_id: int, **kwargs: Any) -> bool:
         """Update user fields."""
         if not kwargs:
             return False
@@ -259,8 +261,8 @@ class PostgreSQLDatabase:
         name: str,
         entity_type: str,
         user_id: int,
-        website: str = None,
-        description: str = None,
+        website: Optional[str] = None,
+        description: Optional[str] = None,
     ) -> int:
         """Create a new entity."""
         with self.get_session() as session:
@@ -288,7 +290,7 @@ class PostgreSQLDatabase:
             return self._orm_to_dict(entity)
 
     def get_all_entities(
-        self, active_only: bool = True, user_id: int = None
+        self, active_only: bool = True, user_id: Optional[int] = None
     ) -> List[Dict]:
         """Get all entities."""
         with self.get_session() as session:
@@ -304,7 +306,7 @@ class PostgreSQLDatabase:
             entities = query.all()
             return [self._orm_to_dict(entity) for entity in entities]
 
-    def update_entity(self, entity_id: int, **kwargs) -> bool:
+    def update_entity(self, entity_id: int, **kwargs: Any) -> bool:
         """Update entity fields."""
         if not kwargs:
             return False
@@ -332,9 +334,9 @@ class PostgreSQLDatabase:
         self,
         name: str,
         base_currency: str = "USD",
-        entity_id: int = None,
-        description: str = None,
-        user_id: int = None,
+        entity_id: Optional[int] = None,
+        description: Optional[str] = None,
+        user_id: Optional[int] = None,
     ) -> int:
         """Create a new portfolio."""
         with self.get_session() as session:
@@ -374,7 +376,7 @@ class PostgreSQLDatabase:
             return result
 
     def get_all_portfolios(
-        self, active_only: bool = True, user_id: int = None
+        self, active_only: bool = True, user_id: Optional[int] = None
     ) -> List[Dict]:
         """Get all portfolios."""
         with self.get_session() as session:
@@ -400,7 +402,7 @@ class PostgreSQLDatabase:
 
             return results
 
-    def update_portfolio(self, portfolio_id: int, **kwargs) -> bool:
+    def update_portfolio(self, portfolio_id: int, **kwargs: Any) -> bool:
         """Update portfolio fields."""
         if not kwargs:
             return False
@@ -457,10 +459,10 @@ class PostgreSQLDatabase:
         symbol: str,
         name: str,
         asset_type: str,
-        exchange: str = None,
+        exchange: Optional[str] = None,
         currency: str = "USD",
-        sector: str = None,
-        description: str = None,
+        sector: Optional[str] = None,
+        description: Optional[str] = None,
     ) -> int:
         """Create a new asset."""
         with self.get_session() as session:
@@ -507,7 +509,7 @@ class PostgreSQLDatabase:
             assets = query.all()
             return [self._orm_to_dict(asset) for asset in assets]
 
-    def update_asset(self, asset_id: int, **kwargs) -> bool:
+    def update_asset(self, asset_id: int, **kwargs: Any) -> bool:
         """Update asset fields."""
         if not kwargs:
             return False
@@ -546,12 +548,12 @@ class PostgreSQLDatabase:
         price: float,
         total_amount: float,
         transaction_date: str,
-        portfolio_id: int = None,
+        portfolio_id: Optional[int] = None,
         fees: float = 0,
         tax: float = 0,
-        currency: str = None,
-        description: str = None,
-        user_id: int = None,
+        currency: Optional[str] = None,
+        description: Optional[str] = None,
+        user_id: Optional[int] = None,
     ) -> int:
         """Create a new transaction."""
         with self.get_session() as session:
@@ -613,7 +615,7 @@ class PostgreSQLDatabase:
             return results
 
     def get_all_transactions(
-        self, limit: int = None, user_id: int = None
+        self, limit: Optional[int] = None, user_id: Optional[int] = None
     ) -> List[Dict]:
         """Get all transactions."""
         with self.get_session() as session:
@@ -639,7 +641,7 @@ class PostgreSQLDatabase:
 
             return results
 
-    def update_transaction(self, transaction_id: int, **kwargs) -> bool:
+    def update_transaction(self, transaction_id: int, **kwargs: Any) -> bool:
         """Update transaction fields."""
         if not kwargs:
             return False
@@ -685,8 +687,8 @@ class PostgreSQLDatabase:
         price: float,
         price_date: str,
         price_type: str = "close",
-        volume: int = None,
-        source: str = None,
+        volume: Optional[int] = None,
+        source: Optional[str] = None,
     ) -> int:
         """Create a new price record."""
         with self.get_session() as session:
@@ -728,8 +730,8 @@ class PostgreSQLDatabase:
     def get_price_history(
         self,
         asset_id: int,
-        start_date: str = None,
-        end_date: str = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
         price_type: str = "close",
     ) -> List[Dict]:
         """Get price history for an asset."""
@@ -877,7 +879,7 @@ class PostgreSQLDatabase:
         config_key: str,
         config_value: Any,
         config_type: str = "string",
-        description: str = None,
+        description: Optional[str] = None,
     ) -> int:
         """Set configuration value."""
         # Convert value to string based on type
@@ -1002,6 +1004,6 @@ class PostgreSQLDatabase:
 
 
 # Convenience function to get database instance
-def get_database(database_url: str = None) -> PostgreSQLDatabase:
+def get_database(database_url: Optional[str] = None) -> PostgreSQLDatabase:
     """Get PostgreSQL database instance."""
     return PostgreSQLDatabase(database_url)

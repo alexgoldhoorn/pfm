@@ -922,7 +922,7 @@ def _primary_plan_params(db: Any) -> Optional[dict]:
 
 
 def run_job_loss(
-    db: Any, today: Optional[date] = None, fx: Optional[Callable] = None, **kwargs
+    db: Any, today: Optional[date] = None, fx: Optional[Callable] = None, **kwargs: Any
 ) -> dict:
     """``job_loss`` on the live numbers."""
     exclude = kwargs.pop("exclude_categories", None)
@@ -931,7 +931,7 @@ def run_job_loss(
 
 
 def run_income_change(
-    db: Any, today: Optional[date] = None, fx: Optional[Callable] = None, **kwargs
+    db: Any, today: Optional[date] = None, fx: Optional[Callable] = None, **kwargs: Any
 ) -> dict:
     """``income_change`` on the live numbers, with goals and the primary plan."""
     from portf_manager.services.goals import goals_summary, list_goals_with_progress
@@ -954,7 +954,7 @@ def run_income_change(
 
 
 def run_house_purchase(
-    db: Any, today: Optional[date] = None, fx: Optional[Callable] = None, **kwargs
+    db: Any, today: Optional[date] = None, fx: Optional[Callable] = None, **kwargs: Any
 ) -> dict:
     """``house_purchase`` on the live numbers."""
     exclude = kwargs.pop("exclude_categories", None)

@@ -205,7 +205,7 @@ def create_csv_exporter(
     return TransactionCSVExporter(db_adapter, auth_manager)
 
 
-def example_usage():
+def example_usage() -> None:
     """
     Example usage of the TransactionCSVExporter.
 

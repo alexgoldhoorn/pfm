@@ -14,7 +14,7 @@ Bookings get the same treatment from ``Database.match_existing_bookings``,
 which matches a whole import at once.
 """
 
-from typing import Dict, Optional, Set
+from typing import Any, Dict, Optional, Set
 
 
 class TransactionDeduplicator:
@@ -29,7 +29,7 @@ class TransactionDeduplicator:
         self._seen: Set[int] = set()
         self.skipped = 0
 
-    def find(self, **fields) -> Optional[Dict]:
+    def find(self, **fields: Any) -> Optional[Dict]:
         """Return the stored transaction this row duplicates, or None.
 
         Takes the keyword arguments of ``Database.find_duplicate_transaction``.

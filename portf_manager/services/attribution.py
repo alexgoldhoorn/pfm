@@ -64,7 +64,7 @@ def _round_row(row: dict) -> dict:
 
 
 def compute_attribution(
-    db,
+    db: Any,
     start: date,
     end: date,
     fx_now: Callable[[str], float],

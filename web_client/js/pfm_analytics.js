@@ -56,7 +56,7 @@ async function loadNetworthPage() {
                         <span class="nw-amt-display" style="cursor:pointer;" title="Click to update balance" onclick="window.editManualAssetAmount(${it.id})">${Fmt.money(it.amount, it.currency, 2)} <i class="bi bi-pencil-square text-muted" style="font-size:0.75em;"></i></span>
                     </td>
                     <td class="text-end ${it.is_liability ? 'text-danger' : ''}">${it.is_liability ? '−' : ''}${Fmt.amt(Fmt.money(it.amount_eur, 'EUR', 0))}</td>
-                    <td class="pe-3 text-end"><button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteManualAsset(${it.id})"><i class="bi bi-trash"></i></button></td>
+                    <td class="pe-3 text-end"><button class="btn btn-sm btn-outline-danger" title="Delete asset" aria-label="Delete asset" onclick="confirmDeleteManualAsset(${it.id})"><i class="bi bi-trash"></i></button></td>
                 </tr>`).join('');
         }
         _renderDeposits(d.deposits || []);
@@ -1289,7 +1289,7 @@ function _renderDeposits(deposits) {
             ? '<span class="badge bg-success">Active</span>'
             : '<span class="badge bg-secondary">' + d.status.charAt(0).toUpperCase() + d.status.slice(1) + '</span>';
         const matureBtn = d.status === 'active'
-            ? `<button class="btn btn-sm btn-outline-success me-1" onclick="openMatureDepositModal(${d.id}, ${d.projected_interest}, '${d.maturity_date}')"><i class="bi bi-check-circle"></i></button>`
+            ? `<button class="btn btn-sm btn-outline-success me-1" title="Mark deposit as matured" aria-label="Mark deposit as matured" onclick="openMatureDepositModal(${d.id}, ${d.projected_interest}, '${d.maturity_date}')"><i class="bi bi-check-circle"></i></button>`
             : '';
         return `<tr>
             <td class="ps-3"><strong>${escapeForAttr(d.name)}</strong>${d.notes ? `<br><small class="text-muted">${escapeForAttr(d.notes)}</small>` : ''}</td>
@@ -1299,7 +1299,7 @@ function _renderDeposits(deposits) {
             <td>${Fmt.date(d.maturity_date)}</td>
             <td class="text-end">${Fmt.money(d.projected_interest, d.currency, 2)}</td>
             <td>${statusBadge}</td>
-            <td class="pe-3 text-end">${matureBtn}<button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteDeposit(${d.id})"><i class="bi bi-trash"></i></button></td>
+            <td class="pe-3 text-end">${matureBtn}<button class="btn btn-sm btn-outline-danger" title="Delete deposit" aria-label="Delete deposit" onclick="confirmDeleteDeposit(${d.id})"><i class="bi bi-trash"></i></button></td>
         </tr>`;
     }).join('');
 }
@@ -1361,7 +1361,7 @@ function _wireDepositForm() {
                     ? `<div class="alert alert-warning py-2 small mb-2"><i class="bi bi-exclamation-triangle me-1"></i><strong>${dupCount}</strong> deposit(s) already exist (unchecked below). Check to import anyway.</div>`
                     : '';
                 preview.innerHTML = dupNote + `
-                    <table class="table table-sm table-bordered mt-2 mb-2">
+                    <div class="table-responsive"><table class="table table-sm table-bordered mt-2 mb-2">
                         <thead><tr>
                             <th></th><th>Name</th><th>Principal</th><th>Cur</th>
                             <th>Rate (%)</th><th>Start</th><th>Maturity</th>
@@ -1370,14 +1370,14 @@ function _wireDepositForm() {
                             <tr class="${dep.is_duplicate ? 'table-warning' : ''}">
                                 <td><input type="checkbox" class="form-check-input dep-extract-select" data-idx="${i}" ${dep.is_duplicate ? '' : 'checked'}></td>
                                 <td><input type="text" class="form-control form-control-sm" id="dep_name_${i}" value="${escapeForAttr(dep.name)}">${dep.is_duplicate ? dupBadge : ''}</td>
-                                <td><input type="number" class="form-control form-control-sm" id="dep_principal_${i}" value="${dep.principal}" step="0.01" min="0" style="width:9ch"></td>
+                                <td><input type="number" class="form-control form-control-sm" id="dep_principal_${i}" value="${escapeForAttr(dep.principal)}" step="0.01" min="0" style="width:9ch"></td>
                                 <td><input type="text" class="form-control form-control-sm" id="dep_currency_${i}" value="${escapeForAttr(dep.currency)}" maxlength="3" style="width:5ch"></td>
-                                <td><input type="number" class="form-control form-control-sm" id="dep_rate_${i}" value="${dep.interest_rate}" step="0.001" min="0" style="width:7ch"></td>
+                                <td><input type="number" class="form-control form-control-sm" id="dep_rate_${i}" value="${escapeForAttr(dep.interest_rate)}" step="0.001" min="0" style="width:7ch"></td>
                                 <td><input type="date" class="form-control form-control-sm" id="dep_start_${i}" value="${escapeForAttr(dep.start_date)}"></td>
                                 <td><input type="date" class="form-control form-control-sm" id="dep_maturity_${i}" value="${escapeForAttr(dep.maturity_date)}"></td>
                             </tr>`).join('')}
                         </tbody>
-                    </table>
+                    </table></div>
                     <button class="btn btn-sm btn-primary" id="depSaveExtracted">
                         <i class="bi bi-cloud-upload me-1"></i>Save selected
                     </button>
@@ -1435,7 +1435,7 @@ async function _loadCashflow() {
                 <td><span class="badge ${CF_INCOME_CATS.has(it.category) ? 'bg-success' : 'bg-danger'}">${CF_CATEGORY_LABELS[it.category] || it.category}</span></td>
                 <td class="text-end">${Fmt.money(it.amount, it.currency, 2)}</td>
                 <td class="text-end ${CF_INCOME_CATS.has(it.category) ? 'text-success' : 'text-danger'}">${CF_INCOME_CATS.has(it.category) ? '' : '−'}${Fmt.amt(Fmt.money(it.amount_eur, 'EUR', 0))}</td>
-                <td class="pe-3 text-end"><button class="btn btn-sm btn-outline-danger" onclick="confirmDeleteCashflow(${it.id})"><i class="bi bi-trash"></i></button></td>
+                <td class="pe-3 text-end"><button class="btn btn-sm btn-outline-danger" title="Delete entry" aria-label="Delete entry" onclick="confirmDeleteCashflow(${it.id})"><i class="bi bi-trash"></i></button></td>
             </tr>`).join('');
         return d;
     } catch (err) {

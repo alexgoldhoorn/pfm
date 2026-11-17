@@ -10,12 +10,12 @@ router = APIRouter()
 
 
 @router.get("/")
-async def list_entities():
+async def list_entities() -> dict:
     """Get all entities."""
     return {"message": "Entities endpoint - under construction"}
 
 
 @router.post("/")
-async def create_entity():
+async def create_entity() -> dict:
     """Create a new entity."""
     return {"message": "Create entity endpoint - under construction"}

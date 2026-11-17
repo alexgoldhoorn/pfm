@@ -8,7 +8,7 @@ table is never modified here.
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from portf_manager.services.own_accounts import load_patterns, matches_own_account
 from portf_manager.services.transfer_matcher import find_all_transfer_matches
@@ -16,7 +16,7 @@ from portf_manager.services.transfer_matcher import find_all_transfer_matches
 logger = logging.getLogger(__name__)
 
 
-def link_transfers(db, spending_ids: Optional[List[int]] = None) -> int:
+def link_transfers(db: Any, spending_ids: Optional[List[int]] = None) -> int:
     """Pair unlinked spending rows with a counterpart and write the links.
 
     Args:
@@ -79,7 +79,7 @@ def _pattern_candidates(db, spending_ids: Optional[List[int]]) -> List[Dict]:
 
 
 def flag_own_account_rows(
-    db,
+    db: Any,
     spending_ids: Optional[List[int]] = None,
     patterns: Optional[List[str]] = None,
 ) -> int:
@@ -113,7 +113,7 @@ def flag_own_account_rows(
     return flagged
 
 
-def preview_own_account_pattern(db, pattern: str) -> List[Dict]:
+def preview_own_account_pattern(db: Any, pattern: str) -> List[Dict]:
     """Rows that flagging with this single pattern would change; writes nothing."""
     return [
         r
@@ -122,7 +122,9 @@ def preview_own_account_pattern(db, pattern: str) -> List[Dict]:
     ]
 
 
-def settle_transfers(db, spending_ids: Optional[List[int]] = None) -> Dict[str, int]:
+def settle_transfers(
+    db: Any, spending_ids: Optional[List[int]] = None
+) -> Dict[str, int]:
     """Link transfers over the given rows (None = all), then flag by pattern.
 
     Pair matching runs first so a real counterpart always wins over a pattern.
@@ -135,7 +137,7 @@ def settle_transfers(db, spending_ids: Optional[List[int]] = None) -> Dict[str, 
     return {"linked": linked, "flagged": flagged}
 
 
-def settle_after_bookings(db) -> Dict[str, int]:
+def settle_after_bookings(db: Any) -> Dict[str, int]:
     """Re-run transfer settling after bookings were created. Never raises."""
     try:
         return settle_transfers(db)

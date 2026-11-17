@@ -173,31 +173,51 @@ def _yf_ticker_for_exchange(ticker: str, exchcode: str, candidates: list[dict]) 
     """
     _SUFFIX = {
         # OpenFIGI / Bloomberg exchange codes
-        "GR": ".DE",  # Deutsche Börse Xetra
+        # Deutsche Börse Xetra
+        "GR": ".DE",
         "GY": ".DE",
-        "GS": ".DE",  # Stuttgart — route to the (same-ticker) Xetra symbol
-        "GF": ".F",  # Frankfurt
-        "GM": ".MU",  # Munich
-        "GD": ".DU",  # Düsseldorf
-        "GH": ".HM",  # Hamburg
-        "GB": ".BE",  # Berlin
-        "FP": ".PA",  # Euronext Paris
-        "NA": ".AS",  # Euronext Amsterdam
-        "IM": ".MI",  # Borsa Italiana Milan
-        "SM": ".MC",  # Bolsa de Madrid
+        # Stuttgart — route to the (same-ticker) Xetra symbol
+        "GS": ".DE",
+        # Frankfurt
+        "GF": ".F",
+        # Munich
+        "GM": ".MU",
+        # Düsseldorf
+        "GD": ".DU",
+        # Hamburg
+        "GH": ".HM",
+        # Berlin
+        "GB": ".BE",
+        # Euronext Paris
+        "FP": ".PA",
+        # Euronext Amsterdam
+        "NA": ".AS",
+        # Borsa Italiana Milan
+        "IM": ".MI",
+        # Bolsa de Madrid
+        "SM": ".MC",
         "SQ": ".MC",
-        "BR": ".BR",  # Euronext Brussels
-        "LS": ".LS",  # Euronext Lisbon
-        "LN": ".L",  # London Stock Exchange
+        # Euronext Brussels
+        "BR": ".BR",
+        # Euronext Lisbon
+        "LS": ".LS",
+        # London Stock Exchange
+        "LN": ".L",
         "LI": ".L",
-        "SW": ".SW",  # SIX Swiss
+        # SIX Swiss
+        "SW": ".SW",
         "SE": ".SW",
         "VX": ".VX",
-        "SS": ".ST",  # Nasdaq Stockholm
-        "DC": ".CO",  # Nasdaq Copenhagen
-        "NO": ".OL",  # Oslo Børs
-        "FH": ".HE",  # Nasdaq Helsinki
-        "PW": ".VI",  # Wiener Börse
+        # Nasdaq Stockholm
+        "SS": ".ST",
+        # Nasdaq Copenhagen
+        "DC": ".CO",
+        # Oslo Børs
+        "NO": ".OL",
+        # Nasdaq Helsinki
+        "FH": ".HE",
+        # Wiener Börse
+        "PW": ".VI",
         # legacy/pretty codes some feeds emit
         "XETRA": ".DE",
         "EAM": ".MC",
@@ -295,7 +315,8 @@ def resolve_tickers_bulk(
         batch = isins[i : i + _BATCH_SIZE]
         openfigi_results.update(_openfigi_batch(batch))
         if i + _BATCH_SIZE < len(isins):
-            time.sleep(0.5)  # respect rate limit
+            # respect rate limit
+            time.sleep(0.5)
 
     out: dict[int, Optional[str]] = {}
     for isin, asset in isin_to_asset.items():
@@ -327,6 +348,7 @@ def resolve_tickers_bulk(
         else:
             out[asset["id"]] = None
 
-        time.sleep(0.1)  # avoid hammering yfinance
+        # avoid hammering yfinance
+        time.sleep(0.1)
 
     return out

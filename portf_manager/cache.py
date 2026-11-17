@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 def cached(
-    db, key: str, ttl_seconds: Optional[float], producer: Callable[[], Any]
+    db: Any, key: str, ttl_seconds: Optional[float], producer: Callable[[], Any]
 ) -> Any:
     """Return a cached value for *key*, else produce, store and return it."""
     if db is not None:

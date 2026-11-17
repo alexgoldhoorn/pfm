@@ -7,7 +7,7 @@ One implementation behind ``GET /analytics/tax-optimizer``, the chat tool
 
 import logging
 from datetime import date, datetime
-from typing import Optional
+from typing import Any, Optional
 
 from portf_manager.positions import (
     managed_portfolio_ids,
@@ -137,7 +137,7 @@ def _wash_blocked(db, candidates: list[dict], today: date, notes: list) -> list[
 
 
 def compute_year_end_tax(
-    db, year: Optional[int] = None, today: Optional[date] = None
+    db: Any, year: Optional[int] = None, today: Optional[date] = None
 ) -> dict:
     """Realised result, harvestable losses, carry-forward and deadline.
 
@@ -298,7 +298,7 @@ def compute_year_end_tax(
     }
 
 
-def check_year_end_tax(db, today: Optional[date] = None) -> list[dict]:
+def check_year_end_tax(db: Any, today: Optional[date] = None) -> list[dict]:
     """Action Item from 1 November to 31 December: losses worth harvesting."""
     today = today or date.today()
     if (today.month, today.day) < ITEM_FROM:

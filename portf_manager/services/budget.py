@@ -666,7 +666,7 @@ class _PaceContext:
         return out
 
 
-def data_through_by_account(db, start: Optional[str]) -> Dict[str, Any]:
+def data_through_by_account(db: Any, start: Optional[str]) -> Dict[str, Any]:
     """``effective_data_through`` over the database's bank accounts.
 
     An account's last import is the date of its latest spending row (the
@@ -782,7 +782,8 @@ def _link_info(
                 2,
             )
             split = loan_calc.payment_split(loan, month)
-        except Exception:  # a loan with an unreadable date must not break the page
+        # a loan with an unreadable date must not break the page
+        except Exception:
             return info
         if split:
             rate = fx(loan.get("currency") or "EUR")
@@ -801,7 +802,7 @@ def _link_info(
 
 
 def compute_budget_variance(
-    db,
+    db: Any,
     budget_id: int,
     months: List[str],
     fx: Callable[[str], float],
@@ -1362,7 +1363,7 @@ def suggest_period(
 
 
 def propose_budget_lines(
-    db,
+    db: Any,
     months: int,
     fx: Callable[[str], float],
     budget_id: Optional[int] = None,

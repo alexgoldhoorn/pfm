@@ -347,7 +347,8 @@ def parse_generic_csv(content: str) -> GenericCSVParseResult:
 
     for row_num, row in enumerate(rows[1:], start=2):
         if not any(c.strip() for c in row):
-            continue  # skip blank lines
+            # skip blank lines
+            continue
         raw = delimiter.join(row)
         try:
             date_str = _parse_date(_get(row, "date"), date_formats)

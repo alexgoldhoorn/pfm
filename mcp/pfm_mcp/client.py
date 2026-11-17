@@ -1,6 +1,7 @@
 """HTTP access to the pfm API and the formatting helpers the tools share."""
 
 import json
+import urllib.parse
 import urllib.request
 from datetime import date
 from typing import Optional
@@ -16,7 +17,12 @@ FULL_HISTORY_LIMIT = 100_000
 def _get(path: str, params: Optional[dict] = None) -> dict | list:
     url = f"{config.settings().url}{path}"
     if params:
-        query = "&".join(f"{k}={v}" for k, v in params.items() if v is not None)
+        # Encode every value: a symbol list with a space, or a value holding
+        # "&" or "#", would otherwise break or rewrite the query.
+        query = urllib.parse.urlencode(
+            {k: v for k, v in params.items() if v is not None},
+            quote_via=urllib.parse.quote,
+        )
         if query:
             url = f"{url}?{query}"
     req = urllib.request.Request(url, headers={"X-API-Key": config.settings().api_key})

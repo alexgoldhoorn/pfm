@@ -65,7 +65,8 @@ def _llm_http_exception(exc: Exception, what: str) -> HTTPException:
 # Chat session history is stored in the DB chat_sessions table (not kv_cache),
 # so it is shared across gunicorn workers and survives a restart — kv_cache had
 # a TTL-based expiry that silently dropped session history after 24 h of inactivity.
-_CHAT_HISTORY_MAX = 200  # keep only the last N messages per session
+# keep only the last N messages per session
+_CHAT_HISTORY_MAX = 200
 # How many earlier messages are replayed to the model on each turn, and how
 # many tool rounds one answer may take (a what-if needs several tools).
 _CHAT_REPLAY_MESSAGES = 12
@@ -347,7 +348,7 @@ class IntentClassifier:
 class EnhancedChatEngine:
     """Enhanced chat engine that integrates stock advice with portfolio context."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.market_data_service = get_market_data_service()
         self.screener = get_stock_screener()
         self.technical_engine = get_technical_analysis_engine()
@@ -963,9 +964,12 @@ class EnhancedChatEngine:
                 tool_result,
                 TOOLS,
             )
+            # An empty answer is a failure, not a reply to store in the session.
+            if not (answer or "").strip():
+                raise LLMResponseError("model returned an empty answer after a tool")
             return answer, tools_used
 
-        return "I wasn't able to generate a response. Please try again.", tools_used
+        raise LLMResponseError("model returned neither text nor a tool call")
 
     async def _generate_enhanced_response(
         self,
@@ -1012,7 +1016,8 @@ about risks. This is informational, not regulated financial advice.
         history = _get_history(db, session_id)
         if history:
             base_prompt += "Previous conversation:\n"
-            for msg in history[-4:]:  # Last 4 messages
+            # Last 4 messages
+            for msg in history[-4:]:
                 base_prompt += f"{msg['role'].upper()}: {msg['content']}\n"
             base_prompt += "\n"
 
@@ -1112,7 +1117,7 @@ def get_enhanced_chat_engine() -> EnhancedChatEngine:
 @router.get("/chat/models")
 def list_chat_models(
     api_key_info: dict = Depends(get_api_key_auth_for_llm),
-):
+) -> dict:
     """The model tiers the chat can answer on, with the model each resolves to.
 
     Only the Anthropic provider maps tiers to different models; for the others
@@ -1167,7 +1172,7 @@ def create_chat_session(
     request: CreateSessionRequest,
     db: Database = Depends(get_database),
     api_key_info: dict = Depends(get_api_key_auth_for_llm),
-):
+) -> dict:
     """Create a new named chat session."""
     session_id = uuid.uuid4().hex[:12]
     db.create_chat_session(session_id, request.name)
@@ -1179,7 +1184,7 @@ def delete_chat_session(
     session_id: str,
     db: Database = Depends(get_database),
     api_key_info: dict = Depends(get_api_key_auth_for_llm),
-):
+) -> None:
     """Delete a chat session and its message history."""
     deleted = db.delete_chat_session(session_id)
     if not deleted:
@@ -1192,7 +1197,7 @@ def rename_chat_session(
     request: RenameSessionRequest,
     db: Database = Depends(get_database),
     api_key_info: dict = Depends(get_api_key_auth_for_llm),
-):
+) -> dict:
     """Rename a chat session."""
     name = request.name.strip()
     if not name:
@@ -1208,7 +1213,7 @@ def get_chat_session_messages(
     session_id: str,
     db: Database = Depends(get_database),
     api_key_info: dict = Depends(get_api_key_auth_for_llm),
-):
+) -> dict:
     """Return the full message history for a chat session."""
     session = db.get_chat_session(session_id)
     if session is None:
@@ -1385,7 +1390,8 @@ async def extract_deposits_from_text(
 # ---------------------------------------------------------------------------
 _EXTRACT_JOBS: Dict[str, Dict[str, Any]] = {}
 _EXTRACT_JOBS_LOCK = threading.Lock()
-_EXTRACT_JOB_TTL = 1800  # seconds
+# seconds
+_EXTRACT_JOB_TTL = 1800
 
 
 def _prune_extract_jobs() -> None:
@@ -1437,7 +1443,7 @@ def _run_extraction_job(job_id: str, text: str) -> None:
 async def extract_async(
     request: TransactionExtractionRequest,
     api_key_info: dict = Depends(get_api_key_auth_for_llm),
-):
+) -> dict:
     """Start an extraction job and return its id immediately (poll for the result)."""
     _prune_extract_jobs()
     job_id = uuid.uuid4().hex
@@ -1459,7 +1465,7 @@ async def extract_async(
 async def extract_status(
     job_id: str,
     api_key_info: dict = Depends(get_api_key_auth_for_llm),
-):
+) -> dict:
     """Return the status/result of an extraction job."""
     with _EXTRACT_JOBS_LOCK:
         job = _EXTRACT_JOBS.get(job_id)

@@ -6,7 +6,7 @@ and how old it is; a line past its freshness limit is flagged ``stale``.
 """
 
 from datetime import date, datetime, timedelta
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from portf_manager.positions import compute_positions
 from portf_manager.services import loans as loan_math
@@ -82,7 +82,7 @@ def _plural(n: int, noun: str) -> str:
 
 
 def build_balance_sheet(
-    db,
+    db: Any,
     today: Optional[date] = None,
     fx: Optional[Callable[[str], float]] = None,
     fx_on: Optional[Callable[[str, object], float]] = None,

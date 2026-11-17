@@ -8,7 +8,7 @@ take plain dicts, so the arithmetic is testable without a database.
 
 from datetime import date
 from itertools import zip_longest
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from portf_manager.services import deployable as deployable_service
 from portf_manager.services import exposure as exposure_service
@@ -70,7 +70,7 @@ def _blocked_entry(info: dict) -> dict:
 
 
 def build_candidates(
-    db,
+    db: Any,
     holdings: List[dict],
     transactions: List[dict],
     settings: dict,
@@ -466,7 +466,7 @@ def split_buckets(
 
 
 def open_lots(
-    db, holdings: List[dict], transactions: List[dict], asset_ids: set
+    db: Any, holdings: List[dict], transactions: List[dict], asset_ids: set
 ) -> Tuple[Dict[int, List[dict]], Dict[int, float], List[str]]:
     """FIFO lots and EUR prices for the given assets, via the rebalance planner.
 
@@ -1147,7 +1147,7 @@ def chat_summary(result: dict) -> str:
 
 
 def next_euro(
-    db,
+    db: Any,
     amount_eur: Optional[float] = None,
     today: Optional[date] = None,
     fx: Optional[Callable[[str], float]] = None,
@@ -1365,7 +1365,7 @@ def rank_reasons(bucket: str, cands: List[dict], total: float, settings: dict) -
 
 
 def candidates_view(
-    db,
+    db: Any,
     bucket: Optional[str] = None,
     today: Optional[date] = None,
     fx: Optional[Callable[[str], float]] = None,

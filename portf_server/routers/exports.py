@@ -26,6 +26,7 @@ from portf_manager.platform_export import (
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
+from portf_manager.database import Database
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -52,11 +53,11 @@ async def _auth(
 
 
 @router.get("/csv")
-async def export_transactions_csv(
+def export_transactions_csv(
     portfolio_id: Optional[List[int]] = Query(
         default=None, description="Filter by one or more portfolio IDs"
     ),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Download all transactions as a CSV file."""
@@ -98,11 +99,11 @@ async def export_transactions_csv(
 
 
 @router.get("/pdt")
-async def export_pdt_xlsx(
+def export_pdt_xlsx(
     portfolio_id: Optional[int] = Query(
         default=None, description="Filter by portfolio ID"
     ),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Download all transactions in Portfolio Dividend Tracker XLSX format."""
@@ -127,8 +128,8 @@ async def export_pdt_xlsx(
 
 
 @router.get("/backup")
-async def export_db_backup(
-    db=Depends(get_database),
+def export_db_backup(
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Download a consistent snapshot of the SQLite database (online-safe backup).
@@ -168,7 +169,7 @@ async def export_db_backup(
 
 
 @router.get("/yahoo-finance")
-async def export_yahoo_finance(
+def export_yahoo_finance(
     portfolio_id: Optional[int] = Query(
         default=None, description="Filter by portfolio ID"
     ),
@@ -176,7 +177,7 @@ async def export_yahoo_finance(
         default="transactions",
         description="'transactions' for full history, 'positions' for current holdings",
     ),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Download portfolio in Yahoo Finance CSV import format."""
@@ -195,7 +196,7 @@ async def export_yahoo_finance(
 
 
 @router.get("/simply-wall-st")
-async def export_simply_wall_st(
+def export_simply_wall_st(
     portfolio_id: Optional[int] = Query(
         default=None, description="Filter by portfolio ID"
     ),
@@ -203,7 +204,7 @@ async def export_simply_wall_st(
         default="transactions",
         description="'transactions' for full history, 'positions' for current holdings",
     ),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Download portfolio in Simply Wall St CSV import format."""

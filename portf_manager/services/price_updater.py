@@ -2,7 +2,7 @@
 
 import logging
 from datetime import date, datetime
-from typing import Optional
+from typing import Any, Optional
 
 from portf_manager.services import price_guard
 
@@ -134,7 +134,7 @@ def _apply_price_guard(db, asset: dict, new_price: float, source: str) -> tuple:
 
 
 def run_price_update(
-    db,
+    db: Any,
     symbols: Optional[list[str]] = None,
     source: str = "api",
 ) -> dict:
@@ -228,7 +228,8 @@ def run_price_update(
                 if rate:
                     _fx_cache[quote_ccy] = float(rate)
                 else:
-                    return None  # FX unavailable — caller skips the asset
+                    # FX unavailable — caller skips the asset
+                    return None
             rate = _fx_cache.get(quote_ccy)
             return price * rate if rate else None
 

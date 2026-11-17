@@ -1,7 +1,6 @@
 """Budget and spending tools."""
 
 import calendar
-import urllib.parse
 from typing import Optional
 
 from pfm_mcp import client, tool
@@ -986,8 +985,8 @@ def spending_transactions(
             page = client._get(
                 "/api/v1/spending/",
                 {
-                    "q": urllib.parse.quote(query) if query else None,
-                    "category": urllib.parse.quote(category) if category else None,
+                    "q": query or None,
+                    "category": category or None,
                     "start_date": start_date,
                     "end_date": end_date,
                     "portfolio_id": portfolio_id,

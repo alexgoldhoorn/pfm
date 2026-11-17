@@ -24,7 +24,7 @@ converted at a stale FX rate is named in ``warnings`` rather than quietly
 understating its own asset type and inflating everyone else's drift.
 """
 
-from typing import Callable, Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from portf_manager import market
 from portf_manager.positions import compute_positions, managed_portfolio_ids
@@ -69,7 +69,7 @@ def _to_eur_converter(db, warnings: List[str]):
     return to_eur
 
 
-def build_holdings(db, transactions: List[dict]) -> Tuple[List[Dict], List[str]]:
+def build_holdings(db: Any, transactions: List[dict]) -> Tuple[List[Dict], List[str]]:
     """Every currently-open position, priced in EUR, plus pricing warnings.
 
     The per-asset layer under :func:`_current_type_values`'s type totals —
@@ -154,7 +154,7 @@ def _current_type_values(
     return type_values, warnings, holdings
 
 
-def merge_targets(db, target_overrides: Optional[List[dict]]) -> Dict[str, float]:
+def merge_targets(db: Any, target_overrides: Optional[List[dict]]) -> Dict[str, float]:
     """Effective target-% set for this plan.
 
     Starts from the saved ``allocation_targets``; each entry in
@@ -190,7 +190,7 @@ def validate_target_sum(targets: Dict[str, float]) -> None:
 
 
 def compute_before_state(
-    db, portfolio_id: Optional[int], target_overrides: Optional[List[dict]]
+    db: Any, portfolio_id: Optional[int], target_overrides: Optional[List[dict]]
 ) -> Tuple[Dict, List[str], List[Dict], List[dict]]:
     """Step A (+ the drift half of Step B): current allocation vs. target.
 
@@ -348,7 +348,7 @@ def plan_sale(candidate: Dict, gap_eur: float) -> Dict:
 
 
 def build_sell_candidates(
-    db,
+    db: Any,
     holdings: List[Dict],
     gaps: List[Dict],
     *,
@@ -947,7 +947,9 @@ def build_strategy_plan(
     }
 
 
-def managed_symbol_split(db, transactions: List[dict]) -> Tuple[set, set, List[str]]:
+def managed_symbol_split(
+    db: Any, transactions: List[dict]
+) -> Tuple[set, set, List[str]]:
     """Split the symbols held in managed (robo-advisor) portfolios.
 
     Args:
@@ -991,7 +993,7 @@ def managed_symbol_split(db, transactions: List[dict]) -> Tuple[set, set, List[s
     return only, mixed, names
 
 
-def managed_only_symbols(db, transactions: List[dict]) -> Tuple[set, List[str]]:
+def managed_only_symbols(db: Any, transactions: List[dict]) -> Tuple[set, List[str]]:
     """Symbols held only in managed portfolios, plus those portfolios' names.
 
     Such a holding counts in the allocation but can never be traded.
@@ -1001,7 +1003,7 @@ def managed_only_symbols(db, transactions: List[dict]) -> Tuple[set, List[str]]:
 
 
 def build_plan(
-    db,
+    db: Any,
     *,
     portfolio_id: Optional[int] = None,
     min_trade_eur: float = 100.0,

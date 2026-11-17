@@ -39,7 +39,7 @@ def _merge(stored: dict) -> dict:
     return plan
 
 
-def load_plan(db) -> dict:
+def load_plan(db: Any) -> dict:
     """The stored plan merged over the defaults; unknown keys are dropped."""
     raw = db.get_setting(PLAN_KEY)
     try:
@@ -60,7 +60,7 @@ def _validate_ages(plan: dict) -> None:
         )
 
 
-def save_plan(db, plan: dict) -> dict:
+def save_plan(db: Any, plan: dict) -> dict:
     """Validate and store *plan*; return it merged over the defaults.
 
     Raises:
@@ -124,7 +124,9 @@ def expand_categories(tree: list[dict], names: list[str]) -> frozenset[str]:
     return frozenset(out)
 
 
-def spending_inputs(db, plan: dict, today: date, fx: Callable[[str], float]) -> dict:
+def spending_inputs(
+    db: Any, plan: dict, today: date, fx: Callable[[str], float]
+) -> dict:
     """Spending target and savings from the imported bank statements.
 
     Returns:
@@ -514,7 +516,7 @@ def _loan_summary(loans: list[dict], today: date) -> list[dict]:
 
 
 def readiness(
-    db,
+    db: Any,
     today: Optional[date] = None,
     fx: Optional[Callable[[str], float]] = None,
     investable_override_eur: Optional[float] = None,

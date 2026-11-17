@@ -13,6 +13,7 @@ pfm_analytics.js, already unit-tested) and the frontend merges it into the
 same displayed list. See docs/superpowers/specs/2026-07-16-action-items-design.md.
 """
 
+from typing import Any
 import logging
 import re
 from datetime import date, datetime, timedelta
@@ -42,7 +43,7 @@ def _parse_date(value) -> date | None:
         return None
 
 
-def check_stale_imports(db, today: date = None) -> list[dict]:
+def check_stale_imports(db: Any, today: date | None = None) -> list[dict]:
     """Portfolios/bank accounts with a transaction history but no activity in
     60+ days. Covers brokerage transactions/bookings and bank-account
     spending imports equally, since a bank portfolio never populates the
@@ -54,7 +55,8 @@ def check_stale_imports(db, today: date = None) -> list[dict]:
         pid = p["id"]
         r = ranges.get(pid)
         if not r:
-            continue  # never funded — nothing to import yet
+            # never funded — nothing to import yet
+            continue
         dates = [
             d
             for d in (
@@ -94,7 +96,7 @@ def check_stale_imports(db, today: date = None) -> list[dict]:
     return items
 
 
-def check_data_quality(db, today: date | None = None) -> list[dict]:
+def check_data_quality(db: Any, today: date | None = None) -> list[dict]:
     """Summarize the Data Quality findings nobody has checked yet.
 
     A duplicate pair or suspicious row marked checked/snoozed on the
@@ -167,7 +169,7 @@ def check_data_quality(db, today: date | None = None) -> list[dict]:
     return items
 
 
-def check_price_update_failures(db) -> list[dict]:
+def check_price_update_failures(db: Any) -> list[dict]:
     """Flag the most recent price-update run if it had errors."""
     runs = db.get_price_update_runs(limit=1)
     if not runs:
@@ -196,7 +198,7 @@ def check_price_update_failures(db) -> list[dict]:
     ]
 
 
-def check_held_prices(db) -> list[dict]:
+def check_held_prices(db: Any) -> list[dict]:
     """One item per price the spike guard is holding back (price_guard.py)."""
     from portf_manager.services import price_guard
 
@@ -239,7 +241,7 @@ def check_held_prices(db) -> list[dict]:
 STALE_RESEARCH_DAYS = 90
 
 
-def check_stale_research(db, today: date = None) -> list[dict]:
+def check_stale_research(db: Any, today: date | None = None) -> list[dict]:
     """Held assets with no research note in the last 90 days."""
     from portf_manager.positions import compute_positions
 
@@ -298,7 +300,7 @@ def check_stale_research(db, today: date = None) -> list[dict]:
     ]
 
 
-def check_goals_off_track(db) -> list[dict]:
+def check_goals_off_track(db: Any) -> list[dict]:
     """Savings goals whose projected value falls short of their target.
 
     An unmet goal whose target date has passed is reported as overdue (there
@@ -348,7 +350,7 @@ _BALANCE_SHEET_DUPLICATE_NOTE = (
 )
 
 
-def check_wealth_scenario(db, today: date | None = None) -> list[dict]:
+def check_wealth_scenario(db: Any, today: date | None = None) -> list[dict]:
     """The primary wealth scenario when the real net worth has fallen behind it.
 
     Only the primary scenario is a plan to keep; the other saved scenarios
@@ -383,7 +385,7 @@ def check_wealth_scenario(db, today: date | None = None) -> list[dict]:
     ]
 
 
-def check_balance_sheet_freshness(db, today: date | None = None) -> list[dict]:
+def check_balance_sheet_freshness(db: Any, today: date | None = None) -> list[dict]:
     """Balance-sheet lines whose data is too old, and manual duplicates."""
     from portf_manager.services import balance_sheet
 
@@ -429,7 +431,7 @@ def check_balance_sheet_freshness(db, today: date | None = None) -> list[dict]:
     return items
 
 
-def check_mortgage_payment(db, today: date | None = None) -> list[dict]:
+def check_mortgage_payment(db: Any, today: date | None = None) -> list[dict]:
     """One item per loan whose latest complete month's debit differs.
 
     Compares the schedule with the bank debits in the loan's category; a
@@ -476,7 +478,7 @@ def check_mortgage_payment(db, today: date | None = None) -> list[dict]:
     return items
 
 
-def check_retirement_readiness(db) -> list[dict]:
+def check_retirement_readiness(db: Any) -> list[dict]:
     """The base-case retirement verdict, when it is not on track."""
     from portf_manager.services import retirement
 
@@ -518,7 +520,7 @@ def check_retirement_readiness(db) -> list[dict]:
     ]
 
 
-def check_allocation(db, today=None) -> list[dict]:
+def check_allocation(db: Any, today=None) -> list[dict]:
     """Idle cash, a low cash buffer, or allocation targets that cannot be used."""
     from portf_manager.services import allocator, rebalance_planner
     from portf_manager.services import deployable as deployable_mod
@@ -589,7 +591,7 @@ def check_allocation(db, today=None) -> list[dict]:
     return items
 
 
-def check_decision_reviews(db, today: date | None = None) -> list[dict]:
+def check_decision_reviews(db: Any, today: date | None = None) -> list[dict]:
     """Open journal decisions whose review date has passed."""
     today = today or date.today()
     items = []
@@ -622,7 +624,7 @@ def check_decision_reviews(db, today: date | None = None) -> list[dict]:
     return items
 
 
-def check_price_alerts(db) -> list[dict]:
+def check_price_alerts(db: Any) -> list[dict]:
     """Watchlist buy-zone hits and price-target crossings."""
     from portf_server.routers.research import compute_price_target_alerts
     from portf_server.routers.watchlist import check_watchlist_alerts
@@ -731,7 +733,7 @@ def _budget_pace_items(summary: dict, overrun_ids: set) -> list[dict]:
     return items
 
 
-def check_budget_overruns(db) -> list[dict]:
+def check_budget_overruns(db: Any) -> list[dict]:
     """Lines over plan, and spending the active budget doesn't cover.
 
     Silent when there is no active budget — an unused feature shouldn't nag.
@@ -823,7 +825,7 @@ def check_budget_overruns(db) -> list[dict]:
     return items
 
 
-def check_fund_exposure(db) -> list[dict]:
+def check_fund_exposure(db: Any) -> list[dict]:
     """Funds that cannot be seen through, and funds holding the same thing."""
     from portf_manager.services import exposure as exposure_service
 
@@ -911,7 +913,7 @@ TRANSFER_SETTLE_DAYS = 3
 BOOKING_BANK_LEG_MIN = 100
 
 
-def check_recurring_charges(db, today: date = None) -> list[dict]:
+def check_recurring_charges(db: Any, today: date | None = None) -> list[dict]:
     """Recurring charges that didn't arrive, and recent price rises.
 
     "Missed" only fires once a statement covering the due date is imported
@@ -974,7 +976,7 @@ ANOMALY_ITEM_DAYS = 14
 ANOMALY_ITEM_MAX = 8
 
 
-def check_spending_anomalies(db, today: date = None) -> list[dict]:
+def check_spending_anomalies(db: Any, today: date | None = None) -> list[dict]:
     """Unusual recent charges (low severity, newest first, capped).
 
     The ids come from ``spending_insights.find_anomalies`` and are stable, so
@@ -1025,7 +1027,7 @@ def check_spending_anomalies(db, today: date = None) -> list[dict]:
     return items
 
 
-def check_uncategorized_spending(db, today: date = None) -> list[dict]:
+def check_uncategorized_spending(db: Any, today: date | None = None) -> list[dict]:
     """The last complete month has too much spending without a category.
 
     Raised when uncategorised outflows are above 5% of that month's spending or
@@ -1086,7 +1088,7 @@ def check_uncategorized_spending(db, today: date = None) -> list[dict]:
     ]
 
 
-def check_unmatched_pattern_transfers(db, today: date = None) -> list[dict]:
+def check_unmatched_pattern_transfers(db: Any, today: date | None = None) -> list[dict]:
     """Rows flagged as transfers by a pattern whose other leg never showed up.
 
     Rows newer than ``TRANSFER_SETTLE_DAYS`` are skipped (the other side may
@@ -1123,7 +1125,7 @@ def check_unmatched_pattern_transfers(db, today: date = None) -> list[dict]:
     return items
 
 
-def check_bookings_without_bank_leg(db, today: date = None) -> list[dict]:
+def check_bookings_without_bank_leg(db: Any, today: date | None = None) -> list[dict]:
     """Recent deposits/withdrawals with no bank-side row, despite fresh imports.
 
     Fires only when every bank account that was active in the review window
@@ -1214,7 +1216,7 @@ def checks_for_tests() -> list:
     return list(_CHECKS)
 
 
-def get_action_items(db) -> list[dict]:
+def get_action_items(db: Any) -> list[dict]:
     """Run every check independently; one failure doesn't take down the rest."""
     import logging
 
@@ -1229,7 +1231,9 @@ def get_action_items(db) -> list[dict]:
     return items
 
 
-def action_items_report(db, status: str = "open", today: date | None = None) -> dict:
+def action_items_report(
+    db: Any, status: str = "open", today: date | None = None
+) -> dict:
     """The items with their follow-up state, plus the counts and stored acks.
 
     Args:

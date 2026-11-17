@@ -113,7 +113,7 @@ def _quote_from_db(db, symbol: str) -> Optional[dict]:
         return None
 
 
-def get_quote(db, symbol: str, max_age: float = 86400) -> dict:
+def get_quote(db: Any, symbol: str, max_age: float = 86400) -> dict:
     """Quote for one Yahoo-format symbol, no older than *max_age* seconds.
 
     Resolution order: fresh kv_cache entry → fresh stored daily price for a
@@ -163,7 +163,7 @@ def get_quote(db, symbol: str, max_age: float = 86400) -> dict:
     }
 
 
-def get_quotes(db, symbols: list[str], max_age: float = 86400) -> list[dict]:
+def get_quotes(db: Any, symbols: list[str], max_age: float = 86400) -> list[dict]:
     """Quotes for many symbols; per-symbol errors, never raises for a batch."""
     return [get_quote(db, s, max_age=max_age) for s in symbols]
 
@@ -180,7 +180,7 @@ _FX_FALLBACK = {
 }
 
 
-def get_fx_eur(db, currency: str, max_age: float = 3600) -> tuple[float, bool]:
+def get_fx_eur(db: Any, currency: str, max_age: float = 3600) -> tuple[float, bool]:
     """EUR rate for *currency* via the ``{CUR}EUR=X`` ticker → (rate, stale)."""
     cur = currency.strip().upper()
     if cur == "EUR":
@@ -215,7 +215,9 @@ def _rate_at_or_before(
     return None
 
 
-def get_fx_eur_on(db, currency: str, on_date: Optional[date]) -> tuple[float, bool]:
+def get_fx_eur_on(
+    db: Any, currency: str, on_date: Optional[date]
+) -> tuple[float, bool]:
     """EUR rate for *currency* on *on_date* (nearest prior trading day).
 
     Daily closes for the ``{CUR}EUR=X`` ticker are fetched one calendar year
@@ -267,7 +269,7 @@ def get_fx_eur_on(db, currency: str, on_date: Optional[date]) -> tuple[float, bo
     return get_fx_eur(db, cur)[0], True
 
 
-def get_fundamentals(db, symbol: str, max_age: float = 21600) -> dict:
+def get_fundamentals(db: Any, symbol: str, max_age: float = 21600) -> dict:
     """Key fundamentals for *symbol*, no older than *max_age* seconds.
 
     Same read-time pattern as quotes, under ``mkt:fund:{SYM}``. Shares the
@@ -456,7 +458,7 @@ def _profile_from_info(symbol: str, info: dict) -> dict:
     return out
 
 
-def get_market_profile(db, symbol: str, max_age: float = 21600) -> dict:
+def get_market_profile(db: Any, symbol: str, max_age: float = 21600) -> dict:
     """Everything a Yahoo Finance quote page shows for *symbol*, grouped.
 
     Company or fund profile, price and trading range, valuation, financials,
@@ -519,7 +521,7 @@ def _fetch_funds_data(symbol: str):
     return yf.Ticker(symbol).funds_data
 
 
-def get_fund_composition(db, symbol: str, max_age: float = 7 * 86400) -> dict:
+def get_fund_composition(db: Any, symbol: str, max_age: float = 7 * 86400) -> dict:
     """Sector weights and the equity/bond/cash split for a fund.
 
     yfinance has no country or region data for funds, so geography does not

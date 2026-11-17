@@ -106,7 +106,8 @@ class SentimentData:
     """News sentiment analysis for a symbol."""
 
     symbol: str
-    sentiment_score: Optional[float] = None  # -1 to 1
+    # -1 to 1
+    sentiment_score: Optional[float] = None
     news_count: Optional[int] = None
     recent_headlines: Optional[List[str]] = None
     timestamp: datetime = None
@@ -122,7 +123,8 @@ class EnhancedMarketDataService:
     def __init__(self, api_client: Optional[APIClient] = None):
         self.api_client = api_client or get_client()
         self._cache = {}
-        self._cache_ttl = 300  # 5 minutes default TTL
+        # 5 minutes default TTL
+        self._cache_ttl = 300
 
     async def get_technical_analysis(self, symbol: str) -> Optional[TechnicalAnalysis]:
         """Get comprehensive technical analysis for a symbol."""
@@ -277,7 +279,8 @@ class EnhancedMarketDataService:
                     item.get("title", "") for item in news[:5]
                 ]
                 # Simple sentiment placeholder (would use actual NLP in production)
-                sentiment_data.sentiment_score = 0.1  # Neutral to slightly positive
+                # Neutral to slightly positive
+                sentiment_data.sentiment_score = 0.1
 
             return sentiment_data
 

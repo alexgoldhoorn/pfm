@@ -35,7 +35,8 @@ class FundamentalScore:
 
     metric: str
     value: Optional[float]
-    score: float  # 0-10
+    # 0-10
+    score: float
     weight: float
     comment: str
 
@@ -141,7 +142,8 @@ class FundamentalAnalysisEngine:
             scores.append(
                 FundamentalScore(
                     metric="Return on Equity",
-                    value=data.return_on_equity * 100,  # Convert to percentage
+                    # Convert to percentage
+                    value=data.return_on_equity * 100,
                     score=roe_score,
                     weight=0.2,
                     comment=self._roe_comment(data.return_on_equity),
@@ -239,9 +241,11 @@ class FundamentalAnalysisEngine:
     def _score_pe_ratio(self, pe: float) -> float:
         """Score P/E ratio (lower is generally better for value)."""
         if pe < 0:
-            return 2  # Negative earnings
+            # Negative earnings
+            return 2
         elif pe <= 10:
-            return 9  # Very attractive
+            # Very attractive
+            return 9
         elif pe <= 15:
             return 8
         elif pe <= 20:
@@ -249,7 +253,8 @@ class FundamentalAnalysisEngine:
         elif pe <= 30:
             return 4
         else:
-            return 2  # Expensive
+            # Expensive
+            return 2
 
     def _score_price_to_book(self, pb: float) -> float:
         """Score P/B ratio."""
@@ -264,7 +269,8 @@ class FundamentalAnalysisEngine:
 
     def _score_roe(self, roe: float) -> float:
         """Score Return on Equity."""
-        if roe >= 0.20:  # 20%+
+        # 20%+
+        if roe >= 0.20:
             return 9
         elif roe >= 0.15:
             return 8
@@ -277,7 +283,8 @@ class FundamentalAnalysisEngine:
 
     def _score_growth(self, growth: float) -> float:
         """Score growth rate."""
-        if growth >= 0.30:  # 30%+
+        # 30%+
+        if growth >= 0.30:
             return 9
         elif growth >= 0.20:
             return 8
@@ -288,7 +295,8 @@ class FundamentalAnalysisEngine:
         elif growth >= 0:
             return 3
         else:
-            return 1  # Negative growth
+            # Negative growth
+            return 1
 
     def _score_debt_to_equity(self, debt: float) -> float:
         """Score debt to equity (lower is better)."""
@@ -308,20 +316,25 @@ class FundamentalAnalysisEngine:
         elif 1.0 <= ratio < 1.5:
             return 6
         elif ratio >= 3.0:
-            return 5  # Too much cash might not be optimal
+            # Too much cash might not be optimal
+            return 5
         else:
-            return 2  # Below 1.0 is concerning
+            # Below 1.0 is concerning
+            return 2
 
     def _score_dividend_yield(self, yield_val: float) -> float:
         """Score dividend yield."""
-        if 0.02 <= yield_val <= 0.06:  # 2-6%
+        # 2-6%
+        if 0.02 <= yield_val <= 0.06:
             return 7
         elif 0.01 <= yield_val < 0.02:
             return 5
         elif yield_val > 0.06:
-            return 4  # Might be unsustainable
+            # Might be unsustainable
+            return 4
         else:
-            return 3  # No dividend
+            # No dividend
+            return 3
 
     # Comment generation methods
     def _pe_comment(self, pe: float) -> str:

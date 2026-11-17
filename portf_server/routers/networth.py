@@ -23,6 +23,7 @@ from ..dependencies import get_api_key_manager, get_database
 from ..settings import get_settings
 from .deposits import _enrich as _enrich_deposit
 from .portfolios import _get_fx_rate as _fx
+from portf_manager.database import Database
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -116,7 +117,7 @@ def _bank_accounts_eur(db) -> tuple:
     return total_eur, accounts
 
 
-def net_worth_eur(db) -> float:
+def net_worth_eur(db: Database) -> float:
     """Total net worth in EUR, taken from the balance sheet.
 
     Shared with Goals projections (see goals.py) and Action Items so the
@@ -205,7 +206,7 @@ def detect_loan(
     description: Optional[str] = None,
     principal: Optional[float] = Query(default=None, gt=0),
     term_months: Optional[int] = Query(default=None, gt=0),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Propose a loan from a recurring monthly debit in the bank rows.
@@ -225,15 +226,19 @@ def detect_loan(
 
 
 @router.get("/loans")
-def list_loans(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def list_loans(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+):
     """All loans with today's balance, monthly payment and end date."""
     return [_loan_row(loan) for loan in db.get_loans()]
 
 
 @router.post("/loans")
 def create_loan(
-    body: LoanBody, db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+    body: LoanBody,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+) -> dict:
     """Create a loan."""
     return {"id": db.create_loan(**body.fields())}
 
@@ -242,9 +247,9 @@ def create_loan(
 def update_loan(
     loan_id: int,
     body: LoanUpdateBody,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Update the loan fields sent; an explicit null clears a nullable field."""
     _get_loan_or_404(db, loan_id)
     db.update_loan(loan_id, **body.fields())
@@ -253,8 +258,10 @@ def update_loan(
 
 @router.delete("/loans/{loan_id}")
 def delete_loan(
-    loan_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+    loan_id: int,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+) -> dict:
     """Delete a loan."""
     if not db.delete_loan(loan_id):
         raise HTTPException(status_code=404, detail="Loan not found")
@@ -263,7 +270,9 @@ def delete_loan(
 
 @router.get("/loans/{loan_id}/schedule")
 def loan_schedule(
-    loan_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+    loan_id: int,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
 ):
     """Yearly amortisation rows of one loan."""
     loan = mortgage_calc.with_periods(db, _get_loan_or_404(db, loan_id))
@@ -274,7 +283,7 @@ def loan_schedule(
 def loan_overview(
     loan_id: int,
     category: Optional[str] = None,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Summary, equity, yearly schedule and payments-versus-bank of one loan.
@@ -297,7 +306,7 @@ def loan_what_if(
     new_rate_pct: Optional[float] = None,
     rate_change_pts: Optional[float] = None,
     rate_from: Optional[date] = None,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """The loan as scheduled against a lump sum and/or extra monthly payments,
@@ -383,7 +392,9 @@ def _get_period_or_404(db, loan_id: int, period_id: int) -> dict:
 
 @router.get("/loans/{loan_id}/rate-periods")
 def list_rate_periods(
-    loan_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+    loan_id: int,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
 ):
     """Rate periods of a loan, oldest first."""
     _get_loan_or_404(db, loan_id)
@@ -394,9 +405,9 @@ def list_rate_periods(
 def create_rate_period(
     loan_id: int,
     body: RatePeriodBody,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Add a rate period (a rate the loan had before its recorded balance)."""
     loan = _get_loan_or_404(db, loan_id)
     _check_period(db, loan, body.from_date, body.balance_eur)
@@ -416,9 +427,9 @@ def update_rate_period(
     loan_id: int,
     period_id: int,
     body: RatePeriodUpdateBody,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Update the fields sent; an explicit null clears balance_eur or note."""
     loan = _get_loan_or_404(db, loan_id)
     current = _get_period_or_404(db, loan_id, period_id)
@@ -439,9 +450,9 @@ def update_rate_period(
 def delete_rate_period(
     loan_id: int,
     period_id: int,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Delete a rate period."""
     _get_loan_or_404(db, loan_id)
     _get_period_or_404(db, loan_id, period_id)
@@ -450,15 +461,19 @@ def delete_rate_period(
 
 
 @router.get("/valuations")
-def list_valuations(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def list_valuations(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+):
     """Provider-reported account valuations."""
     return db.get_account_valuations()
 
 
 @router.post("/valuations")
 def create_valuation(
-    body: ValuationBody, db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+    body: ValuationBody,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+) -> dict:
     """Link a brokerage portfolio to a provider account and refresh once."""
     portfolio = db.get_portfolio(body.portfolio_id)
     if not portfolio:
@@ -495,15 +510,19 @@ def create_valuation(
 
 
 @router.post("/valuations/refresh")
-def refresh_valuations(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def refresh_valuations(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+):
     """Refresh every provider valuation now."""
     return refresh_account_valuations(db, get_settings().indexa_token)
 
 
 @router.delete("/valuations/{portfolio_id}")
 def delete_valuation(
-    portfolio_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+    portfolio_id: int,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+) -> dict:
     """Unlink a portfolio from its provider account."""
     if not db.delete_account_valuation(portfolio_id):
         raise HTTPException(status_code=404, detail="Valuation not found")
@@ -511,13 +530,17 @@ def delete_valuation(
 
 
 @router.get("/balance-sheet")
-def get_balance_sheet(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def get_balance_sheet(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+):
     """Every asset and liability as a sourced, dated line, with totals."""
     return build_balance_sheet(db)
 
 
 @router.get("/")
-def get_networth(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def get_networth(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+) -> dict:
     """Brokerage value + manual assets/liabilities + deposits + total net worth (EUR)."""
     sheet = build_balance_sheet(db)
     items = db.get_manual_assets()
@@ -578,8 +601,10 @@ def get_networth(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
 
 @router.post("/")
 def create_manual_asset(
-    body: ManualAssetBody, db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+    body: ManualAssetBody,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+) -> dict:
     new_id = db.create_manual_asset(
         name=body.name,
         category=body.category,
@@ -596,9 +621,9 @@ def create_manual_asset(
 def update_manual_asset(
     asset_id: int,
     body: ManualAssetUpdate,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     fields = body.model_dump(exclude_none=True)
     if "as_of" in fields:
         fields["as_of"] = fields["as_of"].isoformat()
@@ -614,15 +639,19 @@ def update_manual_asset(
 
 @router.delete("/{asset_id}")
 def delete_manual_asset(
-    asset_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+    asset_id: int,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+) -> dict:
     if not db.delete_manual_asset(asset_id):
         raise HTTPException(status_code=404, detail="Not found")
     return {"deleted": True}
 
 
 @router.get("/cashflow")
-def get_cashflow(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def get_cashflow(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+) -> dict:
     """List monthly cash flow entries with income/expense summary."""
     items = db.get_monthly_cashflow()
     out = []
@@ -650,9 +679,9 @@ def get_cashflow(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
 @router.post("/cashflow")
 def create_cashflow(
     body: CashflowBody,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Create a monthly cash flow entry."""
     if body.category not in _CF_ALL_CATS:
         raise HTTPException(
@@ -671,9 +700,9 @@ def create_cashflow(
 @router.delete("/cashflow/{entry_id}")
 def delete_cashflow(
     entry_id: int,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Delete a monthly cash flow entry."""
     if not db.delete_monthly_cashflow(entry_id):
         raise HTTPException(status_code=404, detail="Not found")

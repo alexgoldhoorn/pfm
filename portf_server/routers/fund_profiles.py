@@ -18,6 +18,7 @@ from portf_manager.services import fund_profiles as fp_service
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
+from portf_manager.database import Database
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -69,13 +70,15 @@ def _save(db, profile: dict) -> dict:
 # Registered before /{asset_id}: FastAPI matches in declaration order, so a
 # literal route declared after a path parameter is swallowed by it.
 @router.get("/benchmarks")
-def list_benchmarks(api_key_info: dict = Depends(_auth)):
+def list_benchmarks(api_key_info: dict = Depends(_auth)) -> dict:
     """The benchmark index table, as dropdown options."""
     return {"benchmarks": benchmarks_service.benchmark_choices()}
 
 
 @router.get("/")
-def list_fund_assets(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def list_fund_assets(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+) -> dict:
     """Every fund-like asset, with whether it has a profile and if it is stale."""
     today = date.today()
     funds = []
@@ -102,7 +105,9 @@ def list_fund_assets(db=Depends(get_database), api_key_info: dict = Depends(_aut
 
 @router.get("/{asset_id}")
 def get_profile(
-    asset_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+    asset_id: int,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
 ):
     """One fund profile."""
     _asset_or_404(db, asset_id)
@@ -119,7 +124,7 @@ def get_profile(
 def put_profile(
     asset_id: int,
     body: ProfileBody,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Save a hand-edited profile. Editing always marks it manual."""
@@ -132,7 +137,7 @@ def put_profile(
 def refresh_profile(
     asset_id: int,
     body: RefreshBody,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Rebuild a profile from its benchmark plus yfinance composition."""
@@ -178,8 +183,10 @@ def _build_suggest_prompt(asset: dict) -> str:
 
 @router.post("/{asset_id}/suggest")
 def suggest_profile(
-    asset_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+    asset_id: int,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+) -> dict:
     """Ask the LLM to draft a profile. Writes nothing — the user applies it."""
     asset = _asset_or_404(db, asset_id)
     try:

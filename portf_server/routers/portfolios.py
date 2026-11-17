@@ -34,7 +34,8 @@ _FX_CACHE: dict[str, float] = {
     "NOK": 0.086,
     "JPY": 0.0059,
 }
-_FX_TTL = 1800  # 30 minutes
+# 30 minutes
+_FX_TTL = 1800
 # Seed timestamps so pre-seeded values are valid immediately (not expired)
 _FX_CACHE_TS: dict[str, float] = {k: time.time() for k in _FX_CACHE}
 
@@ -44,7 +45,7 @@ _FX_CACHE_TS: dict[str, float] = {k: time.time() for k in _FX_CACHE}
 _SHARED_DB = None
 
 
-def set_shared_db(db) -> None:
+def set_shared_db(db: Database) -> None:
     """Register the process-wide Database handle for the shared FX cache."""
     global _SHARED_DB
     _SHARED_DB = db
@@ -266,7 +267,7 @@ async def list_portfolios(
 @router.get("/values")
 def get_portfolio_values(
     database: Database = Depends(get_database),
-):
+) -> dict:
     """Current EUR value, cost, and P&L per portfolio, plus a grand total.
 
     Powers the value column + totals footer on the Portfolios page. Detailed
@@ -395,7 +396,7 @@ def get_holdings(
         None, description="Filter positions to a single broker/portfolio"
     ),
     database: Database = Depends(get_database),
-):
+) -> dict:
     """Get current holdings (positions with total value) computed from transactions.
 
     Sync (plain ``def``) so the blocking FX lookups in ``_get_fx_rate`` run in
@@ -487,7 +488,7 @@ def get_holdings(
 async def create_portfolio(
     portfolio: PortfolioCreate,
     database: Database = Depends(get_database),
-):
+) -> dict:
     """Create a new portfolio."""
     try:
         portfolio_id = database.create_portfolio(
@@ -521,7 +522,7 @@ async def update_portfolio(
     request: Request,
     database: Database = Depends(get_database),
     api_key_info: dict = Depends(_get_api_key_auth),
-):
+) -> dict:
     """Update a portfolio."""
     fields = {k: v for k, v in update.model_dump().items() if v is not None}
     if not fields:
@@ -538,7 +539,7 @@ async def delete_portfolio(
     request: Request,
     database: Database = Depends(get_database),
     api_key_info: dict = Depends(_get_api_key_auth),
-):
+) -> None:
     """Delete a portfolio (soft-delete; its transactions keep their data)."""
     ok = database.delete_portfolio(portfolio_id)
     if not ok:
@@ -551,7 +552,7 @@ async def clear_portfolio_transactions(
     include_bookings: bool = Query(False),
     database: Database = Depends(get_database),
     api_key_info: dict = Depends(_get_api_key_auth),
-):
+) -> dict:
     """Delete all transactions (and optionally bookings) for a portfolio."""
     portfolio = database.get_portfolio(portfolio_id)
     if not portfolio:

@@ -17,7 +17,7 @@ from portf_manager.database import Database  # noqa: E402
 from portf_server.auth_middleware import APIKeyManager, APIKeyError  # noqa: E402
 
 
-def create_key(args):
+def create_key(args) -> None:
     """Create a new API key."""
     try:
         # Initialize database and API key manager
@@ -53,7 +53,7 @@ def create_key(args):
         sys.exit(1)
 
 
-def list_keys(args):
+def list_keys(args) -> None:
     """List all API keys."""
     try:
         # Initialize database and API key manager
@@ -109,7 +109,7 @@ def list_keys(args):
         sys.exit(1)
 
 
-def deactivate_key(args):
+def deactivate_key(args) -> None:
     """Deactivate an API key."""
     try:
         # Initialize database and API key manager
@@ -130,7 +130,7 @@ def deactivate_key(args):
         sys.exit(1)
 
 
-def delete_key(args):
+def delete_key(args) -> None:
     """Delete an API key permanently."""
     try:
         # Initialize database and API key manager
@@ -160,7 +160,7 @@ def delete_key(args):
         sys.exit(1)
 
 
-def create_default_database_schema(db_path: str):
+def create_default_database_schema(db_path: str) -> None:
     """Create the default database schema if it doesn't exist."""
     try:
         db = Database(db_path)
@@ -205,7 +205,7 @@ def create_default_database_schema(db_path: str):
         sys.exit(1)
 
 
-def main():
+def main() -> None:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
         description="API Key Management CLI for Portfolio Management API",

@@ -10,7 +10,7 @@ import json
 import math
 from dataclasses import dataclass
 from datetime import date
-from typing import Optional
+from typing import Any, Optional
 
 # Largest believable move in one day. Chosen: wider than any exchange daily
 # limit, far inside a x100 or /100 unit error.
@@ -91,7 +91,7 @@ def _key(asset_id: int) -> str:
     return f"{SETTING_PREFIX}{asset_id}"
 
 
-def get_held(db, asset_id: int) -> Optional[dict]:
+def get_held(db: Any, asset_id: int) -> Optional[dict]:
     """The held observation for an asset, or None."""
     raw = db.get_setting(_key(asset_id))
     if not raw:
@@ -103,17 +103,17 @@ def get_held(db, asset_id: int) -> Optional[dict]:
     return value if isinstance(value, dict) else None
 
 
-def set_held(db, asset_id: int, observation: dict) -> None:
+def set_held(db: Any, asset_id: int, observation: dict) -> None:
     """Store (or replace) the held observation for an asset."""
     db.set_setting(_key(asset_id), json.dumps(observation))
 
 
-def clear_held(db, asset_id: int) -> None:
+def clear_held(db: Any, asset_id: int) -> None:
     """Drop the held observation for an asset."""
     db.delete_setting(_key(asset_id))
 
 
-def list_held_prices(db) -> list[dict]:
+def list_held_prices(db: Any) -> list[dict]:
     """Every held observation, each with its ``asset_id`` added."""
     held = []
     for key, raw in db.list_settings(SETTING_PREFIX).items():

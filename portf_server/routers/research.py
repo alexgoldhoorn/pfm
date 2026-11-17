@@ -32,6 +32,7 @@ from portf_manager.services.price_updater import yahoo_symbol_for
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
+from portf_manager.database import Database
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -182,8 +183,8 @@ def _current_price(db, asset: Optional[dict], symbol: str) -> tuple[float, str]:
 
 @router.get("/portfolio-analysis/settings")
 async def get_advisor_settings(
-    db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+) -> dict:
     ttl = db.get_setting("advisor_cache_ttl_hours")
     return {"cache_ttl_hours": int(ttl) if ttl else 24}
 
@@ -191,9 +192,9 @@ async def get_advisor_settings(
 @router.put("/portfolio-analysis/settings")
 async def put_advisor_settings(
     body: AdvisorSettingsBody,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     ttl = max(1, min(168, body.cache_ttl_hours))
     db.set_setting("advisor_cache_ttl_hours", str(ttl))
     return {"cache_ttl_hours": ttl}
@@ -203,7 +204,7 @@ async def put_advisor_settings(
 def get_portfolio_analysis(
     portfolio_id: Optional[int] = None,
     refresh: bool = False,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Run (or return cached) LLM portfolio health analysis."""
@@ -225,10 +226,7 @@ def get_portfolio_analysis(
 
     # Force-refresh: delete cached entry
     if refresh:
-        try:
-            db.cache_clear(prefix=cache_key)
-        except Exception:
-            pass
+        db.cache_delete(cache_key)
     else:
         # Return cached result if still valid
         cached = db.cache_get(cache_key)
@@ -314,7 +312,9 @@ def get_portfolio_analysis(
 
 
 @router.get("/compare")
-async def compare(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+async def compare(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+):
     """Latest saved research per symbol: price, fair value, upside, conviction."""
     out = []
     for n in db.get_latest_research_notes():
@@ -346,7 +346,9 @@ async def compare(db=Depends(get_database), api_key_info: dict = Depends(_auth))
 # paths like "/bulk-refresh-status" aren't swallowed by _resolve_asset() —
 # see "Route order is critical" in CLAUDE.md.
 @router.post("/bulk-refresh")
-async def bulk_refresh(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+async def bulk_refresh(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+) -> dict:
     """Start a background research refresh for held + watchlist symbols
     missing or stale (90+ days) on research targets.
 
@@ -377,7 +379,7 @@ async def bulk_refresh_status(api_key_info: dict = Depends(_auth)):
 @router.get("/scorecard")
 def get_scorecard(
     symbol: Optional[str] = None,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Score every stored research report against what the price did."""
@@ -408,7 +410,9 @@ def _track_record(db) -> Optional[str]:
 
 @router.get("/history/{symbol}")
 def get_research_entries(
-    symbol: str, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+    symbol: str,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
 ):
     """Raw research entries for one symbol (reports + manual notes), newest first."""
     from portf_manager.services.research_scorecard import collect_entries
@@ -420,7 +424,9 @@ def get_research_entries(
 
 @router.get("/{symbol}")
 async def get_report(
-    symbol: str, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+    symbol: str,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
 ):
     """Return the cached research report for a symbol, or 404 if not yet generated."""
     asset = _resolve_asset(db, symbol)
@@ -434,7 +440,9 @@ async def get_report(
 
 @router.post("/{symbol}/generate")
 def generate_report(
-    symbol: str, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+    symbol: str,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
 ):
     """Run web-augmented LLM valuation. Works for any symbol (held or not)."""
     from portf_manager.services.research import (
@@ -444,7 +452,8 @@ def generate_report(
     )
 
     sym = symbol.upper()
-    asset = db.get_asset_by_symbol(sym)  # may be None (research anything)
+    # may be None (research anything)
+    asset = db.get_asset_by_symbol(sym)
     pos = _position_stats(db, asset)
     current_price, currency = _current_price(db, asset, sym)
     yf_sym = _yf_symbol(asset, sym)
@@ -493,7 +502,11 @@ def generate_report(
 
 
 @router.get("/{symbol}/lookup")
-def lookup(symbol: str, db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def lookup(
+    symbol: str,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+) -> dict:
     """Snapshot for the research workbench (no LLM): price, position,
     fundamentals, news, existing targets and the latest saved research."""
     from portf_manager.services.research import fetch_fundamentals, fetch_recent_news
@@ -566,9 +579,9 @@ def lookup(symbol: str, db=Depends(get_database), api_key_info: dict = Depends(_
 async def save_research(
     symbol: str,
     body: ResearchSaveBody,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Save a versioned research record and (for held assets) push targets so
     price alerts fire."""
     sym = symbol.upper()
@@ -624,7 +637,9 @@ async def save_research(
 
 @router.get("/{symbol}/history")
 async def history(
-    symbol: str, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+    symbol: str,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
 ):
     """Version history of saved research for a symbol."""
     notes = db.get_research_notes(symbol.upper())
@@ -803,7 +818,7 @@ def research_report(
     symbol: str,
     format: str = "json",
     download: bool = False,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Full research dossier for a symbol (position, fundamentals, targets,
@@ -822,7 +837,9 @@ def research_report(
 
 @router.get("/{symbol}/targets")
 async def get_targets(
-    symbol: str, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+    symbol: str,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
 ):
     """Return price targets for a symbol."""
     asset = _resolve_asset(db, symbol)
@@ -834,7 +851,7 @@ async def get_targets(
 async def set_targets(
     symbol: str,
     body: PriceTargetBody,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Create or update price targets for a symbol."""
@@ -862,7 +879,8 @@ _BULK_RESEARCH: dict = {
     "total": 0,
     "done": 0,
     "current_symbol": None,
-    "results": [],  # [{symbol, status: "updated" | "no_data" | "error", detail}]
+    # [{symbol, status: "updated" | "no_data" | "error", detail}]
+    "results": [],
     "started_at": None,
     "finished_at": None,
     "error": None,
@@ -1012,7 +1030,7 @@ def _run_bulk_research_refresh(db) -> None:
 
 
 def compute_price_target_alerts(
-    db, today: Optional[date] = None, record: bool = False
+    db: Database, today: Optional[date] = None, record: bool = False
 ) -> list[dict]:
     """Compare all price targets against latest stored prices.
 
@@ -1108,9 +1126,9 @@ def compute_price_target_alerts(
 @router.get("/alerts/check")
 async def check_alerts(
     record: bool = False,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """
     Compare all price targets against latest stored prices.
     Returns triggered alerts (does NOT send Telegram — use the cron for that).

@@ -480,7 +480,7 @@
                                     </div>
                                     <div id="dashTopControls" class="row g-2 mt-2 small" style="display:none;">
                                         <div class="col-6 col-sm-3">
-                                            <label class="form-label mb-0 text-muted">Show</label>
+                                            <label for="dashTopN" class="form-label mb-0 text-muted">Show</label>
                                             <select id="dashTopN" class="form-select form-select-sm">
                                                 <option value="5">Top 5</option>
                                                 <option value="10">Top 10</option>
@@ -490,19 +490,19 @@
                                             </select>
                                         </div>
                                         <div class="col-6 col-sm-3">
-                                            <label class="form-label mb-0 text-muted">Type</label>
+                                            <label for="dashTopType" class="form-label mb-0 text-muted">Type</label>
                                             <select id="dashTopType" class="form-select form-select-sm">
                                                 <option value="all">All</option>
                                             </select>
                                         </div>
                                         <div class="col-6 col-sm-3">
-                                            <label class="form-label mb-0 text-muted">Broker</label>
+                                            <label for="dashTopBroker" class="form-label mb-0 text-muted">Broker</label>
                                             <select id="dashTopBroker" class="form-select form-select-sm">
                                                 <option value="all">All</option>
                                             </select>
                                         </div>
                                         <div class="col-6 col-sm-3">
-                                            <label class="form-label mb-0 text-muted">Sort</label>
+                                            <label for="dashTopSort" class="form-label mb-0 text-muted">Sort</label>
                                             <select id="dashTopSort" class="form-select form-select-sm">
                                                 <option value="value">Value</option>
                                                 <option value="gain_pct">Gain %</option>
@@ -1479,16 +1479,16 @@
                         <div class="card-body">
                             <form id="addWatchlistForm" class="row g-2 align-items-end">
                                 <div class="col-6 col-sm-3 col-md-2 position-relative">
-                                    <label class="form-label small mb-1">Symbol *</label>
+                                    <label for="addWatchlistSymbol" class="form-label small mb-1">Symbol *</label>
                                     <input type="text" class="form-control form-control-sm" id="addWatchlistSymbol" autocomplete="off" placeholder="e.g. AAPL" required>
                                     <div id="watchlistSymbolSuggest" class="list-group position-absolute w-100 shadow-sm" style="z-index:1050; display:none; max-height:260px; overflow-y:auto;"></div>
                                 </div>
                                 <div class="col-6 col-sm-3 col-md-2">
-                                    <label class="form-label small mb-1">Buy below</label>
+                                    <label for="addWatchlistBuyBelow" class="form-label small mb-1">Buy below</label>
                                     <input type="number" step="any" class="form-control form-control-sm" id="addWatchlistBuyBelow" placeholder="0.00">
                                 </div>
                                 <div class="col-12 col-sm-4 col-md-5">
-                                    <label class="form-label small mb-1">Notes</label>
+                                    <label for="addWatchlistNotes" class="form-label small mb-1">Notes</label>
                                     <input type="text" class="form-control form-control-sm" id="addWatchlistNotes" placeholder="Optional notes">
                                 </div>
                                 <div class="col-6 col-sm-2 col-md-3">
@@ -1564,23 +1564,23 @@
                         <div class="card-body">
                             <form id="addGoalForm" class="row g-2 align-items-end">
                                 <div class="col-12 col-sm-6 col-md-3">
-                                    <label class="form-label small mb-1">Name *</label>
+                                    <label for="addGoalName" class="form-label small mb-1">Name *</label>
                                     <input type="text" class="form-control form-control-sm" id="addGoalName" placeholder="e.g. Retire at 60" required>
                                 </div>
                                 <div class="col-6 col-sm-3 col-md-2">
-                                    <label class="form-label small mb-1">Target € *</label>
+                                    <label for="addGoalTarget" class="form-label small mb-1">Target € *</label>
                                     <input type="number" step="any" min="0" class="form-control form-control-sm" id="addGoalTarget" placeholder="100000" required>
                                 </div>
                                 <div class="col-6 col-sm-3 col-md-2">
-                                    <label class="form-label small mb-1">Target date *</label>
+                                    <label for="addGoalDate" class="form-label small mb-1">Target date *</label>
                                     <input type="date" class="form-control form-control-sm" id="addGoalDate" required>
                                 </div>
                                 <div class="col-6 col-sm-4 col-md-2">
-                                    <label class="form-label small mb-1">Monthly € *</label>
+                                    <label for="addGoalMonthly" class="form-label small mb-1">Monthly € *</label>
                                     <input type="number" step="any" min="0" class="form-control form-control-sm" id="addGoalMonthly" placeholder="500" required>
                                 </div>
                                 <div class="col-6 col-sm-3 col-md-2">
-                                    <label class="form-label small mb-1">Return % *</label>
+                                    <label for="addGoalReturn" class="form-label small mb-1">Return % *</label>
                                     <input type="number" step="any" class="form-control form-control-sm" id="addGoalReturn" value="6" required>
                                 </div>
                                 <div class="col-12 col-sm-5 col-md-1">
@@ -2059,7 +2059,7 @@
                                 <!-- Idle state -->
                                 <div id="phIdle">
                                     <div class="d-flex flex-wrap gap-2 align-items-center">
-                                        <label class="form-label mb-0">Portfolio</label>
+                                        <label for="phPortfolioSelect" class="form-label mb-0">Portfolio</label>
                                         <select class="form-select form-select-sm w-auto" id="phPortfolioSelect">
                                             <option value="">All portfolios</option>
                                         </select>
@@ -2112,7 +2112,7 @@
                     <div id="researchWorkbench">
                         <div class="card mb-3">
                             <div class="card-body d-flex flex-wrap gap-2 align-items-center">
-                                <label class="form-label mb-0 me-1">Ticker</label>
+                                <label for="researchTicker" class="form-label mb-0 me-1">Ticker</label>
                                 <div class="position-relative" style="max-width:320px; flex:1 1 280px;">
                                     <input class="form-control" id="researchTicker" autocomplete="off" placeholder="Type a name or ticker (e.g. ASML or an ISIN)">
                                     <div id="researchSuggest" class="list-group position-absolute w-100 shadow-sm" style="z-index:1050; display:none; max-height:300px; overflow-y:auto;"></div>
@@ -2166,34 +2166,34 @@
                                             <p class="small text-muted mb-2" id="rvCapLine" style="display:none;"></p>
                                             <div class="row g-2 align-items-end">
                                                 <div class="col-sm-4">
-                                                    <label class="form-label small mb-1">Method</label>
+                                                    <label for="rvMethod" class="form-label small mb-1">Method</label>
                                                     <select class="form-select form-select-sm" id="rvMethod">
                                                         <option value="pe">P/E multiple</option>
                                                         <option value="dividend_yield">Dividend yield</option>
                                                     </select>
                                                 </div>
                                                 <div class="col-sm-4" data-method="pe">
-                                                    <label class="form-label small mb-1">EPS</label>
+                                                    <label for="rvEps" class="form-label small mb-1">EPS</label>
                                                     <input type="number" step="0.01" class="form-control form-control-sm" id="rvEps">
                                                 </div>
                                                 <div class="col-sm-4" data-method="pe">
-                                                    <label class="form-label small mb-1">Target P/E</label>
+                                                    <label for="rvTargetPe" class="form-label small mb-1">Target P/E</label>
                                                     <input type="number" step="0.1" class="form-control form-control-sm" id="rvTargetPe">
                                                 </div>
                                                 <div class="col-sm-4" data-method="dividend_yield" style="display:none;">
-                                                    <label class="form-label small mb-1">Annual dividend</label>
+                                                    <label for="rvDiv" class="form-label small mb-1">Annual dividend</label>
                                                     <input type="number" step="0.01" class="form-control form-control-sm" id="rvDiv">
                                                 </div>
                                                 <div class="col-sm-4" data-method="dividend_yield" style="display:none;">
-                                                    <label class="form-label small mb-1">Target yield %</label>
+                                                    <label for="rvTargetYield" class="form-label small mb-1">Target yield %</label>
                                                     <input type="number" step="0.1" class="form-control form-control-sm" id="rvTargetYield">
                                                 </div>
                                                 <div class="col-sm-4">
-                                                    <label class="form-label small mb-1">Margin of safety %</label>
+                                                    <label for="rvMos" class="form-label small mb-1">Margin of safety %</label>
                                                     <input type="number" step="1" class="form-control form-control-sm" id="rvMos" value="20">
                                                 </div>
                                                 <div class="col-sm-4">
-                                                    <label class="form-label small mb-1">Take-profit premium %</label>
+                                                    <label for="rvPremium" class="form-label small mb-1">Take-profit premium %</label>
                                                     <input type="number" step="1" class="form-control form-control-sm" id="rvPremium" value="20">
                                                 </div>
                                             </div>
@@ -2237,11 +2237,11 @@
                                                     <h6 class="fw-semibold small text-muted text-uppercase mb-2">Sell calculator</h6>
                                                     <div class="d-flex align-items-end gap-2 mb-2 flex-wrap">
                                                         <div>
-                                                            <label class="form-label small mb-1">Shares to sell</label>
+                                                            <label for="rsSellQty" class="form-label small mb-1">Shares to sell</label>
                                                             <input type="number" step="any" class="form-control form-control-sm" id="rsSellQty" style="max-width:130px;">
                                                         </div>
                                                         <div>
-                                                            <label class="form-label small mb-1">or % of position</label>
+                                                            <label for="rsSellPct" class="form-label small mb-1">or % of position</label>
                                                             <input type="number" step="any" class="form-control form-control-sm" id="rsSellPct" style="max-width:110px;" placeholder="e.g. 25">
                                                         </div>
                                                     </div>
@@ -2286,7 +2286,7 @@
                                         <div class="card-body">
                                             <textarea class="form-control mb-2" id="rvThesis" rows="5" placeholder="Bull case / bear case / catalysts / risks — your reasoning behind the targets."></textarea>
                                             <div class="d-flex align-items-center gap-2">
-                                                <label class="form-label small mb-0">Conviction</label>
+                                                <label for="rvConviction" class="form-label small mb-0">Conviction</label>
                                                 <select class="form-select form-select-sm" id="rvConviction" style="max-width:90px;">
                                                     <option value="1">1</option><option value="2">2</option><option value="3" selected>3</option><option value="4">4</option><option value="5">5</option>
                                                 </select>
@@ -2374,7 +2374,7 @@
 
                                     <!-- Cash row -->
                                     <div class="mb-3">
-                                        <label class="form-label fw-semibold text-muted small text-uppercase">Cash / Savings</label>
+                                        <label for="fcCashAmount" class="form-label fw-semibold text-muted small text-uppercase">Cash / Savings</label>
                                         <div class="row g-2">
                                             <div class="col-7">
                                                 <div class="input-group input-group-sm">
@@ -2394,7 +2394,7 @@
 
                                     <!-- Stocks row -->
                                     <div class="mb-3">
-                                        <label class="form-label fw-semibold text-muted small text-uppercase">Stocks / ETFs</label>
+                                        <label for="fcStocksAmount" class="form-label fw-semibold text-muted small text-uppercase">Stocks / ETFs</label>
                                         <div class="row g-2">
                                             <div class="col-7">
                                                 <div class="input-group input-group-sm">
@@ -2447,7 +2447,7 @@
 
                                     <!-- Bonds row -->
                                     <div class="mb-0">
-                                        <label class="form-label fw-semibold text-muted small text-uppercase">Bonds / Fixed Income</label>
+                                        <label for="fcBondsAmount" class="form-label fw-semibold text-muted small text-uppercase">Bonds / Fixed Income</label>
                                         <div class="row g-2">
                                             <div class="col-7">
                                                 <div class="input-group input-group-sm">
@@ -2476,21 +2476,21 @@
                                 </div>
                                 <div class="card-body">
                                     <div class="mb-3">
-                                        <label class="form-label small">Outstanding Balance (EUR)</label>
+                                        <label for="fcMortgagePrincipal" class="form-label small">Outstanding Balance (EUR)</label>
                                         <div class="input-group input-group-sm">
                                             <span class="input-group-text"><i class="bi bi-currency-euro"></i></span>
                                             <input type="number" class="form-control" id="fcMortgagePrincipal" value="0" min="0" step="1000">
                                         </div>
                                     </div>
                                     <div class="mb-3">
-                                        <label class="form-label small">Interest Rate (%)</label>
+                                        <label for="fcMortgageRate" class="form-label small">Interest Rate (%)</label>
                                         <div class="input-group input-group-sm">
                                             <input type="number" class="form-control" id="fcMortgageRate" value="3.5" min="0" max="10" step="0.1">
                                             <span class="input-group-text">%</span>
                                         </div>
                                     </div>
                                     <div class="mb-0">
-                                        <label class="form-label small">Monthly Payment (EUR)</label>
+                                        <label for="fcMonthlyPayment" class="form-label small">Monthly Payment (EUR)</label>
                                         <div class="input-group input-group-sm">
                                             <span class="input-group-text"><i class="bi bi-currency-euro"></i></span>
                                             <input type="number" class="form-control" id="fcMonthlyPayment" value="0" min="0" step="50">
@@ -2519,7 +2519,7 @@
                                 <div class="card-body">
                                     <!-- Years slider -->
                                     <div class="mb-3">
-                                        <label class="form-label d-flex justify-content-between">
+                                        <label for="fcYears" class="form-label d-flex justify-content-between">
                                             <span>Years to Project</span>
                                             <strong id="fcYearsDisplay">30</strong>
                                         </label>
@@ -2879,8 +2879,8 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                             </select>
                                         </div>
                                         <div class="col-auto">
-                                            <label class="form-label small mb-1">Data</label>
-                                            <div class="d-flex gap-3">
+                                            <label class="form-label small mb-1" id="platformExportModeLabel">Data</label>
+                                            <div class="d-flex gap-3" role="radiogroup" aria-labelledby="platformExportModeLabel">
                                                 <div class="form-check mb-0">
                                                     <input class="form-check-input" type="radio" name="platformExportMode" id="platformExportModeTransactions" value="transactions" checked>
                                                     <label class="form-check-label small" for="platformExportModeTransactions">Full transaction history</label>
@@ -2925,26 +2925,26 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                     <!-- Add booking form -->
                                     <form id="addBookingForm" class="row g-2 align-items-end mb-3">
                                         <div class="col-6 col-sm-3 col-md-2">
-                                            <label class="form-label small mb-1">Date</label>
+                                            <label for="addBookingDate" class="form-label small mb-1">Date</label>
                                             <input type="date" class="form-control form-control-sm" id="addBookingDate" required>
                                         </div>
                                         <div class="col-6 col-sm-3 col-md-2">
-                                            <label class="form-label small mb-1">Type</label>
+                                            <label for="addBookingAction" class="form-label small mb-1">Type</label>
                                             <select class="form-select form-select-sm" id="addBookingAction">
                                                 <option value="Deposit">Deposit</option>
                                                 <option value="Withdrawal">Withdrawal</option>
                                             </select>
                                         </div>
                                         <div class="col-6 col-sm-3 col-md-2">
-                                            <label class="form-label small mb-1">Amount</label>
+                                            <label for="addBookingAmount" class="form-label small mb-1">Amount</label>
                                             <input type="number" class="form-control form-control-sm" id="addBookingAmount" min="0.01" step="0.01" placeholder="0.00" required>
                                         </div>
                                         <div class="col-4 col-sm-2 col-md-1">
-                                            <label class="form-label small mb-1">Currency</label>
+                                            <label for="addBookingCurrency" class="form-label small mb-1">Currency</label>
                                             <input type="text" class="form-control form-control-sm" id="addBookingCurrency" value="EUR" maxlength="3">
                                         </div>
                                         <div class="col-8 col-sm-4 col-md-3">
-                                            <label class="form-label small mb-1">Portfolio</label>
+                                            <label for="addBookingPortfolio" class="form-label small mb-1">Portfolio</label>
                                             <select class="form-select form-select-sm" id="addBookingPortfolio">
                                                 <option value="">— None —</option>
                                             </select>
@@ -3134,9 +3134,9 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         <div id="helpAiHistory" class="px-3 pt-2" style="max-height: 320px; overflow-y: auto; display: none;"></div>
                         <div class="card-body pt-2">
                             <div class="input-group">
-                                <input id="helpAiInput" type="text" class="form-control"
+                                <input id="helpAiInput" type="text" class="form-control" aria-label="Ask a question about the app"
                                        placeholder="e.g. How do I import from Coinbase? What does IRR mean? How do I back up my data?">
-                                <button id="helpAiSend" class="btn btn-primary" type="button"><i class="bi bi-send"></i></button>
+                                <button id="helpAiSend" class="btn btn-primary" type="button" title="Send" aria-label="Send"><i class="bi bi-send"></i></button>
                             </div>
                             <div class="text-muted small mt-1">Uses the app's own documentation as context — not your portfolio data.</div>
                         </div>
@@ -3367,11 +3367,11 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                     <input type="search" class="form-control form-control-sm" id="spSearch" placeholder="Merchant, description or category" autocomplete="off">
                                 </div>
                                 <div class="col-6 col-md-3">
-                                    <label class="form-label small mb-1">Account</label>
+                                    <label for="spAccountFilter" class="form-label small mb-1">Account</label>
                                     <select class="form-select form-select-sm" id="spAccountFilter"><option value="">All accounts</option></select>
                                 </div>
                                 <div class="col-6 col-md-3">
-                                    <label class="form-label small mb-1">Category</label>
+                                    <label for="spCategoryFilterBtn" class="form-label small mb-1">Category</label>
                                     <div class="dropdown">
                                         <button class="btn btn-sm btn-outline-secondary dropdown-toggle w-100 text-start" type="button" id="spCategoryFilterBtn" data-bs-toggle="dropdown" aria-expanded="false">All categories</button>
                                         <div class="dropdown-menu p-2" id="spCategoryFilterMenu" style="max-height:280px;overflow-y:auto;min-width:220px;">
@@ -3399,17 +3399,17 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                     </select>
                                 </div>
                                 <div class="col-6 col-md-3">
-                                    <label class="form-label small mb-1">From</label>
+                                    <label for="spFromDate" class="form-label small mb-1">From</label>
                                     <input type="date" class="form-control form-control-sm" id="spFromDate">
                                     <div class="form-text" data-date-hint></div>
                                 </div>
                                 <div class="col-6 col-md-3">
-                                    <label class="form-label small mb-1">To</label>
+                                    <label for="spToDate" class="form-label small mb-1">To</label>
                                     <input type="date" class="form-control form-control-sm" id="spToDate">
                                     <div class="form-text" data-date-hint></div>
                                 </div>
                                 <div class="col-6 col-md-3">
-                                    <label class="form-label small mb-1">Amount</label>
+                                    <label for="spMinAbsAmount" class="form-label small mb-1">Amount</label>
                                     <div class="d-flex gap-1">
                                         <button type="button" class="btn btn-sm btn-outline-danger" id="spAmountSignNegative" title="Expenses only">&minus;</button>
                                         <button type="button" class="btn btn-sm btn-outline-success" id="spAmountSignPositive" title="Income only">+</button>
@@ -3513,11 +3513,11 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                 <div class="card-body border-top">
                                     <form id="spCategoryAddForm" class="row g-2 align-items-end">
                                         <div class="col-5 col-sm-5">
-                                            <label class="form-label small mb-1">New category name</label>
+                                            <label for="spCategoryNameInput" class="form-label small mb-1">New category name</label>
                                             <input class="form-control form-control-sm" id="spCategoryNameInput" placeholder="e.g. Vacation" required>
                                         </div>
                                         <div class="col-4 col-sm-4">
-                                            <label class="form-label small mb-1">Parent</label>
+                                            <label for="spCategoryParentInput" class="form-label small mb-1">Parent</label>
                                             <select class="form-select form-select-sm" id="spCategoryParentInput"></select>
                                         </div>
                                         <div class="col-3 col-sm-3">
@@ -3718,16 +3718,16 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                             <div class="modal-body">
                                 <div class="row g-2 mb-3">
                                     <div class="col-12 col-sm-6">
-                                        <label class="form-label small mb-1">Account</label>
+                                        <label for="spImportAccountSelect" class="form-label small mb-1">Account</label>
                                         <select class="form-select form-select-sm" id="spImportAccountSelect"><option value="">— New account —</option></select>
                                     </div>
                                     <div class="col-12 col-sm-6">
-                                        <label class="form-label small mb-1">Or create new account:</label>
+                                        <label for="spImportAccountName" class="form-label small mb-1">Or create new account:</label>
                                         <input class="form-control form-control-sm" id="spImportAccountName" placeholder="e.g. BBVA Checking">
                                     </div>
                                 </div>
                                 <div class="mb-3">
-                                    <label class="form-label small mb-1">Bank statement file</label>
+                                    <label for="spImportFile" class="form-label small mb-1">Bank statement file</label>
                                     <input type="file" class="form-control form-control-sm" id="spImportFile" accept=".csv,.q43,.n43,.txt">
                                     <div class="form-text">CSV columns: date, description, amount (optional: balance, currency). AEB43/N43 fixed-width exports are auto-detected. <a href="#" id="spDownloadTemplate">Download template</a></div>
                                 </div>
@@ -3967,13 +3967,13 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                             <div id="nwIncomeQuick" class="d-flex flex-wrap gap-2 mb-2"></div>
                             <form id="nwIncomeForm" class="row g-2">
                                 <input type="hidden" id="nwIncId">
-                                <div class="col-12 col-md-4"><label class="form-label small mb-1">Name</label><input class="form-control form-control-sm" id="nwIncName" required></div>
-                                <div class="col-6 col-md-2"><label class="form-label small mb-1">Whose</label><select class="form-select form-select-sm" id="nwIncOwner"><option value="self">Me</option><option value="partner">Partner</option></select></div>
-                                <div class="col-6 col-md-2"><label class="form-label small mb-1">EUR/month</label><input type="number" step="any" min="0" class="form-control form-control-sm" id="nwIncMonthly" required></div>
-                                <div class="col-6 col-md-2"><label class="form-label small mb-1">From age</label><input type="number" min="0" max="120" class="form-control form-control-sm" id="nwIncFrom" required></div>
-                                <div class="col-6 col-md-2"><label class="form-label small mb-1">To age</label><input type="number" min="0" max="120" class="form-control form-control-sm" id="nwIncTo"></div>
-                                <div class="col-12 col-md-4"><label class="form-label small mb-1">Source</label><input class="form-control form-control-sm" id="nwIncSource" placeholder="e.g. simulator, letter"></div>
-                                <div class="col-6 col-md-3"><label class="form-label small mb-1">As of</label><input type="date" class="form-control form-control-sm" id="nwIncAsOf"></div>
+                                <div class="col-12 col-md-4"><label for="nwIncName" class="form-label small mb-1">Name</label><input class="form-control form-control-sm" id="nwIncName" required></div>
+                                <div class="col-6 col-md-2"><label for="nwIncOwner" class="form-label small mb-1">Whose</label><select class="form-select form-select-sm" id="nwIncOwner"><option value="self">Me</option><option value="partner">Partner</option></select></div>
+                                <div class="col-6 col-md-2"><label for="nwIncMonthly" class="form-label small mb-1">EUR/month</label><input type="number" step="any" min="0" class="form-control form-control-sm" id="nwIncMonthly" required></div>
+                                <div class="col-6 col-md-2"><label for="nwIncFrom" class="form-label small mb-1">From age</label><input type="number" min="0" max="120" class="form-control form-control-sm" id="nwIncFrom" required></div>
+                                <div class="col-6 col-md-2"><label for="nwIncTo" class="form-label small mb-1">To age</label><input type="number" min="0" max="120" class="form-control form-control-sm" id="nwIncTo"></div>
+                                <div class="col-12 col-md-4"><label for="nwIncSource" class="form-label small mb-1">Source</label><input class="form-control form-control-sm" id="nwIncSource" placeholder="e.g. simulator, letter"></div>
+                                <div class="col-6 col-md-3"><label for="nwIncAsOf" class="form-label small mb-1">As of</label><input type="date" class="form-control form-control-sm" id="nwIncAsOf"></div>
                                 <div class="col-6 col-md-3 d-flex align-items-end"><div class="form-check"><input class="form-check-input" type="checkbox" id="nwIncIndexed" checked><label class="form-check-label small" for="nwIncIndexed">Indexed to inflation</label></div></div>
                                 <div class="col-12 col-md-2 d-flex align-items-end"><button class="btn btn-sm btn-primary w-100" type="submit" id="nwIncSubmit"><i class="bi bi-plus-lg me-1"></i>Save</button></div>
                             </form>
@@ -4001,11 +4001,11 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                 <div class="card-body">
                                     <form id="nwAddForm" class="row g-2">
                                         <div class="col-12">
-                                            <label class="form-label small mb-1">Name *</label>
+                                            <label for="nwName" class="form-label small mb-1">Name *</label>
                                             <input class="form-control form-control-sm" id="nwName" placeholder="e.g. Emergency fund, Flat, Mortgage" required>
                                         </div>
                                         <div class="col-12">
-                                            <label class="form-label small mb-1">Type</label>
+                                            <label for="nwCategory" class="form-label small mb-1">Type</label>
                                             <select class="form-select form-select-sm" id="nwCategory">
                                                 <optgroup label="Assets">
                                                     <option value="savings_account">Savings account</option>
@@ -4027,15 +4027,15 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                             </select>
                                         </div>
                                         <div class="col-6">
-                                            <label class="form-label small mb-1">Amount</label>
+                                            <label for="nwAmount" class="form-label small mb-1">Amount</label>
                                             <input type="number" step="any" class="form-control form-control-sm" id="nwAmount" placeholder="0.00" required>
                                         </div>
                                         <div class="col-6">
-                                            <label class="form-label small mb-1">Currency</label>
+                                            <label for="nwCurrency" class="form-label small mb-1">Currency</label>
                                             <input class="form-control form-control-sm" id="nwCurrency" value="EUR" maxlength="3">
                                         </div>
                                         <div class="col-12">
-                                            <label class="form-label small mb-1">Amount as of</label>
+                                            <label for="nwAsOf" class="form-label small mb-1">Amount as of</label>
                                             <input type="date" class="form-control form-control-sm" id="nwAsOf">
                                         </div>
                                         <div class="col-12">
@@ -4069,12 +4069,12 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                 <div class="card-body border-bottom">
                                     <form id="nwLoanForm" class="row g-2">
                                         <input type="hidden" id="nwLoanId">
-                                        <div class="col-12 col-md-3"><label class="form-label small mb-1">Name *</label><input class="form-control form-control-sm" id="nwLoanName" required></div>
-                                        <div class="col-6 col-md-2"><label class="form-label small mb-1">Principal *</label><input type="number" step="any" min="0" class="form-control form-control-sm" id="nwLoanPrincipal" required></div>
-                                        <div class="col-6 col-md-2"><label class="form-label small mb-1">Rate % *</label><input type="number" step="any" min="0" class="form-control form-control-sm" id="nwLoanRate" required></div>
-                                        <div class="col-6 col-md-2"><label class="form-label small mb-1">Start date *</label><input type="date" class="form-control form-control-sm" id="nwLoanStart" required></div>
-                                        <div class="col-6 col-md-1"><label class="form-label small mb-1">Months *</label><input type="number" min="1" class="form-control form-control-sm" id="nwLoanTerm" required></div>
-                                        <div class="col-12 col-md-2"><label class="form-label small mb-1">Extra / month</label><input type="number" step="any" min="0" class="form-control form-control-sm" id="nwLoanExtra" value="0"></div>
+                                        <div class="col-12 col-md-3"><label for="nwLoanName" class="form-label small mb-1">Name *</label><input class="form-control form-control-sm" id="nwLoanName" required></div>
+                                        <div class="col-6 col-md-2"><label for="nwLoanPrincipal" class="form-label small mb-1">Principal *</label><input type="number" step="any" min="0" class="form-control form-control-sm" id="nwLoanPrincipal" required></div>
+                                        <div class="col-6 col-md-2"><label for="nwLoanRate" class="form-label small mb-1">Rate % *</label><input type="number" step="any" min="0" class="form-control form-control-sm" id="nwLoanRate" required></div>
+                                        <div class="col-6 col-md-2"><label for="nwLoanStart" class="form-label small mb-1">Start date *</label><input type="date" class="form-control form-control-sm" id="nwLoanStart" required></div>
+                                        <div class="col-6 col-md-1"><label for="nwLoanTerm" class="form-label small mb-1">Months *</label><input type="number" min="1" class="form-control form-control-sm" id="nwLoanTerm" required></div>
+                                        <div class="col-12 col-md-2"><label for="nwLoanExtra" class="form-label small mb-1">Extra / month</label><input type="number" step="any" min="0" class="form-control form-control-sm" id="nwLoanExtra" value="0"></div>
                                         <div class="col-12 col-md-3"><input class="form-control form-control-sm" id="nwLoanLender" placeholder="Lender (optional)"></div>
                                         <div class="col-12 col-md-5"><input class="form-control form-control-sm" id="nwLoanNotes" placeholder="Notes (optional)"></div>
                                         <div class="col-12 col-md-4 d-flex gap-2 justify-content-md-end flex-wrap">
@@ -4086,8 +4086,8 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                         </div>
                                         <div class="collapse" id="nwLoanRateRow">
                                             <div class="row g-2">
-                                                <div class="col-6 col-md-3"><label class="form-label small mb-1">Rate changed on</label><input type="date" class="form-control form-control-sm" id="nwLoanRateAsOf"></div>
-                                                <div class="col-6 col-md-3"><label class="form-label small mb-1">Balance on that date</label><input type="number" step="any" min="0" class="form-control form-control-sm" id="nwLoanBalanceAsOf"></div>
+                                                <div class="col-6 col-md-3"><label for="nwLoanRateAsOf" class="form-label small mb-1">Rate changed on</label><input type="date" class="form-control form-control-sm" id="nwLoanRateAsOf"></div>
+                                                <div class="col-6 col-md-3"><label for="nwLoanBalanceAsOf" class="form-label small mb-1">Balance on that date</label><input type="number" step="any" min="0" class="form-control form-control-sm" id="nwLoanBalanceAsOf"></div>
                                             </div>
                                         </div>
                                         <div class="col-12"><div class="small" id="nwLoanStatus"></div></div>
@@ -4110,9 +4110,9 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                 </div>
                                 <div class="card-body border-bottom">
                                     <form id="nwValuationForm" class="row g-2 align-items-end">
-                                        <div class="col-12 col-md-4"><label class="form-label small mb-1">Broker</label><select class="form-select form-select-sm" id="nwValPortfolio"></select></div>
-                                        <div class="col-6 col-md-2"><label class="form-label small mb-1">Provider</label><input class="form-control form-control-sm" value="indexa" disabled></div>
-                                        <div class="col-6 col-md-3"><label class="form-label small mb-1">Account reference *</label><input class="form-control form-control-sm" id="nwValAccountRef" required></div>
+                                        <div class="col-12 col-md-4"><label for="nwValPortfolio" class="form-label small mb-1">Broker</label><select class="form-select form-select-sm" id="nwValPortfolio"></select></div>
+                                        <div class="col-6 col-md-2"><label for="nwValProvider" class="form-label small mb-1">Provider</label><input class="form-control form-control-sm" id="nwValProvider" value="indexa" disabled></div>
+                                        <div class="col-6 col-md-3"><label for="nwValAccountRef" class="form-label small mb-1">Account reference *</label><input class="form-control form-control-sm" id="nwValAccountRef" required></div>
                                         <div class="col-12 col-md-3"><button type="submit" class="btn btn-sm btn-primary w-100">Add</button></div>
                                         <div class="col-12"><div class="small" id="nwValStatus"></div></div>
                                     </form>
@@ -4169,27 +4169,27 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                     <p class="small text-muted mb-2">Add a fixed-term deposit manually:</p>
                                     <form id="nwDepositForm" class="row g-2 align-items-end">
                                         <div class="col-12 col-sm-4">
-                                            <label class="form-label small mb-1">Name *</label>
+                                            <label for="depName" class="form-label small mb-1">Name *</label>
                                             <input class="form-control form-control-sm" id="depName" placeholder="e.g. Superdepósito 1 mes" required>
                                         </div>
                                         <div class="col-6 col-sm-2">
-                                            <label class="form-label small mb-1">Principal *</label>
+                                            <label for="depPrincipal" class="form-label small mb-1">Principal *</label>
                                             <input type="number" step="any" class="form-control form-control-sm" id="depPrincipal" placeholder="5000" required>
                                         </div>
                                         <div class="col-6 col-sm-1">
-                                            <label class="form-label small mb-1">Currency</label>
+                                            <label for="depCurrency" class="form-label small mb-1">Currency</label>
                                             <input class="form-control form-control-sm" id="depCurrency" value="EUR" maxlength="3">
                                         </div>
                                         <div class="col-6 col-sm-1">
-                                            <label class="form-label small mb-1">Rate % *</label>
+                                            <label for="depRate" class="form-label small mb-1">Rate % *</label>
                                             <input type="number" step="any" class="form-control form-control-sm" id="depRate" placeholder="4.0" required>
                                         </div>
                                         <div class="col-6 col-sm-2">
-                                            <label class="form-label small mb-1">Start date *</label>
+                                            <label for="depStart" class="form-label small mb-1">Start date *</label>
                                             <input type="date" class="form-control form-control-sm" id="depStart" required>
                                         </div>
                                         <div class="col-6 col-sm-2">
-                                            <label class="form-label small mb-1">Maturity date *</label>
+                                            <label for="depMaturity" class="form-label small mb-1">Maturity date *</label>
                                             <input type="date" class="form-control form-control-sm" id="depMaturity" required>
                                         </div>
                                         <div class="col-12 col-sm-2">
@@ -4199,7 +4199,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                     </form>
                                     <!-- LLM paste panel -->
                                     <div class="mt-3">
-                                        <label class="form-label small mb-1"><i class="bi bi-magic me-1"></i>Or paste a statement and let AI extract deposits:</label>
+                                        <label for="depLlmText" class="form-label small mb-1"><i class="bi bi-magic me-1"></i>Or paste a statement and let AI extract deposits:</label>
                                         <textarea class="form-control form-control-sm mb-2" id="depLlmText" rows="3" placeholder="Paste bank statement or deposit overview here…"></textarea>
                                         <div class="d-flex gap-2 align-items-center">
                                             <button class="btn btn-sm btn-outline-secondary" id="depExtractBtn"><i class="bi bi-cpu me-1"></i>Extract deposits</button>
@@ -4310,11 +4310,11 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                     <p class="small text-muted mb-2">Add a recurring monthly income or expense:</p>
                                     <form id="cfAddForm" class="row g-2 align-items-end">
                                         <div class="col-12 col-sm-3">
-                                            <label class="form-label small mb-1">Label *</label>
+                                            <label for="cfLabel" class="form-label small mb-1">Label *</label>
                                             <input class="form-control form-control-sm" id="cfLabel" placeholder="e.g. Salary, Mortgage payment" required>
                                         </div>
                                         <div class="col-6 col-sm-2">
-                                            <label class="form-label small mb-1">Category</label>
+                                            <label for="cfCategory" class="form-label small mb-1">Category</label>
                                             <select class="form-select form-select-sm" id="cfCategory">
                                                 <optgroup label="Income">
                                                     <option value="salary">Salary</option>
@@ -4328,15 +4328,15 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                             </select>
                                         </div>
                                         <div class="col-6 col-sm-2">
-                                            <label class="form-label small mb-1">Amount / month *</label>
+                                            <label for="cfAmount" class="form-label small mb-1">Amount / month *</label>
                                             <input type="number" step="any" class="form-control form-control-sm" id="cfAmount" placeholder="0.00" required>
                                         </div>
                                         <div class="col-4 col-sm-1">
-                                            <label class="form-label small mb-1">Currency</label>
+                                            <label for="cfCurrency" class="form-label small mb-1">Currency</label>
                                             <input class="form-control form-control-sm" id="cfCurrency" value="EUR" maxlength="3">
                                         </div>
                                         <div class="col-8 col-sm-2">
-                                            <label class="form-label small mb-1">Notes</label>
+                                            <label for="cfNotes" class="form-label small mb-1">Notes</label>
                                             <input class="form-control form-control-sm" id="cfNotes" placeholder="Optional">
                                         </div>
                                         <div class="col-12 col-sm-2">
@@ -5562,7 +5562,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                 <div class="modal-body">
                     <input type="hidden" id="matureDepositId">
                     <div class="mb-3">
-                        <label class="form-label">Actual interest paid</label>
+                        <label for="matureInterestPaid" class="form-label">Actual interest paid</label>
                         <div class="input-group">
                             <span class="input-group-text">€</span>
                             <input type="number" step="any" class="form-control" id="matureInterestPaid" placeholder="8.35">
@@ -5570,7 +5570,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         <div class="form-text">This will be recorded as an interest transaction.</div>
                     </div>
                     <div class="mb-3">
-                        <label class="form-label">Payout date</label>
+                        <label for="maturePayoutDate" class="form-label">Payout date</label>
                         <input type="date" class="form-control" id="maturePayoutDate">
                     </div>
                     <div class="small text-danger" id="matureDepositError"></div>
@@ -5689,11 +5689,11 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
             </p>
             <div class="row g-3">
               <div class="col-md-6">
-                <label class="form-label small fw-semibold">Benchmark index</label>
+                <label for="fpBenchmark" class="form-label small fw-semibold">Benchmark index</label>
                 <select class="form-select form-select-sm" id="fpBenchmark"></select>
               </div>
               <div class="col-md-3">
-                <label class="form-label small fw-semibold">Data as of</label>
+                <label for="fpAsOf" class="form-label small fw-semibold">Data as of</label>
                 <input type="date" class="form-control form-control-sm" id="fpAsOf">
               </div>
               <div class="col-md-3 d-flex align-items-end">

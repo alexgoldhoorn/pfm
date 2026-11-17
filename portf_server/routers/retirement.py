@@ -10,6 +10,7 @@ from portf_manager.services.retirement import load_plan, readiness, save_plan
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
+from portf_manager.database import Database
 
 router = APIRouter()
 
@@ -82,7 +83,7 @@ def _income_row(row: dict) -> dict:
 
 
 @router.get("/plan")
-def get_plan(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def get_plan(db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)):
     """The retirement plan settings merged over the defaults."""
     return load_plan(db)
 
@@ -90,7 +91,7 @@ def get_plan(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
 @router.put("/plan")
 def put_plan(
     body: PlanUpdate,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Merge the given known keys over the stored plan and validate."""
@@ -101,15 +102,19 @@ def put_plan(
 
 
 @router.get("/incomes")
-def list_incomes(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def list_incomes(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+):
     """All retirement income streams."""
     return [_income_row(r) for r in db.get_retirement_incomes()]
 
 
 @router.post("/incomes")
 def create_income(
-    body: IncomeBody, db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+    body: IncomeBody,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+) -> dict:
     """Create a retirement income stream."""
     fields = body.model_dump()
     fields["indexed"] = 1 if body.indexed else 0
@@ -120,9 +125,9 @@ def create_income(
 def update_income(
     income_id: int,
     body: IncomeBody,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Replace an income stream's fields."""
     if not db.update_retirement_income(income_id, **body.model_dump()):
         raise HTTPException(status_code=404, detail="Income not found")
@@ -131,8 +136,10 @@ def update_income(
 
 @router.delete("/incomes/{income_id}")
 def delete_income(
-    income_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+    income_id: int,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+) -> dict:
     """Delete an income stream."""
     if not db.delete_retirement_income(income_id):
         raise HTTPException(status_code=404, detail="Income not found")
@@ -140,6 +147,8 @@ def delete_income(
 
 
 @router.get("/readiness")
-def get_readiness(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def get_readiness(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+):
     """Retirement readiness: four scenarios, inputs and warnings."""
     return readiness(db)

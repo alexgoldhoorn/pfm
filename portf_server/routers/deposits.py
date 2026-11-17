@@ -81,7 +81,7 @@ def create_deposit(
     body: DepositBody,
     db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     dep_id = db.create_fixed_deposit(
         name=body.name,
         principal=body.principal,
@@ -101,7 +101,7 @@ def update_deposit(
     body: DepositUpdate,
     db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     fields = body.model_dump(exclude_none=True)
     if "currency" in fields:
         fields["currency"] = fields["currency"].upper()
@@ -115,7 +115,7 @@ def delete_deposit(
     deposit_id: int,
     db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     if not db.delete_fixed_deposit(deposit_id):
         raise HTTPException(status_code=404, detail="Not found")
     return {"deleted": True}
@@ -127,7 +127,7 @@ def mature_deposit(
     body: MatureBody,
     db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     dep = db.get_fixed_deposit(deposit_id)
     if not dep:
         raise HTTPException(status_code=404, detail="Deposit not found")

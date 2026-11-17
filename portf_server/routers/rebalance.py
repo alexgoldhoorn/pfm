@@ -21,6 +21,7 @@ from portf_manager.services import rebalance_planner
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
+from portf_manager.database import Database
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -119,7 +120,9 @@ async def _auth(
 
 
 @router.get("/targets")
-async def get_targets(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+async def get_targets(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+):
     """Return current allocation targets."""
     return db.get_allocation_targets()
 
@@ -127,7 +130,7 @@ async def get_targets(db=Depends(get_database), api_key_info: dict = Depends(_au
 @router.put("/targets")
 async def set_targets(
     targets: List[AllocationTarget],
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Bulk-set allocation targets (replaces all existing)."""
@@ -179,8 +182,8 @@ def _managed_block(db, transactions: List[dict]) -> dict:
 
 @router.get("/analysis")
 def get_rebalance_analysis(
-    db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+) -> dict:
     """
     Compare current holdings allocation vs targets and return
     buy/sell amounts needed to rebalance.
@@ -248,7 +251,8 @@ def get_rebalance_analysis(
             }
         )
 
-        if abs(drift_eur) > 10:  # ignore sub-€10 noise
+        # ignore sub-€10 noise
+        if abs(drift_eur) > 10:
             actions.append(
                 {
                     "asset_type": atype,
@@ -272,7 +276,7 @@ def get_rebalance_analysis(
 @router.post("/plan", response_model=RebalancePlanResponse)
 def plan_rebalance(
     request: RebalancePlanRequest,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """

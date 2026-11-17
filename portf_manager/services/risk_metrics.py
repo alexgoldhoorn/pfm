@@ -209,7 +209,7 @@ def compute_risk_metrics(
 
 
 def compute_portfolio_risk(
-    db, fx_on: Callable[[str, str], float], window: str = "all"
+    db: Any, fx_on: Callable[[str, str], float], window: str = "all"
 ) -> dict[str, Any]:
     """:func:`compute_risk_metrics` over the database's snapshots and trades.
 

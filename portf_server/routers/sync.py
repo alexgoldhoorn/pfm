@@ -24,6 +24,7 @@ from portf_manager.parsers.pdt_xlsx_parser import (
     _pdt_action_to_tx_type,
 )
 from portf_manager.currency_utils import normalize_gbx_amounts
+from portf_manager.database import Database
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -124,8 +125,8 @@ class BackupResponse(BaseModel):
 
 
 @router.get("/pdt-config", response_model=SyncConfigResponse)
-async def get_sync_config(
-    db=Depends(get_database), api_key_info: dict = Depends(_auth)
+def get_sync_config(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
 ):
     """Return current Google Sheets sync configuration."""
     sa_file = _google_service_account_file()
@@ -149,9 +150,9 @@ async def get_sync_config(
 
 
 @router.put("/pdt-config", response_model=SyncConfigResponse)
-async def update_sync_config(
+def update_sync_config(
     body: SyncConfigUpdate,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Persist the Google Spreadsheet ID to the database."""
@@ -175,7 +176,7 @@ async def update_sync_config(
 
 
 @router.post("/pdt-pull", response_model=PullResponse)
-async def pull_from_sheets(
+def pull_from_sheets(
     spreadsheet_id: Optional[str] = Query(
         default=None,
         description="Google Spreadsheet ID (falls back to GOOGLE_SPREADSHEET_ID env var)",
@@ -183,7 +184,7 @@ async def pull_from_sheets(
     portfolio_id: Optional[int] = Query(
         default=None, description="Assign all imported records to this portfolio"
     ),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """
@@ -385,7 +386,7 @@ async def pull_from_sheets(
 
 
 @router.post("/pdt-push", response_model=PushResponse)
-async def push_to_sheets(
+def push_to_sheets(
     spreadsheet_id: Optional[str] = Query(
         default=None,
         description="Google Spreadsheet ID (falls back to GOOGLE_SPREADSHEET_ID env var)",
@@ -393,7 +394,7 @@ async def push_to_sheets(
     portfolio_id: Optional[int] = Query(
         default=None, description="Export only this portfolio (default: all)"
     ),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """
@@ -434,10 +435,10 @@ async def push_to_sheets(
 
 
 @router.post("/pdt-backup", response_model=BackupResponse)
-async def backup_sheet(
+def backup_sheet(
     spreadsheet_id: Optional[str] = Query(default=None),
     title: Optional[str] = Query(default=None),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """
@@ -468,10 +469,10 @@ async def backup_sheet(
 
 
 @router.get("/pdt-download")
-async def download_sheet(
+def download_sheet(
     spreadsheet_id: Optional[str] = Query(default=None),
     fmt: str = Query(default="xlsx"),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """

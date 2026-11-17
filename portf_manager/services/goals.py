@@ -12,7 +12,7 @@ actual monthly pace against the pace still needed.
 """
 
 from datetime import date, datetime
-from typing import Optional
+from typing import Any, Optional
 
 STATUS_ACHIEVED = "achieved"
 STATUS_ON_TRACK = "on_track"
@@ -176,7 +176,7 @@ def goal_progress(goal: dict, current_nw: float, today: Optional[date] = None) -
     }
 
 
-def list_goals_with_progress(db, today: Optional[date] = None) -> list[dict]:
+def list_goals_with_progress(db: Any, today: Optional[date] = None) -> list[dict]:
     """Every goal with its progress fields, ordered by target date.
 
     Reads the net worth once (the balance sheet does FX lookups), so call it

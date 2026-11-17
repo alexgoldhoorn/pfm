@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from portf_manager import market
 
 from ..dependencies import get_database
+from portf_manager.database import Database
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ def _enabled() -> bool:
 
 
 @router.get("/summary")
-def public_summary(db=Depends(get_database)):
+def public_summary(db: Database = Depends(get_database)) -> dict:
     """Return allocation percentages + lifetime return %. No absolute amounts.
 
     Disabled unless PORTF_PUBLIC_VIEW is truthy.

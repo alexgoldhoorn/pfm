@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Iterable, List, Optional
+from typing import Any, Iterable, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +49,7 @@ def clean_patterns(raw: Iterable[str]) -> List[str]:
     return cleaned
 
 
-def load_patterns(db) -> List[str]:
+def load_patterns(db: Any) -> List[str]:
     """Read the stored patterns; anything unusable yields an empty list."""
     raw = db.get_setting(SETTING_KEY)
     if raw is None:
@@ -76,7 +76,7 @@ def load_patterns(db) -> List[str]:
     return kept
 
 
-def save_patterns(db, patterns: Iterable[str]) -> List[str]:
+def save_patterns(db: Any, patterns: Iterable[str]) -> List[str]:
     """Clean and store the patterns.
 
     Returns:

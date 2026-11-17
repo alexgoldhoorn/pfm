@@ -6,7 +6,7 @@ capped symbol or sector over its limit.
 """
 
 from datetime import date
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from portf_manager.services import deployable as deployable_service
 from portf_manager.services.exposure import compute_exposure
@@ -48,7 +48,7 @@ def _entry(
 
 
 def cap_status(
-    db,
+    db: Any,
     fx: Optional[Callable[[str], float]] = None,
     today: Optional[date] = None,
 ) -> dict:
@@ -125,7 +125,7 @@ def cap_status(
     }
 
 
-def check_position_caps(db) -> list[dict]:
+def check_position_caps(db: Any) -> list[dict]:
     """Action Items: one per breached explicit cap."""
     items = []
     for cap in cap_status(db)["caps"]:

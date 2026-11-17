@@ -2908,9 +2908,15 @@ function setupPortfoliosPage() {
 }
 
 window.setAssetPrice = async function(id, symbol, currency) {
-    const val = prompt(`Set a manual price for ${symbol}${currency ? ' (' + currency + ')' : ''}.\nThe daily price update will stop overwriting it.`);
-    if (val === null) return;
-    const price = parseFloat(val);
+    const val = await noteDialog({
+        title: 'Set manual price',
+        message: `Set a manual price for ${symbol}${currency ? ' (' + currency + ')' : ''}. The daily price update will stop overwriting it.`,
+        confirmLabel: 'Set price',
+        placeholder: 'e.g. 12.50',
+    });
+    if (val === null || val === '') return;
+    // Accept a decimal comma ("12,50") as well as a dot.
+    const price = parseFloat(val.replace(',', '.'));
     if (!(price > 0)) { notify('Please enter a positive number.'); return; }
     try {
         await window.apiClient.setAssetPrice(id, price);
@@ -3515,9 +3521,9 @@ function setupImportExportPage() {
             const rows = bookings.map(b => `
                 <tr>
                     <td>${Fmt.date(b.date)}</td>
-                    <td><span class="badge bg-${b.action === 'Deposit' ? 'success' : 'warning'}">${b.action}</span></td>
-                    <td class="text-end">${parseFloat(b.amount).toFixed(2)}</td>
-                    <td>${b.currency}</td>
+                    <td><span class="badge bg-${b.action === 'Deposit' ? 'success' : 'warning'}">${esc(b.action)}</span></td>
+                    <td class="text-end">${Fmt.money(b.amount, b.currency, 2)}</td>
+                    <td>${esc(b.currency)}</td>
                     <td class="text-muted small">${esc(b.portfolio_name || '')}</td>
                 </tr>`).join('');
             container.innerHTML = `<table class="table table-sm table-hover mb-0">
@@ -3753,10 +3759,10 @@ function setupGoogleSheetsPage() {
             if (sheetId) await window.apiClient.saveSyncConfig(sheetId).catch(() => {});
             const r = await window.apiClient.syncPull(sheetId);
             setSyncStatus(
-                `Pulled from <code>${r.spreadsheet_id}</code>: `
+                `Pulled from <code>${esc(r.spreadsheet_id)}</code>: `
                 + `${r.imported_transactions} transactions, ${r.imported_dividends} dividends, `
                 + `${r.imported_bookings} bookings.`
-                + (r.errors.length ? `<br>${r.errors.length} error(s): ${r.errors[0]}` : ''),
+                + (r.errors.length ? `<br>${r.errors.length} error(s): ${esc(r.errors[0])}` : ''),
                 r.errors.length ? 'warning' : 'success'
             );
         } catch (err) {
@@ -3796,7 +3802,7 @@ function setupGoogleSheetsPage() {
             const bsModal = window.bootstrap && window.bootstrap.Modal.getInstance(pushModal);
             if (bsModal) bsModal.hide();
             setSyncStatus(
-                `Pushed to <a href="${r.spreadsheet_url}" target="_blank">${r.spreadsheet_id}</a>: `
+                `Pushed to <a href="${esc(r.spreadsheet_url)}" target="_blank" rel="noopener">${esc(r.spreadsheet_id)}</a>: `
                 + `${r.transactions_written} transactions, ${r.dividends_written} dividends, `
                 + `${r.bookings_written} bookings.`,
                 'success'
@@ -6975,7 +6981,7 @@ function setupResearchPage() {
                     recompute();
                 } catch (e) { /* ignore */ }
             }));
-        } catch (e) { $('rvHistory').innerHTML = '<div class="p-3 text-danger small">' + e.message + '</div>'; }
+        } catch (e) { $('rvHistory').innerHTML = '<div class="p-3 text-danger small">' + esc(e.message) + '</div>'; }
     }
 
     const pnlCls = v => (v > 0 ? 'text-success' : v < 0 ? 'text-danger' : '');
@@ -7409,7 +7415,7 @@ function setupResearchPage() {
             }
             if (res.watchlist_updated) R.watchBuyBelow = c.buy;
             loadHistory(R.symbol);
-        } catch (e) { $('rvSaveMsg').innerHTML = '<span class="text-danger">' + e.message + '</span>'; }
+        } catch (e) { $('rvSaveMsg').innerHTML = '<span class="text-danger">' + esc(e.message) + '</span>'; }
     });
 
     async function loadCompare() {
@@ -7435,7 +7441,7 @@ function setupResearchPage() {
                 page.querySelector('#researchTabs [data-rtab="workbench"]').click();
                 $('researchTicker').value = tr.dataset.sym; load(tr.dataset.sym);
             }));
-        } catch (e) { body.innerHTML = '<tr><td colspan="8" class="text-danger text-center py-3">' + e.message + '</td></tr>'; }
+        } catch (e) { body.innerHTML = '<tr><td colspan="8" class="text-danger text-center py-3">' + esc(e.message) + '</td></tr>'; }
     }
 
     // Expose loader (builds the autocomplete suggestion list on each page open).
@@ -8389,19 +8395,19 @@ async function _renderSpTrendChart() {
                         type: 'bar',
                         label: 'Spent',
                         data: months.map(m => m.spent_eur),
-                        backgroundColor: SP_CATEGORY_CHART_COLORS[3],
+                        backgroundColor: cssVar('--viz-bad'),
                     },
                     {
                         type: 'bar',
                         label: 'Income',
                         data: months.map(m => m.income_eur),
-                        backgroundColor: SP_CATEGORY_CHART_COLORS[1],
+                        backgroundColor: cssVar('--viz-good'),
                     },
                     {
                         type: 'line',
                         label: 'Net',
                         data: months.map(m => m.net_eur),
-                        borderColor: SP_CATEGORY_CHART_COLORS[5],
+                        borderColor: cssVar('--viz-neutral'),
                         fill: false,
                     },
                 ],
@@ -8494,9 +8500,11 @@ function _renderSpBreadcrumb() {
 window._renderSpBreadcrumb = _renderSpBreadcrumb;
 
 let _spCategoryChartInstance = null;
-// Shared palette for pie slices -- same colors as the Dashboard's
-// "Allocation by Type" donut, for visual consistency across the app.
-const SP_CATEGORY_CHART_COLORS = ['#2563eb', '#16a34a', '#f59e0b', '#dc2626', '#7c3aed', '#64748b'];
+// Pie slices use the --viz-1..8 series tokens, resolved at render time
+// (canvas can't read var()) so light and dark mode each get their palette.
+function spCategoryChartColors() {
+    return Array.from({ length: VIZ_SLOTS }, (_, i) => cssVar(`--viz-${i + 1}`));
+}
 
 function _renderSpendingCategoryChart(byCategoryEur) {
     window._spCategoryChartData = byCategoryEur || {};
@@ -8539,7 +8547,7 @@ function _renderSpendingCategoryChart(byCategoryEur) {
                 labels: labels,
                 datasets: [{
                     data: values,
-                    backgroundColor: labels.map((_, i) => SP_CATEGORY_CHART_COLORS[i % SP_CATEGORY_CHART_COLORS.length]),
+                    backgroundColor: (pal => labels.map((_, i) => pal[i % pal.length]))(spCategoryChartColors()),
                 }]
             },
             options: {
@@ -8568,8 +8576,8 @@ function _renderSpendingCategoryChart(byCategoryEur) {
                 datasets: [{
                     label: 'Spent (30d, EUR)',
                     data: values,
-                    backgroundColor: 'rgba(220,53,69,0.7)',
-                    borderColor: 'rgba(220,53,69,1)',
+                    backgroundColor: cssVar('--viz-bad'),
+                    borderColor: cssVar('--viz-bad'),
                     borderWidth: 1,
                 }]
             },
@@ -11057,8 +11065,8 @@ function _renderBgTrendChart() {
             data: {
                 labels: months.map(monthKeyLabel),
                 datasets: [
-                    { type: 'bar', label: 'Actual spend', data: actualByMonth, backgroundColor: SP_CATEGORY_CHART_COLORS[3] },
-                    { type: 'line', label: 'Planned spend', data: plannedByMonth, borderColor: SP_CATEGORY_CHART_COLORS[0], borderDash: [5, 4], fill: false, tension: 0.1 },
+                    { type: 'bar', label: 'Actual spend', data: actualByMonth, backgroundColor: cssVar('--viz-bad') },
+                    { type: 'line', label: 'Planned spend', data: plannedByMonth, borderColor: cssVar('--viz-1'), borderDash: [5, 4], fill: false, tension: 0.1 },
                 ],
             },
             options: {

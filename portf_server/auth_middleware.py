@@ -8,6 +8,7 @@ This module provides API key authentication functionality including:
 """
 
 import hashlib
+import logging
 import secrets
 import string
 from datetime import datetime, timedelta
@@ -18,6 +19,8 @@ from fastapi.security import HTTPBearer
 
 from portf_manager.database import Database
 
+logger = logging.getLogger(__name__)
+
 
 class APIKeyError(Exception):
     """Base exception for API key related errors."""
@@ -26,7 +29,7 @@ class APIKeyError(Exception):
 class APIKeyManager:
     """Manager class for API key operations."""
 
-    def __init__(self, database: Database):
+    def __init__(self, database: Database) -> None:
         """
         Initialize API key manager.
 
@@ -118,7 +121,8 @@ class APIKeyManager:
             return {
                 "id": key_id,
                 "key_name": key_name,
-                "api_key": api_key,  # Only returned once during creation
+                # Only returned once during creation
+                "api_key": api_key,
                 "key_prefix": key_prefix,
                 "description": description,
                 "expires_at": expires_at,
@@ -138,6 +142,10 @@ class APIKeyManager:
 
         Returns:
             dict or None: API key information if valid, None otherwise
+
+        Raises:
+            HTTPException: 503 when the key store can't be read, so a database
+                fault isn't reported to every client as an invalid key.
         """
         try:
             key_hash = self._hash_api_key(api_key)
@@ -178,8 +186,12 @@ class APIKeyManager:
 
                 return key_info
 
-        except Exception:
-            return None
+        except Exception as e:
+            logger.exception("API key validation failed")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="API key store unavailable",
+            ) from e
 
     def _update_last_used(self, key_id: int):
         """
@@ -193,9 +205,9 @@ class APIKeyManager:
             with self.database.get_connection() as conn:
                 conn.execute(query, (datetime.now(), key_id))
                 conn.commit()
-        except Exception:
+        except Exception as e:
             # Log but don't fail the request if timestamp update fails
-            pass
+            logger.warning("Could not update last_used for API key %s: %s", key_id, e)
 
     def list_api_keys(self) -> list:
         """
@@ -271,7 +283,7 @@ class APIKeyManager:
 class APIKeyBearer(HTTPBearer):
     """Custom HTTPBearer that validates API keys."""
 
-    def __init__(self, api_key_manager: APIKeyManager):
+    def __init__(self, api_key_manager: APIKeyManager) -> None:
         """
         Initialize API key bearer.
 

@@ -32,6 +32,12 @@ def _add_column_if_missing(conn, table, column, ddl):
         # Table doesn't exist yet (fresh DB creates it with the column included).
 
 
+def _like_prefix(prefix: str) -> str:
+    """Return a LIKE pattern (``ESCAPE '\\'``) matching *prefix* literally."""
+    escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return escaped + "%"
+
+
 class DatabaseError(Exception):
     """Custom exception for database-related errors."""
 
@@ -2700,82 +2706,70 @@ class Database:
 
     # ── App settings (persistent key/value) ────────────────────────────────
 
-    def _ensure_app_settings(self, conn: sqlite3.Connection) -> None:
-        """Create app_settings table if missing (defensive — migration may not have run)."""
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS app_settings (
-                key        TEXT PRIMARY KEY,
-                value      TEXT NOT NULL,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
-        conn.commit()
+    def _settings_query(self, sql: str, params: tuple = (), write: bool = False):
+        """Run one statement on app_settings and return its rows.
+
+        ``app_settings`` is created by ``_create_all_tables`` and the v21
+        migration. Only a missing table is healed here (create it and retry);
+        any other error propagates, so a locked or broken database is never
+        read as "setting not set" — startup would then regenerate the VAPID
+        keys and break every push subscription.
+        """
+        with self.get_connection() as conn:
+            for attempt in (1, 2):
+                try:
+                    rows = conn.execute(sql, params).fetchall()
+                    if write:
+                        conn.commit()
+                    return rows
+                except sqlite3.OperationalError as e:
+                    if attempt == 2 or "no such table" not in str(e):
+                        raise
+                    conn.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS app_settings (
+                            key        TEXT PRIMARY KEY,
+                            value      TEXT NOT NULL,
+                            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                        )
+                        """
+                    )
+                    conn.commit()
 
     def get_setting(self, key: str) -> Optional[str]:
         """Return the stored value for *key*, or None if not set."""
-        with self.get_connection() as conn:
-            try:
-                row = conn.execute(
-                    "SELECT value FROM app_settings WHERE key = ?", (key,)
-                ).fetchone()
-                return row["value"] if row else None
-            except Exception:
-                self._ensure_app_settings(conn)
-                return None
+        rows = self._settings_query(
+            "SELECT value FROM app_settings WHERE key = ?", (key,)
+        )
+        return rows[0]["value"] if rows else None
 
     def set_setting(self, key: str, value: str) -> None:
         """Upsert a persistent app setting."""
-        with self.get_connection() as conn:
-            try:
-                conn.execute(
-                    """
-                    INSERT INTO app_settings (key, value, updated_at)
-                    VALUES (?, ?, CURRENT_TIMESTAMP)
-                    ON CONFLICT(key) DO UPDATE SET value = excluded.value,
-                                                   updated_at = CURRENT_TIMESTAMP
-                    """,
-                    (key, value),
-                )
-                conn.commit()
-            except Exception:
-                self._ensure_app_settings(conn)
-                conn.execute(
-                    """
-                    INSERT INTO app_settings (key, value, updated_at)
-                    VALUES (?, ?, CURRENT_TIMESTAMP)
-                    ON CONFLICT(key) DO UPDATE SET value = excluded.value,
-                                                   updated_at = CURRENT_TIMESTAMP
-                    """,
-                    (key, value),
-                )
-                conn.commit()
+        self._settings_query(
+            """
+            INSERT INTO app_settings (key, value, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+                                           updated_at = CURRENT_TIMESTAMP
+            """,
+            (key, value),
+            write=True,
+        )
 
     def delete_setting(self, key: str) -> None:
         """Remove a persistent app setting (no-op when absent)."""
-        with self.get_connection() as conn:
-            try:
-                conn.execute("DELETE FROM app_settings WHERE key = ?", (key,))
-                conn.commit()
-            except Exception:
-                self._ensure_app_settings(conn)
+        self._settings_query(
+            "DELETE FROM app_settings WHERE key = ?", (key,), write=True
+        )
 
     def list_settings(self, prefix: str) -> Dict[str, str]:
         """Return every setting whose key starts with *prefix* as {key: value}."""
-        # Escape LIKE wildcards so a prefix such as "a_b" matches literally.
-        escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        with self.get_connection() as conn:
-            try:
-                rows = conn.execute(
-                    "SELECT key, value FROM app_settings "
-                    "WHERE key LIKE ? ESCAPE '\\' ORDER BY key",
-                    (escaped + "%",),
-                ).fetchall()
-            except Exception:
-                self._ensure_app_settings(conn)
-                return {}
-            return {r["key"]: r["value"] for r in rows}
+        rows = self._settings_query(
+            "SELECT key, value FROM app_settings "
+            "WHERE key LIKE ? ESCAPE '\\' ORDER BY key",
+            (_like_prefix(prefix),),
+        )
+        return {r["key"]: r["value"] for r in rows}
 
     # ── Web Push subscriptions ─────────────────────────────────────────────
 
@@ -2817,9 +2811,9 @@ class Database:
         updated_count: int,
         skipped_count: int,
         error_count: int,
-        skipped_symbols: List[str] = None,
-        error_symbols: List[str] = None,
-        api_errors: List[str] = None,
+        skipped_symbols: Optional[List[str]] = None,
+        error_symbols: Optional[List[str]] = None,
+        api_errors: Optional[List[str]] = None,
         source: str = "cron",
     ) -> int:
         """Persist the outcome of one price-update run. Lists stored as JSON."""
@@ -2883,7 +2877,7 @@ class Database:
         amount: float = 0.0,
         currency: str = "EUR",
         is_liability: bool = False,
-        notes: str = None,
+        notes: Optional[str] = None,
         as_of: Optional[str] = None,
     ) -> int:
         # as_of is the date the amount was last confirmed; default is today
@@ -2905,7 +2899,7 @@ class Database:
             conn.commit()
             return cur.lastrowid
 
-    def update_manual_asset(self, asset_id: int, **fields) -> bool:
+    def update_manual_asset(self, asset_id: int, **fields: Any) -> bool:
         allowed = {
             "name",
             "category",
@@ -3004,7 +2998,7 @@ class Database:
             ).fetchone()
             return dict(row) if row else None
 
-    def update_loan(self, loan_id: int, **fields) -> bool:
+    def update_loan(self, loan_id: int, **fields: Any) -> bool:
         """Update known loan columns; unknown fields are ignored.
 
         ``None`` is ignored except for the nullable columns ``lender``,
@@ -3071,7 +3065,7 @@ class Database:
             conn.commit()
             return cur.lastrowid
 
-    def update_loan_rate_period(self, period_id: int, **fields) -> bool:
+    def update_loan_rate_period(self, period_id: int, **fields: Any) -> bool:
         """Update rate-period columns; ``None`` clears ``balance_eur``/``note``."""
         return self._update_row(
             "loan_rate_periods",
@@ -3315,7 +3309,7 @@ class Database:
             ).fetchall()
             return [dict(r) for r in rows]
 
-    def update_retirement_income(self, income_id: int, **fields) -> bool:
+    def update_retirement_income(self, income_id: int, **fields: Any) -> bool:
         """Update known income columns; unknown fields are ignored.
 
         ``None`` is ignored except for the nullable columns ``to_age``,
@@ -3417,7 +3411,7 @@ class Database:
             ).fetchone()
             return dict(row) if row else None
 
-    def update_wealth_scenario(self, scenario_id: int, **fields) -> bool:
+    def update_wealth_scenario(self, scenario_id: int, **fields: Any) -> bool:
         """Update known columns; ``description``/``baseline_net_worth_eur`` may be NULL.
 
         Raises ``ValueError`` when renaming onto an existing name.
@@ -3476,8 +3470,8 @@ class Database:
         interest_rate: float = 0.0,
         start_date: str = "",
         maturity_date: str = "",
-        portfolio_id: int = None,
-        notes: str = None,
+        portfolio_id: Optional[int] = None,
+        notes: Optional[str] = None,
     ) -> int:
         """Create a fixed deposit record."""
         with self.get_connection() as conn:
@@ -3510,7 +3504,7 @@ class Database:
             ).fetchone()
             return dict(row) if row else None
 
-    def get_fixed_deposits(self, status: str = None) -> List[Dict]:
+    def get_fixed_deposits(self, status: Optional[str] = None) -> List[Dict]:
         """List fixed deposits, optionally filtered by status."""
         with self.get_connection() as conn:
             if status:
@@ -3524,7 +3518,7 @@ class Database:
                 ).fetchall()
             return [dict(r) for r in rows]
 
-    def update_fixed_deposit(self, deposit_id: int, **fields) -> bool:
+    def update_fixed_deposit(self, deposit_id: int, **fields: Any) -> bool:
         """Update fixed deposit fields."""
         valid = {
             "name",
@@ -3572,7 +3566,7 @@ class Database:
         category: str,
         amount: float,
         currency: str = "EUR",
-        notes: str = None,
+        notes: Optional[str] = None,
     ) -> int:
         """Create a monthly cash flow entry, return new id."""
         with self.get_connection() as conn:
@@ -3613,7 +3607,9 @@ class Database:
         except (ValueError, TypeError):
             return None
 
-    def cache_set(self, key: str, value: Any, ttl_seconds: Optional[float] = None):
+    def cache_set(
+        self, key: str, value: Any, ttl_seconds: Optional[float] = None
+    ) -> None:
         """Cache *value* (JSON-serialisable) under *key* with an optional TTL."""
         import json
         import time
@@ -3627,12 +3623,25 @@ class Database:
             )
             conn.commit()
 
+    def cache_delete(self, key: str) -> int:
+        """Delete the one cache entry stored under exactly *key*."""
+        with self.get_connection() as conn:
+            cur = conn.execute("DELETE FROM kv_cache WHERE key = ?", (key,))
+            conn.commit()
+            return cur.rowcount
+
     def cache_clear(self, prefix: Optional[str] = None) -> int:
-        """Delete cache entries (all, or those whose key starts with *prefix*)."""
+        """Delete cache entries (all, or those whose key starts with *prefix*).
+
+        The prefix matches literally (LIKE wildcards are escaped). To drop a
+        single key use ``cache_delete``: a prefix such as ``"x:1"`` also
+        matches ``"x:10"``.
+        """
         with self.get_connection() as conn:
             if prefix:
                 cur = conn.execute(
-                    "DELETE FROM kv_cache WHERE key LIKE ?", (prefix + "%",)
+                    "DELETE FROM kv_cache WHERE key LIKE ? ESCAPE '\\'",
+                    (_like_prefix(prefix),),
                 )
             else:
                 cur = conn.execute("DELETE FROM kv_cache")
@@ -3664,7 +3673,7 @@ class Database:
         email: str,
         password_hash: str,
         salt: str,
-        full_name: str = None,
+        full_name: Optional[str] = None,
     ) -> int:
         """Create a new user."""
         with self.get_connection() as conn:
@@ -3719,7 +3728,7 @@ class Database:
             conn.commit()
             return cursor.rowcount > 0
 
-    def update_user(self, user_id: int, **kwargs) -> bool:
+    def update_user(self, user_id: int, **kwargs: Any) -> bool:
         """Update user fields."""
         if not kwargs:
             return False
@@ -3748,8 +3757,8 @@ class Database:
         name: str,
         entity_type: str,
         user_id: int,
-        website: str = None,
-        description: str = None,
+        website: Optional[str] = None,
+        description: Optional[str] = None,
     ) -> int:
         """Create a new entity."""
         with self.get_connection() as conn:
@@ -3778,7 +3787,7 @@ class Database:
             return dict(row) if row else None
 
     def get_all_entities(
-        self, active_only: bool = True, user_id: int = None
+        self, active_only: bool = True, user_id: Optional[int] = None
     ) -> List[Dict]:
         """Get all entities."""
         with self.get_connection() as conn:
@@ -3802,7 +3811,7 @@ class Database:
             cursor = conn.execute(query, params)
             return [dict(row) for row in cursor.fetchall()]
 
-    def update_entity(self, entity_id: int, **kwargs) -> bool:
+    def update_entity(self, entity_id: int, **kwargs: Any) -> bool:
         """Update entity fields."""
         if not kwargs:
             return False
@@ -3832,9 +3841,9 @@ class Database:
         self,
         name: str,
         base_currency: str = "USD",
-        entity_id: int = None,
-        description: str = None,
-        user_id: int = None,
+        entity_id: Optional[int] = None,
+        description: Optional[str] = None,
+        user_id: Optional[int] = None,
         account_type: str = "brokerage",
         is_managed: bool = False,
     ) -> int:
@@ -3900,7 +3909,7 @@ class Database:
         self,
         name: str,
         base_currency: str = "EUR",
-        description: str = None,
+        description: Optional[str] = None,
         account_type: str = "brokerage",
     ) -> int:
         """Return the portfolio ID for *name*, creating it if it does not exist.
@@ -3925,7 +3934,7 @@ class Database:
         )
 
     def get_all_portfolios(
-        self, active_only: bool = True, user_id: int = None
+        self, active_only: bool = True, user_id: Optional[int] = None
     ) -> List[Dict]:
         """Get all portfolios."""
         with self.get_connection() as conn:
@@ -3954,7 +3963,7 @@ class Database:
             cursor = conn.execute(query, params)
             return [dict(row) for row in cursor.fetchall()]
 
-    def update_portfolio(self, portfolio_id: int, **kwargs) -> bool:
+    def update_portfolio(self, portfolio_id: int, **kwargs: Any) -> bool:
         """Update portfolio fields."""
         if not kwargs:
             return False
@@ -4011,10 +4020,10 @@ class Database:
         symbol: str,
         name: str,
         asset_type: str,
-        exchange: str = None,
+        exchange: Optional[str] = None,
         currency: str = "USD",
-        sector: str = None,
-        description: str = None,
+        sector: Optional[str] = None,
+        description: Optional[str] = None,
     ) -> int:
         """
         Create a new asset.
@@ -4086,7 +4095,7 @@ class Database:
             cursor = conn.execute(query, params)
             return [dict(row) for row in cursor.fetchall()]
 
-    def update_asset(self, asset_id: int, **kwargs) -> bool:
+    def update_asset(self, asset_id: int, **kwargs: Any) -> bool:
         """Update asset fields."""
         if not kwargs:
             return False
@@ -4129,7 +4138,7 @@ class Database:
         quantity: float,
         price: float,
         transaction_date: str,
-        portfolio_id: int = None,
+        portfolio_id: Optional[int] = None,
         exclude_ids: Optional[Set[int]] = None,
     ) -> Optional[Dict]:
         """Return an existing transaction that matches on all key fields, or None.
@@ -4205,12 +4214,12 @@ class Database:
         price: float,
         total_amount: float,
         transaction_date: str,
-        portfolio_id: int = None,
+        portfolio_id: Optional[int] = None,
         fees: float = 0,
         tax: float = 0,
-        currency: str = None,
-        description: str = None,
-        user_id: int = None,
+        currency: Optional[str] = None,
+        description: Optional[str] = None,
+        user_id: Optional[int] = None,
     ) -> int:
         """Create a new transaction."""
         with self.get_connection() as conn:
@@ -4281,7 +4290,10 @@ class Database:
             return [dict(row) for row in cursor.fetchall()]
 
     def get_all_transactions(
-        self, limit: int = None, user_id: int = None, portfolio_id: int = None
+        self,
+        limit: Optional[int] = None,
+        user_id: Optional[int] = None,
+        portfolio_id: Optional[int] = None,
     ) -> List[Dict]:
         """Get all transactions."""
         with self.get_connection() as conn:
@@ -4314,7 +4326,7 @@ class Database:
             cursor = conn.execute(query, params)
             return [dict(row) for row in cursor.fetchall()]
 
-    def update_transaction(self, transaction_id: int, **kwargs) -> bool:
+    def update_transaction(self, transaction_id: int, **kwargs: Any) -> bool:
         """Update transaction fields."""
         if not kwargs:
             return False
@@ -4384,7 +4396,7 @@ class Database:
         action: str,
         amount: float,
         currency: str,
-        portfolio_id: int = None,
+        portfolio_id: Optional[int] = None,
     ) -> int:
         """Create a new booking (deposit or withdrawal)."""
         with self.get_connection() as conn:
@@ -4404,7 +4416,7 @@ class Database:
         action: str,
         amount: float,
         currency: str,
-        portfolio_id: int = None,
+        portfolio_id: Optional[int] = None,
     ) -> Optional[Dict]:
         """Return an existing booking matching on date, action, amount (±0.001),
         currency and portfolio, or None. Used to detect re-imported cash moves.
@@ -4537,7 +4549,7 @@ class Database:
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def get_all_bookings(self, portfolio_id: int = None) -> List[Dict]:
+    def get_all_bookings(self, portfolio_id: Optional[int] = None) -> List[Dict]:
         """Get all bookings, optionally filtered by portfolio."""
         with self.get_connection() as conn:
             query = """
@@ -4611,9 +4623,9 @@ class Database:
         amount: float,
         currency: str = "EUR",
         category: str = "uncategorized",
-        source: str = None,
-        balance: float = None,
-        merchant: str = None,
+        source: Optional[str] = None,
+        balance: Optional[float] = None,
+        merchant: Optional[str] = None,
     ) -> int:
         """Create a spending transaction.
 
@@ -4684,15 +4696,15 @@ class Database:
 
     def _spending_where_clause(
         self,
-        portfolio_id: int = None,
-        category: str = None,
-        categories: List[str] = None,
-        start_date: str = None,
-        end_date: str = None,
-        is_transfer: bool = None,
-        amount_sign: str = None,
-        min_abs_amount: float = None,
-        q: str = None,
+        portfolio_id: Optional[int] = None,
+        category: Optional[str] = None,
+        categories: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        is_transfer: Optional[bool] = None,
+        amount_sign: Optional[str] = None,
+        min_abs_amount: Optional[float] = None,
+        q: Optional[str] = None,
         transfer_linked: Optional[bool] = None,
         one_off: Optional[bool] = None,
     ):
@@ -4792,19 +4804,19 @@ class Database:
 
     def list_spending_transactions(
         self,
-        portfolio_id: int = None,
-        category: str = None,
-        categories: List[str] = None,
-        start_date: str = None,
-        end_date: str = None,
-        is_transfer: bool = None,
-        amount_sign: str = None,
-        min_abs_amount: float = None,
-        q: str = None,
-        limit: int = None,
-        offset: int = None,
-        sort_by: str = None,
-        sort_dir: str = None,
+        portfolio_id: Optional[int] = None,
+        category: Optional[str] = None,
+        categories: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        is_transfer: Optional[bool] = None,
+        amount_sign: Optional[str] = None,
+        min_abs_amount: Optional[float] = None,
+        q: Optional[str] = None,
+        limit: Optional[int] = None,
+        offset: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_dir: Optional[str] = None,
         transfer_linked: Optional[bool] = None,
         one_off: Optional[bool] = None,
     ) -> List[Dict]:
@@ -4850,15 +4862,15 @@ class Database:
 
     def count_spending_transactions(
         self,
-        portfolio_id: int = None,
-        category: str = None,
-        categories: List[str] = None,
-        start_date: str = None,
-        end_date: str = None,
-        is_transfer: bool = None,
-        amount_sign: str = None,
-        min_abs_amount: float = None,
-        q: str = None,
+        portfolio_id: Optional[int] = None,
+        category: Optional[str] = None,
+        categories: Optional[List[str]] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        is_transfer: Optional[bool] = None,
+        amount_sign: Optional[str] = None,
+        min_abs_amount: Optional[float] = None,
+        q: Optional[str] = None,
         transfer_linked: Optional[bool] = None,
         one_off: Optional[bool] = None,
     ) -> int:
@@ -4892,7 +4904,7 @@ class Database:
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def update_spending_transaction(self, spending_id: int, **kwargs) -> bool:
+    def update_spending_transaction(self, spending_id: int, **kwargs: Any) -> bool:
         """Update spending transaction fields (category, transfer fields, one_off)."""
         valid_fields = {
             "category",
@@ -5481,7 +5493,7 @@ class Database:
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def update_spending_rule(self, rule_id: int, **kwargs) -> bool:
+    def update_spending_rule(self, rule_id: int, **kwargs: Any) -> bool:
         """Update a spending rule. A ``None`` condition value clears it."""
         valid_fields = {"pattern", "category", "priority", *self._RULE_CONDITION_FIELDS}
         update_fields = {k: v for k, v in kwargs.items() if k in valid_fields}
@@ -5510,8 +5522,8 @@ class Database:
         price: float,
         price_date: str,
         price_type: str = "close",
-        volume: int = None,
-        source: str = None,
+        volume: Optional[int] = None,
+        source: Optional[str] = None,
     ) -> int:
         """Create a new price record."""
         with self.get_connection() as conn:
@@ -5545,8 +5557,8 @@ class Database:
     def get_price_history(
         self,
         asset_id: int,
-        start_date: str = None,
-        end_date: str = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
         price_type: str = "close",
     ) -> List[Dict]:
         """Get price history for an asset."""
@@ -5680,7 +5692,7 @@ class Database:
         config_key: str,
         config_value: Any,
         config_type: str = "string",
-        description: str = None,
+        description: Optional[str] = None,
     ) -> int:
         """Set configuration value."""
         # Convert value to string based on type
@@ -5950,7 +5962,7 @@ class Database:
             ).fetchone()
             return dict(row) if row else None
 
-    def create_research_note(self, **kwargs) -> int:
+    def create_research_note(self, **kwargs: Any) -> int:
         """Append a versioned research record (thesis + calculated targets)."""
         cols = [
             "asset_id",
@@ -6158,10 +6170,10 @@ class Database:
     def add_watchlist(
         self,
         symbol: str,
-        name: str = None,
-        asset_type: str = None,
-        buy_below: float = None,
-        notes: str = None,
+        name: Optional[str] = None,
+        asset_type: Optional[str] = None,
+        buy_below: Optional[float] = None,
+        notes: Optional[str] = None,
     ) -> int:
         """Add (or update) a watchlist symbol."""
         with self.get_connection() as conn:
@@ -6316,7 +6328,7 @@ class Database:
         "source",
     )
 
-    def create_decision(self, **fields) -> int:
+    def create_decision(self, **fields: Any) -> int:
         """Insert a journal entry; keys outside ``_DECISION_FIELDS`` are ignored."""
         row = {k: v for k, v in fields.items() if k in self._DECISION_FIELDS}
         if not row.get("decided_on") or not row.get("action") or not row.get("title"):
@@ -6366,7 +6378,7 @@ class Database:
         with self.get_connection() as conn:
             return [dict(r) for r in conn.execute(query, params).fetchall()]
 
-    def update_decision(self, decision_id: int, **fields) -> bool:
+    def update_decision(self, decision_id: int, **fields: Any) -> bool:
         """Update the given fields of a journal entry (unknown keys ignored)."""
         row = {k: v for k, v in fields.items() if k in self._DECISION_FIELDS}
         if not row:
@@ -6548,7 +6560,7 @@ class Database:
             return dict(row) if row else None
 
     def create_budget(
-        self, name: str, description: str = None, is_active: bool = False
+        self, name: str, description: Optional[str] = None, is_active: bool = False
     ) -> int:
         """Create a budget. Pass is_active to make it the active one."""
         with self.get_connection() as conn:
@@ -6561,7 +6573,7 @@ class Database:
             conn.commit()
             return cursor.lastrowid
 
-    def update_budget(self, budget_id: int, **kwargs) -> bool:
+    def update_budget(self, budget_id: int, **kwargs: Any) -> bool:
         """Update a budget's name/description. Returns False if nothing to do."""
         valid_fields = {"name", "description"}
         update_fields = {k: v for k, v in kwargs.items() if k in valid_fields}
@@ -6642,9 +6654,9 @@ class Database:
         line_type: str,
         ref_key: str,
         monthly_amount: float = 0,
-        overrides: str = None,
-        link_id: int = None,
-        notes: str = None,
+        overrides: Optional[str] = None,
+        link_id: Optional[int] = None,
+        notes: Optional[str] = None,
         period: str = "monthly",
         rollover: bool = False,
         link_type: str = "manual",
@@ -6683,7 +6695,7 @@ class Database:
             conn.commit()
             return cursor.lastrowid
 
-    def update_budget_line(self, line_id: int, **kwargs) -> bool:
+    def update_budget_line(self, line_id: int, **kwargs: Any) -> bool:
         """Update a budget line's amount/overrides/link/notes/period/rollover."""
         valid_fields = {
             "line_type",

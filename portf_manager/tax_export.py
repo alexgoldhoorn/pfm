@@ -198,7 +198,8 @@ def generate_tax_report_filename(start_date, end_date, symbols=None):
 
     # Build filename
     if symbols:
-        symbols_str = "_".join(symbols[:3])  # Limit to first 3 symbols
+        # Limit to first 3 symbols
+        symbols_str = "_".join(symbols[:3])
         if len(symbols) > 3:
             symbols_str += f"_plus{len(symbols)-3}more"
         filename = f"tax_report_{start_str}_{end_str}_{symbols_str}_{timestamp}.csv"

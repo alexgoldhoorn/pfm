@@ -113,7 +113,7 @@ def _fetch_fundamentals_live(symbol: str) -> dict[str, Any]:
         return {"symbol": symbol}
 
 
-def fetch_fundamentals(symbol: str, db=None) -> dict[str, Any]:
+def fetch_fundamentals(symbol: str, db: Any = None) -> dict[str, Any]:
     """Pull key fundamentals from yfinance for *symbol*.
 
     When *db* is supplied the result is cached for ~6h (fundamentals change
@@ -136,7 +136,7 @@ def fetch_fundamentals(symbol: str, db=None) -> dict[str, Any]:
     return data
 
 
-def fetch_recent_news(symbol: str, limit: int = 6, db=None) -> list[dict]:
+def fetch_recent_news(symbol: str, limit: int = 6, db: Any = None) -> list[dict]:
     """Recent news headlines + links for *symbol* (web context + citations).
 
     Uses yfinance's news feed — live, no API key — so the LLM analysis is
@@ -199,11 +199,14 @@ def compute_targets(
             fair = eps * target_pe
     elif method == "dividend_yield":
         dividend = _num(a.get("annual_dividend", fundamentals.get("dividendRate")))
-        target_yield = _num(a.get("target_yield"))  # in % (e.g. 4 = 4%)
+        # in % (e.g. 4 = 4%)
+        target_yield = _num(a.get("target_yield"))
         if dividend and target_yield:
             fair = dividend / (target_yield / 100.0)
-    mos = _num(a.get("margin_of_safety", 20)) or 0  # %
-    premium = _num(a.get("premium", 20)) or 0  # %
+    # %
+    mos = _num(a.get("margin_of_safety", 20)) or 0
+    # %
+    premium = _num(a.get("premium", 20)) or 0
     buy_below = round(fair * (1 - mos / 100.0), 4) if fair else None
     sell_above = round(fair * (1 + premium / 100.0), 4) if fair else None
     return {
@@ -214,7 +217,7 @@ def compute_targets(
     }
 
 
-def get_symbols_needing_refresh(db) -> list[dict[str, Any]]:
+def get_symbols_needing_refresh(db: Any) -> list[dict[str, Any]]:
     """Held + watchlist symbols with no research note, or one 90+ days stale.
 
     Powers the Research page's "Refresh all targets" bulk button — see

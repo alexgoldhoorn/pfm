@@ -86,7 +86,7 @@ class RateLimiter:
         wait_until = oldest_call + timedelta(seconds=self.window_seconds)
         return (wait_until - datetime.now()).total_seconds()
 
-    def record_call(self):
+    def record_call(self) -> None:
         """Record that an API call was made."""
         self.calls.append(datetime.now())
 
@@ -108,13 +108,18 @@ class APIClient:
         self,
         cache_strategy: CacheStrategy = CacheStrategy.BOTH,
         cache_dir: Optional[str] = None,
-        price_cache_ttl: int = 3600,  # 1 hour
-        fx_cache_ttl: int = 14400,  # 4 hours
-        metadata_cache_ttl: int = 86400,  # 24 hours
+        # 1 hour
+        price_cache_ttl: int = 3600,
+        # 4 hours
+        fx_cache_ttl: int = 14400,
+        # 24 hours
+        metadata_cache_ttl: int = 86400,
         max_retries: int = 3,
         retry_delay: float = 1.0,
-        yfinance_rate_limit: int = 20,  # calls per minute
-        fx_rate_limit: int = 100,  # calls per month (free tier)
+        # calls per minute
+        yfinance_rate_limit: int = 20,
+        # calls per month (free tier)
+        fx_rate_limit: int = 100,
         fx_api_key: Optional[str] = None,
     ):
         """
@@ -149,7 +154,9 @@ class APIClient:
             max_calls=yfinance_rate_limit, window_seconds=60
         )
         self.fx_limiter = RateLimiter(
-            max_calls=fx_rate_limit, window_seconds=2592000  # 30 days
+            # 30 days
+            max_calls=fx_rate_limit,
+            window_seconds=2592000,
         )
 
         # Create cache directory if using disk cache
@@ -521,7 +528,8 @@ class APIClient:
                 # Use yfinance's download function for bulk operations
                 data = yf.download(
                     tickers=" ".join(symbols),
-                    period="2d",  # Get last 2 days to ensure we have recent data
+                    # Get last 2 days to ensure we have recent data
+                    period="2d",
                     interval="1d",
                     progress=False,
                     threads=True,
@@ -583,8 +591,14 @@ class APIClient:
                         logger.debug(
                             f"{symbol}: GBX→GBP ÷100 → {batch_results[symbol]:.4f}"
                         )
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Without the currency we can't tell pence from pounds, and
+                    # storing a pence price as GBP is 100x too high. Skip the
+                    # symbol this run; the next run retries it.
+                    logger.warning(
+                        f"{symbol}: currency lookup failed ({e}); price not stored"
+                    )
+                    batch_results.pop(symbol, None)
 
             results.update(batch_results)
             invalid_symbols.extend(batch_invalid)
@@ -852,7 +866,8 @@ class APIClient:
                         "close": float(row["Close"]),
                         "adj_close": float(
                             row["Close"]
-                        ),  # Yahoo Finance doesn't separate these
+                            # Yahoo Finance doesn't separate these
+                        ),
                         "volume": (
                             int(row["Volume"]) if not pd.isna(row["Volume"]) else 0
                         ),
@@ -884,7 +899,7 @@ class APIClient:
             logger.error(f"Error fetching price history for {symbol}: {e}")
             raise APIError(f"Failed to fetch price history for {symbol}: {e}")
 
-    def clear_cache(self, prefix: Optional[str] = None):
+    def clear_cache(self, prefix: Optional[str] = None) -> None:
         """
         Clear cache entries.
 
@@ -941,7 +956,7 @@ def get_client() -> APIClient:
     return _client_instance
 
 
-def set_client(client: APIClient):
+def set_client(client: APIClient) -> None:
     """Set global API client instance."""
     global _client_instance
     _client_instance = client

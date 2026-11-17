@@ -289,13 +289,13 @@ async def generate_tax_report(
                             ("BACKGROUND", (0, 1), (-1, -1), colors.white),
                             ("FONTSIZE", (0, 1), (-1, -1), 8),
                             ("GRID", (0, 0), (-1, -1), 1, colors.black),
-                            # Color code gains/losses
+                            # Color code gains/losses (overridden for losses)
                             (
                                 "TEXTCOLOR",
                                 (6, 1),
                                 (6, -1),
                                 colors.green,
-                            ),  # Will be overridden for losses
+                            ),
                         ]
                     )
                 )
@@ -353,7 +353,7 @@ async def generate_tax_report(
 
 
 @router.get("/")
-async def tax_info():
+async def tax_info() -> dict:
     """Tax reporting info and available endpoints."""
     return {
         "message": "Tax reporting endpoints",

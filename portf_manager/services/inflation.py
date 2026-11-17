@@ -15,7 +15,7 @@ import csv
 import io
 import logging
 from datetime import date
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 
@@ -48,7 +48,7 @@ def _fetch_hicp(start_month: str) -> Optional[dict[str, float]]:
     return index or None
 
 
-def hicp_index(db, start: date) -> Optional[dict[str, float]]:
+def hicp_index(db: Any, start: date) -> Optional[dict[str, float]]:
     """``{"YYYY-MM": index}`` from the December before *start*, cached 24h.
 
     Starting a month early gives the base for the first calendar year.

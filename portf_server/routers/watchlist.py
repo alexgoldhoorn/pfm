@@ -13,11 +13,13 @@ from portf_manager import market
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
+from portf_manager.database import Database
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-_PRICE_CACHE_TTL = 600  # seconds — 10 minutes
+# seconds — 10 minutes
+_PRICE_CACHE_TTL = 600
 
 
 def _fetch_price_cached(db, symbol: str) -> Tuple[Optional[float], Optional[str]]:
@@ -46,7 +48,9 @@ async def _auth(
 
 
 @router.get("/")
-def list_watchlist(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def list_watchlist(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+):
     """List watchlist entries with current price + distance to buy target."""
     entries = db.get_watchlist()
     for e in entries:
@@ -66,8 +70,10 @@ def list_watchlist(db=Depends(get_database), api_key_info: dict = Depends(_auth)
 
 @router.post("/", status_code=201)
 def add_watchlist(
-    body: WatchlistAdd, db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+    body: WatchlistAdd,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+) -> dict:
     """Add a symbol to the watchlist (auto-fills name/type from yfinance if omitted).
 
     Sync (plain ``def``) so FastAPI runs it in the threadpool: the yfinance
@@ -99,8 +105,10 @@ def add_watchlist(
 
 @router.delete("/{symbol}")
 async def delete_watchlist(
-    symbol: str, db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+    symbol: str,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+) -> dict:
     """Remove a symbol from the watchlist."""
     if not db.delete_watchlist(symbol):
         raise HTTPException(status_code=404, detail="Symbol not on watchlist")
@@ -109,8 +117,8 @@ async def delete_watchlist(
 
 @router.get("/alerts/check")
 def check_watchlist_alerts(
-    db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+) -> dict:
     """Return watchlist symbols that have dropped into their buy zone."""
     alerts = []
     for e in db.get_watchlist():

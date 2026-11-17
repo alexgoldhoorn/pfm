@@ -12,7 +12,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, timedelta
 from statistics import median
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 # (name, typical gap in days, tolerance in days, charges per year)
 CADENCES = (
@@ -232,7 +232,7 @@ def detect_recurring(
     return found
 
 
-def last_import_dates(db) -> Dict[int, date]:
+def last_import_dates(db: Any) -> Dict[int, date]:
     """Latest imported spending date per account (transfers count)."""
     last_import: Dict[int, date] = {}
     for pid, dates in db.get_portfolio_date_ranges().items():
@@ -242,7 +242,9 @@ def last_import_dates(db) -> Dict[int, date]:
     return last_import
 
 
-def load_recurring(db, portfolio_id: Optional[int] = None) -> List[RecurringSeries]:
+def load_recurring(
+    db: Any, portfolio_id: Optional[int] = None
+) -> List[RecurringSeries]:
     """detect_recurring over the database's bank outflows."""
     rows = db.list_spending_transactions(
         portfolio_id=portfolio_id, is_transfer=False, amount_sign="negative"

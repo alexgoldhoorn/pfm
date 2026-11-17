@@ -29,7 +29,7 @@ class SubscribeBody(BaseModel):
 
 
 @router.get("/vapid-key")
-async def get_vapid_key(db: Database = Depends(get_database)):
+async def get_vapid_key(db: Database = Depends(get_database)) -> dict:
     """Return the VAPID public key (no auth required — needed before subscribe)."""
     key = db.get_setting("vapid_public_key") or ""
     return {"public_key": key}
@@ -40,7 +40,7 @@ async def subscribe(
     body: SubscribeBody,
     db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Save or update a push subscription."""
     db.add_push_subscription(body.endpoint, body.p256dh, body.auth)
     return {"status": "subscribed"}
@@ -51,7 +51,7 @@ async def unsubscribe(
     body: SubscribeBody,
     db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Remove a push subscription."""
     db.delete_push_subscription(body.endpoint)
     return {"status": "unsubscribed"}

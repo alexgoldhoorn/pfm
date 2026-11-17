@@ -8,7 +8,7 @@ HTTP client: the only dependency is the `mcp` package, and it never writes.
 
 ## Install and configure
 
-**Requirements:** a pfm API from 2026-10-19 onward (PROJECT_STATUS v2.5.83: `/analytics/wash-sale`, `/allocate/*`, `/retirement/*`). Older servers answer those tools with a 404, shown as "Error fetching …".
+**Requirements:** a pfm API from 2026-11-16 onward (PROJECT_STATUS v2.5.100: `/networth/loans/{id}/overview`, `/what-if`; v2.5.96: `/api/v1/scenarios/*`). Older servers answer those tools with a 404, shown as "Error fetching …".
 
 You need a running pfm API and one of its API keys. Point the server at them
 with two environment variables:

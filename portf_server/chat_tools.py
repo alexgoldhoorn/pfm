@@ -25,12 +25,15 @@ def _j(obj) -> str:
 
 
 def _fx(currency: str) -> float:
-    try:
-        from portf_server.routers.portfolios import _get_fx_rate
+    """EUR rate for *currency*.
 
-        return _get_fx_rate(currency)
-    except Exception:
-        return 1.0
+    ``market.get_fx_eur`` already falls back to the last cached or a static
+    rate, so an exception here is a real fault: let it reach ``execute_tool``
+    (which reports "Error: ...") rather than count USD as EUR at 1.0.
+    """
+    from portf_server.routers.portfolios import _get_fx_rate
+
+    return _get_fx_rate(currency)
 
 
 # ── tool registry ──────────────────────────────────────────────────────────
@@ -708,12 +711,12 @@ def _get_recurring_spending(db: Database, include_ended: bool = False) -> str:
 @_tool("search_spending_transactions")
 def _search_spending_transactions(
     db: Database,
-    query: str = None,
-    category: str = None,
-    start_date: str = None,
-    end_date: str = None,
-    amount_sign: str = None,
-    min_abs_amount: float = None,
+    query: Optional[str] = None,
+    category: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    amount_sign: Optional[str] = None,
+    min_abs_amount: Optional[float] = None,
     limit: int = 25,
 ) -> str:
     # Raw bank rows hold sensitive text (tax ids, names): cap the count and

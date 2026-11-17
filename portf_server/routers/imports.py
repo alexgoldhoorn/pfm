@@ -55,6 +55,7 @@ from portf_manager.services.transfer_linking import settle_after_bookings
 from ..dependencies import get_database
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager
+from portf_manager.database import Database
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -102,7 +103,8 @@ class PreviewTransaction(BaseModel):
 class PreviewBooking(BaseModel):
     broker: Optional[str] = None
     date: str
-    action: str  # "Deposit" or "Withdrawal"
+    # "Deposit" or "Withdrawal"
+    action: str
     amount: float
     currency: str
     is_duplicate: bool = False
@@ -205,7 +207,8 @@ def _parse_indexacapital_movimientos(
     skipped: List[dict] = []
     reader = csv.reader(StringIO(content.strip()), delimiter=";")
     rows = list(reader)
-    for i, row in enumerate(rows[1:], start=2):  # skip header
+    # skip header
+    for i, row in enumerate(rows[1:], start=2):
         if len(row) < 3:
             continue
         date, movimiento, importe_raw = row[0].strip(), row[1].strip(), row[2]
@@ -609,7 +612,8 @@ def _flag_duplicates(
                 db.get_asset_by_name(tx.name) if tx.name else None
             )
             if not asset:
-                continue  # new asset → can't be a duplicate yet
+                # new asset → can't be a duplicate yet
+                continue
             price, _t, _fees, _cur = normalize_gbx_amounts(
                 symbol, tx.price, None, tx.fees, tx.currency
             )
@@ -663,7 +667,7 @@ def _flag_duplicates(
 async def upload_broker_file(
     broker: str = Form(..., description=f"Broker type: {', '.join(SUPPORTED_BROKERS)}"),
     file: UploadFile = File(..., description="Broker statement file (CSV or XLSX)"),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """
@@ -744,7 +748,7 @@ async def upload_broker_file(
 @router.post("/save", response_model=SaveResponse)
 async def save_imported_transactions(
     body: SaveRequest,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """
@@ -1010,9 +1014,9 @@ async def save_imported_transactions(
 @router.post("/check-duplicates")
 async def check_duplicates(
     body: SaveRequest,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Flag which of the supplied transactions/bookings already exist (no write).
 
     Lets the text/LLM import preview show duplicates before saving, the same way

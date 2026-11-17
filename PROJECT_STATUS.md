@@ -7,7 +7,9 @@
 
 Last updated: 2026-11-17
 
-**Recent (v2.5.103):** **Cost control 2: planned items, tax in the forecast, budget suggestions, statement import, uncategorised queue, year view.** Schema v46 (`planned_items`, CRUD at `/spending/planned`). `GET /spending/forecast` places open planned items on their dates, adds the estimated quarterly tax from the allocator's reserve maths (only when work-income merchants are ticked; no double counting with recurring tax charges or the baseline) and takes `extra_amount`/`extra_date`/`extra_kind` for an unsaved what-if (`include_tax=false` turns the tax off). Seed proposals suggest yearly and carry-over lines. `POST /spending/import-file` imports a statement in one call; `GET /spending/uncategorized-queue` (+ `classify`) groups uncategorised rows by merchant, the review gains `uncategorized` and a `spending:uncategorized:<YYYY-MM>` Action Item; `GET /spending/year` compares a year with the one before, like for like. Chat: `get_planned_items`, `get_spending_year`, `get_uncategorized_queue` and a what-if on `get_cashflow_forecast` (53 tools). MCP: `planned_items`, `spending_year`, `uncategorized_queue` and a what-if on `cashflow_forecast` (51 tools). Web client: a Planned card, what-if row, planned/tax chart and columns and the quarterly tax estimate under Budget › Forecast; yearly/carry-over suggestions with a period toggle in the seed dialog; a *To classify* card (Transactions) and a *Year* card (Analytics); pure helpers in `cost_control2.test.mjs`, e2e extended (390px). Review fixes: the tax past-due rule is judged at the data-through date and only quarterly tax series are replaced by the estimate; the year view judges completeness from the accounts with rows in the year and shows unknown months as null; `import-file` is all or nothing (400 input, 500 save failure), serialised, with `balance_check` and `transfers_settled`; the uncategorised Action Item id carries the month; classify creates the rule first; seed suggestions use months complete by the data-through rule. Docs `cashflow-forecast.md`, `budgeting.md`, `spending.md`, `web-client.md`, `llm.md`, `action-items.md`.
+**Recent (v2.5.104):** **Cost control 2: planned items, tax in the forecast, budget suggestions, statement import, uncategorised queue, year view.** Schema v46 (`planned_items`, CRUD at `/spending/planned`). `GET /spending/forecast` places open planned items on their dates, adds the estimated quarterly tax from the allocator's reserve maths (only when work-income merchants are ticked; no double counting with recurring tax charges or the baseline) and takes `extra_amount`/`extra_date`/`extra_kind` for an unsaved what-if (`include_tax=false` turns the tax off). Seed proposals suggest yearly and carry-over lines. `POST /spending/import-file` imports a statement in one call; `GET /spending/uncategorized-queue` (+ `classify`) groups uncategorised rows by merchant, the review gains `uncategorized` and a `spending:uncategorized:<YYYY-MM>` Action Item; `GET /spending/year` compares a year with the one before, like for like. Chat: `get_planned_items`, `get_spending_year`, `get_uncategorized_queue` and a what-if on `get_cashflow_forecast` (53 tools). MCP: `planned_items`, `spending_year`, `uncategorized_queue` and a what-if on `cashflow_forecast` (51 tools). Web client: a Planned card, what-if row, planned/tax chart and columns and the quarterly tax estimate under Budget › Forecast; yearly/carry-over suggestions with a period toggle in the seed dialog; a *To classify* card (Transactions) and a *Year* card (Analytics); pure helpers in `cost_control2.test.mjs`, e2e extended (390px). Review fixes: the tax past-due rule is judged at the data-through date and only quarterly tax series are replaced by the estimate; the year view judges completeness from the accounts with rows in the year and shows unknown months as null; `import-file` is all or nothing (400 input, 500 save failure), serialised, with `balance_check` and `transfers_settled`; the uncategorised Action Item id carries the month; classify creates the rule first; seed suggestions use months complete by the data-through rule. Docs `cashflow-forecast.md`, `budgeting.md`, `spending.md`, `web-client.md`, `llm.md`, `action-items.md`.
+
+**Recent (v2.5.103):** **Review fixes: failures surface, text is escaped.** A failed GBX currency lookup no longer stores a UK price 100x too high (the price update skips the symbol, the snapshot backfill uses stored prices); chat raises a 502 instead of saving a placeholder or empty answer; booking/deposit extraction reads a wrapped reply and errors on a wrong shape instead of "0 found"; a key-store fault is a logged 503, not a silent 401; the Sheets sync and export endpoints run in the threadpool; the MCP client URL-encodes query values; dead `calculator.py` removed. Web: imported and backend text escaped in sync status, import previews and research errors, quote-safe inline handlers, labelled icon buttons, themed spending charts, `noteDialog` for manual prices. Docs: chat/MCP tool counts, schema version and router lists corrected.
 
 **Recent (v2.5.102):** **Loans & Mortgage: borrowed and month-by-month payments.** A *Borrowed* card (original amount, repaid and % repaid since the start) and a *Monthly payments* list under the yearly table (every payment past and future, grouped by year, history rows marked, next payment highlighted). The overview adds `summary.principal_eur`/`start_date`/`term_months`/`repaid_eur`/`repaid_pct` and `payments` (`loans.monthly_rows`); the MCP `loans` tool and chat `get_loans` print the borrowed line. Docs `docs/features/mortgage.md`.
 
@@ -287,11 +289,11 @@ All are re-exported by the remote gateway (now 85 tools) and added to the financ
 - Interactive REPL with tab completion (`portf` wrapper script)
 
 ### Backend (`portf_server/`) — ✅ Working
-- FastAPI REST API, 200+ endpoints across routers: auth, public, assets, transactions,
+- FastAPI REST API, 250+ endpoints across routers: auth, public, assets, transactions,
   portfolios, entities, sectors, llm, tax, analytics, research, rebalance,
   networth, retirement, allocate, deposits, bookings, spending, budgets, action_items,
   watchlist, goals, sync, exports, imports, fund_profiles, market, reports, system,
-  notifications
+  notifications, decisions, scenarios, wealth_scenarios, caps, saved_reports
 - API key authentication
 - Docker support with docker-compose
 
@@ -308,23 +310,23 @@ All are re-exported by the remote gateway (now 85 tools) and added to the financ
 
 ### Database — ✅ Working
 - SQLite (default) + PostgreSQL support via database factory
-- Schema v35 with automatic migrations on startup
-- Tables: assets, transactions (dividends are transaction rows), portfolios, prices, bookings, entities, users, api_keys, watchlist, goals, allocation_targets, price_targets, research_reports, research_notes, portfolio_snapshots, manual_assets, fixed_deposits, monthly_cashflow, app_settings, app_logs, kv_cache, push_subscriptions, chat_sessions, price_update_runs, spending_transactions, spending_rules, spending_categories, budgets, budget_lines, fund_profiles, loans, account_valuations, retirement_incomes
+- Schema v45 with automatic migrations on startup
+- Tables: assets, transactions (dividends are transaction rows), portfolios, prices, bookings, entities, users, api_keys, watchlist, goals, allocation_targets, price_targets, research_reports, research_notes, portfolio_snapshots, manual_assets, fixed_deposits, monthly_cashflow, app_settings, app_logs, kv_cache, push_subscriptions, chat_sessions, price_update_runs, spending_transactions, spending_rules, spending_categories, budgets, budget_lines, fund_profiles, loans, loan_rate_periods, account_valuations, retirement_incomes, wealth_scenarios, decisions, research_history, position_caps, reports
 
 ### LLM Integration — ✅ Working
 - Provider-agnostic abstraction (`llm_client.py`)
 - **Default: auto-detect** — tries Ollama locally first (zero config), falls back to Anthropic, then Gemini, then OpenRouter; production (`docker-compose.yml`) pins `anthropic`
 - Default models: `llama3.2` (Ollama), `gemini-2.5-flash` (Gemini), `openai/gpt-4o-mini` (OpenRouter); Anthropic uses **model tiers** `fast`/`main`/`heavy` → `claude-haiku-5-5` / `claude-sonnet-5-5` / `claude-opus-5-5` (`PORTF_ANTHROPIC_<TIER>_MODEL`)
 - Config via `PORTF_LLM_PROVIDER` (`auto`/`ollama`/`gemini`/`openrouter`/`anthropic`) + `PORTF_LLM_MODEL` (pins one model for all tiers) + `ANTHROPIC_API_KEY`
-- Chat: 18 in-process tools (`portf_server/chat_tools.py`); on Anthropic a multi-round tool loop (`run_tool_loop`, up to 6 rounds), two-pass elsewhere
+- Chat: 50 in-process tools (`portf_server/chat_tools.py`); on Anthropic a multi-round tool loop (`run_tool_loop`, up to 10 rounds in chat), two-pass elsewhere
 - Search-grounded research: Gemini/Anthropic implement `generate_with_search()`; research endpoint uses it when available, falls back to yfinance headlines
 - Three use cases: transaction extraction, stock reports, chat/advisor
 
 ## Test Status
 
-**1921 passed, 0 failed, 6 skipped** (unit tests, excluding integration/e2e); JS: **235 passed, 0 failed**
+**2650 passed, 0 failed, 6 skipped** (unit tests, excluding integration/e2e); JS: **399 passed, 0 failed**; MCP: **159 passed**
 
-All tests passing as of 2026-10-23.
+All tests passing as of 2026-11-17.
 
 ## Recent Changes (main)
 

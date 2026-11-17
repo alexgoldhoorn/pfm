@@ -40,12 +40,16 @@ class PDTTransaction:
 
     broker: str
     name: str
-    pdt_type: str  # 'Stock market', 'Crypto', 'Commodity'
-    search: str  # ISIN or ticker
+    # 'Stock market', 'Crypto', 'Commodity'
+    pdt_type: str
+    # ISIN or ticker
+    search: str
     exchange: str
     date: date
-    action: str  # 'Buy' or 'Sell'
-    amount: float  # quantity
+    # 'Buy' or 'Sell'
+    action: str
+    # quantity
+    amount: float
     price: float
     price_currency: str
     price_exchange_rate: Optional[float] = None
@@ -70,7 +74,8 @@ class PDTDividend:
     search: str
     exchange: str
     date: date
-    action: str  # 'Cash', 'Stock', 'Staking'
+    # 'Cash', 'Stock', 'Staking'
+    action: str
     amount: float
     amount_currency: str
     amount_exchange_rate: Optional[float] = None
@@ -91,7 +96,8 @@ class PDTBooking:
 
     broker: str
     date: date
-    action: str  # 'Deposit', 'Withdrawal'
+    # 'Deposit', 'Withdrawal'
+    action: str
     amount: float
     currency: str
 
@@ -103,7 +109,8 @@ class PDTParseResult:
     transactions: List[PDTTransaction] = field(default_factory=list)
     dividends: List[PDTDividend] = field(default_factory=list)
     bookings: List[PDTBooking] = field(default_factory=list)
-    skipped: List[Tuple[str, str]] = field(default_factory=list)  # (sheet, reason)
+    # (sheet, reason)
+    skipped: List[Tuple[str, str]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -672,7 +679,8 @@ class PDTXLSXExporter:
             portfolio_id: If given, export only transactions from this portfolio.
         """
         wb = Workbook()
-        wb.remove(wb.active)  # remove default blank sheet
+        # remove default blank sheet
+        wb.remove(wb.active)
 
         self._write_transactions_sheet(wb, db_adapter, portfolio_id)
         self._write_dividends_sheet(wb, db_adapter, portfolio_id)
@@ -706,7 +714,8 @@ class PDTXLSXExporter:
             tx_type = tx.get("transaction_type", "")
             pdt_action = _tx_type_to_pdt_action(tx_type)
             if pdt_action is None:
-                continue  # skip dividend / split / transfer rows
+                # skip dividend / split / transfer rows
+                continue
 
             asset = db_adapter.get_asset(tx["asset_id"])
             if not asset:

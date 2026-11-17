@@ -2,11 +2,12 @@
 
 > **Scope note (2026-10-23).** This file documents the core endpoints the API
 > started with (assets, transactions, portfolios, LLM, tax, auth) and was checked
-> against the code on that date. The API has since grown to ~30 routers under
+> against the code on that date. The API has since grown to 34 routers under
 > `/api/v1/` (`import`, `export`, `bookings`, `spending`, `sync`, `rebalance`,
 > `research`, `analytics`, `fund-profiles`, `reports`, `watchlist`, `goals`,
 > `budgets`, `networth`, `allocate`, `retirement`, `deposits`, `market`,
-> `action-items`, `notifications`, `system`, `public`, `sectors`). Those are
+> `action-items`, `notifications`, `system`, `public`, `sectors`, `decisions`,
+> `scenarios`, `wealth-scenarios`, `caps`, `saved-reports`, `entities`). Those are
 > documented per area in `docs/features/*.md`; the live OpenAPI schema at
 > `/docs` is always complete.
 

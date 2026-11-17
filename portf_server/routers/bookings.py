@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from portf_manager.services.transfer_linking import settle_after_bookings
 
 from ..dependencies import get_database
+from portf_manager.database import Database
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -22,7 +23,8 @@ logger = logging.getLogger(__name__)
 class BookingCreate(BaseModel):
     portfolio_id: Optional[int] = None
     date: date
-    action: str  # "Deposit" or "Withdrawal"
+    # "Deposit" or "Withdrawal"
+    action: str
     amount: float
     currency: str = "EUR"
 
@@ -38,7 +40,7 @@ class BookingResponse(BaseModel):
 
 
 @router.post("/", response_model=BookingResponse, status_code=201)
-def create_booking(body: BookingCreate, db=Depends(get_database)):
+def create_booking(body: BookingCreate, db: Database = Depends(get_database)):
     """Create a manual deposit or withdrawal booking."""
     if body.action not in ("Deposit", "Withdrawal"):
         raise HTTPException(
@@ -66,7 +68,7 @@ def list_bookings(
     portfolio_id: Optional[int] = Query(
         default=None, description="Filter by portfolio ID"
     ),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
 ):
     """Get all bookings (deposits and withdrawals)."""
     try:
@@ -78,7 +80,7 @@ def list_bookings(
 
 
 @router.delete("/{booking_id}", response_model=dict)
-def delete_booking(booking_id: int, db=Depends(get_database)):
+def delete_booking(booking_id: int, db: Database = Depends(get_database)) -> dict:
     """Delete a booking by ID."""
     try:
         booking = db.get_booking(booking_id)

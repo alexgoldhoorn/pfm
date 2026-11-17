@@ -8,7 +8,7 @@ API's own total is the better figure, so it is stored (with its date) in
 import json
 import logging
 from datetime import date, datetime
-from typing import Optional
+from typing import Any, Optional
 from urllib.request import Request, urlopen
 
 logger = logging.getLogger(__name__)
@@ -58,7 +58,7 @@ def fetch_portfolio(account_ref: str, token: str) -> dict:
 
 
 def refresh_account_valuations(
-    db,
+    db: Any,
     token: Optional[str],
     today: Optional[date] = None,
     only_portfolio: Optional[int] = None,

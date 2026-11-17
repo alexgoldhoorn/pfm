@@ -4,7 +4,7 @@ from typing import Any, Callable, Optional
 
 
 def cash_by_portfolio(
-    db, fx_on: Callable[[str, Any], float], transactions: Optional[list] = None
+    db: Any, fx_on: Callable[[str, Any], float], transactions: Optional[list] = None
 ) -> dict[int, dict]:
     """Compute the EUR cash balance and last activity date per portfolio.
 

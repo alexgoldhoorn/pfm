@@ -691,7 +691,8 @@ def _forecast(
             bills = _bills(
                 series, accounts, through_by_account, tree or {}, horizon_end, fx
             )
-        except Exception as e:  # a failing rate must not take the forecast down
+        # a failing rate must not take the forecast down
+        except Exception as e:
             bills = None
             warnings.append(f"Recurring charges could not be placed: {e}")
 

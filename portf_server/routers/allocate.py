@@ -11,6 +11,7 @@ from portf_manager.services import deployable as dep
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
+from portf_manager.database import Database
 
 router = APIRouter()
 
@@ -58,13 +59,15 @@ def _income_merchants(db, settings: dict) -> list[str]:
 
 
 @router.get("/deployable")
-def get_deployable(db=Depends(get_database), _: dict = Depends(_auth)):
+def get_deployable(db: Database = Depends(get_database), _: dict = Depends(_auth)):
     """Cash that can be invested now, after tax reserve and buffer."""
     return dep.deployable(db)
 
 
 @router.get("/settings")
-def get_settings(db=Depends(get_database), _: dict = Depends(_auth)):
+def get_settings(
+    db: Database = Depends(get_database), _: dict = Depends(_auth)
+) -> dict:
     """Allocator settings plus the merchants the form can tick."""
     settings = dep.load_settings(db)
     return {**settings, "income_merchants": _income_merchants(db, settings)}
@@ -72,7 +75,7 @@ def get_settings(db=Depends(get_database), _: dict = Depends(_auth)):
 
 @router.put("/settings")
 def put_settings(
-    body: SettingsUpdate, db=Depends(get_database), _: dict = Depends(_auth)
+    body: SettingsUpdate, db: Database = Depends(get_database), _: dict = Depends(_auth)
 ):
     """Merge a partial update into the stored settings."""
     try:
@@ -84,7 +87,7 @@ def put_settings(
 @router.get("/next-euro")
 def get_next_euro(
     amount: float | None = Query(None, ge=0),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     _: dict = Depends(_auth),
 ):
     """Where the next euro should go, with reasons."""
@@ -94,7 +97,7 @@ def get_next_euro(
 @router.get("/candidates")
 def get_candidates(
     bucket: Optional[str] = Query(None),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     _: dict = Depends(_auth),
 ):
     """Everything the next euro could buy, with cap room and rank reasons."""

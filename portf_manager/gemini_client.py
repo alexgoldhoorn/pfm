@@ -31,6 +31,28 @@ def _json_from_reply(reply: str, what: str):
         ) from None
 
 
+def _as_list(data: object, what: str) -> list[dict]:
+    """Coerce a parsed extraction reply into a list of dict items.
+
+    Accepts a list, a wrapper object holding exactly one list (e.g.
+    ``{"bookings": [...]}``) or a single item object. Non-dict list elements
+    are dropped.
+
+    Raises:
+        LLMResponseError: The reply has some other shape, which would
+            otherwise read as "nothing found".
+    """
+    if isinstance(data, dict):
+        lists = [v for v in data.values() if isinstance(v, list)]
+        data = lists[0] if len(lists) == 1 else [data]
+    if not isinstance(data, list):
+        raise LLMResponseError(
+            f"The model's reply to the {what} request was JSON but not a list "
+            f"({type(data).__name__})."
+        )
+    return [item for item in data if isinstance(item, dict)]
+
+
 def _normalize_booking_date(raw: object) -> str:
     """Coerce an LLM-returned date into an ISO ``YYYY-MM-DD`` string.
 
@@ -408,7 +430,7 @@ Now extract cash movements from this text:
 """
         data = _json_from_reply(self.llm.generate(prompt), "cash movement")
         bookings = []
-        for item in data if isinstance(data, list) else []:
+        for item in _as_list(data, "cash movement"):
             action = str(item.get("action", "")).strip().capitalize()
             if action not in ("Deposit", "Withdrawal"):
                 continue
@@ -475,7 +497,7 @@ Now extract deposits from this text:
 """
         data = _json_from_reply(self.llm.generate(prompt), "deposit")
         deposits = []
-        for item in data if isinstance(data, list) else []:
+        for item in _as_list(data, "deposit"):
             try:
                 deposits.append(
                     {

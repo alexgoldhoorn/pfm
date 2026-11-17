@@ -9,7 +9,7 @@ The MCP server is a small Python package, `mcp/pfm_mcp/` (one module per area in
 `mcp/server.py` is only a compatibility shim: it is symlinked from
 `~/mcp/pfm/server.py` and imported live by `~/mcp/remote_gateway/server.py`, the
 always-on, internet-facing `mcp-remote-gateway.service`
-(`https://mcp.goldhoorn.net`), which re-exports most of its tools. A change here
+(host in `~/mcp/CLAUDE.md`), which re-exports most of its tools. A change here
 affects that surface too — see `~/mcp/CLAUDE.md`, "Exception:
 remote_gateway/server.py".
 
@@ -135,7 +135,8 @@ the provider there, not only in `.env.local`.
   `ToolCapableLLMClient`; the 53 chat tools in `portf_server/chat_tools.py` call
   DB/service functions directly, never HTTP. Only `set_action_item_status`
   (follow-up state) and `record_decision` (the journal) write; `tests/unit/test_chat_tools.py` pins the count. Chat on Anthropic runs
-  `AnthropicLLMClient.run_tool_loop` (several tools per answer, 6 rounds); the
+  `AnthropicLLMClient.run_tool_loop` (several tools per answer; chat passes
+  `_CHAT_MAX_TOOL_ROUNDS` = 10, the method default is 6); the
   engine checks for it on the class, so a `MagicMock` LLM keeps the two-pass path.
 - Every provider method is wrapped by `_instrument`: transient errors are retried
   (`PORTF_LLM_MAX_ATTEMPTS`, `PORTF_LLM_RETRY_DELAY`), config/request errors fail

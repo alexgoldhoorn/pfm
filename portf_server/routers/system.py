@@ -67,7 +67,7 @@ def list_logs(
 async def restore_db(
     file: UploadFile,
     db: Database = Depends(get_database),
-):
+) -> dict:
     """Replace the live SQLite database with an uploaded backup.
 
     Accepts .db or .db.gz files. Validates integrity and schema version before

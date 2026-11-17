@@ -32,7 +32,9 @@ def irpf_savings_tax(base: float, jurisdiction: str = "ES") -> float:
     return progressive_tax(base, jurisdiction)
 
 
-def current_year_savings_components(db, year: Optional[int] = None) -> dict[str, Any]:
+def current_year_savings_components(
+    db: Any, year: Optional[int] = None
+) -> dict[str, Any]:
     """The Spanish IRPF savings base for *year*, plus the legs it is made of.
 
     One pass over the FIFO tax report and the transaction list produces every
@@ -108,7 +110,7 @@ def current_year_savings_components(db, year: Optional[int] = None) -> dict[str,
     }
 
 
-def current_year_savings_base(db, year: Optional[int] = None) -> float:
+def current_year_savings_base(db: Any, year: Optional[int] = None) -> float:
     """Spanish IRPF taxable savings base for *year*: realised gains (FIFO,
     via ``TaxCalculator``) plus dividend/interest income, all in EUR.
 
@@ -239,7 +241,8 @@ def period_start_date(period: str, today: Optional[date] = None) -> Optional[dat
         return date(today.year - 3, today.month, min(today.day, 28))
     if p == "5y":
         return date(today.year - 5, today.month, min(today.day, 28))
-    return None  # 'all'
+    # 'all'
+    return None
 
 
 def period_return(
