@@ -96,6 +96,12 @@ def seeded(tmp_path):
         ],
         one_off=True,
     )
+    # the statements run into the current month, so the last month is complete
+    from datetime import date
+
+    db.create_spending_transaction(
+        bank, date.today().strftime("%Y-%m-01"), "Landlord", -1.0, category="Coffee"
+    )
     return db
 
 
@@ -152,3 +158,19 @@ def test_a_short_history_keeps_every_suggestion_monthly(tmp_path):
     )
     assert proposal["suggested_period"] == "monthly"
     assert "too short" in proposal["reason"]
+
+
+def test_a_month_the_data_stops_short_of_does_not_count(seeded):
+    # a second account that has imported only to the 10th of the last month
+    slow = seeded.get_or_create_portfolio("Example Slow Bank", account_type="bank")
+    last = _months(1)[0]
+    seeded.create_spending_transaction(
+        slow, f"{last}-10", "Example Shop", -5.0, category="Coffee"
+    )
+    by_ref = {
+        p["ref_key"]: p
+        for p in bs.propose_budget_lines(seeded, 12, _fx)
+        if p["line_type"] == "spending"
+    }
+    # Rent has rows in all 12 calendar months, but the last is not complete
+    assert by_ref["Rent"]["months_with_activity"] == 11

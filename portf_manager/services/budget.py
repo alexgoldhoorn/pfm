@@ -1420,7 +1420,22 @@ def propose_budget_lines(
             is_transfer=False,
         )
     }
-    suggest_months = [m for m in suggest_window if m in imported_months]
+    # A month counts for a suggestion only when the data reaches its end: the
+    # same "complete by the data-through rule" the forecast baseline uses (the
+    # earliest last import over the accounts that have rows in the window).
+    from portf_manager.services import spending_insights
+
+    through = spending_insights.account_data_through(
+        db.list_spending_transactions(start_date=f"{suggest_window[0]}-01"),
+        start=f"{suggest_window[0]}-01",
+    )["effective"]
+    suggest_months = [
+        m
+        for m in suggest_window
+        if m in imported_months
+        and through is not None
+        and spending_insights._month_end(m).isoformat() <= through
+    ]
     category_actuals = _collect_category_actuals(rows, month_set, fx)
     suggest_actuals = _collect_category_actuals(rows, set(suggest_months), fx)
     tier_tree = {row["name"]: row for row in tree}
