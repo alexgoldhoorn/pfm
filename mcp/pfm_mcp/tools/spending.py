@@ -815,6 +815,16 @@ def spending_review(month: Optional[str] = None) -> str:
             + "; moved to savings/investment "
             + _eur(tiers.get("savings_eur"))
         )
+    unc = data.get("uncategorized")
+    if unc:
+        share = unc.get("share_pct")
+        lines.append(
+            f"\nUncategorised: {unc.get('count')} outflow(s),"
+            f" {_eur(unc.get('total_eur'))},"
+            f" {'n/a' if share is None else f'{float(share):.1f}%'} of spending"
+        )
+        if unc.get("highlight"):
+            lines.append(f"  {unc['highlight']}")
     recurring = data.get("recurring")
     if recurring is not None:
         body = _review_recurring(recurring)

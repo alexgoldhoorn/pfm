@@ -511,6 +511,12 @@ def test_spending_review_prints_parts_and_degrades_per_part():
         "totals": {"totals": _COMPARE["totals"]},
         "movers": {"categories": _COMPARE["items"], "merchants": []},
         "anomalies": {"count": 0, "items": []},
+        "uncategorized": {
+            "count": 4,
+            "total_eur": 250.0,
+            "share_pct": 7.5,
+            "highlight": "4 uncategorised outflow(s) are 8% of 2026-06's spending.",
+        },
         "tiers": {
             "month": {
                 "fixed_eur": 1000.0,
@@ -554,6 +560,7 @@ def test_spending_review_prints_parts_and_degrades_per_part():
     assert "change +500.00 EUR (+41.7%)" in result
     assert "unclassified n/a" in result
     assert "Example Streaming" in result and "+33.3% (now 40.00 EUR)" in result
+    assert "Uncategorised: 4 outflow(s)" in result and "7.5% of spending" in result
     assert "Budget: no active budget." in result
     assert "Forecast: n/a" in result
     assert "Data freshness: Example Bank through 2026-07-05" in result
