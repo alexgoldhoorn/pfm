@@ -27,7 +27,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-matrix@2.0.1/dist/chartjs-chart-matrix.min.js"></script>
 
     <!-- Custom CSS -->
-    <link href="css/styles.css?v=1792000000" rel="stylesheet">
+    <link href="css/styles.css?v=1792000001" rel="stylesheet">
     <style>
         /* Privacy mode: blur monetary amounts until hovered */
         body.pfm-privacy .pfm-amt { filter: blur(0.45em); transition: filter .12s ease; user-select: none; }
@@ -3310,12 +3310,12 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
 
                 <!-- Spending Page -->
                 <div id="spendingPage" class="page-content" style="display: none;">
-                    <div class="d-flex align-items-center justify-content-between mb-3">
+                    <div class="d-flex align-items-center justify-content-between mb-3 flex-wrap gap-2">
                         <div>
                             <h4 class="mb-0"><i class="bi bi-wallet2 me-2 text-primary"></i>Spending<button class="btn btn-sm btn-link p-0 ms-2 align-baseline" onclick="showPageHelp('spending')" title="What is this page?"><i class="bi bi-question-circle"></i></button></h4>
                             <p class="text-muted small mb-0">Categorized bank-account spending, income, and transfers between your own accounts.</p>
                         </div>
-                        <div class="d-flex gap-2 align-items-center">
+                        <div class="d-flex gap-2 align-items-center flex-wrap">
                             <div class="d-flex align-items-center gap-1">
                                 <label class="small text-muted mb-0" for="spSummaryPeriod">Period</label>
                                 <select class="form-select form-select-sm" id="spSummaryPeriod" style="width:auto;">
@@ -4662,7 +4662,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                 </div>
                             </div>
                             <div class="card mb-3">
-                                <div class="card-header py-2"><span class="fw-semibold small">Estimated quarterly tax <span class="badge text-bg-warning-subtle border">estimate</span> <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip" id="bgFcTaxHelp"></i></span></div>
+                                <div class="card-header py-2"><span class="fw-semibold small">Estimated quarterly tax <span class="badge bg-warning-subtle text-warning-emphasis border">estimate</span> <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip" id="bgFcTaxHelp"></i></span></div>
                                 <div class="table-responsive">
                                     <table class="table table-sm mb-0 align-middle">
                                         <thead><tr>
@@ -5613,7 +5613,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
 
     <!-- Centralized help text (must load before the app scripts) -->
-    <script src="js/help_text.js?v=1792000000"></script>
+    <script src="js/help_text.js?v=1792000001"></script>
 
     <!-- App scripts: portfolio_debug.js was split into these four classic
          scripts. They share one global scope and MUST load in this order:
@@ -5772,10 +5772,10 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
       </div>
     </div>
 
-    <script src="js/pfm_core.js?v=1792000000"></script>
-    <script src="js/pfm_pages.js?v=1792000000"></script>
-    <script src="js/pfm_analytics.js?v=1792000000"></script>
-    <script src="js/pfm_features.js?v=1792000000"></script>
+    <script src="js/pfm_core.js?v=1792000001"></script>
+    <script src="js/pfm_pages.js?v=1792000001"></script>
+    <script src="js/pfm_analytics.js?v=1792000001"></script>
+    <script src="js/pfm_features.js?v=1792000001"></script>
     <script>
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('/sw.js');

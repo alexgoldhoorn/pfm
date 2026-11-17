@@ -201,6 +201,9 @@ test("paceMeta: null without a pace, a status badge and sentence with one", () =
     const over = w.paceMeta({ status: "over", projected_month_end_eur: 700, limit_eur: 400, actual_to_date_eur: 450 });
     assert.match(over.badge, /danger/);
     assert.match(over.text, /Already over/);
+    assert.match(over.short, /450 spent, → .*700 of .*400/);
+    assert.match(ok.short, /^→ .*380 of .*400$/);
+    assert.doesNotMatch(ok.short, /Data through/);
 });
 
 test("paceMeta: too_early has no projection and says so", () => {

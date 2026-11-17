@@ -588,6 +588,13 @@ body {
     align-items: center;
     justify-content: center;
 }
+/* Cost-control tables: a signed amount never splits from its sign on a
+   phone; the table scrolls sideways inside .table-responsive instead. */
+#spPaneAnalytics td.text-end,
+#bgPaneOverview td.text-end,
+#bgPaneForecast td.text-end {
+    white-space: nowrap;
+}
 /* Tables keep whole words and figures and scroll sideways when they do not
    fit; the bubble's "break anywhere" would squeeze a column to one letter. */
 .chat-bubble table {

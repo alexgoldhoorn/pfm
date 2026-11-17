@@ -10427,7 +10427,7 @@ function _bgVarianceCell(varianceEur, favourable) {
     const amount = Number(varianceEur) || 0;
     const cls = amount === 0 ? 'text-muted' : (favourable ? 'text-success' : 'text-danger');
     const sign = amount > 0 ? '+' : (amount < 0 ? '−' : '');
-    return `<span class="${cls}">${sign}${Fmt.amt(Fmt.money(Math.abs(amount), 'EUR', 0))}</span>`;
+    return `<span class="${cls} text-nowrap">${sign}${Fmt.amt(Fmt.money(Math.abs(amount), 'EUR', 0))}</span>`;
 }
 
 const BG_BAR_CLASS = { good: 'bg-success', near: 'bg-secondary', bad: 'bg-danger' };
@@ -10587,7 +10587,7 @@ function _renderBgKpis() {
     set('bgKpiPlanned', spending ? _bgEur(plan) + (spending.available_total != null && Math.abs(spending.available_total - spending.planned_total) >= 0.005 ? ' <span class="small text-muted fw-normal" title="Planned plus what yearly funds and carry-over lines bring in">incl. carry</span>' : '') : '—');
     set('bgKpiActual', spending ? _bgEur(spending.actual_total) : '—');
     set('bgKpiVariance', spending ? _bgVarianceCell(spending.variance_eur, spending.favourable) : '—');
-    set('bgKpiNet', `${_bgEur(variance.net.planned_total)} → ${_bgEur(variance.net.actual_total)} ${_bgVarianceCell(variance.net.variance_eur, variance.net.favourable)}`);
+    set('bgKpiNet', `<span class="text-nowrap">${_bgEur(variance.net.planned_total)}</span> → <span class="text-nowrap">${_bgEur(variance.net.actual_total)}</span> ${_bgVarianceCell(variance.net.variance_eur, variance.net.favourable)}`);
 }
 
 function _renderBgNetBreakdown() {
@@ -10651,7 +10651,7 @@ function _renderBgVariance() {
                     ${line.link_label ? `<div class="text-muted small">against ${_bgEur(line.link_amount_eur)} outstanding on ${esc(line.link_label)}${line.link_principal_eur !== undefined && line.link_principal_eur !== null ? ` (this month: ${_bgEur(line.link_principal_eur)} principal, ${_bgEur(line.link_interest_eur)} interest)` : ''}</div>` : ''}
                     ${line.link_broken ? `<div class="text-warning small"><i class="bi bi-exclamation-triangle me-1"></i>Linked item no longer exists</div>` : ''}
                     ${fund ? `<div class="text-muted small"><i class="bi bi-piggy-bank me-1"></i>${esc(fund)}</div>` : ''}
-                    ${pace ? `<div class="small d-md-none"><span class="badge ${pace.badge}">${esc(pace.label)}</span> ${esc(pace.text)}</div>` : ''}
+                    ${pace ? `<div class="small d-md-none" title="${escapeForAttr(pace.text)}"><span class="badge ${pace.badge}">${esc(pace.label)}</span> <span class="text-muted">${esc(pace.short)}</span></div>` : ''}
                     ${_bgProgressBar(budgetLinePlan(line), line.actual_total, section.favourable_when_under)}
                 </td>
                 <td class="text-end">${_bgEur(line.planned_total)}${budgetPlanDiffers(line) ? `<div class="small text-muted" title="Variance is measured against this">available ${_bgEur(budgetLinePlan(line))}${carried ? ` (carried ${Fmt.money(carried, 'EUR', 0)})` : ''}</div>` : ''}</td>
@@ -11798,12 +11798,17 @@ function paceMeta(pace) {
         return {
             status: pace.status, label: meta.label, badge: meta.badge, projected: '—', limit,
             text: `Too early to project: ${ccMoney(pace.actual_to_date_eur)} spent so far of ${limit}.${through}`,
+            short: `${ccMoney(pace.actual_to_date_eur)} so far of ${limit}`,
         };
     }
     const text = pace.status === 'over'
         ? `Already over: ${ccMoney(pace.actual_to_date_eur)} spent of ${limit}, heading for ${projected} by month end.${through}`
         : `Heading for ${projected} of ${limit} by month end.${through}`;
-    return { status: pace.status, label: meta.label, badge: meta.badge, projected, limit, text };
+    // One line for narrow table rows; the full sentence goes in the title.
+    const short = pace.status === 'over'
+        ? `${ccMoney(pace.actual_to_date_eur)} spent, → ${projected} of ${limit}`
+        : `→ ${projected} of ${limit}`;
+    return { status: pace.status, label: meta.label, badge: meta.badge, projected, limit, text, short };
 }
 
 /** "Last 12 months: spent €y of €x, €z left", or null for a line without a fund. */
@@ -12682,7 +12687,7 @@ function _renderSpYear(data) {
         <div class="table-responsive"><table class="table table-sm mb-0 align-middle">
             <thead><tr><th class="ps-0">Category</th><th class="text-end">${esc(String(m.year))}</th><th class="text-end">${esc(String(m.previousYear))}</th><th class="text-end">Change</th><th class="text-end d-none d-sm-table-cell">Share</th></tr></thead>
             <tbody>${m.categories.map(c => `<tr>
-                <td class="ps-0 text-break">${esc(c.name)}</td>
+                <td class="ps-0">${esc(c.name)}</td>
                 <td class="text-end">${esc(c.thisText)}</td>
                 <td class="text-end">${esc(c.previousText)}</td>
                 <td class="text-end ${c.deltaClass}">${esc(c.deltaText)} <span class="text-muted small">${esc(c.pctText)}</span></td>
@@ -12912,7 +12917,7 @@ function _renderBgFcTable(fc) {
         return;
     }
     body.innerHTML = rows.map((r, i) => `<tr${r.below ? ' class="table-danger"' : ''}>
-        <td class="ps-3">${esc(r.label)}${r.billCount ? ` <span class="small text-muted" title="Known bills this month">&middot; ${r.billCount} bill${r.billCount === 1 ? '' : 's'}</span>` : ''}</td>
+        <td class="ps-3 text-nowrap">${esc(r.label)}${r.billCount ? `<div class="small text-muted" title="Known bills this month">${r.billCount} bill${r.billCount === 1 ? '' : 's'}</div>` : ''}</td>
         <td class="text-end">${esc(r.income)}</td>
         <td class="text-end">${esc(r.recurring)}</td>
         <td class="text-end">${esc(r.variable)}</td>
