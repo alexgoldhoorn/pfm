@@ -294,8 +294,8 @@ function createPageManager() {
             const renderRow = (row) => {
                 const pnlClass = (row.pnl_amount || 0) >= 0 ? 'text-success' : 'text-danger';
                 const typeBadge = { stock: 'bg-primary', etf: 'bg-info', index: 'bg-success', crypto: 'bg-warning text-dark', bond: 'bg-secondary', p2p: 'bg-dark' }[row.asset_type] || 'bg-secondary';
-                const symEsc = (row.symbol || '').replace(/'/g, "\\'");
-                const nameEsc = (row.name || '').replace(/'/g, "\\'");
+                const symArg = esc(JSON.stringify(row.symbol || ''));
+                const nameArg = esc(JSON.stringify(row.name || ''));
                 const dash = '<span class="text-muted">—</span>';
                 return `
                     <tr>
@@ -303,13 +303,13 @@ function createPageManager() {
                         <td>${esc(row.name || 'N/A')}</td>
                         <td><span class="badge ${typeBadge}">${esc((row.asset_type || '').toUpperCase())}</span></td>
                         <td>${esc(row.exchange || 'N/A')}</td>
-                        <td>${row.currency || ''}</td>
+                        <td>${esc(row.currency || '')}</td>
                         <td class="text-end">${row.owned ? parseFloat(row.quantity).toLocaleString(Fmt.loc(), { maximumFractionDigits: 4 }) : dash}</td>
                         <td class="text-end">${row.owned ? fmt(row.avg_price) : dash}</td>
                         <td class="text-end">
                             ${row.current_price > 0 ? fmt(row.current_price) : dash}
                             ${row.auto_price === false ? '<span class="badge bg-secondary ms-1" title="Manual price — the daily cron will not overwrite it">manual</span>' : ''}
-                            <button class="btn btn-sm btn-link p-0 ms-1 align-baseline" title="Set a manual price" onclick="setAssetPrice(${row.id}, '${symEsc}', '${row.currency || ''}')"><i class="bi bi-pencil-square"></i></button>
+                            <button class="btn btn-sm btn-link p-0 ms-1 align-baseline" title="Set a manual price" onclick="setAssetPrice(${row.id}, ${symArg}, ${esc(JSON.stringify(row.currency || ''))})"><i class="bi bi-pencil-square"></i></button>
                         </td>
                         <td class="text-end fw-bold">${row.owned ? fmt(row.total_value) : dash}</td>
                         <td class="text-end ${row.owned ? pnlClass : ''}">${row.owned ? (row.pnl_amount >= 0 ? '+' : '') + fmt(row.pnl_amount) : dash}</td>
@@ -317,7 +317,7 @@ function createPageManager() {
                         <td class="text-center text-nowrap">${assetLinks(row.symbol)}</td>
                         <td class="text-end pe-3">
                             <div class="btn-group btn-group-sm">
-                                <button class="btn btn-outline-primary" title="Research / Valuation" onclick="openResearchModal('${symEsc}', '${nameEsc}')"><i class="bi bi-graph-up"></i></button>
+                                <button class="btn btn-outline-primary" title="Research / Valuation" onclick="openResearchModal(${symArg}, ${nameArg})"><i class="bi bi-graph-up"></i></button>
                             </div>
                         </td>
                     </tr>`;
@@ -645,12 +645,12 @@ function createPageManager() {
                             <td class="text-end">${fmtPrice(tx.fees, tx.currency)}</td>
                             <td class="text-nowrap">
                                 <div class="btn-group btn-group-sm">
-                                    <button class="btn btn-outline-secondary"
+                                    <button class="btn btn-outline-secondary" title="Edit transaction" aria-label="Edit transaction"
                                         onclick="openEditTransaction(${tx.id})">
                                         <i class="bi bi-pencil"></i>
                                     </button>
-                                    <button class="btn btn-outline-danger"
-                                        onclick="confirmDeleteTransaction(${tx.id},'${tx.symbol}')">
+                                    <button class="btn btn-outline-danger" title="Delete transaction" aria-label="Delete transaction"
+                                        onclick="confirmDeleteTransaction(${tx.id}, ${esc(JSON.stringify(tx.symbol || ''))})">
                                         <i class="bi bi-trash"></i>
                                     </button>
                                 </div>

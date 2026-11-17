@@ -4480,7 +4480,7 @@ function _buildPreviewTable(transactions, bookings, deposits) {
               <div class="list-group position-absolute shadow symbol-suggest" style="min-width:210px;max-height:180px;overflow-y:auto;display:none;z-index:1050"></div>
               <small class="text-muted d-block">${esc(tx.name || '')}</small>
             </td>
-            <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : tx.tx_type === 'sell' ? 'danger' : 'secondary'}">${(tx.tx_type || '').toUpperCase()}</span></td>
+            <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : tx.tx_type === 'sell' ? 'danger' : 'secondary'}">${esc((tx.tx_type || '').toUpperCase())}</span></td>
             <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(Fmt.loc(), {maximumFractionDigits: 4})}</td>
             <td class="text-end">${parseFloat(tx.price || 0).toFixed(4)}</td>
             <td>${esc(tx.currency || '')}</td>
@@ -4507,7 +4507,7 @@ function _buildPreviewTable(transactions, bookings, deposits) {
         <tr class="${dep.is_duplicate ? 'table-warning' : ''}">
             <td><input class="form-check-input file-dep-select" type="checkbox" ${dep.is_duplicate ? '' : 'checked'} data-idx="${i}" data-dup="${dep.is_duplicate ? '1' : '0'}"></td>
             <td>${esc(dep.name || '')}${dep.is_duplicate ? dupBadge : ''}</td>
-            <td class="text-end">${parseFloat(dep.principal || 0).toFixed(2)} ${dep.currency || ''}</td>
+            <td class="text-end">${Fmt.money(dep.principal || 0, dep.currency, 2)}</td>
             <td class="text-end">${parseFloat(dep.interest_rate || 0).toFixed(3)}%</td>
             <td>${Fmt.date(dep.start_date)}</td>
             <td>${Fmt.date(dep.maturity_date)}</td>
@@ -4757,10 +4757,10 @@ function setupLlmImportModal() {
                 <td><input class="form-check-input tx-select" type="checkbox" checked data-idx="${i}"></td>
                 <td>${Fmt.date(tx.date)}</td>
                 <td><strong>${esc(tx.symbol || '')}</strong><br><small class="text-muted">${esc(tx.asset_name || '')}</small></td>
-                <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : tx.tx_type === 'sell' ? 'danger' : 'info'}">${(tx.tx_type || '').toUpperCase()}</span></td>
+                <td><span class="badge bg-${tx.tx_type === 'buy' ? 'success' : tx.tx_type === 'sell' ? 'danger' : 'info'}">${esc((tx.tx_type || '').toUpperCase())}</span></td>
                 <td class="text-end">${parseFloat(tx.quantity || 0).toLocaleString(Fmt.loc(), {maximumFractionDigits: 4})}</td>
                 <td class="text-end">${parseFloat(tx.price || 0).toFixed(4)}</td>
-                <td>${tx.currency || ''}</td>
+                <td>${esc(tx.currency || '')}</td>
                 <td class="text-end text-muted">${(parseFloat(tx.fees) || 0) > 0 ? parseFloat(tx.fees).toFixed(2) : '—'}</td>
             </tr>
         `).join('');
