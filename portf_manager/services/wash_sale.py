@@ -5,7 +5,7 @@ Shared by the MCP ``wash_sale_check`` tool and the next-euro allocator.
 
 import calendar
 from datetime import date
-from typing import Optional
+from typing import Any, Optional
 
 # A loss on selling securities is not deductible while homogeneous securities
 # bought within 2 months before or after the sale (listed) — or 1 year
@@ -200,7 +200,7 @@ def analyse(
     return {"blocked": blocked, "no_rebuy": no_rebuy, "recent_buys": recent_buys}
 
 
-def blocked_assets(db, today: date, fx_on=None) -> dict[int, dict]:
+def blocked_assets(db: Any, today: date, fx_on=None) -> dict[int, dict]:
     """Assets whose recent loss sale still blocks a repurchase.
 
     Runs the tax-report FIFO for this year and last, feeds the realised lots to

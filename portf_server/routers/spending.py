@@ -55,6 +55,7 @@ from portf_manager.llm_client import get_llm_client
 from ..dependencies import get_database
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager
+from portf_manager.database import Database
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -344,7 +345,7 @@ async def upload_bank_statement(
     file: UploadFile = File(..., description="Bank statement CSV"),
     account_portfolio_id: Optional[int] = Form(None),
     account_name: Optional[str] = Form(None),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Parse a bank statement CSV and return a rule-categorized preview. No DB write."""
@@ -433,7 +434,7 @@ async def upload_bank_statement(
 @router.post("/save", response_model=SpendingSaveResponse)
 async def save_spending_transactions(
     body: SpendingSaveRequest,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Save previewed spending rows, honoring duplicate_action, then auto-link transfers."""
@@ -574,7 +575,7 @@ async def list_spending(
     offset: int = Query(default=0, ge=0),
     sort_by: str = "date",
     sort_dir: str = "desc",
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """List spending transactions with optional filters, paginated and sorted.
@@ -640,9 +641,9 @@ async def list_spending(
 
 @router.get("/own-account-patterns", response_model=dict)
 async def get_own_account_patterns(
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Text patterns that mark a row as a transfer to the user's own account."""
     return {"patterns": load_patterns(db)}
 
@@ -650,9 +651,9 @@ async def get_own_account_patterns(
 @router.put("/own-account-patterns", response_model=dict)
 async def put_own_account_patterns(
     body: OwnAccountPatternsBody,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Replace the pattern list, then flag every row that now matches."""
     try:
         stored = save_patterns(db, body.patterns)
@@ -664,9 +665,9 @@ async def put_own_account_patterns(
 @router.post("/own-account-patterns/preview", response_model=dict)
 async def preview_own_account_patterns(
     body: OwnAccountPreviewBody,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Rows a pattern would flag, without saving it (first 20 returned)."""
     try:
         pattern = clean_patterns([body.pattern])[0]
@@ -686,9 +687,9 @@ async def preview_own_account_patterns(
 async def update_spending_category(
     spending_id: int,
     body: CategoryUpdateBody,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Edit a spending row's category and/or its transfer flag.
 
     The "Transfer" category and the ``is_transfer`` flag always agree:
@@ -784,8 +785,10 @@ async def update_spending_category(
 
 @router.delete("/{spending_id}", response_model=dict)
 async def delete_spending(
-    spending_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+    spending_id: int,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+) -> dict:
     """Delete a spending transaction (hard delete)."""
     if not db.delete_spending_transaction(spending_id):
         raise HTTPException(status_code=404, detail="Spending transaction not found")
@@ -794,9 +797,9 @@ async def delete_spending(
 
 @router.post("/rescan-transfers", response_model=dict)
 async def rescan_transfers(
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Re-run transfer matching over all currently-unlinked spending rows.
 
     Covers the case where a matching leg is imported later, from a different
@@ -818,9 +821,9 @@ class RescanCategoriesBody(BaseModel):
 @router.post("/rescan-categories", response_model=dict)
 async def rescan_categories(
     body: Optional[RescanCategoriesBody] = None,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Re-apply current spending_rules to still-uncategorized rows.
 
     Scoped to `body.ids` when provided (only those rows, and only the ones
@@ -879,7 +882,9 @@ _TRANSFER_RULE_DETAIL = (
 
 
 @router.get("/rules", response_model=List[SpendingRuleResponse])
-async def list_rules(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+async def list_rules(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+):
     """List all spending category rules."""
     return [SpendingRuleResponse(**r) for r in db.list_spending_rules()]
 
@@ -887,7 +892,7 @@ async def list_rules(db=Depends(get_database), api_key_info: dict = Depends(_aut
 @router.post("/rules", response_model=SpendingRuleResponse, status_code=201)
 async def create_rule(
     body: SpendingRuleBody,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Create a spending category rule."""
@@ -920,7 +925,7 @@ async def create_rule(
 @router.post("/rules/preview", response_model=RulePreviewResponse)
 async def preview_rule(
     body: RulePreviewBody,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Rows a rule would match, without saving it.
@@ -969,7 +974,7 @@ async def preview_rule(
 async def update_rule(
     rule_id: int,
     body: SpendingRuleUpdateBody,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Edit a rule. Pattern/category/priority change when given; a condition
@@ -1039,8 +1044,10 @@ async def update_rule(
 
 @router.delete("/rules/{rule_id}", response_model=dict)
 async def delete_rule(
-    rule_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+    rule_id: int,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+) -> dict:
     """Delete a spending category rule."""
     if not db.delete_spending_rule(rule_id):
         raise HTTPException(status_code=404, detail="Rule not found")
@@ -1049,7 +1056,7 @@ async def delete_rule(
 
 @router.get("/categories", response_model=List[str])
 async def list_categories(
-    db=Depends(get_database), api_key_info: dict = Depends(_auth)
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
 ):
     """List every known spending category (used + explicitly registered, deduplicated)."""
     return db.list_spending_categories()
@@ -1058,9 +1065,9 @@ async def list_categories(
 @router.post("/categories", response_model=dict, status_code=201)
 async def create_category(
     body: SpendingCategoryBody,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Register a new, initially-unused spending category."""
     name = body.name.strip()
     if not name:
@@ -1080,9 +1087,9 @@ async def create_category(
 async def rename_category(
     old_name: str,
     body: SpendingCategoryRenameBody,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Rename a category everywhere it's used (transactions, rules, registry)."""
     new_name = body.new_name.strip()
     if not new_name:
@@ -1105,7 +1112,7 @@ async def rename_category(
 
 @router.get("/categories/tree", response_model=List[dict])
 async def list_categories_tree(
-    db=Depends(get_database), api_key_info: dict = Depends(_auth)
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
 ):
     """Every category with its tree position, for building paths/indented views."""
     return db.list_spending_categories_tree()
@@ -1126,7 +1133,7 @@ class SpendingCategoryBreakdownResponse(BaseModel):
 def get_spending_category_breakdown(
     parent: str = "Spend",
     days: int = 30,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Immediate children of a category tree node, each with its full
@@ -1195,9 +1202,9 @@ def get_spending_category_breakdown(
 async def reparent_category(
     name: str,
     body: SpendingCategoryReparentBody,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Move a category under a different parent."""
     try:
         db.reparent_spending_category(name, body.new_parent_name)
@@ -1276,9 +1283,9 @@ def parse_essentiality_suggestions(data: object, names: set[str]) -> List[dict]:
 def set_category_essentiality(
     name: str,
     body: CategoryEssentialityBody,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Mark a category fixed, flexible or optional (null clears the mark).
 
     The mark drives the what-if scenarios' "what to cut first"; a category
@@ -1297,9 +1304,9 @@ def set_category_essentiality(
 
 @router.post("/categories/suggest-essentiality", response_model=dict)
 def suggest_category_essentiality(
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """LLM suggestions for Spend categories that have no mark yet.
 
     Nothing is saved: the user accepts suggestions one by one or all at once.
@@ -1335,7 +1342,7 @@ def suggest_category_essentiality(
 @router.get("/summary", response_model=SpendingSummaryResponse)
 def get_spending_summary(
     days: int = 30,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Aggregate spending/income/transfers across all bank accounts for the
@@ -1395,7 +1402,7 @@ def get_spending_summary(
 def list_recurring(
     portfolio_id: Optional[int] = None,
     include_ended: bool = False,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Recurring charges (subscriptions, bills) detected from bank outflows.
@@ -1435,7 +1442,7 @@ class SpendingTrendMonth(BaseModel):
 @router.get("/trend", response_model=List[SpendingTrendMonth])
 def get_spending_trend(
     months: int = 12,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Monthly spent/income/net for the last N calendar months, EUR-converted
@@ -1503,7 +1510,7 @@ def compare_spending(
     baseline_months: int = Query(default=6, ge=1, le=24),
     group_by: Literal["category", "merchant"] = "category",
     portfolio_id: Optional[int] = None,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """One month against its normal and against the same month a year ago.
@@ -1539,7 +1546,7 @@ def compare_spending(
 def get_spending_anomalies(
     days: int = Query(default=60, ge=1, le=365),
     portfolio_id: Optional[int] = None,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Unusual charges in the last ``days`` days (deterministic, no LLM).
@@ -1559,7 +1566,7 @@ def get_spending_anomalies(
 def get_spending_tiers(
     months: int = Query(default=12, ge=1, le=60),
     portfolio_id: Optional[int] = None,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Per month, spending split by fixed / flexible / optional / unclassified.
@@ -1586,7 +1593,7 @@ def get_cashflow_forecast(
         le=cashflow_forecast.MAX_FORECAST_MONTHS,
     ),
     portfolio_id: Optional[int] = None,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Where this month ends and the next ``months`` months (default 12).
@@ -1616,7 +1623,7 @@ def get_cashflow_forecast(
 def get_spending_review(
     month: Optional[str] = Query(default=None, pattern=_MONTH_PATTERN),
     portfolio_id: Optional[int] = None,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """One month's review in a single payload (deterministic, no LLM).
@@ -1722,7 +1729,7 @@ def _parse_suggestions(data: object) -> List[CategorySuggestion]:
 @router.post("/suggest-categories", response_model=SuggestCategoriesResponse)
 async def suggest_categories(
     body: SuggestCategoriesRequest,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """LLM-assisted category suggestions for rows no rule matched.

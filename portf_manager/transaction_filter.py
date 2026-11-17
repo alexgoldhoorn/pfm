@@ -270,7 +270,7 @@ def create_transaction_filter_service(
     return TransactionFilterService(db_adapter, auth_manager)
 
 
-def example_usage():
+def example_usage() -> None:
     """
     Example usage of the TransactionFilterService.
 
@@ -320,7 +320,8 @@ def example_usage():
 
     # Example 4: Get transaction summary
     print("\n=== Example 4: Transaction summary ===")
-    filter_criteria = TransactionFilter()  # No filters - all transactions
+    # No filters - all transactions
+    filter_criteria = TransactionFilter()
     summary = filter_service.get_filtered_transaction_summary(filter_criteria)
     print(f"Summary: {summary}")
 

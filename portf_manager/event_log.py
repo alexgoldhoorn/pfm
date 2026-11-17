@@ -116,7 +116,7 @@ class DatabaseLogHandler(logging.Handler):
 _installed: Optional[DatabaseLogHandler] = None
 
 
-def install_db_log_handler(db) -> Optional[DatabaseLogHandler]:
+def install_db_log_handler(db: Any) -> Optional[DatabaseLogHandler]:
     """Attach the persistent log handler to the root logger (replacing any old one).
 
     Returns None when the database adapter has no log store (the Postgres

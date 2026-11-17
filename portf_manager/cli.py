@@ -226,15 +226,19 @@ class PortfolioManagerCLI:
             self.http_client = PortfolioHTTPClient(self.config)
             self.db_manager = (
                 self.http_client
-            )  # Use HTTP client as database manager interface
-            self.auth_manager = None  # Server handles auth via API key
+                # Use HTTP client as database manager interface
+            )
+            # Server handles auth via API key
+            self.auth_manager = None
         else:
             # Local mode - use SQLite database
             self.db_manager = Database(self.config.db_path)
             self.auth_manager = AuthManager(self.db_manager)
             self.http_client = None
 
-    def login_user(self, username: str = None, password: str = None) -> None:
+    def login_user(
+        self, username: Optional[str] = None, password: Optional[str] = None
+    ) -> None:
         """Authenticate and login a user."""
         while not self.auth_manager.is_authenticated():
             try:
@@ -298,7 +302,7 @@ class PortfolioManagerCLI:
         currency: str,
         transaction_type: str,
         transaction_date: str,
-        portfolio_name: str = None,
+        portfolio_name: Optional[str] = None,
     ) -> None:
         """Add a new transaction for an asset."""
         asset_data = self.db_manager.get_asset_by_symbol(symbol.upper())
@@ -459,11 +463,13 @@ class PortfolioManagerCLI:
 
             for asset in assets:
                 symbol = asset.get("symbol", "N/A")
-                name = (asset.get("name") or "N/A")[:24]  # Truncate long names
+                # Truncate long names
+                name = (asset.get("name") or "N/A")[:24]
                 asset_type = asset.get("asset_type", "N/A")
                 sector = (asset.get("sector") or "Unknown Sector")[
                     :19
-                ]  # Truncate long sectors
+                    # Truncate long sectors
+                ]
                 exchange = asset.get("exchange") or "N/A"
 
                 print(
@@ -482,12 +488,12 @@ class PortfolioManagerCLI:
     def update_asset(
         self,
         asset_id: int,
-        name: str = None,
-        exchange: str = None,
-        currency: str = None,
-        sector: str = None,
-        description: str = None,
-        is_active: bool = None,
+        name: Optional[str] = None,
+        exchange: Optional[str] = None,
+        currency: Optional[str] = None,
+        sector: Optional[str] = None,
+        description: Optional[str] = None,
+        is_active: Optional[bool] = None,
     ) -> None:
         """Update an existing asset."""
         try:
@@ -978,7 +984,8 @@ class PortfolioManagerCLI:
                             print(
                                 "📋 Use 'list-transactions 50' to show more, or 'list-transactions all' to show all."
                             )
-                            limit = 10  # Fall back to default
+                            # Fall back to default
+                            limit = 10
                         else:
                             limit = total_count
                     except KeyboardInterrupt:
@@ -1103,11 +1110,11 @@ class PortfolioManagerCLI:
     def update_transaction(
         self,
         transaction_id: int,
-        quantity: float = None,
-        price: float = None,
-        transaction_date: str = None,
-        transaction_type: str = None,
-        description: str = None,
+        quantity: Optional[float] = None,
+        price: Optional[float] = None,
+        transaction_date: Optional[str] = None,
+        transaction_type: Optional[str] = None,
+        description: Optional[str] = None,
     ) -> None:
         """Update transaction fields."""
         try:
@@ -1200,7 +1207,7 @@ class PortfolioManagerCLI:
             print(f"❌ Error updating transaction: {e}")
 
     def import_csv(
-        self, csv_file: str, portfolio_name: str = None, error_handler=None
+        self, csv_file: str, portfolio_name: Optional[str] = None, error_handler=None
     ) -> None:
         """Import transactions from MyInvestor CSV file."""
         try:
@@ -1328,7 +1335,8 @@ class PortfolioManagerCLI:
                         # Create transaction
                         self.db_manager.create_transaction(
                             asset_id=asset_data["id"],
-                            transaction_type="buy",  # All negative amounts are purchases
+                            # All negative amounts are purchases
+                            transaction_type="buy",
                             quantity=shares,
                             price=price_per_share,
                             total_amount=total_amount,
@@ -1365,7 +1373,8 @@ class PortfolioManagerCLI:
         # Skip positive amounts (deposits, dividends) and non-stock transactions
         skip_keywords = ["INVEST", "AHORRO", "MY INVESTOR", "PERIODO"]
 
-        if importe >= 0:  # Positive amounts are deposits/dividends
+        # Positive amounts are deposits/dividends
+        if importe >= 0:
             return True
 
         for keyword in skip_keywords:
@@ -1385,7 +1394,8 @@ class PortfolioManagerCLI:
                 asset_name = parts[0].strip()
                 shares_str = parts[1].strip()
 
-                if shares_str:  # Check if shares part is not empty
+                # Check if shares part is not empty
+                if shares_str:
                     try:
                         shares = int(shares_str)
                         return (asset_name, shares)
@@ -1424,7 +1434,8 @@ class PortfolioManagerCLI:
             asset_id = self.db_manager.create_asset(
                 symbol=symbol,
                 name=asset_name,
-                asset_type="stock",  # Assume stock for now
+                # Assume stock for now
+                asset_type="stock",
                 currency="EUR",
                 sector=sector,
                 description="Auto-created from CSV import",
@@ -1538,8 +1549,8 @@ class PortfolioManagerCLI:
         self,
         name: str,
         base_currency: str = "USD",
-        entity_name: str = None,
-        description: str = None,
+        entity_name: Optional[str] = None,
+        description: Optional[str] = None,
     ) -> None:
         """Add a new portfolio."""
         try:
@@ -1644,7 +1655,11 @@ class PortfolioManagerCLI:
             print(f"❌ Error listing entities: {e}")
 
     def add_entity(
-        self, name: str, entity_type: str, website: str = None, description: str = None
+        self,
+        name: str,
+        entity_type: str,
+        website: Optional[str] = None,
+        description: Optional[str] = None,
     ) -> None:
         """Add a new entity."""
         try:
@@ -1732,7 +1747,7 @@ class PortfolioManagerCLI:
             print(f"❌ Error processing text: {e}")
 
     def import_coinbase_csv(
-        self, csv_file: str, portfolio_name: str = None, clear: bool = False
+        self, csv_file: str, portfolio_name: Optional[str] = None, clear: bool = False
     ) -> None:
         """Import transactions from a Coinbase CSV export file."""
         try:
@@ -2426,7 +2441,8 @@ class PortfolioManagerCLI:
                             asset_id = self.db_manager.create_asset(
                                 symbol=transaction.symbol.upper(),
                                 name=transaction.asset_name,
-                                asset_type="crypto",  # Mark as crypto
+                                # Mark as crypto
+                                asset_type="crypto",
                                 currency=transaction.currency,
                                 description="Auto-created from Coinbase CSV import",
                             )
@@ -2517,7 +2533,8 @@ class PortfolioManagerCLI:
                                 asset_id = self.db_manager.create_asset(
                                     symbol=transaction.symbol.upper(),
                                     name=transaction.asset_name,
-                                    asset_type="etf",  # IndexaCapital assets are ETFs/Index funds
+                                    # IndexaCapital assets are ETFs/Index funds
+                                    asset_type="etf",
                                     currency=transaction.currency,
                                     description="Auto-created from IndexaCapital CSV import",
                                 )
@@ -2634,10 +2651,10 @@ class PortfolioManagerCLI:
 
     def export_transactions(
         self,
-        symbols: list = None,
-        start_date: str = None,
-        end_date: str = None,
-        output_file: str = None,
+        symbols: Optional[list] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        output_file: Optional[str] = None,
     ) -> None:
         """Export transactions to CSV file."""
         try:
@@ -2801,7 +2818,9 @@ class PortfolioManagerCLI:
             sys.exit(1)
         return ours[0]
 
-    def update_prices(self, symbols: list = None, show_values: bool = False) -> None:
+    def update_prices(
+        self, symbols: Optional[list] = None, show_values: bool = False
+    ) -> None:
         """Update prices for portfolio assets using external API.
 
         In server mode the run is delegated to the server (see
@@ -2905,7 +2924,7 @@ class PortfolioManagerCLI:
             sys.exit(1)
 
 
-def handle_export_to_sheets(args):
+def handle_export_to_sheets(args: argparse.Namespace) -> None:
     """Handle the export-to-sheets command using Google Sheets API."""
     from .google_sheets_export import (
         create_google_sheets_exporter,
@@ -2954,7 +2973,7 @@ def handle_export_to_sheets(args):
         sys.exit(1)
 
 
-def handle_export_transactions(args, cli=None):
+def handle_export_transactions(args: argparse.Namespace, cli=None) -> None:
     """Handle the export-transactions command using the new CSV export functionality."""
     from .csv_export import create_csv_exporter
     from .transaction_filter import TransactionFilter
@@ -2993,10 +3012,12 @@ def handle_export_transactions(args, cli=None):
             # Create a simple mock auth manager for server mode
             class MockAuthManager:
                 def is_authenticated(self):
-                    return True  # Server mode uses API key auth
+                    # Server mode uses API key auth
+                    return True
 
                 def get_current_user(self):
-                    return {"id": 1, "username": "api_user"}  # Mock user
+                    # Mock user
+                    return {"id": 1, "username": "api_user"}
 
             auth_manager = MockAuthManager()
         else:
@@ -3164,7 +3185,7 @@ def handle_export_transactions(args, cli=None):
             sys.exit(1)
 
 
-def handle_extract_tax_report(args):
+def handle_extract_tax_report(args: argparse.Namespace) -> None:
     """Handle the extract-tax-report command."""
     from .tax_calculator import TaxCalculator
     from .tax_export import TaxReportExporter, generate_tax_report_filename
@@ -3214,7 +3235,8 @@ def handle_extract_tax_report(args):
 
     # Parse dates
     end_date = date.today()
-    start_date = end_date - timedelta(days=365)  # Default to 1 year ago
+    # Default to 1 year ago
+    start_date = end_date - timedelta(days=365)
 
     if args.start_date:
         try:
@@ -3406,7 +3428,7 @@ def handle_extract_tax_report(args):
             sys.exit(1)
 
 
-def create_parser():
+def create_parser() -> argparse.ArgumentParser:
     """Create and configure the argument parser."""
     parser = argparse.ArgumentParser(
         description="Portfolio Manager CLI - Manage your investment portfolio",
@@ -3958,7 +3980,7 @@ Examples of use:
     return parser
 
 
-def handle_multi_agent_commands(args):
+def handle_multi_agent_commands(args: argparse.Namespace):
     """Handle multi-agent system commands"""
     try:
         # Check if multi-agent system is available
@@ -4009,9 +4031,12 @@ def main() -> None:
     parser = create_parser()
     args = parser.parse_args()
     # Load environment variables from multiple .env files
-    load_dotenv(".env.local", override=False)  # Load local env first
-    load_dotenv(".env.development", override=False)  # Then development
-    load_dotenv(".env", override=False)  # Finally base .env
+    # Load local env first
+    load_dotenv(".env.local", override=False)
+    # Then development
+    load_dotenv(".env.development", override=False)
+    # Finally base .env
+    load_dotenv(".env", override=False)
 
     # Initialize configuration from arguments and environment
     try:
@@ -4111,7 +4136,8 @@ def main() -> None:
                 elif command.lower().startswith("paste"):
                     # Parse paste command with optional format
                     parts = command.split()
-                    format_type = "myinvestor"  # default
+                    # default
+                    format_type = "myinvestor"
                     if len(parts) > 1 and (parts[1] in ["--format", "-f"]):
                         if len(parts) > 2 and parts[2] in [
                             "myinvestor",
@@ -4157,7 +4183,7 @@ def main() -> None:
     execute_command(cli, args, parser)
 
 
-def print_interactive_help():
+def print_interactive_help() -> None:
     """Print help for interactive mode."""
     print("📚 Portfolio Manager Interactive Commands:")
     print()
@@ -4265,7 +4291,11 @@ def print_interactive_help():
     print()
 
 
-def execute_command(cli: PortfolioManagerCLI, args, parser=None):
+def execute_command(
+    cli: PortfolioManagerCLI,
+    args: argparse.Namespace,
+    parser: Optional[argparse.ArgumentParser] = None,
+) -> None:
     """Execute parsed command arguments with robust error handling."""
     # Create error handler with debug mode based on args
     debug_mode = getattr(args, "debug", False)
@@ -4332,7 +4362,8 @@ def execute_command(cli: PortfolioManagerCLI, args, parser=None):
                             asset_id = cli.db_manager.create_asset(
                                 symbol=transaction.symbol.upper(),
                                 name=transaction.asset_name,
-                                asset_type="etf",  # IndexaCapital assets are ETFs/Index funds
+                                # IndexaCapital assets are ETFs/Index funds
+                                asset_type="etf",
                                 currency=transaction.currency,
                                 description="Auto-created from IndexaCapital CSV import",
                             )
@@ -4380,7 +4411,8 @@ def execute_command(cli: PortfolioManagerCLI, args, parser=None):
                             asset_id = cli.db_manager.create_asset(
                                 symbol=transaction.symbol.upper(),
                                 name=transaction.asset_name,
-                                asset_type="etf",  # IndexaCapital assets are ETFs/Index funds
+                                # IndexaCapital assets are ETFs/Index funds
+                                asset_type="etf",
                                 currency=transaction.currency,
                                 description="Auto-created from IndexaCapital CSV import",
                             )
@@ -4464,7 +4496,8 @@ def execute_command(cli: PortfolioManagerCLI, args, parser=None):
             # Parse limit argument - can be number, "all", or default
             limit_arg = args.limit
             if limit_arg == "all":
-                limit = None  # No limit
+                # No limit
+                limit = None
             else:
                 try:
                     limit = int(limit_arg)
@@ -4751,7 +4784,7 @@ if __name__ == "__main__":
 
 
 # Multi-Agent Analysis Integration
-def add_multi_agent_commands(parser):
+def add_multi_agent_commands(parser: argparse.ArgumentParser) -> None:
     """Add multi-agent analysis commands to the parser"""
     # Add multi-agent subcommand group
     parser.add_argument(

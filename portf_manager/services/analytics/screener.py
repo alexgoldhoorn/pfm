@@ -226,12 +226,14 @@ class StockScreener:
 
         scoring_weights = {
             "market_cap": 0.1,
-            "pe_ratio": 0.2,  # Lower PE is better
+            # Lower PE is better
+            "pe_ratio": 0.2,
             "dividend_yield": 0.1,
             "revenue_growth": 0.2,
             "earnings_growth": 0.2,
             "return_on_equity": 0.2,
-            "debt_to_equity": 0.1,  # Lower is better
+            # Lower is better
+            "debt_to_equity": 0.1,
             "current_ratio": 0.1,
             "rsi_14": 0.1,
         }
@@ -250,15 +252,24 @@ class StockScreener:
         """Normalize metric values to 0-1 scale."""
         # Simple normalization - can be improved with historical data
         normalization_rules = {
-            "market_cap": min(value / 1e12, 1.0),  # Cap at 1T
-            "pe_ratio": max(0, min(1 - (value / 50), 1)),  # Lower is better
-            "dividend_yield": min(value / 0.1, 1.0),  # Cap at 10%
-            "revenue_growth": min(max(value, 0) / 0.5, 1.0),  # Cap at 50%
-            "earnings_growth": min(max(value, 0) / 0.5, 1.0),  # Cap at 50%
-            "return_on_equity": min(max(value, 0) / 0.3, 1.0),  # Cap at 30%
-            "debt_to_equity": max(0, min(1 - (value / 2), 1)),  # Lower is better
-            "current_ratio": min(max(value - 1, 0) / 2, 1.0),  # 1-3 range
-            "rsi_14": 1 - abs(value - 50) / 50,  # Closer to 50 is better
+            # Cap at 1T
+            "market_cap": min(value / 1e12, 1.0),
+            # Lower is better
+            "pe_ratio": max(0, min(1 - (value / 50), 1)),
+            # Cap at 10%
+            "dividend_yield": min(value / 0.1, 1.0),
+            # Cap at 50%
+            "revenue_growth": min(max(value, 0) / 0.5, 1.0),
+            # Cap at 50%
+            "earnings_growth": min(max(value, 0) / 0.5, 1.0),
+            # Cap at 30%
+            "return_on_equity": min(max(value, 0) / 0.3, 1.0),
+            # Lower is better
+            "debt_to_equity": max(0, min(1 - (value / 2), 1)),
+            # 1-3 range
+            "current_ratio": min(max(value - 1, 0) / 2, 1.0),
+            # Closer to 50 is better
+            "rsi_14": 1 - abs(value - 50) / 50,
         }
 
         return normalization_rules.get(metric, min(max(value, 0), 1))
@@ -273,7 +284,8 @@ class PredefinedScreeners:
         """Screen for value stocks."""
         return [
             ScreenerFilter(ScreenerCriteria.PE_RATIO, max_value=15),
-            ScreenerFilter(ScreenerCriteria.MARKET_CAP, min_value=1e9),  # > $1B
+            # > $1B
+            ScreenerFilter(ScreenerCriteria.MARKET_CAP, min_value=1e9),
             ScreenerFilter(ScreenerCriteria.DEBT_TO_EQUITY, max_value=0.6),
         ]
 
@@ -281,16 +293,20 @@ class PredefinedScreeners:
     def growth_stocks() -> List[ScreenerFilter]:
         """Screen for growth stocks."""
         return [
-            ScreenerFilter(ScreenerCriteria.REVENUE_GROWTH, min_value=0.15),  # > 15%
-            ScreenerFilter(ScreenerCriteria.EARNINGS_GROWTH, min_value=0.20),  # > 20%
-            ScreenerFilter(ScreenerCriteria.ROE, min_value=0.15),  # > 15%
+            # > 15%
+            ScreenerFilter(ScreenerCriteria.REVENUE_GROWTH, min_value=0.15),
+            # > 20%
+            ScreenerFilter(ScreenerCriteria.EARNINGS_GROWTH, min_value=0.20),
+            # > 15%
+            ScreenerFilter(ScreenerCriteria.ROE, min_value=0.15),
         ]
 
     @staticmethod
     def dividend_stocks() -> List[ScreenerFilter]:
         """Screen for dividend stocks."""
         return [
-            ScreenerFilter(ScreenerCriteria.DIVIDEND_YIELD, min_value=0.03),  # > 3%
+            # > 3%
+            ScreenerFilter(ScreenerCriteria.DIVIDEND_YIELD, min_value=0.03),
             ScreenerFilter(ScreenerCriteria.CURRENT_RATIO, min_value=1.2),
             ScreenerFilter(ScreenerCriteria.DEBT_TO_EQUITY, max_value=0.8),
         ]
@@ -299,10 +315,12 @@ class PredefinedScreeners:
     def quality_stocks() -> List[ScreenerFilter]:
         """Screen for high-quality stocks."""
         return [
-            ScreenerFilter(ScreenerCriteria.ROE, min_value=0.15),  # > 15%
+            # > 15%
+            ScreenerFilter(ScreenerCriteria.ROE, min_value=0.15),
             ScreenerFilter(ScreenerCriteria.CURRENT_RATIO, min_value=1.5),
             ScreenerFilter(ScreenerCriteria.DEBT_TO_EQUITY, max_value=0.5),
-            ScreenerFilter(ScreenerCriteria.MARKET_CAP, min_value=5e9),  # > $5B
+            # > $5B
+            ScreenerFilter(ScreenerCriteria.MARKET_CAP, min_value=5e9),
         ]
 
     @staticmethod
@@ -310,11 +328,16 @@ class PredefinedScreeners:
         """Screen for momentum stocks."""
         return [
             ScreenerFilter(
-                ScreenerCriteria.PRICE_CHANGE_1M, min_value=5
-            ),  # > 5% in 1 month
+                ScreenerCriteria.PRICE_CHANGE_1M,
+                min_value=5,
+                # > 5% in 1 month
+            ),
             ScreenerFilter(
-                ScreenerCriteria.RSI, min_value=50, max_value=70
-            ),  # Strong but not overbought
+                ScreenerCriteria.RSI,
+                min_value=50,
+                max_value=70,
+                # Strong but not overbought
+            ),
         ]
 
 

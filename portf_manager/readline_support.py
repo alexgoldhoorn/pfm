@@ -43,7 +43,7 @@ def setup_readline() -> bool:
         return False
 
 
-def configure_readline():
+def configure_readline() -> None:
     """Configure readline behavior and key bindings."""
     import readline
 
@@ -64,7 +64,7 @@ def configure_readline():
     readline.set_history_length(1000)
 
 
-def setup_history():
+def setup_history() -> None:
     """Set up persistent command history."""
     import readline
 
@@ -85,7 +85,7 @@ def setup_history():
         print(f"⚠️  Could not load command history: {e}")
 
 
-def setup_completion():
+def setup_completion() -> None:
     """Set up tab completion for common commands."""
     import readline
 
@@ -215,7 +215,7 @@ def get_history_file_path() -> Path:
     return home / ".portf_history"
 
 
-def save_history(history_file: Path):
+def save_history(history_file: Path) -> None:
     """
     Save command history to file.
 
@@ -236,7 +236,7 @@ def save_history(history_file: Path):
         pass
 
 
-def add_to_history(command: str):
+def add_to_history(command: str) -> None:
     """
     Add a command to the history manually.
 
@@ -280,7 +280,7 @@ def get_history() -> List[str]:
         return []
 
 
-def clear_history():
+def clear_history() -> None:
     """Clear the command history."""
     try:
         import readline
@@ -293,7 +293,7 @@ def clear_history():
         pass
 
 
-def print_history():
+def print_history() -> None:
     """Print the command history."""
     try:
         import readline
@@ -344,7 +344,7 @@ def enhanced_input(prompt: str = "") -> str:
         raise
 
 
-def print_readline_help():
+def print_readline_help() -> None:
     """Print help for readline keyboard shortcuts."""
     print("⌨️  Keyboard Shortcuts:")
     print("-" * 50)

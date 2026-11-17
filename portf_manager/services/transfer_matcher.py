@@ -21,7 +21,8 @@ _MATCH_WINDOW_DAYS = 3
 @dataclass
 class TransferMatch:
     spending_id: int
-    link_type: str  # "spending" or "booking"
+    # "spending" or "booking"
+    link_type: str
     link_id: int
 
 

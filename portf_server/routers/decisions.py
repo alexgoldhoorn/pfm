@@ -147,7 +147,7 @@ def list_decisions(
     symbol: Optional[str] = None,
     db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Journal entries, newest first. ``status``: open | reviewed | all."""
     if status not in ("open", "reviewed", "all"):
         raise HTTPException(
@@ -246,6 +246,6 @@ def delete_decision(
     decision_id: int,
     db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> None:
     if not db.delete_decision(decision_id):
         raise HTTPException(status_code=404, detail="Decision not found")

@@ -192,7 +192,8 @@ def parse_myinvestor_csv(csv_content: str) -> MyInvestorParseResult:
 
     for i, date, concepto, importe, currency, raw in parsed:
         if _INTEREST_WITHHOLDING_RE.match(concepto):
-            continue  # consumed below by its matching credit row, if any
+            # consumed below by its matching credit row, if any
+            continue
 
         if (
             concepto.upper() in _DEPOSIT_CONCEPTS

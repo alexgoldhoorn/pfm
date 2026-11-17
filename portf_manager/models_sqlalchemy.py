@@ -283,12 +283,14 @@ class ApiKey(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     key_name = Column(String(255), nullable=False)
     key_hash = Column(String(255), nullable=False, unique=True)
-    key_prefix = Column(String(20), nullable=False)  # First 8 chars for identification
+    # First 8 chars for identification
+    key_prefix = Column(String(20), nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
     description = Column(Text)
     last_used = Column(DateTime)
     created_at = Column(DateTime, default=func.current_timestamp())
-    expires_at = Column(DateTime)  # Optional expiration
+    # Optional expiration
+    expires_at = Column(DateTime)
 
     # Indexes
     __table_args__ = (

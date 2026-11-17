@@ -110,7 +110,8 @@ def parse_mintos_csv(csv_content: str) -> MintosParseResult:
         cur = (row.get("Divisa") or "EUR").strip() or "EUR"
         details = (row.get("Detalles") or "").strip()
         low = ptype.lower()
-        month = date[:7]  # YYYY-MM
+        # YYYY-MM
+        month = date[:7]
 
         if low == "mintos core fee":
             res.bookings.append(
@@ -161,13 +162,15 @@ def parse_mintos_csv(csv_content: str) -> MintosParseResult:
                 res.skipped.append(
                     (f"{date} bond transfer", f"no ISIN found: {details}")
                 )
-        elif "retenci" in low:  # withholding tax (negative)
+        # withholding tax (negative)
+        elif "retenci" in low:
             m = months.setdefault(month, [0.0, 0.0, 0, date, cur])
             m[1] += abs(amt)
             m[2] += 1
             if date > m[3]:
                 m[3] = date
-        elif "interes" in low:  # interest income
+        # interest income
+        elif "interes" in low:
             m = months.setdefault(month, [0.0, 0.0, 0, date, cur])
             m[0] += amt
             m[2] += 1

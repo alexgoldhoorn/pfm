@@ -9,7 +9,7 @@ at that date, leaving total cost unchanged (so average cost per share scales).
 ``dividend`` and unknown types don't affect positions.
 """
 
-from typing import Callable, Dict, Hashable, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Hashable, Iterable, List, Optional, Tuple
 
 
 def _sort_key(tx: dict):
@@ -88,7 +88,7 @@ def self_managed_held_asset_ids(
     }
 
 
-def managed_portfolio_ids(db) -> set:
+def managed_portfolio_ids(db: Any) -> set:
     """Ids of the portfolios flagged ``is_managed`` (active or not)."""
     return {
         p["id"] for p in db.get_all_portfolios(active_only=False) if p.get("is_managed")

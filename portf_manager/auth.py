@@ -23,7 +23,11 @@ class UserSession:
     """Represents a user session with authentication state."""
 
     def __init__(
-        self, user_id: int, username: str, email: str, session_token: str = None
+        self,
+        user_id: int,
+        username: str,
+        email: str,
+        session_token: Optional[str] = None,
     ):
         self.user_id = user_id
         self.username = username
@@ -40,7 +44,7 @@ class UserSession:
         """Check if the session has expired."""
         return datetime.now() - self.last_activity > timedelta(hours=max_age_hours)
 
-    def refresh(self):
+    def refresh(self) -> None:
         """Refresh the session's last activity timestamp."""
         self.last_activity = datetime.now()
 
@@ -78,7 +82,9 @@ class AuthManager:
         self.current_session: Optional[UserSession] = None
         self._load_session()
 
-    def _hash_password(self, password: str, salt: str = None) -> tuple[str, str]:
+    def _hash_password(
+        self, password: str, salt: Optional[str] = None
+    ) -> tuple[str, str]:
         """Hash password with salt."""
         if salt is None:
             salt = secrets.token_hex(32)
@@ -88,7 +94,8 @@ class AuthManager:
             "sha256",
             password.encode("utf-8"),
             salt.encode("utf-8"),
-            100000,  # 100k iterations
+            # 100k iterations
+            100000,
         )
         return password_hash.hex(), salt
 
@@ -98,7 +105,7 @@ class AuthManager:
         return hmac.compare_digest(computed_hash, password_hash)
 
     def register_user(
-        self, username: str, email: str, password: str, full_name: str = None
+        self, username: str, email: str, password: str, full_name: Optional[str] = None
     ) -> int:
         """Register a new user."""
         # Check if user already exists
@@ -153,7 +160,7 @@ class AuthManager:
 
         return session
 
-    def logout(self):
+    def logout(self) -> None:
         """Logout current user and clear session."""
         if self.current_session:
             self.current_session = None
@@ -183,7 +190,7 @@ class AuthManager:
             raise AuthenticationError("Authentication required")
         return self.current_session
 
-    def change_password(self, current_password: str, new_password: str):
+    def change_password(self, current_password: str, new_password: str) -> None:
         """Change user's password."""
         user = self.get_current_user()
         if not user:

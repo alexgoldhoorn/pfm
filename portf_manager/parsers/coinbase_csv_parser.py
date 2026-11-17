@@ -19,8 +19,10 @@ class CoinbaseParseResult:
     """Result of parsing Coinbase CSV data."""
 
     importable: List[LLMTransaction]
-    skipped: List[Tuple[str, str]]  # (transaction_type, reason)
-    bookings: List[dict] = field(default_factory=list)  # cash deposits/withdrawals
+    # (transaction_type, reason)
+    skipped: List[Tuple[str, str]]
+    # cash deposits/withdrawals
+    bookings: List[dict] = field(default_factory=list)
 
 
 class CoinbaseCSVParser:
@@ -172,7 +174,8 @@ class CoinbaseCSVParser:
                 .replace("$", "")
                 .replace(",", "")
             )
-            coinbase_unit_price = float(price_clean)  # Price per 1 crypto unit
+            # Price per 1 crypto unit
+            coinbase_unit_price = float(price_clean)
         except ValueError:
             raise ValueError(
                 f"Invalid price at transaction: {price_at_transaction_str}"
@@ -181,7 +184,8 @@ class CoinbaseCSVParser:
         # For income types, store as price=EUR total, qty=1 (earnings pattern)
         # For trades, calculate from total (includes fees)
         if is_income:
-            unit_price = total_amount  # EUR value of the staking reward
+            # EUR value of the staking reward
+            unit_price = total_amount
             quantity = 1.0
             fees_amount = 0.0
         else:

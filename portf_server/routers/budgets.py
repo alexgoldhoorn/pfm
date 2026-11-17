@@ -22,6 +22,7 @@ from portf_manager.services import budget as budget_service
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
+from portf_manager.database import Database
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -213,7 +214,7 @@ class BudgetSeedProposal(BaseModel):
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 
-def _line_label(db, line: Dict, tree: List[Dict] = None) -> str:
+def _line_label(db, line: Dict, tree: Optional[List[Dict]] = None) -> str:
     """Human label for a line: a portfolio name, or a category breadcrumb.
 
     Only a broker-keyed investment line names a portfolio; a category-keyed one
@@ -228,7 +229,9 @@ def _line_label(db, line: Dict, tree: List[Dict] = None) -> str:
     return budget_service.category_path(tree, line["ref_key"])
 
 
-def _serialize_line(db, line: Dict, tree: List[Dict] = None) -> BudgetLineResponse:
+def _serialize_line(
+    db, line: Dict, tree: Optional[List[Dict]] = None
+) -> BudgetLineResponse:
     return BudgetLineResponse(
         id=line["id"],
         budget_id=line["budget_id"],
@@ -359,7 +362,9 @@ def _validate_ref_key(db, line_type: str, ref_key: str, sibling_ref_keys: set) -
 
 
 @router.get("/", response_model=List[BudgetResponse])
-async def list_budgets(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+async def list_budgets(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+):
     """Every budget, active one first."""
     return [
         BudgetResponse(**{**b, "is_active": bool(b["is_active"])})
@@ -369,7 +374,9 @@ async def list_budgets(db=Depends(get_database), api_key_info: dict = Depends(_a
 
 @router.post("/", response_model=BudgetResponse, status_code=201)
 async def create_budget(
-    body: BudgetBody, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+    body: BudgetBody,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
 ):
     """Create a budget, optionally duplicating another one's lines.
 
@@ -414,7 +421,9 @@ async def create_budget(
 
 
 @router.get("/summary", response_model=Optional[BudgetVarianceResponse])
-def get_budget_summary(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def get_budget_summary(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+):
     """This month's variance for the active budget, or null if there is none.
 
     One call for the Dashboard card and the Action Items check. Registered
@@ -433,8 +442,10 @@ def get_budget_summary(db=Depends(get_database), api_key_info: dict = Depends(_a
 
 @router.get("/{budget_id}", response_model=dict)
 async def get_budget(
-    budget_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+    budget_id: int,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+) -> dict:
     """One budget with all of its lines."""
     budget = _require_budget(db, budget_id)
     tree = db.list_spending_categories_tree()
@@ -454,7 +465,7 @@ async def get_budget(
 async def update_budget(
     budget_id: int,
     body: BudgetUpdateBody,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Rename a budget or change its description."""
@@ -479,8 +490,10 @@ async def update_budget(
 
 @router.post("/{budget_id}/activate", response_model=dict)
 async def activate_budget(
-    budget_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+    budget_id: int,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+) -> dict:
     """Make this the active budget, clearing the flag on every other one."""
     _require_budget(db, budget_id)
     db.set_active_budget(budget_id)
@@ -489,8 +502,10 @@ async def activate_budget(
 
 @router.delete("/{budget_id}", response_model=dict)
 async def delete_budget(
-    budget_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+    budget_id: int,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+) -> dict:
     """Delete a budget and its lines."""
     _require_budget(db, budget_id)
     db.delete_budget(budget_id)
@@ -502,7 +517,9 @@ async def delete_budget(
 
 @router.get("/{budget_id}/lines", response_model=List[BudgetLineResponse])
 async def list_budget_lines(
-    budget_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+    budget_id: int,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
 ):
     """A budget's lines."""
     _require_budget(db, budget_id)
@@ -514,7 +531,7 @@ async def list_budget_lines(
 async def create_budget_line(
     budget_id: int,
     body: BudgetLineBody,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Add a line to a budget."""
@@ -550,7 +567,7 @@ async def create_budget_line(
 async def bulk_upsert_budget_lines(
     budget_id: int,
     body: BudgetLinesBulkBody,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Insert-or-update many lines in one call — the grid save and the
@@ -614,7 +631,7 @@ async def update_budget_line(
     budget_id: int,
     line_id: int,
     body: BudgetLineUpdateBody,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Update a line's type, amount, per-month overrides, link, notes, period
@@ -679,9 +696,9 @@ async def update_budget_line(
 async def delete_budget_line(
     budget_id: int,
     line_id: int,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Remove a line from a budget."""
     _require_budget(db, budget_id)
     line = db.get_budget_line(line_id)
@@ -699,7 +716,7 @@ def get_budget_variance(
     budget_id: int,
     months: int = DEFAULT_VARIANCE_MONTHS,
     end_month: Optional[str] = None,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Planned vs actual over the last N calendar months.
@@ -728,7 +745,7 @@ def get_budget_variance(
 def get_seed_proposals(
     budget_id: int,
     months: int = 12,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Budget lines suggested from the last N complete months of real activity.

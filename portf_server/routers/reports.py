@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from portf_manager.services.performance import DEFAULT_BENCHMARK
 
 from ..dependencies import get_database
+from portf_manager.database import Database
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -31,7 +32,7 @@ def get_portfolio_report_pdf(
             "health. Default: all four."
         ),
     ),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
 ):
     """General portfolio report as a PDF, with selectable sections.
 

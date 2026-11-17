@@ -8,7 +8,7 @@ import sys
 import traceback
 import os
 from datetime import datetime
-from typing import Any
+from typing import Optional, Any
 from errno import ENOSPC, EACCES, EPERM
 
 
@@ -42,7 +42,7 @@ class FileIOError(PortfolioManagerError):
     def __init__(
         self,
         message: str,
-        filename: str = None,
+        filename: Optional[str] = None,
         exit_code: int = ExitCodes.GENERAL_ERROR,
     ):
         super().__init__(message, exit_code)
@@ -52,21 +52,21 @@ class FileIOError(PortfolioManagerError):
 class PermissionError(FileIOError):
     """Error related to file permissions."""
 
-    def __init__(self, message: str, filename: str = None):
+    def __init__(self, message: str, filename: Optional[str] = None):
         super().__init__(message, filename, ExitCodes.PERMISSION_ERROR)
 
 
 class DiskFullError(FileIOError):
     """Error when disk is full."""
 
-    def __init__(self, message: str, filename: str = None):
+    def __init__(self, message: str, filename: Optional[str] = None):
         super().__init__(message, filename, ExitCodes.DISK_FULL)
 
 
 class InvalidDateError(PortfolioManagerError):
     """Error for invalid date formats."""
 
-    def __init__(self, message: str, date_str: str = None):
+    def __init__(self, message: str, date_str: Optional[str] = None):
         super().__init__(message, ExitCodes.INVALID_DATE)
         self.date_str = date_str
 
@@ -74,7 +74,7 @@ class InvalidDateError(PortfolioManagerError):
 class UnknownSymbolError(PortfolioManagerError):
     """Error for unknown or invalid symbols."""
 
-    def __init__(self, message: str, symbol: str = None):
+    def __init__(self, message: str, symbol: Optional[str] = None):
         super().__init__(message, ExitCodes.UNKNOWN_SYMBOL)
         self.symbol = symbol
 
@@ -85,7 +85,7 @@ class ErrorHandler:
     def __init__(self, debug: bool = False):
         self.debug = debug
 
-    def handle_error(self, error: Exception, context: str = None) -> None:
+    def handle_error(self, error: Exception, context: Optional[str] = None) -> None:
         """Handle an error with appropriate logging and exit."""
         if isinstance(error, PortfolioManagerError):
             exit_code = error.exit_code
@@ -109,7 +109,10 @@ class ErrorHandler:
         sys.exit(exit_code)
 
     def handle_file_error(
-        self, error: Exception, filename: str = None, operation: str = None
+        self,
+        error: Exception,
+        filename: Optional[str] = None,
+        operation: Optional[str] = None,
     ) -> None:
         """Handle file-related errors with specific messaging."""
         if isinstance(error, OSError):
@@ -145,7 +148,10 @@ class ErrorHandler:
             self.handle_error(file_error, f"file operation ({operation})")
 
     def handle_date_error(
-        self, error: ValueError, date_str: str = None, context: str = None
+        self,
+        error: ValueError,
+        date_str: Optional[str] = None,
+        context: Optional[str] = None,
     ) -> None:
         """Handle date parsing errors."""
         date_error = InvalidDateError(
@@ -153,7 +159,7 @@ class ErrorHandler:
         )
         self.handle_error(date_error, context or "date parsing")
 
-    def handle_symbol_warning(self, symbol: str, context: str = None) -> None:
+    def handle_symbol_warning(self, symbol: str, context: Optional[str] = None) -> None:
         """Handle unknown symbol warnings (non-fatal)."""
         if context:
             print(
@@ -162,7 +168,9 @@ class ErrorHandler:
         else:
             print(f"⚠️  Warning: Unknown symbol '{symbol}' - using default sector")
 
-    def validate_date_format(self, date_str: str, context: str = None) -> datetime:
+    def validate_date_format(
+        self, date_str: str, context: Optional[str] = None
+    ) -> datetime:
         """Validate and parse date string."""
         try:
             # Try YYYY-MM-DD format first
@@ -178,7 +186,7 @@ class ErrorHandler:
                 except ValueError as e:
                     self.handle_date_error(e, date_str, context)
 
-    def convert_date_format(self, date_str: str, context: str = None) -> str:
+    def convert_date_format(self, date_str: str, context: Optional[str] = None) -> str:
         """Convert date string to YYYY-MM-DD format with proper error handling."""
         try:
             # Try DD/MM/YYYY format first
@@ -211,10 +219,10 @@ class ErrorHandler:
     def safe_file_operation(
         self,
         operation: callable,
-        filename: str = None,
-        operation_name: str = None,
-        *args,
-        **kwargs,
+        filename: Optional[str] = None,
+        operation_name: Optional[str] = None,
+        *args: Any,
+        **kwargs: Any,
     ) -> Any:
         """Safely execute a file operation with error handling."""
         try:
@@ -253,8 +261,11 @@ def create_error_handler(debug: bool = False) -> ErrorHandler:
     return ErrorHandler(debug=debug)
 
 
-def handle_unknown_symbol(symbol: str, context: str = None, debug: bool = False) -> str:
+def handle_unknown_symbol(
+    symbol: str, context: Optional[str] = None, debug: bool = False
+) -> str:
     """Handle unknown symbol with warning and return default sector."""
     handler = create_error_handler(debug)
     handler.handle_symbol_warning(symbol, context)
-    return "Unknown Sector"  # Default sector for unknown symbols
+    # Default sector for unknown symbols
+    return "Unknown Sector"

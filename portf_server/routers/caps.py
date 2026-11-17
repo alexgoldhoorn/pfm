@@ -41,7 +41,7 @@ async def _auth(
 def list_caps(
     db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """The stored caps (no exposure maths; see ``/status``)."""
     items = db.get_position_caps()
     return {"items": items, "total": len(items)}
@@ -95,6 +95,6 @@ def delete_cap(
     cap_id: int,
     db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> None:
     if not db.delete_position_cap(cap_id):
         raise HTTPException(status_code=404, detail="Cap not found")

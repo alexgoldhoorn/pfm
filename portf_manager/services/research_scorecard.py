@@ -50,7 +50,7 @@ def _derive_recommendation(fair: float, price: Optional[float]) -> Optional[str]
     return "HOLD"
 
 
-def collect_entries(db, symbol: Optional[str] = None) -> list[dict]:
+def collect_entries(db: Any, symbol: Optional[str] = None) -> list[dict]:
     """Merge report history and manual notes into one list of entries.
 
     Args:
@@ -235,7 +235,7 @@ def _breakdown(entries: list[dict], field: str) -> dict:
 
 
 def compute_scorecard(
-    db, symbol: Optional[str] = None, today: Optional[date] = None
+    db: Any, symbol: Optional[str] = None, today: Optional[date] = None
 ) -> dict:
     """Score every stored research entry against the price afterwards.
 
@@ -365,7 +365,7 @@ def _calibration_block(both: dict) -> dict:
     }
 
 
-def calibration(db, today: Optional[date] = None) -> dict:
+def calibration(db: Any, today: Optional[date] = None) -> dict:
     """How far the stored research can be trusted, from the scorecard.
 
     Cached for one hour. Always covers all symbols.

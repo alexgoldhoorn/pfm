@@ -24,6 +24,7 @@ from portf_manager.parsers.pdt_xlsx_parser import (
     _pdt_action_to_tx_type,
 )
 from portf_manager.currency_utils import normalize_gbx_amounts
+from portf_manager.database import Database
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -124,7 +125,9 @@ class BackupResponse(BaseModel):
 
 
 @router.get("/pdt-config", response_model=SyncConfigResponse)
-def get_sync_config(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def get_sync_config(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+):
     """Return current Google Sheets sync configuration."""
     sa_file = _google_service_account_file()
     email = None
@@ -149,7 +152,7 @@ def get_sync_config(db=Depends(get_database), api_key_info: dict = Depends(_auth
 @router.put("/pdt-config", response_model=SyncConfigResponse)
 def update_sync_config(
     body: SyncConfigUpdate,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Persist the Google Spreadsheet ID to the database."""
@@ -181,7 +184,7 @@ def pull_from_sheets(
     portfolio_id: Optional[int] = Query(
         default=None, description="Assign all imported records to this portfolio"
     ),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """
@@ -391,7 +394,7 @@ def push_to_sheets(
     portfolio_id: Optional[int] = Query(
         default=None, description="Export only this portfolio (default: all)"
     ),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """
@@ -435,7 +438,7 @@ def push_to_sheets(
 def backup_sheet(
     spreadsheet_id: Optional[str] = Query(default=None),
     title: Optional[str] = Query(default=None),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """
@@ -469,7 +472,7 @@ def backup_sheet(
 def download_sheet(
     spreadsheet_id: Optional[str] = Query(default=None),
     fmt: str = Query(default="xlsx"),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """

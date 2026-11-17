@@ -279,7 +279,7 @@ def summarize(params: dict) -> dict:
 # ── tracking ────────────────────────────────────────────────────────────────
 
 
-def current_net_worth(db) -> Optional[float]:
+def current_net_worth(db: Any) -> Optional[float]:
     """Today's balance-sheet net worth, or None when it cannot be built."""
     try:
         from portf_manager.services.balance_sheet import build_balance_sheet
@@ -389,7 +389,7 @@ def scenario_view(
     return view
 
 
-def list_views(db, today: Optional[date] = None) -> list[dict]:
+def list_views(db: Any, today: Optional[date] = None) -> list[dict]:
     """Every saved scenario with summary and tracking against today's net worth."""
     rows = db.get_wealth_scenarios()
     actual = current_net_worth(db) if rows else None
@@ -562,7 +562,7 @@ def prefill_params(
     return {"params": params, "sources": sources, "notes": notes}
 
 
-def gather_prefill(db, today: Optional[date] = None) -> dict:
+def gather_prefill(db: Any, today: Optional[date] = None) -> dict:
     """Read the balance sheet, exposure, loans and bank rows; see ``prefill_params``.
 
     Each source is read on its own: one that fails is reported in ``notes``

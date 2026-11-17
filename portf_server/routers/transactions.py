@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from ..dependencies import get_database
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager
+from portf_manager.database import Database
 
 router = APIRouter()
 
@@ -52,7 +53,7 @@ async def list_transactions(
     portfolio_id: Optional[int] = Query(
         default=None, description="Filter by portfolio"
     ),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(get_api_key_auth_for_transactions),
 ):
     """Get all transactions."""
@@ -99,9 +100,9 @@ class TransactionCreateRequest(BaseModel):
 @router.post("/", response_model=dict)
 async def create_transaction(
     request: TransactionCreateRequest,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(get_api_key_auth_for_transactions),
-):
+) -> dict:
     """Create a new transaction."""
     try:
         # Validate that the asset exists
@@ -157,7 +158,7 @@ async def create_transaction(
 @router.get("/{transaction_id}")
 async def get_transaction(
     transaction_id: int,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(get_api_key_auth_for_transactions),
 ):
     """Get a specific transaction by ID."""
@@ -193,9 +194,9 @@ class TransactionUpdateRequest(BaseModel):
 async def update_transaction(
     transaction_id: int,
     request: TransactionUpdateRequest,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(get_api_key_auth_for_transactions),
-):
+) -> dict:
     """Update a transaction."""
     try:
         # Check if transaction exists
@@ -279,9 +280,9 @@ async def update_transaction(
 @router.delete("/{transaction_id}", response_model=dict)
 async def delete_transaction(
     transaction_id: int,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(get_api_key_auth_for_transactions),
-):
+) -> dict:
     """Delete a transaction."""
     try:
         # Check if transaction exists

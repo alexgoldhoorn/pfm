@@ -35,7 +35,7 @@ def _fx_on(db, currency: str, on_date) -> float:
     return _get_fx_rate_on(db, currency, on_date)
 
 
-def gather_performance(db, portfolio_id: Optional[int] = None) -> dict[str, Any]:
+def gather_performance(db: Any, portfolio_id: Optional[int] = None) -> dict[str, Any]:
     """Invested, current value, total gain and return, IRR, inception date."""
     perf = compute_performance(
         db, _fx, lambda cur, d: _fx_on(db, cur, d), portfolio_id=portfolio_id
@@ -50,7 +50,7 @@ def gather_performance(db, portfolio_id: Optional[int] = None) -> dict[str, Any]
     }
 
 
-def gather_risk(db) -> dict[str, Any]:
+def gather_risk(db: Any) -> dict[str, Any]:
     """Flow-adjusted risk metrics from daily snapshots (portfolio-wide)."""
     metrics = compute_portfolio_risk(db, lambda cur, d: _fx_on(db, cur, d))
     metrics.pop("returns", None)
@@ -83,7 +83,8 @@ def _resolve_sector_country(db, asset: dict, _value: float = 0) -> tuple[str, st
     yf_sym = asset.get("ticker") or sym
 
     def _fetch(s=yf_sym):
-        fund = get_fundamentals(db, s, max_age=0)  # force live when outer cache is cold
+        # force live when outer cache is cold
+        fund = get_fundamentals(db, s, max_age=0)
         return {"sector": fund.get("sector"), "country": fund.get("country")}
 
     try:
@@ -96,7 +97,9 @@ def _resolve_sector_country(db, asset: dict, _value: float = 0) -> tuple[str, st
     return (sector or "Unknown", country or "Unknown")
 
 
-def gather_diversification(db, portfolio_id: Optional[int] = None) -> dict[str, Any]:
+def gather_diversification(
+    db: Any, portfolio_id: Optional[int] = None
+) -> dict[str, Any]:
     """Exposure breakdown for the health bundle, funds looked through.
 
     Delegates to the exposure service: this and /analytics/diversification are
@@ -109,7 +112,9 @@ def gather_diversification(db, portfolio_id: Optional[int] = None) -> dict[str, 
     return result
 
 
-def gather_fees_and_dividends(db, portfolio_id: Optional[int] = None) -> dict[str, Any]:
+def gather_fees_and_dividends(
+    db: Any, portfolio_id: Optional[int] = None
+) -> dict[str, Any]:
     """Fee drag % and trailing-12m dividend income."""
     txns = db.get_all_transactions(portfolio_id=portfolio_id)
     portfolios = {p["id"]: p["name"] for p in db.get_all_portfolios()}
@@ -158,7 +163,7 @@ def gather_fees_and_dividends(db, portfolio_id: Optional[int] = None) -> dict[st
     }
 
 
-def gather_tax(db, portfolio_id: Optional[int] = None) -> dict[str, Any]:
+def gather_tax(db: Any, portfolio_id: Optional[int] = None) -> dict[str, Any]:
     """Harvestable losses and current-year IRPF estimate."""
     yr = date.today().year
     realised_gain = 0.0
@@ -221,7 +226,9 @@ def gather_tax(db, portfolio_id: Optional[int] = None) -> dict[str, Any]:
     }
 
 
-def gather_holdings_fundamentals(db, portfolio_id: Optional[int] = None) -> list[dict]:
+def gather_holdings_fundamentals(
+    db: Any, portfolio_id: Optional[int] = None
+) -> list[dict]:
     """Per-holding weight % + fundamentals (P/E, yield, sector) from yfinance cache."""
     txns = db.get_all_transactions(portfolio_id=portfolio_id)
     positions, _ = compute_positions(txns)

@@ -165,7 +165,8 @@ def parse_generic_bank_csv(content: str) -> BankParseResult:
 
     for row_num, row in enumerate(rows[1:], start=2):
         if not any(c.strip() for c in row):
-            continue  # skip blank lines
+            # skip blank lines
+            continue
         try:
             date_str = _parse_date(_get(row, "date"), date_formats)
         except ValueError as e:

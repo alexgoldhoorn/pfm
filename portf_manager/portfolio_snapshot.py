@@ -188,7 +188,8 @@ class PortfolioSnapshot:
             as_of=datetime.now().isoformat(),
             total_positions=len(positions),
             total_invested=total_invested,
-            current_value=None,  # Would need market data integration
+            # Would need market data integration
+            current_value=None,
             cash_balance=cash_balance,
             positions=positions,
             recent_transactions=recent_transactions,
@@ -224,7 +225,8 @@ class PortfolioSnapshot:
             "positions": compact_positions,
             "recent_activity": summary.recent_transactions[
                 :10
-            ],  # Limit to 10 most recent
+                # Limit to 10 most recent
+            ],
         }
 
     def estimate_token_count(self, json_data: Dict[str, Any]) -> int:

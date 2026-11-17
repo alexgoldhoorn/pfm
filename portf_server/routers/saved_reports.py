@@ -50,7 +50,7 @@ def _clean_title(title: str) -> str:
 @router.get("/")
 def list_reports(
     db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+) -> dict:
     """Saved reports without their content, newest first."""
     return {"items": db.list_reports()}
 

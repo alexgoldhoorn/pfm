@@ -75,7 +75,7 @@ def _stored(db) -> dict:
     return merged
 
 
-def load_settings(db) -> dict:
+def load_settings(db: Any) -> dict:
     """Stored settings over the defaults.
 
     When ``managed_portfolio_ids`` is empty and a portfolio name contains
@@ -153,7 +153,7 @@ def _validate(settings: dict, db) -> None:
         raise ValueError(f"unknown portfolio ids in managed_portfolio_ids: {unknown}")
 
 
-def save_settings(db, patch: dict) -> dict:
+def save_settings(db: Any, patch: dict) -> dict:
     """Merge *patch* over the stored settings, validate and store them.
 
     Unknown keys in *patch* are ignored.
@@ -398,7 +398,7 @@ def _buffer_rule(settings: dict) -> str:
 
 
 def deployable(
-    db,
+    db: Any,
     today: date | None = None,
     fx=None,
     fx_on=None,
@@ -538,7 +538,7 @@ def deployable(
     return out
 
 
-def deployable_cached(db, today: date | None = None, fx=None, fx_on=None) -> dict:
+def deployable_cached(db: Any, today: date | None = None, fx=None, fx_on=None) -> dict:
     """:func:`deployable` cached for 60 seconds, keyed on today's date.
 
     Only for callers using the live FX and the stored settings; a settings

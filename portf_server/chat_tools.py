@@ -711,12 +711,12 @@ def _get_recurring_spending(db: Database, include_ended: bool = False) -> str:
 @_tool("search_spending_transactions")
 def _search_spending_transactions(
     db: Database,
-    query: str = None,
-    category: str = None,
-    start_date: str = None,
-    end_date: str = None,
-    amount_sign: str = None,
-    min_abs_amount: float = None,
+    query: Optional[str] = None,
+    category: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    amount_sign: Optional[str] = None,
+    min_abs_amount: Optional[float] = None,
     limit: int = 25,
 ) -> str:
     # Raw bank rows hold sensitive text (tax ids, names): cap the count and

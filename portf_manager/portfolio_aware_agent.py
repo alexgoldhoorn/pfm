@@ -171,7 +171,7 @@ def create_portfolio_aware_chat_session(db_path: str) -> PortfolioAwareAgent:
 
 
 # Console integration functions
-def run_portfolio_chat_session(db_path: str):
+def run_portfolio_chat_session(db_path: str) -> None:
     """Run an interactive portfolio-aware chat session"""
     agent = create_portfolio_aware_chat_session(db_path)
 

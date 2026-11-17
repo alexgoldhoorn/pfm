@@ -16,7 +16,7 @@ occurrence of the same kind.
 
 import json
 from datetime import date, datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
 
 ACK_PREFIX = "action_item_ack:"
 STATUSES = ("open", "checked", "snoozed")
@@ -60,7 +60,7 @@ def effective_status(ack: Optional[dict], today: Optional[date] = None) -> str:
     return "open"
 
 
-def list_acks(db) -> dict[str, dict]:
+def list_acks(db: Any) -> dict[str, dict]:
     """Every stored ack, keyed by finding id.
 
     A backend without ``app_settings`` support (the PostgreSQL adapter has
@@ -82,7 +82,7 @@ def list_acks(db) -> dict[str, dict]:
     return acks
 
 
-def get_ack(db, item_id: str) -> Optional[dict]:
+def get_ack(db: Any, item_id: str) -> Optional[dict]:
     """The stored ack for one finding, or None."""
     getter = getattr(db, "get_setting", None)
     if getter is None:
@@ -101,7 +101,7 @@ def get_ack(db, item_id: str) -> Optional[dict]:
 
 
 def set_ack(
-    db,
+    db: Any,
     item_id: str,
     status: str,
     note: Optional[str] = None,

@@ -288,7 +288,7 @@ async def delete_asset(
     asset_id: int,
     db: Database = Depends(get_database),
     api_key_info: dict = Depends(get_api_key_auth_for_assets),
-):
+) -> None:
     """
     Delete an asset (soft delete).
 
@@ -449,7 +449,7 @@ async def get_asset_prices(
 def resolve_tickers(
     db: Database = Depends(get_database),
     api_key_info: dict = Depends(get_api_key_auth_for_assets),
-):
+) -> dict:
     """Auto-resolve Yahoo Finance tickers for ISIN-keyed assets via OpenFIGI.
 
     Finds all assets whose symbol is an ISIN and ticker is unset, queries

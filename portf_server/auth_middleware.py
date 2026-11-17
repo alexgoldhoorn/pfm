@@ -29,7 +29,7 @@ class APIKeyError(Exception):
 class APIKeyManager:
     """Manager class for API key operations."""
 
-    def __init__(self, database: Database):
+    def __init__(self, database: Database) -> None:
         """
         Initialize API key manager.
 
@@ -121,7 +121,8 @@ class APIKeyManager:
             return {
                 "id": key_id,
                 "key_name": key_name,
-                "api_key": api_key,  # Only returned once during creation
+                # Only returned once during creation
+                "api_key": api_key,
                 "key_prefix": key_prefix,
                 "description": description,
                 "expires_at": expires_at,
@@ -282,7 +283,7 @@ class APIKeyManager:
 class APIKeyBearer(HTTPBearer):
     """Custom HTTPBearer that validates API keys."""
 
-    def __init__(self, api_key_manager: APIKeyManager):
+    def __init__(self, api_key_manager: APIKeyManager) -> None:
         """
         Initialize API key bearer.
 

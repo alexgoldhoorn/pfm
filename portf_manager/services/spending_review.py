@@ -274,7 +274,8 @@ def build_review(
     def guard(name: str, build):
         try:
             return build()
-        except Exception as e:  # one failing part never takes the review down
+        # one failing part never takes the review down
+        except Exception as e:
             warnings.append(f"{name} could not be built: {e}")
             return None
 

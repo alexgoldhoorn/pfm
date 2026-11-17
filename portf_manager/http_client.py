@@ -41,7 +41,7 @@ class PortfolioHTTPClient:
         """Context manager exit - close client."""
         self.client.close()
 
-    def close(self):
+    def close(self) -> None:
         """Close the HTTP client."""
         self.client.close()
 
@@ -151,7 +151,7 @@ class PortfolioHTTPClient:
         response = self._make_request("GET", "/api/v1/assets", params=params)
         return response if isinstance(response, list) else response.get("assets", [])
 
-    def update_asset(self, asset_id: int, **kwargs) -> bool:
+    def update_asset(self, asset_id: int, **kwargs: Any) -> bool:
         """Update asset on server."""
         try:
             self._make_request("PUT", f"/api/v1/assets/{asset_id}", json=kwargs)
@@ -227,7 +227,7 @@ class PortfolioHTTPClient:
         except RuntimeError:
             return False
 
-    def update_transaction(self, transaction_id: int, **kwargs) -> bool:
+    def update_transaction(self, transaction_id: int, **kwargs: Any) -> bool:
         """Update a transaction on the server."""
         if not kwargs:
             return False

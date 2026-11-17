@@ -21,6 +21,7 @@ from portf_manager.services.action_items import action_items_report
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
+from portf_manager.database import Database
 
 router = APIRouter()
 
@@ -40,7 +41,7 @@ def list_action_items(
             "all: every item, annotated with its status and ack."
         ),
     ),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Aggregated cross-cutting maintenance checklist.
@@ -61,8 +62,8 @@ def list_action_items(
 
 @router.get("/acks")
 def list_action_item_acks(
-    db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+) -> dict:
     """Every stored follow-up record, keyed by finding id."""
     return {"acks": list_acks(db)}
 
@@ -83,8 +84,10 @@ class AckIn(BaseModel):
 
 @router.post("/ack")
 def ack_action_item(
-    body: AckIn, db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+    body: AckIn,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+) -> dict:
     """Mark a finding checked or snoozed, or reopen it (``status: open``).
 
     Returns ``{"id", "status", "ack"}``; ``ack`` is null once reopened.

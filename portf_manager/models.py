@@ -75,30 +75,30 @@ class DatabaseAdapter(Protocol):
     def get_price_history(
         self,
         asset_id: int,
-        start_date: str = None,
-        end_date: str = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
         price_type: str = "close",
     ) -> List[Dict]:
         """Get price history for an asset."""
         ...
 
-    def get_all_transactions(self, limit: int = None) -> List[Dict]:
+    def get_all_transactions(self, limit: Optional[int] = None) -> List[Dict]:
         """Get all transactions."""
         ...
 
-    def create_asset(self, **kwargs) -> int:
+    def create_asset(self, **kwargs: Any) -> int:
         """Create new asset."""
         ...
 
-    def create_transaction(self, **kwargs) -> int:
+    def create_transaction(self, **kwargs: Any) -> int:
         """Create new transaction."""
         ...
 
-    def update_asset(self, asset_id: int, **kwargs) -> bool:
+    def update_asset(self, asset_id: int, **kwargs: Any) -> bool:
         """Update asset."""
         ...
 
-    def update_transaction(self, transaction_id: int, **kwargs) -> bool:
+    def update_transaction(self, transaction_id: int, **kwargs: Any) -> bool:
         """Update transaction."""
         ...
 
@@ -110,11 +110,11 @@ class DatabaseAdapter(Protocol):
         """Get entity by name."""
         ...
 
-    def create_entity(self, **kwargs) -> int:
+    def create_entity(self, **kwargs: Any) -> int:
         """Create new entity."""
         ...
 
-    def update_entity(self, entity_id: int, **kwargs) -> bool:
+    def update_entity(self, entity_id: int, **kwargs: Any) -> bool:
         """Update entity."""
         ...
 
@@ -126,11 +126,11 @@ class DatabaseAdapter(Protocol):
         """Get portfolio by name."""
         ...
 
-    def create_portfolio(self, **kwargs) -> int:
+    def create_portfolio(self, **kwargs: Any) -> int:
         """Create new portfolio."""
         ...
 
-    def update_portfolio(self, portfolio_id: int, **kwargs) -> bool:
+    def update_portfolio(self, portfolio_id: int, **kwargs: Any) -> bool:
         """Update portfolio."""
         ...
 
@@ -151,7 +151,8 @@ class Entity:
 
     id: int
     name: str
-    entity_type: str  # e.g., 'broker', 'bank', 'platform'
+    # e.g., 'broker', 'bank', 'platform'
+    entity_type: str
     website: Optional[str] = None
     description: Optional[str] = None
     is_active: bool = True
@@ -212,7 +213,7 @@ class Asset:
         if isinstance(self.asset_type, str):
             self.asset_type = AssetType(self.asset_type)
 
-    def set_db_adapter(self, adapter: DatabaseAdapter):
+    def set_db_adapter(self, adapter: DatabaseAdapter) -> None:
         """Set database adapter for data access."""
         self._db_adapter = adapter
 
@@ -323,7 +324,8 @@ class Asset:
                 if transaction.transaction_type == TransactionType.BUY:
                     total_cost += transaction.total_amount
                     total_shares += transaction.quantity
-                else:  # SELL
+                # SELL
+                else:
                     # Use FIFO for cost basis calculation
                     if total_shares > 0:
                         avg_cost = total_cost / total_shares
@@ -418,7 +420,7 @@ class Transaction:
         if isinstance(self.transaction_date, str):
             self.transaction_date = datetime.fromisoformat(self.transaction_date).date()
 
-    def set_db_adapter(self, adapter: DatabaseAdapter):
+    def set_db_adapter(self, adapter: DatabaseAdapter) -> None:
         """Set database adapter for data access."""
         self._db_adapter = adapter
 
@@ -556,7 +558,7 @@ class Portfolio:
     # Database adapter for data access
     _db_adapter: Optional[DatabaseAdapter] = field(default=None, init=False, repr=False)
 
-    def set_db_adapter(self, adapter: DatabaseAdapter):
+    def set_db_adapter(self, adapter: DatabaseAdapter) -> None:
         """Set database adapter for data access."""
         self._db_adapter = adapter
 

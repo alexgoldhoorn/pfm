@@ -11,6 +11,7 @@ from portf_manager.services import wealth_scenarios as ws
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
+from portf_manager.database import Database
 
 router = APIRouter()
 
@@ -60,13 +61,15 @@ def _view(db, scenario_id: int, with_projection: bool = False) -> dict:
 
 
 @router.get("/")
-def list_scenarios(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def list_scenarios(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+):
     """Every saved scenario with its summary and tracking (primary first)."""
     return ws.list_views(db)
 
 
 @router.get("/prefill")
-def prefill(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def prefill(db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)):
     """Simulator inputs from the balance sheet, loans and bank imports.
 
     Registered before ``/{scenario_id}``. Keys that could not be derived are
@@ -78,7 +81,7 @@ def prefill(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
 @router.post("/", status_code=201)
 def create_scenario(
     body: ScenarioCreate,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Save the current inputs under a name; the baseline is today's net worth."""
@@ -99,7 +102,9 @@ def create_scenario(
 
 @router.get("/{scenario_id}")
 def get_scenario(
-    scenario_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+    scenario_id: int,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
 ):
     """One scenario with its yearly projection path."""
     return _view(db, scenario_id, with_projection=True)
@@ -109,7 +114,7 @@ def get_scenario(
 def update_scenario(
     scenario_id: int,
     body: ScenarioUpdate,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Rename, describe, re-parameterise or promote a scenario.
@@ -144,7 +149,9 @@ def update_scenario(
 
 @router.post("/{scenario_id}/rebaseline")
 def rebaseline_scenario(
-    scenario_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+    scenario_id: int,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
 ):
     """Restart tracking from today, keeping the inputs as they are."""
     if not db.update_wealth_scenario(
@@ -158,8 +165,10 @@ def rebaseline_scenario(
 
 @router.delete("/{scenario_id}")
 def delete_scenario(
-    scenario_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+    scenario_id: int,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+) -> dict:
     """Delete a scenario."""
     if not db.delete_wealth_scenario(scenario_id):
         raise HTTPException(status_code=404, detail="Scenario not found")

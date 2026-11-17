@@ -223,7 +223,8 @@ _INSTRUMENTED_METHODS = (
     "generate_with_search",
     "generate_with_tools",
     "complete_with_tool_result",
-    "run_tool_loop",  # a retry re-runs the read-only tools too
+    # a retry re-runs the read-only tools too
+    "run_tool_loop",
 )
 _call_depth = threading.local()
 
@@ -1108,7 +1109,8 @@ class AnthropicLLMClient:
         messages = [{"role": "user", "content": prompt}]
         tools = [{"type": search_type, "name": "web_search", "max_uses": 5}]
         msg = None
-        for _ in range(4):  # a long server-tool turn can pause; resume it
+        # a long server-tool turn can pause; resume it
+        for _ in range(4):
             msg = self._create(messages=messages, tools=tools)
             if msg.stop_reason != "pause_turn":
                 break

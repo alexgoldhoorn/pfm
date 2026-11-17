@@ -65,6 +65,7 @@ from ..dependencies import get_api_key_manager, get_database
 # can't make us re-hit the network per position — the cause of the tax-estimate
 # 504 gateway timeouts).
 from .portfolios import _get_fx_rate as _fx
+from portf_manager.database import Database
 
 _KNOWN_BENCHMARKS = set(PERFORMANCE_BENCHMARKS)
 
@@ -296,7 +297,9 @@ def _compute_positions(db):
 
 
 @router.get("/dividends")
-async def get_dividends(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+async def get_dividends(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+) -> dict:
     """Dividend income by year, month, symbol + projected forward annual income.
 
     Every amount is in EUR, each payment converted at its own date's rate, and
@@ -392,9 +395,9 @@ def get_performance(
         DEFAULT_BENCHMARK, description="Benchmark ticker for comparison"
     ),
     period: str = Query("all", description="Return window: ytd | 1m | 1y | all"),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Total return, money-weighted IRR, and time-weighted return vs a benchmark.
 
     ``total_return_pct`` / ``money_weighted_irr_pct`` are lifetime figures.
@@ -472,7 +475,7 @@ def get_attribution(
     start: Optional[date] = Query(None, description="Overrides period"),
     end: Optional[date] = Query(None, description="Defaults to today"),
     portfolio_id: Optional[int] = Query(None),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """What drove the return: flow-adjusted gain per asset, type and broker.
@@ -522,7 +525,7 @@ def get_progress(
     benchmark: str = Query(
         DEFAULT_BENCHMARK, description="Benchmark ticker for the yearly comparison"
     ),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Contributions vs growth, yearly/monthly returns (nominal and real),
@@ -683,14 +686,16 @@ def get_progress(
 
 @router.get("/networth-history")
 async def get_networth_history(
-    db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+) -> dict:
     """Daily portfolio value vs invested-cost snapshots."""
     return {"snapshots": db.get_snapshots()}
 
 
 @router.post("/snapshot")
-def take_snapshot(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def take_snapshot(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+) -> dict:
     """Record today's portfolio value/cost snapshot (called by the price cron).
 
     Cost is the EUR cost basis at transaction-date rates, so it only changes
@@ -844,9 +849,9 @@ def _run_backfill(db, force: bool = False) -> None:
 @router.post("/backfill-snapshots")
 async def backfill_snapshots(
     force: bool = Query(False, description="Recompute/overwrite existing snapshots"),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Start a background reconstruction of historical net-worth snapshots."""
     if _BACKFILL["running"]:
         return {"status": "running", **_BACKFILL}
@@ -866,9 +871,9 @@ async def backfill_status(api_key_info: dict = Depends(_auth)):
 @router.get("/tax-estimate")
 def get_tax_estimate(
     year: Optional[int] = Query(None, description="Tax year (default current)"),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Spanish IRPF savings-base estimate: realised gains + dividends YTD, unrealised, harvest candidates."""
     yr = year or date.today().year
 
@@ -900,7 +905,8 @@ def get_tax_estimate(
         value = pos["quantity"] * price
         gain = (value - pos["cost"]) * _fx(cur)
         unrealised += gain
-        if gain < -1:  # currently at a loss → harvest candidate
+        # currently at a loss → harvest candidate
+        if gain < -1:
             harvest_candidates.append(
                 {
                     "symbol": asset["symbol"],
@@ -929,7 +935,7 @@ def get_tax_estimate(
 @router.get("/tax-optimizer")
 def get_tax_optimizer(
     year: Optional[int] = Query(None),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Year-end tax optimisation: realised gains + income this year, the losses
@@ -944,7 +950,9 @@ def get_tax_optimizer(
 
 
 @router.get("/diversification")
-def get_diversification(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def get_diversification(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+):
     """Exposure breakdown with funds looked through, plus concentration.
 
     Defined as a sync handler (not async) so FastAPI runs it in a threadpool:
@@ -963,7 +971,9 @@ def get_diversification(db=Depends(get_database), api_key_info: dict = Depends(_
 
 
 @router.get("/fund-overlap")
-def get_fund_overlap(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def get_fund_overlap(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+) -> dict:
     """Held funds that hold the same thing — same index family, or nested."""
     from portf_manager.services.exposure import compute_exposure, find_fund_overlaps
 
@@ -983,7 +993,7 @@ def get_risk(
     window: str = Query(
         "all", pattern="^(all|1y)$", description="all history, or trailing 1y"
     ),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Drawdowns, volatility, Sharpe, Sortino, Calmar, Beta, Alpha from snapshots.
@@ -1053,7 +1063,9 @@ def get_risk(
 
 
 @router.get("/fees")
-def get_fees(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def get_fees(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+) -> dict:
     """Total fees + tax by broker/portfolio, fee drag as % of invested."""
     by_portfolio: dict[str, dict] = {}
     total_fees = total_tax = total_invested = 0.0
@@ -1204,7 +1216,7 @@ def _build_tax_report_data(db, yr: int, fx_on=None, strict: bool = False) -> dic
 @router.get("/tax-report")
 def get_tax_report(
     year: Optional[int] = Query(None, description="Tax year (default current)"),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Per-lot realised gains (FIFO) + dividend withholding summary for a year."""
@@ -1220,7 +1232,7 @@ def _today() -> date:
 @router.get("/wash-sale")
 def get_wash_sale(
     symbol: Optional[str] = Query(None, description="Check a single ticker/ISIN"),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Spanish antiaplicación check (art. 33.5 LIRPF) as of today.
@@ -1256,7 +1268,7 @@ def get_wash_sale(
 @router.get("/tax-report/pdf")
 def get_tax_report_pdf(
     year: Optional[int] = Query(None, description="Tax year (default current)"),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Filing-ready Spanish IRPF tax report as a PDF.
@@ -1289,7 +1301,7 @@ def get_tax_report_pdf(
     )
 
 
-def compute_data_freshness(db, stale_days: int = 4) -> dict:
+def compute_data_freshness(db: Database, stale_days: int = 4) -> dict:
     """Freshness of the stored prices behind every value / gain figure.
 
     Shared by ``GET /analytics/data-freshness`` and the chat's
@@ -1389,7 +1401,7 @@ async def get_data_freshness(
             "many calendar days (4 covers a normal weekend)."
         ),
     ),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Freshness of the external price data behind value / gain-loss figures.
@@ -1405,9 +1417,9 @@ async def get_data_freshness(
 @router.get("/update-runs")
 async def get_update_runs(
     limit: int = Query(20, ge=1, le=100, description="Max runs to return."),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Recent price-update runs (timings, success/skip/error counts, symbols).
 
     Powers the Diagnostics page's update-history table so the daily cron's
@@ -1434,9 +1446,9 @@ class UpdateRunIn(BaseModel):
 @router.post("/update-runs")
 async def record_update_run(
     run: UpdateRunIn,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Persist a price-update run (server-mode path for the CLI cron)."""
     run_id = db.record_price_update_run(
         started_at=run.started_at,
@@ -1466,9 +1478,9 @@ def trigger_price_update(
     source: Literal["api", "cron", "manual"] = Query(
         "api", description="Label stored on the run record."
     ),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Start a background price update for all (or the given) auto-priced assets.
 
     The CLI in server mode delegates its whole run here: the updater needs the
@@ -1503,7 +1515,7 @@ def trigger_price_update(
 @router.get("/price-update-status")
 def price_update_status(
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Check whether a background price update is currently running."""
     with _price_update_lock:
         return {
@@ -1520,7 +1532,7 @@ def stress_test(
     scenario: Optional[str] = Query(None),
     from_date: Optional[str] = Query(None, alias="from"),
     to_date: Optional[str] = Query(None, alias="to"),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Stress test portfolio against a historical crash scenario or custom date range.
@@ -1659,7 +1671,9 @@ def stress_test(
 
 
 @router.get("/dq/reconciliation")
-def dq_reconciliation(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def dq_reconciliation(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+) -> dict:
     """Per-portfolio cash reconciliation.
 
     Computes the 'implied cash' each portfolio should hold at the broker
@@ -1754,7 +1768,9 @@ def _within_pct(a: float, b: float, pct: float) -> bool:
 
 
 @router.get("/dq/duplicates")
-def dq_duplicates(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def dq_duplicates(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+) -> dict:
     """Scan all transactions for fuzzy near-duplicates.
 
     Groups by (portfolio_id, asset_id, transaction_type). Within each group,
@@ -1848,7 +1864,9 @@ def dq_duplicates(db=Depends(get_database), api_key_info: dict = Depends(_auth))
 
 
 @router.get("/dq/suspicious")
-def dq_suspicious(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
+def dq_suspicious(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+) -> dict:
     """Scan transactions for data anomalies.
 
     Checks (per transaction, chronologically):
@@ -1968,9 +1986,9 @@ def dq_suspicious(db=Depends(get_database), api_key_info: dict = Depends(_auth))
 def get_correlation(
     portfolio_id: Optional[int] = Query(None),
     days: int = Query(90, ge=30, le=365),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Pearson correlation matrix of daily log-returns for held assets.
 
     Only assets with at least 10 price points in the requested window are
@@ -2092,7 +2110,7 @@ def get_correlation(
 
 @router.get("/portfolio-comparison")
 def get_portfolio_comparison(
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Performance comparison across all portfolios.
@@ -2139,7 +2157,7 @@ class StressRequest(BaseModel):
 
 
 @router.get("/stress/scenarios")
-def get_stress_scenarios(api_key_info: dict = Depends(_auth)):
+def get_stress_scenarios(api_key_info: dict = Depends(_auth)) -> dict:
     """The preset shock scenarios and their shocks."""
     from portf_manager.services.stress import list_scenarios
 
@@ -2149,9 +2167,9 @@ def get_stress_scenarios(api_key_info: dict = Depends(_auth)):
 @router.get("/stress")
 def get_stress(
     scenario: str = Query("equity_bear"),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Loss from a preset shock, with the retirement verdict recomputed."""
     from portf_manager.services.stress import SCENARIOS, run_stress
 
@@ -2168,9 +2186,9 @@ def get_stress(
 @router.post("/stress")
 def post_stress(
     body: StressRequest,
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Loss from a custom shock body."""
     from portf_manager.services.stress import run_stress
 

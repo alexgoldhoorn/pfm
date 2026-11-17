@@ -237,7 +237,7 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # Health check endpoint
 @app.get("/health", tags=["Health"])
-async def health_check():
+async def health_check() -> dict:
     """
     Health check endpoint to verify the API is running.
     """
@@ -251,7 +251,7 @@ async def health_check():
 
 # Root endpoint
 @app.get("/", tags=["Root"])
-async def root():
+async def root() -> dict:
     """
     Root endpoint with API information.
     """

@@ -5,14 +5,17 @@ from typing import Optional
 
 @dataclass
 class LLMTransaction:
-    tx_type: str  # buy / sell
+    # buy / sell
+    tx_type: str
     symbol: str
     asset_name: str
     quantity: float
     price: float
-    date: str  # ISO-8601
+    # ISO-8601
+    date: str
     currency: str
-    raw_text: str  # original line for traceability
+    # original line for traceability
+    raw_text: str
     fees: float = 0.0
     asset_type: str = ""
     tax: float = 0.0

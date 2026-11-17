@@ -14,6 +14,7 @@ from portf_manager import market
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
+from portf_manager.database import Database
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -33,9 +34,9 @@ async def _auth(
 def batch_quotes(
     symbols: str = Query(..., description="Comma-separated Yahoo-format symbols"),
     max_age: int = Query(86400, ge=0, description="Max data age in seconds"),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """Batch quotes; per-symbol errors inside the response, never a batch 500."""
     syms = [s.strip().upper() for s in symbols.split(",") if s.strip()]
     if not syms:
@@ -51,7 +52,7 @@ def batch_quotes(
 def single_quote(
     symbol: str,
     max_age: int = Query(86400, ge=0),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Quote for one Yahoo-format symbol (e.g. NVDA, ASML.AS, BTC-EUR)."""
@@ -62,9 +63,9 @@ def single_quote(
 def fx_rates(
     currencies: str = Query(..., description="Comma-separated ISO currency codes"),
     max_age: int = Query(3600, ge=0),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
-):
+) -> dict:
     """EUR conversion rates for the given currencies."""
     curs = [c.strip().upper() for c in currencies.split(",") if c.strip()]
     if not curs:
@@ -80,7 +81,7 @@ def fx_rates(
 def fundamentals(
     symbol: str,
     max_age: int = Query(21600, ge=0),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Key yfinance fundamentals (PE, market cap, dividend yield, 52w range...)."""

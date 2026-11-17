@@ -8,7 +8,7 @@ Supported platforms:
 
 import csv
 import io
-from typing import Optional
+from typing import Any, Optional
 
 from portf_manager.positions import compute_positions
 
@@ -63,7 +63,7 @@ def _build_asset_meta(txs: list[dict]) -> dict[int, dict]:
 
 
 def build_yahoo_finance_csv(
-    db, portfolio_id: Optional[int], mode: str
+    db: Any, portfolio_id: Optional[int], mode: str
 ) -> tuple[str, list[str]]:
     txs = _fetch_buy_sell_txs(db, portfolio_id)
     buf = io.StringIO()
@@ -121,7 +121,7 @@ def build_yahoo_finance_csv(
 
 
 def build_simply_wall_st_csv(
-    db, portfolio_id: Optional[int], mode: str
+    db: Any, portfolio_id: Optional[int], mode: str
 ) -> tuple[str, list[str]]:
     txs = _fetch_buy_sell_txs(db, portfolio_id)
     buf = io.StringIO()

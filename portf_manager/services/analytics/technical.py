@@ -46,7 +46,8 @@ class TechnicalSignal:
 
     signal_type: SignalType
     strength: SignalStrength
-    confidence: float  # 0-1
+    # 0-1
+    confidence: float
     description: str
     supporting_indicators: List[str]
     target_price: Optional[float] = None
@@ -62,9 +63,11 @@ class TechnicalRecommendation:
     overall_confidence: float
     current_price: float
     signals: List[TechnicalSignal]
-    key_levels: Dict[str, float]  # support, resistance, etc.
+    # support, resistance, etc.
+    key_levels: Dict[str, float]
     risk_assessment: str
-    time_horizon: str  # short, medium, long
+    # short, medium, long
+    time_horizon: str
     timestamp: datetime = None
 
     def __post_init__(self):
@@ -152,13 +155,16 @@ class TechnicalAnalysisEngine:
         # RSI Analysis
         if data.rsi_14 is not None:
             if data.rsi_14 > 70:
-                score -= 2  # Overbought
+                # Overbought
+                score -= 2
                 indicators.append("RSI overbought (>70)")
             elif data.rsi_14 < 30:
-                score += 2  # Oversold
+                # Oversold
+                score += 2
                 indicators.append("RSI oversold (<30)")
             elif 40 <= data.rsi_14 <= 60:
-                score += 1  # Neutral momentum
+                # Neutral momentum
+                score += 1
                 indicators.append("RSI neutral")
 
         # MACD Analysis
@@ -296,7 +302,8 @@ class TechnicalAnalysisEngine:
         elif score < 0:
             strength = SignalStrength.SELL
 
-        confidence = min(abs(score) / 2.0, 0.7)  # Volume signals are less reliable
+        # Volume signals are less reliable
+        confidence = min(abs(score) / 2.0, 0.7)
 
         return TechnicalSignal(
             signal_type=SignalType.VOLUME,
@@ -385,7 +392,8 @@ class TechnicalAnalysisEngine:
         elif score <= -1:
             strength = SignalStrength.SELL
 
-        confidence = min(abs(score) / 2.0, 0.6)  # Reversal signals are less certain
+        # Reversal signals are less certain
+        confidence = min(abs(score) / 2.0, 0.6)
 
         return TechnicalSignal(
             signal_type=SignalType.REVERSAL,

@@ -26,6 +26,7 @@ from portf_manager.platform_export import (
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
+from portf_manager.database import Database
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -56,7 +57,7 @@ def export_transactions_csv(
     portfolio_id: Optional[List[int]] = Query(
         default=None, description="Filter by one or more portfolio IDs"
     ),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Download all transactions as a CSV file."""
@@ -102,7 +103,7 @@ def export_pdt_xlsx(
     portfolio_id: Optional[int] = Query(
         default=None, description="Filter by portfolio ID"
     ),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Download all transactions in Portfolio Dividend Tracker XLSX format."""
@@ -128,7 +129,7 @@ def export_pdt_xlsx(
 
 @router.get("/backup")
 def export_db_backup(
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Download a consistent snapshot of the SQLite database (online-safe backup).
@@ -176,7 +177,7 @@ def export_yahoo_finance(
         default="transactions",
         description="'transactions' for full history, 'positions' for current holdings",
     ),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Download portfolio in Yahoo Finance CSV import format."""
@@ -203,7 +204,7 @@ def export_simply_wall_st(
         default="transactions",
         description="'transactions' for full history, 'positions' for current holdings",
     ),
-    db=Depends(get_database),
+    db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Download portfolio in Simply Wall St CSV import format."""

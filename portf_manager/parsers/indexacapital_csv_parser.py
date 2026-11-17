@@ -20,7 +20,8 @@ class IndexaCapitalParseResult:
     """Result of parsing IndexaCapital CSV data."""
 
     importable: List[LLMTransaction]
-    skipped: List[Tuple[str, str]]  # (transaction_type, reason)
+    # (transaction_type, reason)
+    skipped: List[Tuple[str, str]]
 
 
 class IndexaCapitalCSVParser:
@@ -44,17 +45,21 @@ class IndexaCapitalCSVParser:
 
         for row_num, row in enumerate(reader, 1):
             if row_num == 1:
-                continue  # header row
+                # header row
+                continue
 
             if len(row) < 9:
                 skipped.append((f"Row {row_num}", f"Insufficient columns: {len(row)}"))
                 continue
 
             try:
-                row[0].strip()  # DD/MM/YYYY
-                settlement_date = row[1].strip()  # YYYY-MM-DD
+                # DD/MM/YYYY
+                row[0].strip()
+                # YYYY-MM-DD
+                settlement_date = row[1].strip()
                 asset_name = row[2].strip().strip('"')
-                symbol = row[3].strip()  # ISIN
+                # ISIN
+                symbol = row[3].strip()
                 tx_type = row[4].strip().strip('"')
                 quantity_str = row[5].strip()
                 total_amount_str = row[6].strip().strip('"')
@@ -108,8 +113,10 @@ class IndexaCapitalCSVParser:
                     quantity=quantity,
                     price=price,
                     date=transaction_date,
-                    currency="EUR",  # IndexaCapital uses EUR
-                    raw_text=";".join(row),  # Join back for traceability
+                    # IndexaCapital uses EUR
+                    currency="EUR",
+                    # Join back for traceability
+                    raw_text=";".join(row),
                     fees=fees,
                 )
 

@@ -34,7 +34,7 @@ def _find_category(db, wanted_names: List[str]) -> Optional[str]:
     return None
 
 
-def default_category(db, loan: dict) -> Optional[str]:
+def default_category(db: Any, loan: dict) -> Optional[str]:
     """The spending category a loan's debits are expected in.
 
     The category named like the loan (case-insensitive), else ``Mortgage``
@@ -43,7 +43,7 @@ def default_category(db, loan: dict) -> Optional[str]:
     return _find_category(db, [str(loan["name"]), "mortgage"])
 
 
-def with_periods(db, loan: dict) -> dict:
+def with_periods(db: Any, loan: dict) -> dict:
     """Return the loan dict with its rate periods under ``rate_periods``."""
     return {**loan, "rate_periods": db.get_loan_rate_periods(loan["id"])}
 
@@ -104,7 +104,9 @@ def summary(loan: dict, today: date) -> Dict[str, Any]:
     }
 
 
-def equity(db, loan: dict, today: date, fx: Callable[[str], float]) -> Dict[str, Any]:
+def equity(
+    db: Any, loan: dict, today: date, fx: Callable[[str], float]
+) -> Dict[str, Any]:
     """Property value less the loan balance, with loan-to-value.
 
     Property is every manual asset in category ``property`` (not a liability).
@@ -219,7 +221,7 @@ def _history_comparison(
 
 
 def reconciliation(
-    db, loan: dict, today: date, category: Optional[str] = None
+    db: Any, loan: dict, today: date, category: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
     """Scheduled payment against the bank debits, one row per month.
 
@@ -320,7 +322,7 @@ def latest_complete_row(recon: Optional[Dict[str, Any]]) -> Optional[Dict[str, A
 
 
 def overview(
-    db,
+    db: Any,
     loan: dict,
     fx: Callable[[str], float],
     today: Optional[date] = None,
@@ -352,7 +354,10 @@ def _period_out(period: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def digest(
-    db, loan: Dict[str, Any], fx: Callable[[str], float], today: Optional[date] = None
+    db: Any,
+    loan: Dict[str, Any],
+    fx: Callable[[str], float],
+    today: Optional[date] = None,
 ) -> Dict[str, Any]:
     """One loan in a compact form for the chat and other readers.
 
@@ -533,7 +538,7 @@ def _solve_stretches(
 
 
 def detect(
-    db,
+    db: Any,
     category: Optional[str] = None,
     description: Optional[str] = None,
     principal: Optional[float] = None,
