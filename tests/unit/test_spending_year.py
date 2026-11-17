@@ -95,7 +95,11 @@ def test_month_grid_marks_unknown_months(two_years):
     assert len(d["months"]["this"]) == 12 and len(d["months"]["previous"]) == 12
     june_prev = d["months"]["previous"][5]
     assert june_prev["month"] == "2024-06"
-    assert june_prev["has_imports"] is False and june_prev["spending_eur"] == 0.0
+    assert june_prev["has_imports"] is False
+    # unknown, never zero
+    assert june_prev["income_eur"] is None
+    assert june_prev["spending_eur"] is None
+    assert june_prev["savings_eur"] is None
     assert d["months"]["this"][2]["spending_eur"] == 2250.0
 
 
@@ -165,6 +169,71 @@ def test_nothing_comparable_gives_no_totals_or_deltas(db):
     assert d["categories"] == []
     assert d["movers"] == {"increases": [], "decreases": []}
     assert any("like for like" in w for w in d["warnings"])
+
+
+def test_account_closed_last_year_does_not_blank_this_year(db):
+    main = db.create_portfolio("Example Bank", account_type="bank")
+    old = db.create_portfolio("Example Old Bank", account_type="bank")
+    _fill(db, main, 2025, range(1, 13), 350.0)
+    _fill(db, main, 2026, range(1, 11), 400.0)
+    # the old account closed in March 2025
+    for m in (1, 2, 3):
+        db.create_spending_transaction(
+            old, f"2025-{m:02d}-10", "EXAMPLE SHOP", -50.0, category="Groceries"
+        )
+    d = _build(db, date(2026, 11, 17), 2026)
+    assert d["data_through"] == "2026-10-10"
+    assert d["compared_months"] == [f"2026-{m:02d}" for m in range(1, 10)]
+    assert d["totals"]["this"]["spending_eur"] == 9 * 1400.0
+    # its 2025 rows still count in the previous-year sums
+    assert d["totals"]["previous"]["spending_eur"] == 9 * 1350.0 + 3 * 50.0
+
+
+def test_lagging_account_is_named_in_a_warning(db):
+    main = db.create_portfolio("Example Bank", account_type="bank")
+    slow = db.create_portfolio("Example Slow Bank", account_type="bank")
+    _fill(db, main, 2025, range(1, 13), 350.0)
+    _fill(db, main, 2026, range(1, 11), 400.0)
+    for m in range(1, 6):
+        db.create_spending_transaction(
+            slow, f"2026-{m:02d}-28", "EXAMPLE SHOP", -10.0, category="Groceries"
+        )
+    d = _build(db, date(2026, 11, 17), 2026)
+    assert d["compared_months"][-1] == "2026-04"
+    assert any("Example Slow Bank" in w and "2026-05-28" in w for w in d["warnings"])
+
+
+def test_account_started_mid_previous_year_is_flagged(db):
+    main = db.create_portfolio("Example Bank", account_type="bank")
+    new = db.create_portfolio("Example New Bank", account_type="bank")
+    _fill(db, main, 2025, range(1, 13), 350.0)
+    _fill(db, main, 2026, range(1, 11), 400.0)
+    db.create_spending_transaction(
+        new, "2025-06-10", "EXAMPLE SHOP", -10.0, category="Groceries"
+    )
+    db.create_spending_transaction(
+        new, "2026-10-12", "EXAMPLE SHOP", -10.0, category="Groceries"
+    )
+    d = _build(db, date(2026, 11, 17), 2026)
+    assert any(
+        "Example New Bank" in w and "2025-06-10" in w and "inflated" in w
+        for w in d["warnings"]
+    )
+
+
+def test_one_offs_cover_the_whole_year_not_only_compared_months(db):
+    bank = db.create_portfolio("Example Bank", account_type="bank")
+    _fill(db, bank, 2025, range(1, 13), 350.0)
+    _fill(db, bank, 2026, range(1, 11), 400.0)
+    # July 2026 is complete, but 2025-07 is removed from the comparison by
+    # putting the one-off in a month that is still open
+    tx = db.create_spending_transaction(
+        bank, "2026-10-09", "EXAMPLE ROOFER", -700.0, category="Repairs"
+    )
+    db.update_spending_transaction(tx, one_off=1)
+    d = _build(db, date(2026, 11, 17), 2026)
+    assert "2026-10" not in d["compared_months"]
+    assert [o["description"] for o in d["one_offs"]] == ["EXAMPLE ROOFER"]
 
 
 def test_bad_year_or_depth_is_refused(db):

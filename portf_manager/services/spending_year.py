@@ -65,12 +65,14 @@ def _month_entry(month: str, rows: List[dict], tree, complete: bool) -> Dict[str
         for r in rows
         if not r["is_transfer"] and r["amount_eur"] < 0 and r["category"] in saved
     )
+    has_imports = bool(rows)
+    # a month without imports is unknown, never zero
     return {
         "month": month,
-        "income_eur": round(income, 2),
-        "spending_eur": round(spend, 2),
-        "savings_eur": round(savings, 2),
-        "has_imports": bool(rows),
+        "income_eur": round(income, 2) if has_imports else None,
+        "spending_eur": round(spend, 2) if has_imports else None,
+        "savings_eur": round(savings, 2) if has_imports else None,
+        "has_imports": has_imports,
         "complete": complete,
     }
 
@@ -134,8 +136,32 @@ def build_year(
     previous_year = year - 1
     warnings: List[str] = []
 
-    info = spending_insights.account_data_through(rows, start=f"{previous_year}-01-01")
+    # Completeness is judged only from the accounts that have rows in the year
+    # shown: one closed in the previous year holds nothing back (its rows still
+    # count in the previous-year sums).
+    info = spending_insights.account_data_through(rows, start=f"{year}-01-01")
     through = info["effective"]
+    if info["lagging"] is not None:
+        warnings.append(
+            f"{info['lagging_name']} has imported only through {through}, behind "
+            "the other accounts: the months after it are not complete, so the "
+            "comparison stops there."
+        )
+    first_row: Dict[Any, Dict[str, str]] = {}
+    for r in rows:
+        cur = first_row.get(r["portfolio_id"])
+        if cur is None or r["date"] < cur["date"]:
+            first_row[r["portfolio_id"]] = {
+                "date": r["date"],
+                "name": r.get("account") or f"account {r['portfolio_id']}",
+            }
+    for item in sorted(first_row.values(), key=lambda i: i["name"]):
+        if f"{previous_year}-02-01" <= item["date"] <= f"{previous_year}-12-31":
+            warnings.append(
+                f"{item['name']} has rows only from {item['date']}: "
+                f"{previous_year} holds less than a full year of it, so the "
+                "like-for-like change is inflated."
+            )
     by_month: Dict[str, List[dict]] = defaultdict(list)
     for r in rows:
         by_month[r["date"][:7]].append(r)
@@ -206,7 +232,6 @@ def build_year(
     categories: List[Dict[str, Any]] = []
     movers: Dict[str, List[Dict[str, Any]]] = {"increases": [], "decreases": []}
     merchants: List[Dict[str, Any]] = []
-    one_offs: List[Dict[str, Any]] = []
     if compared:
         this_spend = spending_insights._spend_rows(this_rows, tree)
         prev_spend = spending_insights._spend_rows(prev_rows, tree)
@@ -293,18 +318,19 @@ def build_year(
                     "previous_eur": round(prev_m.get(key, 0.0), 2),
                 }
             )
-        one_offs = [
-            {
-                "id": r["id"],
-                "date": r["date"],
-                "description": r["description"],
-                "amount_eur": round(r["amount_eur"], 2),
-                "category": r["category"],
-                "account": r.get("account"),
-            }
-            for r in sorted(this_rows, key=lambda r: (r["date"], r["id"]))
-            if r["one_off"] and not r["is_transfer"]
-        ]
+    # every one-off row of the year, not only those in the compared months
+    one_offs = [
+        {
+            "id": r["id"],
+            "date": r["date"],
+            "description": r["description"],
+            "amount_eur": round(r["amount_eur"], 2),
+            "category": r["category"],
+            "account": r.get("account"),
+        }
+        for r in sorted(rows, key=lambda r: (r["date"], r["id"]))
+        if r["date"][:4] == str(year) and r["one_off"] and not r["is_transfer"]
+    ]
 
     return {
         "year": year,
