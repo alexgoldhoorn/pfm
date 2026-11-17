@@ -340,18 +340,18 @@ def _resolve_account(
     )
 
 
-@router.post("/upload", response_model=SpendingUploadResponse)
-async def upload_bank_statement(
-    file: UploadFile = File(..., description="Bank statement CSV"),
-    account_portfolio_id: Optional[int] = Form(None),
-    account_name: Optional[str] = Form(None),
-    db=Depends(get_database),
-    api_key_info: dict = Depends(_auth),
-):
-    """Parse a bank statement CSV and return a rule-categorized preview. No DB write."""
-    portfolio_id = _resolve_account(db, account_portfolio_id, account_name)
+def _parse_statement(file_bytes: bytes):
+    """Parse a statement file with the format auto-detection.
 
-    file_bytes = await file.read()
+    Args:
+        file_bytes: The raw upload.
+
+    Returns:
+        The parser result (``rows``, ``skipped``).
+
+    Raises:
+        HTTPException: 422 when the file cannot be parsed.
+    """
     try:
         # AEB43 exports commonly contain raw Latin-1 bytes (accented
         # characters); fall back when the file isn't valid UTF-8.
@@ -360,9 +360,8 @@ async def upload_bank_statement(
         except UnicodeDecodeError:
             content = file_bytes.decode("latin-1")
         if looks_like_aeb43(content):
-            result = parse_aeb43(content)
-        else:
-            result = parse_generic_bank_csv(content)
+            return parse_aeb43(content)
+        return parse_generic_bank_csv(content)
     except Exception as e:
         logger.exception("Error parsing bank statement")
         raise HTTPException(
@@ -370,6 +369,16 @@ async def upload_bank_statement(
             detail=f"Failed to parse file: {str(e)}",
         )
 
+
+def _preview_rows(db, portfolio_id: int, result) -> tuple:
+    """Rule-categorised preview rows for a parsed statement.
+
+    Duplicates are looked up against the rows stored before the import, never
+    within the file itself.
+
+    Returns:
+        ``(rows, duplicate_count)``.
+    """
     rules = db.list_spending_rules()
     fits = _category_fits(db)
     dup_count = 0
@@ -407,9 +416,18 @@ async def upload_bank_statement(
                 merchant=merchant,
             )
         )
+    return rows, dup_count
 
-    # Warn (never block) when stated balances don't add up: rows missing from
-    # this file, or between the previous import and this one.
+
+def _balance_breaks(db, portfolio_id: int, result) -> tuple:
+    """Stated-balance checks for a parsed statement.
+
+    Warn (never block) when stated balances don't add up: rows missing from
+    this file, or between the previous import and this one.
+
+    Returns:
+        ``(balance_rows_checked, breaks)``.
+    """
     balance_rows = [r for r in result.rows if r.balance is not None]
     breaks = []
     if balance_rows:
@@ -418,6 +436,23 @@ async def upload_bank_statement(
         breaks = find_balance_breaks(
             result.rows, opening_balance=prior["balance"] if prior else None
         )
+    return len(balance_rows), breaks
+
+
+@router.post("/upload", response_model=SpendingUploadResponse)
+async def upload_bank_statement(
+    file: UploadFile = File(..., description="Bank statement CSV"),
+    account_portfolio_id: Optional[int] = Form(None),
+    account_name: Optional[str] = Form(None),
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Parse a bank statement CSV and return a rule-categorized preview. No DB write."""
+    portfolio_id = _resolve_account(db, account_portfolio_id, account_name)
+
+    result = _parse_statement(await file.read())
+    rows, dup_count = _preview_rows(db, portfolio_id, result)
+    checked, breaks = _balance_breaks(db, portfolio_id, result)
 
     skipped = [{"row": row, "reason": reason} for row, reason in result.skipped]
     return SpendingUploadResponse(
@@ -426,19 +461,23 @@ async def upload_bank_statement(
         skipped_count=len(skipped),
         skipped=skipped,
         duplicate_count=dup_count,
-        balance_rows_checked=len(balance_rows),
+        balance_rows_checked=checked,
         balance_breaks=[BalanceBreakOut(**vars(b)) for b in breaks],
     )
 
 
-@router.post("/save", response_model=SpendingSaveResponse)
-async def save_spending_transactions(
-    body: SpendingSaveRequest,
-    db=Depends(get_database),
-    api_key_info: dict = Depends(_auth),
-):
-    """Save previewed spending rows, honoring duplicate_action, then auto-link transfers."""
+def _save_rows(
+    db, account_portfolio_id: int, rows, duplicate_action: str
+) -> SpendingSaveResponse:
+    """Save spending rows, honoring ``duplicate_action``, then link transfers.
 
+    Args:
+        db: Database.
+        account_portfolio_id: The bank account the rows belong to.
+        rows: Objects with ``date``, ``description``, ``amount``, ``currency``,
+            ``category`` and ``balance``.
+        duplicate_action: ``skip``, ``overwrite`` or ``add``.
+    """
     fits = _category_fits(db)
 
     def _resolve_row_category(row) -> str:
@@ -454,19 +493,19 @@ async def save_spending_transactions(
     money_out: Dict[str, float] = {}
     uncategorized_ids: List[int] = []
 
-    for row in body.rows:
+    for row in rows:
         try:
             existing = db.find_duplicate_spending_transaction(
-                portfolio_id=body.account_portfolio_id,
+                portfolio_id=account_portfolio_id,
                 date=row.date,
                 amount=row.amount,
                 description=row.description,
             )
             if existing:
-                if body.duplicate_action == "skip":
+                if duplicate_action == "skip":
                     duplicates_skipped += 1
                     continue
-                if body.duplicate_action == "overwrite":
+                if duplicate_action == "overwrite":
                     # A transfer keeps its category and transfer fields: the
                     # "Transfer" category and the flag must stay in agreement.
                     current = db.get_spending_transaction(existing["id"]) or {}
@@ -484,7 +523,7 @@ async def save_spending_transactions(
 
             category = _resolve_row_category(row)
             new_id = db.create_spending_transaction(
-                portfolio_id=body.account_portfolio_id,
+                portfolio_id=account_portfolio_id,
                 date=row.date,
                 description=row.description,
                 amount=row.amount,
@@ -523,9 +562,9 @@ async def save_spending_transactions(
             r = db.get_spending_transaction(sid)
             if r and r.get("category") == "uncategorized":
                 uncategorized += 1
-        p = db.get_portfolio(body.account_portfolio_id)
+        p = db.get_portfolio(account_portfolio_id)
         account_name = p.get("name") if p else None
-        latest = db.get_latest_bank_balance(body.account_portfolio_id)
+        latest = db.get_latest_bank_balance(account_portfolio_id)
     except Exception as e:
         logger.debug(f"Spending save summary lookup failed: {e}")
 
@@ -545,6 +584,86 @@ async def save_spending_transactions(
         latest_balance_currency=(latest or {}).get("currency"),
         latest_balance_date=(latest or {}).get("date"),
     )
+
+
+@router.post("/save", response_model=SpendingSaveResponse)
+async def save_spending_transactions(
+    body: SpendingSaveRequest,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Save previewed spending rows, honoring duplicate_action, then auto-link transfers."""
+    return _save_rows(db, body.account_portfolio_id, body.rows, body.duplicate_action)
+
+
+@router.post("/import-file", response_model=dict)
+async def import_statement_file(
+    file: UploadFile = File(..., description="Bank statement file"),
+    portfolio_id: int = Form(...),
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Parse, de-duplicate, categorise and save a statement in one call.
+
+    The same parse, preview and save paths as ``/upload`` + ``/save``: rows
+    already stored before the import are dropped (never rows repeated inside
+    the file), rules and transfer matching apply as on a normal import.
+    Nothing is written when the account is not a bank account or the file
+    parses to nothing.
+
+    Returns:
+        ``{parsed, imported, duplicates, uncategorized, date_from, date_to,
+        data_through, warnings}``.
+    """
+    portfolio = db.get_portfolio(portfolio_id)
+    if not portfolio or portfolio.get("account_type") != "bank":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Portfolio {portfolio_id} is not a bank account",
+        )
+    result = _parse_statement(await file.read())
+    if not result.rows:
+        reasons = sorted({str(reason) for _row, reason in result.skipped})
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No rows found in the file"
+            + (": " + "; ".join(reasons[:3]) if reasons else ""),
+        )
+
+    preview, dup_count = _preview_rows(db, portfolio_id, result)
+    checked, breaks = _balance_breaks(db, portfolio_id, result)
+    # "add": the duplicates were already dropped against what was stored
+    # before, so twins inside the file are both kept.
+    saved = _save_rows(
+        db, portfolio_id, [r for r in preview if not r.is_duplicate], "add"
+    )
+
+    warnings: List[str] = []
+    if result.skipped:
+        warnings.append(f"{len(result.skipped)} line(s) in the file were skipped")
+    if breaks:
+        warnings.append(
+            f"{len(breaks)} stated balance(s) do not add up: rows may be missing"
+        )
+    warnings.extend(f"Row not saved: {e}" for e in saved.errors)
+    data_through = None
+    try:
+        last = (db.get_portfolio_date_ranges().get(portfolio_id) or {}).get(
+            "last_spending_date"
+        )
+        data_through = str(last)[:10] if last else None
+    except Exception as e:
+        warnings.append(f"data_through not available: {e}")
+    return {
+        "parsed": len(result.rows),
+        "imported": saved.saved,
+        "duplicates": dup_count,
+        "uncategorized": saved.uncategorized,
+        "date_from": saved.date_from,
+        "date_to": saved.date_to,
+        "data_through": data_through,
+        "warnings": warnings,
+    }
 
 
 _SPENDING_SORT_BY_VALUES = {
