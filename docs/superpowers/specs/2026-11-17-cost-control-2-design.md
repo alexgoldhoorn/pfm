@@ -102,14 +102,17 @@ tax-paid rows); do not copy its maths.
   ticked the forecast adds no tax estimate and one warning that says where to
   tick them. `GET /spending/forecast?include_tax=false` switches it off.
 - **No double counting.** When the estimate is in use: recurring series whose
-  category is one of the allocator's tax-paid categories are dropped from the
-  known bills, and rows in those categories are left out of the everyday
+  category is one of the allocator's tax-paid categories **and whose cadence is
+  quarterly** (the pagos fraccionados the estimate replaces) are dropped from
+  the known bills (a yearly or other-cadence series stays a known bill), and rows in those categories are left out of the everyday
   baseline of the *forecast only* (`everyday_outflows` as used by the budget
   pace is unchanged: add a parameter, default off). When the estimate is not
   in use, behaviour is exactly as today.
 - Each month gains `tax_eur` (inside `spending_eur`); response gains
   `tax_payments: [...]` and an assumption line ("quarterly tax is an estimate
-  from the allocator settings: IVA x%, IRPF y%").
+  from the allocator settings: IVA x%, IRPF y%"). A one-time annual tax
+  settlement is not estimated. The past-due rule of `quarter_reserve` is judged
+  at the data-through date, not today (the allocator keeps its own behaviour).
 
 ## 3. Budget suggestions
 
@@ -138,9 +141,13 @@ and transfers out):
 with the existing auto-detection, drop rows already stored (the same duplicate
 rule as the web preview, against rows stored before the import), apply rules
 and transfer matching exactly like upload + save, and return
-`{parsed, imported, duplicates, uncategorized, date_from, date_to, data_through, warnings}`.
-The portfolio must be a bank account (400 otherwise); a file that parses to
-nothing is a 400 with the parser's reason; nothing is written on any error.
+`{parsed, imported, duplicates, uncategorized, date_from, date_to, data_through, balance_check, transfers_settled, warnings}`.
+The portfolio must be a bank account (400 otherwise); a file that cannot be
+parsed or parses to nothing is a 400 with the parser's reason; all or nothing:
+a row that fails to save removes what the call saved (500). Calls are
+serialised. `balance_check` is `ok`, `mismatch` (warning, not a refusal) or
+`unknown`; if transfer settling fails after the save, the rows stay and
+`transfers_settled` is false.
 It must share code with `/upload` and `/save`, not copy it.
 
 Phase 2 (not in this branch): `~/mcp/scripts/pfm_statement_inbox.py` watches

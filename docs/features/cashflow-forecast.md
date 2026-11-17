@@ -114,8 +114,16 @@ Code: `services/planned_items.py` (rules), the `planned_items` table, CRUD under
   allocator settings name work-income merchants**; with none ticked there is no
   tax estimate and a warning says where to tick them (as does a history with no
   complete quarter of work income). `include_tax=false` switches it off.
-- **No double counting.** When the estimate is in use, recurring series in one
-  of the allocator's tax-paid categories are dropped from the known bills, and
+- **Past-due is judged at the data-through date.** `quarter_reserve` zeroes an
+  unpaid quarter more than 30 days after its due date; the forecast passes the
+  data-through date as that reference, because the balance starts there: a
+  quarter due on or after it that is missing from the statements is still
+  projected, even when `today` is far later and an account lags. The allocator's
+  own use of `quarter_reserve` is unchanged.
+- **No double counting.** When the estimate is in use, recurring series with a
+  **quarterly** cadence in one of the allocator's tax-paid categories (the
+  pagos fraccionados the estimate replaces) are dropped from the known bills; a
+  yearly or other-cadence series in those categories stays a known bill. And
   rows in those categories are left out of the everyday baseline **of the
   forecast only** (`everyday_outflows` as the budget pace uses it is unchanged:
   the new parameter defaults off). When the estimate is not in use, behaviour
@@ -143,6 +151,8 @@ Code: `services/planned_items.py` (rules), the `planned_items` table, CRUD under
 
 - A `null` is "not known", not zero: clients print "not available".
 - `months` outside 1..36 is a 422.
+- A one-time annual tax settlement (the Renta result, say) is not estimated;
+  enter it as a planned item.
 - A planned item is not a bill: it never changes an average, and an item left open after its date stops counting (overdue) until it is marked done or moved.
 - Tax payments are an estimate with a `basis`; label them as such, and never add them to the recurring bills yourself.
 - Changing what counts as income or recurring changes the review and the chat

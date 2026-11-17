@@ -309,9 +309,18 @@ filters `is_transfer` itself).
   against rows stored before the import, never twins inside the file), apply
   rules and transfer matching, and save through the same `_save_rows` as
   `/save`. Returns `{parsed, imported, duplicates, uncategorized, date_from,
-  date_to, data_through, warnings}`. 400, nothing written, for a portfolio that
-  is not a bank account or a file that parses to nothing (the parser's reason
-  is in `detail`). A host job can post statements with it.
+  date_to, data_through, balance_check, transfers_settled, warnings}`. **All or
+  nothing:** a portfolio that is not a bank account, a file that cannot be
+  parsed (400 here, unlike `/upload`'s 422) or parses to nothing is a 400; a row
+  that fails to save deletes the rows this call already created and the answer
+  is a 500 with the reason; `/save` keeps its partial behaviour. Calls are
+  serialised by a module-level lock. `balance_check` is `ok`, `mismatch` (the
+  stated balances do not add up with each other or with the balance stored
+  before the file: rows may be missing; a warning, never a refusal, and an
+  unattended caller should alert on it) or `unknown` (no balance column). If
+  transfer settling raises after the rows are saved, the rows stay, the answer
+  is 200 with `transfers_settled: false` and a warning (run the transfer
+  rescan). A host job can post statements with it.
 - **`GET /spending/uncategorized-queue?limit=20&months=12&portfolio_id=`**
   (`services/spending_uncategorized.py`): non-transfer rows with category
   `uncategorized`, grouped per merchant and direction (rows without a merchant
@@ -328,8 +337,9 @@ filters `is_transfer` itself).
   the same sign/root check as editing one row. All-or-nothing validation (400
   for an unknown id, a transfer, a wrong sign, `Transfer` as category, or
   `create_rule` without a pattern); rows that already have a category are
-  counted in `skipped`. With `create_rule` an identical rule is reused, then
-  the rules re-scan the other uncategorised rows. Returns `{updated, skipped,
+  counted in `skipped`. With `create_rule` an identical rule is reused or
+  created **before** any row is updated (a rule failure is a 500 and changes
+  nothing), then the rules re-scan the other uncategorised rows. Returns `{updated, skipped,
   rule_id, rule_created, recategorized_by_rule}`.
 - **Review field.** `GET /spending/review` gains `uncategorized: {count,
   total_eur, share_pct, highlight}` for the reviewed month (null when nothing
@@ -342,12 +352,17 @@ filters `is_transfer` itself).
   imported month of the previous year), each `{income_eur, spending_eur,
   savings_eur, net_eur, savings_rate_pct (null without income), one_off_eur,
   months}`. `months` is `{this, previous}`, 12 entries each with `has_imports`
-  and `complete`; a month without imports is unknown (named in a warning),
-  never zero. `compared_through` / `compared_months` say what was compared.
+  and `complete`; a month without imports has `income_eur`, `spending_eur` and
+  `savings_eur` null (unknown, named in a warning), never zero. Completeness is
+  judged only from the accounts that have rows in the year shown: an account
+  closed in the previous year holds nothing back (its rows still count in the
+  previous-year sums); an account that imported least is named in a warning.
+  An account whose first row falls in the previous year after January is named
+  too (the like-for-like change is then inflated). `compared_through` / `compared_months` say what was compared.
   `categories` are the top-level Spend categories (children with `depth=2`),
   `movers` `{increases, decreases}` by leaf category, `merchants` the 10
-  largest, `one_offs` the one-off rows of the compared months (they count in
-  the totals). With nothing comparable the totals, categories and deltas are
+  largest, `one_offs` the one-off rows of the whole year (they count in the
+  totals of the compared months). With nothing comparable the totals, categories and deltas are
   null/empty and a warning says so. Plain `def` (FX lookups).
 - Clients: chat `get_planned_items`, `get_spending_year`,
   `get_uncategorized_queue`; MCP `planned_items`, `spending_year`,

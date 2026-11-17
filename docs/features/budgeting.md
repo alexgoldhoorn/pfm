@@ -293,7 +293,9 @@ are unchanged, so variance still reconciles with `/spending/trend` to the cent.
 
 `GET /budgets/{id}/seed-proposals` (`budget.propose_budget_lines`, writes
 nothing) keeps its fields. For **spending** lines it adds, over the last 12
-complete months with imports (one-off rows and transfers out):
+complete months with imports (one-off rows and transfers out). A month is
+complete by the data-through rule the forecast baseline uses: it must end on or
+before the earliest last import over the accounts that have rows in the window:
 `months_with_activity`, `suggested_period`, `suggested_amount`,
 `suggested_rollover` and `reason`.
 
