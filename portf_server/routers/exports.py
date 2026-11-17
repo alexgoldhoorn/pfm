@@ -52,7 +52,7 @@ async def _auth(
 
 
 @router.get("/csv")
-async def export_transactions_csv(
+def export_transactions_csv(
     portfolio_id: Optional[List[int]] = Query(
         default=None, description="Filter by one or more portfolio IDs"
     ),
@@ -98,7 +98,7 @@ async def export_transactions_csv(
 
 
 @router.get("/pdt")
-async def export_pdt_xlsx(
+def export_pdt_xlsx(
     portfolio_id: Optional[int] = Query(
         default=None, description="Filter by portfolio ID"
     ),
@@ -127,7 +127,7 @@ async def export_pdt_xlsx(
 
 
 @router.get("/backup")
-async def export_db_backup(
+def export_db_backup(
     db=Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
@@ -168,7 +168,7 @@ async def export_db_backup(
 
 
 @router.get("/yahoo-finance")
-async def export_yahoo_finance(
+def export_yahoo_finance(
     portfolio_id: Optional[int] = Query(
         default=None, description="Filter by portfolio ID"
     ),
@@ -195,7 +195,7 @@ async def export_yahoo_finance(
 
 
 @router.get("/simply-wall-st")
-async def export_simply_wall_st(
+def export_simply_wall_st(
     portfolio_id: Optional[int] = Query(
         default=None, description="Filter by portfolio ID"
     ),

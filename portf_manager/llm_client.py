@@ -774,9 +774,12 @@ class OllamaLLMClient:
                 timeout=120,
             )
             resp.raise_for_status()
-            return resp.json().get("message", {}).get("content", "")
-        except Exception:
-            pass
+            content = resp.json().get("message", {}).get("content", "")
+            if content:
+                return content
+        except (requests.RequestException, ValueError) as e:
+            # Older Ollama builds have no /api/chat; fall back to /api/generate.
+            logger.warning("Ollama /api/chat failed (%s); trying /api/generate", e)
 
         body = "\n".join(
             f"{m['role'].upper()}: {m['content']}"
@@ -793,7 +796,10 @@ class OllamaLLMClient:
             timeout=120,
         )
         resp.raise_for_status()
-        return resp.json().get("response", "")
+        text = resp.json().get("response", "")
+        if not text:
+            raise LLMResponseError("Ollama returned an empty answer after a tool")
+        return text
 
 
 class OpenRouterLLMClient:

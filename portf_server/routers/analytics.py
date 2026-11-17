@@ -781,17 +781,21 @@ def _run_backfill(db, force: bool = False) -> None:
                 yfsym = _yf_symbol(a)
                 ticker = yf.Ticker(yfsym)
                 h = ticker.history(start=start_d, end=today + timedelta(days=1))
-                gbx = False
-                try:
-                    gbx = ticker.fast_info.currency == "GBp"
-                except Exception:
-                    pass
+                # A failed currency lookup raises here, so the Yahoo history is
+                # skipped and only stored prices are used: a pence series taken
+                # as GBP would be 100x too high.
+                gbx = ticker.fast_info.currency == "GBp"
                 for idx, row in h.iterrows():
                     merged[idx.date().isoformat()] = float(row["Close"]) / (
                         100.0 if gbx else 1.0
                     )
-            except Exception:
-                pass
+            except Exception as e:
+                merged = {}
+                logger.warning(
+                    "Snapshot backfill: Yahoo history skipped for asset %s: %s",
+                    aid,
+                    e,
+                )
             for row in db.get_price_history(aid, start_date=start_d.isoformat()):
                 if row.get("price") is not None:
                     merged[d10(row["price_date"])] = float(row["price"])

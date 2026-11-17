@@ -124,9 +124,7 @@ class BackupResponse(BaseModel):
 
 
 @router.get("/pdt-config", response_model=SyncConfigResponse)
-async def get_sync_config(
-    db=Depends(get_database), api_key_info: dict = Depends(_auth)
-):
+def get_sync_config(db=Depends(get_database), api_key_info: dict = Depends(_auth)):
     """Return current Google Sheets sync configuration."""
     sa_file = _google_service_account_file()
     email = None
@@ -149,7 +147,7 @@ async def get_sync_config(
 
 
 @router.put("/pdt-config", response_model=SyncConfigResponse)
-async def update_sync_config(
+def update_sync_config(
     body: SyncConfigUpdate,
     db=Depends(get_database),
     api_key_info: dict = Depends(_auth),
@@ -175,7 +173,7 @@ async def update_sync_config(
 
 
 @router.post("/pdt-pull", response_model=PullResponse)
-async def pull_from_sheets(
+def pull_from_sheets(
     spreadsheet_id: Optional[str] = Query(
         default=None,
         description="Google Spreadsheet ID (falls back to GOOGLE_SPREADSHEET_ID env var)",
@@ -385,7 +383,7 @@ async def pull_from_sheets(
 
 
 @router.post("/pdt-push", response_model=PushResponse)
-async def push_to_sheets(
+def push_to_sheets(
     spreadsheet_id: Optional[str] = Query(
         default=None,
         description="Google Spreadsheet ID (falls back to GOOGLE_SPREADSHEET_ID env var)",
@@ -434,7 +432,7 @@ async def push_to_sheets(
 
 
 @router.post("/pdt-backup", response_model=BackupResponse)
-async def backup_sheet(
+def backup_sheet(
     spreadsheet_id: Optional[str] = Query(default=None),
     title: Optional[str] = Query(default=None),
     db=Depends(get_database),
@@ -468,7 +466,7 @@ async def backup_sheet(
 
 
 @router.get("/pdt-download")
-async def download_sheet(
+def download_sheet(
     spreadsheet_id: Optional[str] = Query(default=None),
     fmt: str = Query(default="xlsx"),
     db=Depends(get_database),

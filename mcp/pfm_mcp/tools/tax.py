@@ -1,7 +1,6 @@
 """Tax report, tax estimate and the antiaplicacion (wash-sale) check."""
 
 import calendar
-import urllib.parse
 from datetime import date
 from typing import Optional
 
@@ -153,7 +152,7 @@ def wash_sale_check(symbol: Optional[str] = None) -> str:
     """
     today = client._today()
     try:
-        params = {"symbol": urllib.parse.quote(symbol)} if symbol else None
+        params = {"symbol": symbol} if symbol else None
         out = client._get("/api/v1/analytics/wash-sale", params)
     except Exception as e:
         return f"Error fetching data for wash-sale check: {e}"

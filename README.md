@@ -3,7 +3,7 @@
 [![Python](https://img.shields.io/badge/Python-3.13%2B-blue.svg)](https://python.org)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Code Style](https://img.shields.io/badge/Code%20Style-Black-000000.svg)](https://github.com/psf/black)
-[![Testing](https://img.shields.io/badge/Tests-1921%20passing-brightgreen.svg)](https://pytest.org)
+[![Testing](https://img.shields.io/badge/Tests-2.5k%2B%20passing-brightgreen.svg)](https://pytest.org)
 
 Python CLI + FastAPI server + web client for tracking stocks, ETFs, funds, bonds, crypto and commodities across multiple brokers. Features LLM-powered import, an agentic AI chat with live portfolio tools, an MCP server for AI assistants, full Portfolio Dividend Tracker (PDT) v2 compatibility, Google Sheets sync, and Spanish IRPF tax reporting.
 
@@ -35,8 +35,8 @@ Python CLI + FastAPI server + web client for tracking stocks, ETFs, funds, bonds
 - **Full PDT v2 compatibility**: import/export Transactions, Dividends, and Bookings (deposits/withdrawals) with correct per-transaction currencies
 - **Google Sheets sync**: pull from / push to a PDT-format Google Spreadsheet via service account
 - **LLM-powered import**: paste any transaction text; Ollama, Anthropic, Gemini, or OpenRouter parses it automatically (extracts fees, dedupes duplicates, assigns to a portfolio)
-- **Agentic AI chat**: ask about your portfolio in natural language using an agentic loop with 18 live in-process tools (holdings, performance, risk, diversification, tax, quotes, research, news, allocation targets, deployable cash, next-euro allocator). Persistent named chat sessions. All 4 LLM providers supported. Dark-mode aware
-- **MCP server** (`mcp/`, package `pfm-mcp`): 32 read-only tools exposing holdings, transactions, performance, dividends, risk, tax, research, watchlist, goals, net worth, spending, budget, retirement and the next-euro allocator — connect any MCP-compatible AI assistant (Claude, etc.) to your live portfolio data
+- **Agentic AI chat**: ask about your portfolio in natural language using an agentic loop with 50 live in-process tools (holdings, performance, risk, tax, research, allocator, net worth, spending, budget, loans, what-if scenarios and more). Persistent named chat sessions. All 4 LLM providers supported. Dark-mode aware
+- **MCP server** (`mcp/`, package `pfm-mcp`): 48 read-only tools exposing holdings, transactions, performance, dividends, risk, tax, research, watchlist, goals, net worth, spending, budget, retirement and the next-euro allocator — connect any MCP-compatible AI assistant (Claude, etc.) to your live portfolio data
 - **Daily prices in EUR**: yfinance prices updated daily via cron or on-demand from the dashboard "Refresh prices" button. GBX→GBP normalized, all values FX-converted to EUR. yfinance lookups (sector/country, fundamentals, news, benchmarks) are cached for speed
 - **Analytics** (tabbed, lazy-loaded): performance (total return, money-weighted IRR, benchmark vs S&P/AEX/IBEX/CAC/FTSE/DAX, YTD/1M/1Y/all) + net-worth chart; dividend income with **forward income & calendar**; **gain/loss leaderboard** (top winners/losers by € and %); tax estimate + **per-lot tax report with CSV export**; diversification + concentration (HHI over holdings); risk (drawdown/volatility/Sharpe); fee drag
 - **Research workbench**: ticker autocomplete, your position (cost basis, P/L, **sell calculator**, average-cost chart), Yahoo fundamentals with sources, LLM valuation (fair value, BUY/HOLD/SELL), and a **downloadable Markdown research report** per ticker; price-target alerts to Telegram
@@ -51,7 +51,7 @@ Python CLI + FastAPI server + web client for tracking stocks, ETFs, funds, bonds
 - **Per-user settings** (browser-local): theme/dark mode, number & date format, default currency, default broker, holdings sort, hide-tiny-positions, benchmark, landing page; plus in-app **change password**
 - **Authentication**: username/password login (web) + API-key (machine); external HTTPS via nginx-proxy-manager (`portfolio.example.com`)
 - **Web client**: Bootstrap 5 responsive UI with a grouped, collapsible sidebar, per-page Help + glossary, About and Resources pages, and metric tooltips (static, no build step)
-- **FastAPI backend**: REST API with API-key auth, 200+ endpoints
+- **FastAPI backend**: REST API with API-key auth, 250+ endpoints
 - **Dual-mode CLI**: direct SQLite access (local mode) or REST API (server mode)
 - **PostgreSQL support**: drop-in via `DATABASE_URL` env var
 
@@ -81,7 +81,7 @@ Python CLI + FastAPI server + web client for tracking stocks, ETFs, funds, bonds
                           │ HTTP (MCP)
                    ┌──────┴───────┐
                    │  MCP Server   │
-                   │  32 tools     │
+                   │  48 tools     │
                    │ (mcp/pfm_mcp) │
                    └──────────────┘
 ```
@@ -428,28 +428,9 @@ Auto mode (default) tries in order: **Ollama → Anthropic → Gemini → OpenRo
 
 ### Agentic chat (tool-calling loop)
 
-The AI chat page uses an agentic tool loop: all 4 providers implement a `ToolCapableLLMClient` protocol with 18 in-process portfolio tools. On Anthropic, `run_tool_loop` runs up to 6 rounds (several tools per answer); the other providers use a two-pass loop:
+The AI chat page uses an agentic tool loop: all 4 providers implement a `ToolCapableLLMClient` protocol with 50 in-process portfolio tools. On Anthropic, `run_tool_loop` runs up to 10 rounds in chat (several tools per answer); the other providers use a two-pass loop:
 
-| Tool | What it returns |
-|---|---|
-| `get_holdings` | All positions with cost basis, current value, P/L |
-| `get_performance` | IRR, period return, benchmark comparison |
-| `get_risk` | Drawdown, volatility, Sharpe, Sortino, Beta, Alpha |
-| `get_diversification` | Sector/country/currency breakdown + HHI |
-| `get_kpis` | Dashboard KPIs (total value, invested, unrealised gain) |
-| `get_health` | AI-scored portfolio health (5 categories) |
-| `get_brokers` | Per-broker values and returns |
-| `get_quote` | Live market quote for a symbol |
-| `get_price` | Latest stored price for a held asset |
-| `get_research` | Saved research notes and valuation |
-| `get_transactions` | Recent transactions (filterable) |
-| `get_tax_estimate` | IRPF savings-base estimate for a year |
-| `asset_details` | Full asset metadata + position |
-| `asset_news` | Recent news headlines for a symbol |
-| `financial_news` | General market/financial news |
-| `get_allocation_targets` | Allocation targets plus the Rebalance analysis |
-| `get_deployable_cash` | Cash available to invest after tax reserve and household buffer |
-| `get_next_euro` | The next-euro allocator's proposal |
+The tools cover holdings and performance, risk and diversification, research and quotes, tax (IRPF estimate, year-end planner, antiaplicación), the next-euro allocator and caps, net worth, goals and retirement, spending, budget and cash-flow forecast, loans, what-if scenarios, the decision journal and Action Items. Only `set_action_item_status` and `record_decision` write. Full list: `TOOLS` in `portf_server/chat_tools.py` (the count is pinned by `tests/unit/test_chat_tools.py`).
 
 Tools never make HTTP round-trips — they call DB/service functions directly. Chat history is persisted as named sessions (DB v24).
 
@@ -461,39 +442,11 @@ Gemini and Anthropic providers implement `generate_with_search()` — the Resear
 
 ## MCP Server
 
-The `mcp/` directory is its own package, `pfm-mcp` (`mcp/pfm_mcp/`, one module per area under `tools/`), exposing your portfolio data as **32 read-only MCP tools** so any MCP-compatible AI assistant (Claude Desktop, Claude Code, etc.) can query your live portfolio directly. `mcp/server.py` is only a compatibility shim. Full tool table and setup: [`mcp/README.md`](mcp/README.md).
+The `mcp/` directory is its own package, `pfm-mcp` (`mcp/pfm_mcp/`, one module per area under `tools/`), exposing your portfolio data as **48 read-only MCP tools** so any MCP-compatible AI assistant (Claude Desktop, Claude Code, etc.) can query your live portfolio directly. `mcp/server.py` is only a compatibility shim. Full tool table and setup: [`mcp/README.md`](mcp/README.md).
 
 ### Available tools
 
-| Tool | Description |
-|---|---|
-| `portfolio_holdings` | Full position list with cost, value, P/L per broker |
-| `list_portfolios` | All brokers/portfolios with totals |
-| `list_assets` | Assets (filterable by type) |
-| `list_transactions` | Transactions (filterable by portfolio/type/date) |
-| `quote` | Live market quote(s) for any symbols |
-| `performance` | IRR, period return, benchmark |
-| `dividends` | Income history by year/month/symbol |
-| `diversification` | Sector/country/currency breakdown + HHI |
-| `risk` | Drawdown, volatility, Sharpe, Sortino, Beta, Alpha |
-| `fundamentals` | P/E, EPS, market cap, dividend yield |
-| `research_lookup` | Snapshot + saved research notes for a symbol |
-| `research_compare` | Side-by-side comparison of all researched assets |
-| `watchlist` | Watched tickers with buy-zone alerts |
-| `portfolio_health` | AI-scored 5-category health report (from cache) |
-| `tax_estimate` | IRPF savings-base estimate + harvest candidates |
-| `tax_report` | Per-lot FIFO realised gains + dividend withholding |
-| `goals` | FIRE/savings goals with on-track progress |
-| `bookings` | Cash deposits and withdrawals |
-| `networth` | Net worth with accounts and balance sheet |
-| `retirement_readiness` | Retirement scenarios in today's euros |
-| `action_items` | Open items pfm has detected |
-| `data_freshness` | How current the price data is |
-| `rebalance_analysis` | Allocation drift against the targets |
-| `wash_sale_check` | Antiaplicación (art. 33.5 LIRPF) windows and blocked losses |
-| `budget_summary` | Active budget, planned vs actual |
-| `spending_summary`, `spending_transactions` | Bank spending totals, trend and individual rows |
-| `next_euro`, `deployable_cash`, `allocation_targets`, `allocation_candidates`, `allocator_settings` | The next-euro allocator |
+See the full tool table in [`mcp/README.md`](mcp/README.md); `mcp/tests/test_readme.py` keeps it in step with the registered tools.
 
 ### Setup
 
@@ -550,7 +503,7 @@ uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e
 uv run pytest tests/ --cov=portf_manager --cov-report=term-missing
 ```
 
-**Current status**: 1921 passed, 6 skipped (unit, 2026-10-23); JS: 235 passed (`make test-js`).
+**Current status**: ~2.5k unit tests and ~400 JS tests (`make test-js`); run the suites for current numbers.
 
 Key test files:
 - `tests/test_pdt_xlsx_parser.py` — PDT XLSX parse/export roundtrip
@@ -558,7 +511,7 @@ Key test files:
 - `tests/unit/test_generic_csv_parser.py` — generic CSV parser (date/decimal style, asset_type pass-through)
 - `tests/unit/test_imports_exports.py` — server import/export/sync API
 - `tests/unit/test_api_routers.py` — all routers incl. tax-report FIFO shape assertion
-- `tests/test_database.py` — database CRUD + migrations (schema v35)
+- `tests/test_database.py` — database CRUD + migrations (schema v45)
 - `tests/test_cli_update_prices.py` — CLI update-prices via shared service
 
 ---
@@ -568,8 +521,8 @@ Key test files:
 ```
 pfm/
 ├── portf_manager/              # Core CLI package
-│   ├── cli.py                  # 30+ commands (argparse)
-│   ├── database.py             # SQLite layer + auto-migrations (schema v35)
+│   ├── cli.py                  # 32 commands (argparse)
+│   ├── database.py             # SQLite layer + auto-migrations (schema v45)
 │   ├── database_factory.py     # SQLite/PostgreSQL auto-detection
 │   ├── models.py               # Enums: AssetType, TransactionType
 │   ├── llm_client.py           # Provider-agnostic LLM client (Ollama/Gemini/OpenRouter/Anthropic)
@@ -597,7 +550,7 @@ pfm/
 │       ├── research.py
 │       └── ...                         # performance, risk_metrics, exposure, balance_sheet, loans,
 │                                       # retirement, allocator, budget, recurring, wash_sale, pdf_reports, …
-├── portf_server/               # FastAPI REST API (200+ endpoints)
+├── portf_server/               # FastAPI REST API (250+ endpoints)
 │   ├── app.py                  # Lifespan, router registration, API key seed
 │   ├── routers/
 │   │   ├── analytics.py        # Performance, risk, tax, diversification, snapshots
@@ -614,19 +567,19 @@ pfm/
 │   │   ├── auth.py
 │   │   └── ...                 # networth, retirement, allocate, spending, budgets, action_items,
 │   │                           # fund_profiles, reports, rebalance, watchlist, goals, public, system, …
-│   ├── chat_tools.py           # 18 in-process portfolio tools for the agentic chat loop
+│   ├── chat_tools.py           # 50 in-process portfolio tools for the agentic chat loop
 │   ├── schemas/
 │   └── auth_middleware.py
 ├── web_client/                 # Bootstrap 5 + Chart.js frontend (no build step)
 │   ├── index.html
 │   ├── js/
-│   │   ├── help_text.js        # PAGE_HELP / METRIC_HELP — all 20 pages documented
+│   │   ├── help_text.js        # PAGE_HELP / METRIC_HELP — every page documented
 │   │   ├── pfm_core.js         # Prefs, Fmt, AssetSearch, API/modal managers
 │   │   ├── pfm_pages.js        # Nav, dashboard, transactions, assets, holdings
 │   │   ├── pfm_analytics.js    # Net-worth/dividend/analytics/diversification charts
 │   │   └── pfm_features.js     # Watchlist, goals, chat, portfolios, import/export, research
 │   └── css/
-├── mcp/                        # pfm-mcp package: 32 read-only MCP tools backed by the FastAPI server
+├── mcp/                        # pfm-mcp package: 48 read-only MCP tools backed by the FastAPI server
 │   ├── pfm_mcp/                # client.py, config.py, tools/ (one module per area)
 │   ├── tests/
 │   └── server.py               # Compatibility shim for the ~/mcp symlink

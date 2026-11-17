@@ -8,6 +8,7 @@ This module provides API key authentication functionality including:
 """
 
 import hashlib
+import logging
 import secrets
 import string
 from datetime import datetime, timedelta
@@ -17,6 +18,8 @@ from fastapi import HTTPException, Request, status
 from fastapi.security import HTTPBearer
 
 from portf_manager.database import Database
+
+logger = logging.getLogger(__name__)
 
 
 class APIKeyError(Exception):
@@ -138,6 +141,10 @@ class APIKeyManager:
 
         Returns:
             dict or None: API key information if valid, None otherwise
+
+        Raises:
+            HTTPException: 503 when the key store can't be read, so a database
+                fault isn't reported to every client as an invalid key.
         """
         try:
             key_hash = self._hash_api_key(api_key)
@@ -178,8 +185,12 @@ class APIKeyManager:
 
                 return key_info
 
-        except Exception:
-            return None
+        except Exception as e:
+            logger.exception("API key validation failed")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="API key store unavailable",
+            ) from e
 
     def _update_last_used(self, key_id: int):
         """
@@ -193,9 +204,9 @@ class APIKeyManager:
             with self.database.get_connection() as conn:
                 conn.execute(query, (datetime.now(), key_id))
                 conn.commit()
-        except Exception:
+        except Exception as e:
             # Log but don't fail the request if timestamp update fails
-            pass
+            logger.warning("Could not update last_used for API key %s: %s", key_id, e)
 
     def list_api_keys(self) -> list:
         """

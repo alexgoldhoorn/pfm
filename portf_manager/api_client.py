@@ -583,8 +583,14 @@ class APIClient:
                         logger.debug(
                             f"{symbol}: GBX→GBP ÷100 → {batch_results[symbol]:.4f}"
                         )
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Without the currency we can't tell pence from pounds, and
+                    # storing a pence price as GBP is 100x too high. Skip the
+                    # symbol this run; the next run retries it.
+                    logger.warning(
+                        f"{symbol}: currency lookup failed ({e}); price not stored"
+                    )
+                    batch_results.pop(symbol, None)
 
             results.update(batch_results)
             invalid_symbols.extend(batch_invalid)

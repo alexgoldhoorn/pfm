@@ -959,9 +959,12 @@ class EnhancedChatEngine:
                 tool_result,
                 TOOLS,
             )
+            # An empty answer is a failure, not a reply to store in the session.
+            if not (answer or "").strip():
+                raise LLMResponseError("model returned an empty answer after a tool")
             return answer, tools_used
 
-        return "I wasn't able to generate a response. Please try again.", tools_used
+        raise LLMResponseError("model returned neither text nor a tool call")
 
     async def _generate_enhanced_response(
         self,
