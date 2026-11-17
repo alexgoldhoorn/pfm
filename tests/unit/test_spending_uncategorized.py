@@ -196,7 +196,7 @@ def test_action_item_is_raised_above_the_threshold(env):
     items = action_items.check_uncategorized_spending(db)
     assert len(items) == 1
     item = items[0]
-    assert item["id"] == "spending:uncategorized"
+    assert item["id"] == f"spending:uncategorized:{_last_month()}"
     assert item["context"]["month"] == _last_month()
     assert item["context"]["total_eur"] == 230.0
     assert "UNKNOWN CORP" in item["detail"]

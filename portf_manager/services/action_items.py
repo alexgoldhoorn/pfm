@@ -1030,8 +1030,9 @@ def check_uncategorized_spending(db, today: date = None) -> list[dict]:
 
     Raised when uncategorised outflows are above 5% of that month's spending or
     above 500 EUR. A month with no imports, or one the data stops short of, is
-    never judged. The id is fixed (``spending:uncategorized``) so the stored
-    check/snooze state applies; the detail names the biggest groups.
+    never judged. The id carries the month (``spending:uncategorized:<YYYY-MM>``)
+    so checking one month does not hide a later one; the detail names the
+    biggest groups.
     """
     from portf_manager.services import (
         exposure,
@@ -1063,7 +1064,7 @@ def check_uncategorized_spending(db, today: date = None) -> list[dict]:
     )
     return [
         {
-            "id": "spending:uncategorized",
+            "id": f"spending:uncategorized:{month}",
             "category": "spending",
             "severity": "low",
             "title": (

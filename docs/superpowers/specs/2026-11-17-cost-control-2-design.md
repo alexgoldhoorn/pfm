@@ -167,7 +167,8 @@ Phase 2 (not in this branch): `~/mcp/scripts/pfm_statement_inbox.py` watches
   and root checks included), so a group is one request.
 - `GET /spending/review` gains `uncategorized: {count, total_eur, share_pct}`
   for the reviewed month, with a highlight line when the share is above 5%.
-- Action Item `spending:uncategorized` when the last complete month's
+- Action Item `spending:uncategorized:{YYYY-MM}` (the month it judges, so a
+  checked item does not hide a later month) when the last complete month's
   uncategorised share is above 5% or its total above EUR 500 (check first
   whether an uncategorised item already exists and extend it instead).
 

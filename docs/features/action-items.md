@@ -37,10 +37,10 @@
 
 ### Uncategorised spending (2026-11-17)
 - **`check_uncategorized_spending`** (`spending` category, `low`, id
-  `spending:uncategorized`): raised when the last complete month's uncategorised
+  `spending:uncategorized:<YYYY-MM>`): raised when the last complete month's uncategorised
   outflows are above 5% of that month's spending or above 500 EUR
-  (`spending_uncategorized.SHARE_ALERT_PCT` / `TOTAL_ALERT_EUR`). The id is fixed,
-  so one checked/snoozed state covers it; the detail names the biggest groups
+  (`spending_uncategorized.SHARE_ALERT_PCT` / `TOTAL_ALERT_EUR`). The id carries the
+  month, so checking it for one month does not hide the next; the detail names the biggest groups
   from the queue. A month with no imports, or one the data stops short of, is
   never judged; none complete means no item. Links to the Spending page's To
   classify card. Details: `spending.md` → Cost control 2.

@@ -9,6 +9,7 @@ different dedup + transfer semantics.
 
 import json
 import logging
+import threading
 from typing import Callable, Dict, List, Literal, Optional
 
 from fastapi import (
@@ -132,6 +133,10 @@ class SpendingSaveResponse(BaseModel):
     latest_balance: Optional[float] = None
     latest_balance_currency: Optional[str] = None
     latest_balance_date: Optional[str] = None
+    # False when transfer settling failed after the rows were saved (the rows
+    # stay; ``settle_error`` says why). Always True on a normal save.
+    transfers_settled: bool = True
+    settle_error: Optional[str] = None
 
 
 class SpendingTransactionResponse(BaseModel):
@@ -342,17 +347,30 @@ def _resolve_account(
     )
 
 
-def _parse_statement(file_bytes: bytes):
+# One statement import at a time: the unattended job and a person may post
+# together, and two interleaved imports would both pass the duplicate check.
+_IMPORT_LOCK = threading.Lock()
+
+
+class _ImportAborted(Exception):
+    """A strict save failed; nothing from the call is left stored."""
+
+
+def _parse_statement(
+    file_bytes: bytes, fail_status: int = status.HTTP_422_UNPROCESSABLE_ENTITY
+):
     """Parse a statement file with the format auto-detection.
 
     Args:
         file_bytes: The raw upload.
+        fail_status: HTTP status for a file that cannot be parsed.
 
     Returns:
         The parser result (``rows``, ``skipped``).
 
     Raises:
-        HTTPException: 422 when the file cannot be parsed.
+        HTTPException: ``fail_status`` (default 422) when the file cannot be
+            parsed.
     """
     try:
         # AEB43 exports commonly contain raw Latin-1 bytes (accented
@@ -367,7 +385,7 @@ def _parse_statement(file_bytes: bytes):
     except Exception as e:
         logger.exception("Error parsing bank statement")
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=fail_status,
             detail=f"Failed to parse file: {str(e)}",
         )
 
@@ -469,7 +487,11 @@ async def upload_bank_statement(
 
 
 def _save_rows(
-    db, account_portfolio_id: int, rows, duplicate_action: str
+    db,
+    account_portfolio_id: int,
+    rows,
+    duplicate_action: str,
+    strict: bool = False,
 ) -> SpendingSaveResponse:
     """Save spending rows, honoring ``duplicate_action``, then link transfers.
 
@@ -479,6 +501,14 @@ def _save_rows(
         rows: Objects with ``date``, ``description``, ``amount``, ``currency``,
             ``category`` and ``balance``.
         duplicate_action: ``skip``, ``overwrite`` or ``add``.
+        strict: All or nothing. A row that fails to save deletes the rows this
+            call already created and raises ``_ImportAborted``; a transfer
+            settling failure keeps the rows and is reported in the response
+            (``transfers_settled`` False). Meant for ``duplicate_action``
+            ``add``, where every saved row is a new one.
+
+    Raises:
+        _ImportAborted: ``strict`` and a row failed.
     """
     fits = _category_fits(db)
 
@@ -548,10 +578,25 @@ def _save_rows(
             if category == "uncategorized":
                 uncategorized_ids.append(new_id)
         except Exception as e:
+            if strict:
+                _rollback_import(db, saved_ids, f"{row.date} {row.description}: {e}")
             errors.append(f"{row.date} {row.description}: {str(e)}")
             logger.warning(f"Failed to save spending row: {e}")
 
-    transfers_linked = settle_transfers(db, saved_ids)["linked"] if saved_ids else 0
+    transfers_linked = 0
+    transfers_settled = True
+    settle_error = None
+    if saved_ids:
+        if strict:
+            try:
+                transfers_linked = settle_transfers(db, saved_ids)["linked"]
+            except Exception as e:
+                # the rows are saved and valid: keep them and say so
+                transfers_settled = False
+                settle_error = str(e)
+                logger.warning(f"Transfer settling failed after import: {e}")
+        else:
+            transfers_linked = settle_transfers(db, saved_ids)["linked"]
 
     # Summary-only lookups: never fail a save because of them.
     account_name = None
@@ -585,7 +630,32 @@ def _save_rows(
         latest_balance=(latest or {}).get("balance"),
         latest_balance_currency=(latest or {}).get("currency"),
         latest_balance_date=(latest or {}).get("date"),
+        transfers_settled=transfers_settled,
+        settle_error=settle_error,
     )
+
+
+def _rollback_import(db, saved_ids: List[int], reason: str) -> None:
+    """Delete the rows an aborted strict import created, then raise.
+
+    Raises:
+        _ImportAborted: always, naming the failed row and any row that could
+            not be removed.
+    """
+    stuck = []
+    for sid in reversed(saved_ids):
+        try:
+            db.delete_spending_transaction(sid)
+        except Exception as e:
+            logger.error(f"Could not roll back spending row {sid}: {e}")
+            stuck.append(sid)
+    message = f"Import aborted, nothing was stored. Failed row {reason}"
+    if stuck:
+        message = (
+            f"Import aborted but rows {stuck} could not be removed again. "
+            f"Failed row {reason}"
+        )
+    raise _ImportAborted(message)
 
 
 @router.post("/save", response_model=SpendingSaveResponse)
@@ -610,12 +680,21 @@ async def import_statement_file(
     The same parse, preview and save paths as ``/upload`` + ``/save``: rows
     already stored before the import are dropped (never rows repeated inside
     the file), rules and transfer matching apply as on a normal import.
-    Nothing is written when the account is not a bank account or the file
-    parses to nothing.
+    All or nothing: a bank-account, parse or input problem is a 400 and a row
+    that fails to save is a 500; in both cases nothing from the call stays
+    stored. Calls are serialised, so two posts never interleave. If transfer
+    settling fails after the rows are saved, the rows stay and the response
+    carries ``transfers_settled: false`` and a warning.
+
+    ``balance_check`` compares the file's stated balances with each other and
+    with the balance stored before the file's first row: ``ok``, ``mismatch``
+    (rows may be missing; the import still goes ahead) or ``unknown`` (the
+    file has no balance column). An unattended caller should alert on
+    ``mismatch``.
 
     Returns:
         ``{parsed, imported, duplicates, uncategorized, date_from, date_to,
-        data_through, warnings}``.
+        data_through, balance_check, transfers_settled, warnings}``.
     """
     portfolio = db.get_portfolio(portfolio_id)
     if not portfolio or portfolio.get("account_type") != "bank":
@@ -623,7 +702,14 @@ async def import_statement_file(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Portfolio {portfolio_id} is not a bank account",
         )
-    result = _parse_statement(await file.read())
+    content = await file.read()
+    with _IMPORT_LOCK:
+        return _import_statement(db, portfolio_id, content)
+
+
+def _import_statement(db, portfolio_id: int, content: bytes) -> dict:
+    """The body of ``/import-file``, run under the import lock."""
+    result = _parse_statement(content, fail_status=status.HTTP_400_BAD_REQUEST)
     if not result.rows:
         reasons = sorted({str(reason) for _row, reason in result.skipped})
         raise HTTPException(
@@ -636,9 +722,18 @@ async def import_statement_file(
     checked, breaks = _balance_breaks(db, portfolio_id, result)
     # "add": the duplicates were already dropped against what was stored
     # before, so twins inside the file are both kept.
-    saved = _save_rows(
-        db, portfolio_id, [r for r in preview if not r.is_duplicate], "add"
-    )
+    try:
+        saved = _save_rows(
+            db,
+            portfolio_id,
+            [r for r in preview if not r.is_duplicate],
+            "add",
+            strict=True,
+        )
+    except _ImportAborted as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
 
     warnings: List[str] = []
     if result.skipped:
@@ -647,7 +742,11 @@ async def import_statement_file(
         warnings.append(
             f"{len(breaks)} stated balance(s) do not add up: rows may be missing"
         )
-    warnings.extend(f"Row not saved: {e}" for e in saved.errors)
+    if not saved.transfers_settled:
+        warnings.append(
+            "Rows were saved but own-account transfers were not matched "
+            f"({saved.settle_error}): run the transfer rescan."
+        )
     data_through = None
     try:
         last = (db.get_portfolio_date_ranges().get(portfolio_id) or {}).get(
@@ -656,6 +755,12 @@ async def import_statement_file(
         data_through = str(last)[:10] if last else None
     except Exception as e:
         warnings.append(f"data_through not available: {e}")
+    if breaks:
+        balance_check = "mismatch"
+    elif checked:
+        balance_check = "ok"
+    else:
+        balance_check = "unknown"
     return {
         "parsed": len(result.rows),
         "imported": saved.saved,
@@ -664,6 +769,8 @@ async def import_statement_file(
         "date_from": saved.date_from,
         "date_to": saved.date_to,
         "data_through": data_through,
+        "balance_check": balance_check,
+        "transfers_settled": saved.transfers_settled,
         "warnings": warnings,
     }
 
