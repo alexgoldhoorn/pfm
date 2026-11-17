@@ -16,7 +16,11 @@ from datetime import date, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
 from portf_manager.services import budget as budget_service
-from portf_manager.services import cashflow_forecast, spending_insights
+from portf_manager.services import (
+    cashflow_forecast,
+    spending_insights,
+    spending_uncategorized,
+)
 from portf_manager.services.recurring import load_recurring
 
 # Items kept per list, so the bundle stays readable in chat and in a tool reply.
@@ -100,6 +104,19 @@ def _tiers_part(rows, tree, month, today):
     return {
         "month": by_month.get(month),
         "previous": by_month.get(spending_insights.shift_month(month, -1)),
+    }
+
+
+def _uncategorized_part(rows, tree, month, summary):
+    """Uncategorised outflows of the review month; None when nothing is imported."""
+    if summary and summary.get("status") == "no_imports":
+        return None
+    figures = spending_uncategorized.month_figures(rows, tree, month)
+    return {
+        "count": figures["count"],
+        "total_eur": figures["total_eur"],
+        "share_pct": figures["share_pct"],
+        "highlight": spending_uncategorized.highlight(figures),
     }
 
 
@@ -257,7 +274,7 @@ def build_review(
 
     Returns:
         ``{month, as_of, data_through, status, totals, movers, anomalies,
-        tiers, recurring, budget, forecast, freshness, warnings}``. Every part
+        tiers, uncategorized, recurring, budget, forecast, freshness, warnings}``. Every part
         after ``month`` / ``as_of`` is ``None`` when it could not be built (a
         warning says why); ``budget`` is also ``None`` without an active
         budget. ``totals`` and ``movers`` carry no deltas unless the month is
@@ -311,6 +328,14 @@ def build_review(
         if have
         else None
     )
+    uncategorized = (
+        guard(
+            "Uncategorised rows",
+            lambda: _uncategorized_part(rows, tree, month, summary),
+        )
+        if have
+        else None
+    )
     recurring = guard(
         "Recurring changes", lambda: _recurring_part(db, fx, month, portfolio_id)
     )
@@ -360,6 +385,7 @@ def build_review(
         "movers": movers,
         "anomalies": anomalies,
         "tiers": tiers,
+        "uncategorized": uncategorized,
         "recurring": recurring,
         "budget": budget,
         "forecast": forecast,

@@ -1025,6 +1025,66 @@ def check_spending_anomalies(db, today: date = None) -> list[dict]:
     return items
 
 
+def check_uncategorized_spending(db, today: date = None) -> list[dict]:
+    """The last complete month has too much spending without a category.
+
+    Raised when uncategorised outflows are above 5% of that month's spending or
+    above 500 EUR. A month with no imports, or one the data stops short of, is
+    never judged. The id is fixed (``spending:uncategorized``) so the stored
+    check/snooze state applies; the detail names the biggest groups.
+    """
+    from portf_manager.services import (
+        exposure,
+        spending_insights,
+        spending_uncategorized,
+    )
+
+    today = today or date.today()
+    first = spending_insights.shift_month(today.strftime("%Y-%m"), -13)
+    rows = spending_insights.load_rows(
+        db, exposure._default_fx, start_date=f"{first}-01"
+    )
+    month = spending_uncategorized.last_complete_month(rows, today)
+    if month is None:
+        return []
+    tree = {r["name"]: r for r in db.list_spending_categories_tree()}
+    figures = spending_uncategorized.month_figures(rows, tree, month)
+    share = figures["share_pct"] or 0.0
+    if not (
+        share > spending_uncategorized.SHARE_ALERT_PCT
+        or figures["total_eur"] > spending_uncategorized.TOTAL_ALERT_EUR
+    ):
+        return []
+    queue = spending_uncategorized.build_queue(rows, tree, today, limit=3, months=3)
+    top = ", ".join(
+        f"{g['merchant']} ({g['total_eur']:,.0f} EUR)"
+        for g in queue["groups"]
+        if g["direction"] == "out"
+    )
+    return [
+        {
+            "id": "spending:uncategorized",
+            "category": "spending",
+            "severity": "low",
+            "title": (
+                f"{figures['total_eur']:,.0f} EUR of {month} spending has no category"
+            ),
+            "detail": (
+                f"{figures['count']} outflow(s), {share:.0f}% of the month's "
+                "spending, are uncategorised: the comparisons are less reliable."
+                + (f" Biggest: {top}." if top else "")
+            ),
+            "link_page": "spending",
+            "context": {
+                "month": month,
+                "count": figures["count"],
+                "total_eur": figures["total_eur"],
+                "share_pct": figures["share_pct"],
+            },
+        }
+    ]
+
+
 def check_unmatched_pattern_transfers(db, today: date = None) -> list[dict]:
     """Rows flagged as transfers by a pattern whose other leg never showed up.
 
@@ -1139,6 +1199,7 @@ _CHECKS = (
     check_fund_exposure,
     check_recurring_charges,
     check_spending_anomalies,
+    check_uncategorized_spending,
     check_unmatched_pattern_transfers,
     check_bookings_without_bank_leg,
     check_decision_reviews,

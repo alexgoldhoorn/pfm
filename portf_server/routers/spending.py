@@ -45,6 +45,7 @@ from portf_manager.services import (
     planned_items,
     spending_insights,
     spending_review,
+    spending_uncategorized,
 )
 from portf_manager.services.spending_rules import (
     TRANSFER_CATEGORY,
@@ -1061,10 +1062,19 @@ async def rescan_categories(
     Never touches a row that already has a non-"uncategorized" category —
     covers the case where rules are added/edited after rows were imported.
     """
+    return {"recategorized": _rescan_uncategorized(db, body.ids if body else None)}
+
+
+def _rescan_uncategorized(db, ids: Optional[List[int]] = None) -> int:
+    """Re-apply the rules to still-uncategorized rows (all, or only ``ids``).
+
+    Returns:
+        How many rows got a category.
+    """
     rules = db.list_spending_rules()
     uncategorized = db.list_spending_transactions(category="uncategorized")
-    if body and body.ids is not None:
-        id_set = set(body.ids)
+    if ids is not None:
+        id_set = set(ids)
         uncategorized = [row for row in uncategorized if row["id"] in id_set]
     fits = _category_fits(db)
     updated = 0
@@ -1080,7 +1090,7 @@ async def rescan_categories(
         if category != "uncategorized":
             if db.update_spending_transaction(row["id"], category=category):
                 updated += 1
-    return {"recategorized": updated}
+    return updated
 
 
 def _validate_rule_conditions(
@@ -1882,6 +1892,121 @@ def get_cashflow_forecast(
         include_tax=include_tax,
         what_if=what_if,
     )
+
+
+@router.get("/uncategorized-queue", response_model=dict)
+def get_uncategorized_queue(
+    limit: int = Query(default=spending_uncategorized.DEFAULT_LIMIT, ge=1, le=200),
+    months: int = Query(default=spending_uncategorized.DEFAULT_MONTHS, ge=1, le=60),
+    portfolio_id: Optional[int] = None,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Uncategorised rows grouped by merchant, biggest money first.
+
+    Non-transfer rows with category ``uncategorized`` in the last ``months``
+    calendar months, grouped per merchant and direction (rows without a
+    merchant by their normalised description). Each group carries a
+    ``proposed_pattern`` for a rule and the ids to classify it with
+    ``POST /uncategorized-queue/classify``. ``share_of_spending_pct`` and
+    ``last_complete_month`` count outflows only. Plain ``def`` because of the
+    FX lookups.
+    """
+    from datetime import date
+
+    today = date.today()
+    first = spending_insights.shift_month(today.strftime("%Y-%m"), -max(months, 13))
+    rows = spending_insights.load_rows(
+        db, _fx, start_date=f"{first}-01", portfolio_id=portfolio_id
+    )
+    return spending_uncategorized.build_queue(
+        rows, _category_tree(db), today, limit=limit, months=months
+    )
+
+
+class ClassifyGroupBody(BaseModel):
+    transaction_ids: List[int]
+    category: str
+    create_rule: bool = False
+    pattern: Optional[str] = None
+
+
+@router.post("/uncategorized-queue/classify", response_model=dict)
+def classify_uncategorized_group(
+    body: ClassifyGroupBody,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Give a group of uncategorised rows one category in a single request.
+
+    A thin wrapper over the row edit and the rules: every id must exist, not be
+    a transfer and be able to hold the category's sign (same check as editing
+    one row), otherwise nothing is written (400). Rows that already have a
+    category are left alone and counted in ``skipped``. With ``create_rule`` a
+    rule for ``pattern`` is added (an identical rule is reused), then the rules
+    are re-applied to the other still-uncategorised rows. ``Transfer`` cannot
+    be chosen here.
+
+    Returns:
+        ``{updated, skipped, rule_id, rule_created, recategorized_by_rule}``.
+    """
+    category = body.category.strip()
+    if not category:
+        raise HTTPException(status_code=400, detail="Category cannot be empty")
+    if category == TRANSFER_CATEGORY:
+        raise HTTPException(status_code=400, detail=_TRANSFER_RULE_DETAIL)
+    if not body.transaction_ids:
+        raise HTTPException(status_code=400, detail="transaction_ids cannot be empty")
+    pattern = (body.pattern or "").strip()
+    if body.create_rule and not pattern:
+        raise HTTPException(
+            status_code=400, detail="pattern is required to create a rule"
+        )
+    root = db.get_spending_category_root(category)
+    todo: List[int] = []
+    skipped = 0
+    for tid in dict.fromkeys(body.transaction_ids):
+        row = db.get_spending_transaction(tid)
+        if not row:
+            raise HTTPException(status_code=400, detail=f"Transaction {tid} not found")
+        if row.get("is_transfer"):
+            raise HTTPException(
+                status_code=400, detail=f"Transaction {tid} is a transfer"
+            )
+        if not _sign_matches_root(root, row["amount"]):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"'{category}' is an {root} category; transaction {tid} is "
+                    f"{'a debit' if row['amount'] < 0 else 'a credit'}"
+                ),
+            )
+        if (row.get("category") or "uncategorized") != "uncategorized":
+            skipped += 1
+            continue
+        todo.append(tid)
+
+    updated = sum(
+        1 for tid in todo if db.update_spending_transaction(tid, category=category)
+    )
+    rule_id = None
+    rule_created = False
+    rescanned = 0
+    if body.create_rule:
+        existing = db.find_duplicate_spending_rule(pattern, category)
+        if existing:
+            rule_id = existing["id"]
+        else:
+            rule_id = db.create_spending_rule(pattern=pattern, category=category)
+            rule_created = True
+        rescanned = _rescan_uncategorized(db)
+    return {
+        "updated": updated,
+        "skipped": skipped,
+        "rule_id": rule_id,
+        "rule_created": rule_created,
+        "recategorized_by_rule": rescanned,
+    }
 
 
 @router.get("/review", response_model=dict)
