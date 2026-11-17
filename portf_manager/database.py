@@ -16,7 +16,7 @@ from pathlib import Path
 from portf_manager.services.merchant import fold_for_search, normalize_merchant
 
 # Database version for migration tracking
-DATABASE_VERSION = 45
+DATABASE_VERSION = 46
 
 
 # black
@@ -577,6 +577,30 @@ class Database:
 
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS planned_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                description TEXT NOT NULL,
+                amount REAL NOT NULL CHECK (amount != 0),
+                currency TEXT NOT NULL DEFAULT 'EUR',
+                kind TEXT NOT NULL
+                    CHECK (kind IN ('spending', 'savings', 'income')),
+                portfolio_id INTEGER
+                    REFERENCES portfolios(id) ON DELETE SET NULL,
+                done INTEGER NOT NULL DEFAULT 0,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                CHECK (
+                    (kind = 'income' AND amount > 0)
+                    OR (kind != 'income' AND amount < 0)
+                )
+            )
+        """
+        )
+
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS account_valuations (
                 portfolio_id INTEGER PRIMARY KEY
                     REFERENCES portfolios(id) ON DELETE CASCADE,
@@ -1048,6 +1072,8 @@ class Database:
             self._migrate_to_v44(conn)
         if current_version < 45:
             self._migrate_to_v45(conn)
+        if current_version < 46:
+            self._migrate_to_v46(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -2232,6 +2258,38 @@ class Database:
         )
         conn.commit()
 
+    def _migrate_to_v46(self, conn: sqlite3.Connection) -> None:
+        """Migrate from v45 to v46 — planned items for the cash-flow forecast.
+
+        ``planned_items`` holds future one-off expenses and income entered by
+        hand. Nothing is backfilled; the step is guarded so a rerun is
+        harmless.
+        """
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS planned_items (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                date TEXT NOT NULL,
+                description TEXT NOT NULL,
+                amount REAL NOT NULL CHECK (amount != 0),
+                currency TEXT NOT NULL DEFAULT 'EUR',
+                kind TEXT NOT NULL
+                    CHECK (kind IN ('spending', 'savings', 'income')),
+                portfolio_id INTEGER
+                    REFERENCES portfolios(id) ON DELETE SET NULL,
+                done INTEGER NOT NULL DEFAULT 0,
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                CHECK (
+                    (kind = 'income' AND amount > 0)
+                    OR (kind != 'income' AND amount < 0)
+                )
+            )
+        """
+        )
+        conn.commit()
+
     def _migrate_to_v45(self, conn: sqlite3.Connection) -> None:
         """Migrate from v44 to v45 — loan rate history.
 
@@ -3029,6 +3087,78 @@ class Database:
             cur = conn.execute(
                 "DELETE FROM loan_rate_periods WHERE id = ?", (period_id,)
             )
+            conn.commit()
+            return cur.rowcount > 0
+
+    # ── Planned items (future one-offs for the forecast) ────────────────────
+
+    _PLANNED_FIELDS = {
+        "date",
+        "description",
+        "amount",
+        "currency",
+        "kind",
+        "portfolio_id",
+        "done",
+        "notes",
+    }
+
+    def create_planned_item(
+        self,
+        date: str,
+        description: str,
+        amount: float,
+        kind: str,
+        currency: str = "EUR",
+        portfolio_id: Optional[int] = None,
+        notes: Optional[str] = None,
+    ) -> int:
+        """Create a planned item and return its id.
+
+        The caller validates the sign against ``kind``; a violated CHECK
+        surfaces as ``DatabaseError``.
+        """
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                "INSERT INTO planned_items "
+                "(date, description, amount, currency, kind, portfolio_id, notes) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (date, description, amount, currency, kind, portfolio_id, notes),
+            )
+            conn.commit()
+            return cur.lastrowid
+
+    def get_planned_item(self, item_id: int) -> Optional[Dict]:
+        """One planned item, or None."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM planned_items WHERE id = ?", (item_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def list_planned_items(self, include_done: bool = False) -> List[Dict]:
+        """Planned items by date; done ones only when asked for."""
+        sql = "SELECT * FROM planned_items"
+        if not include_done:
+            sql += " WHERE done = 0"
+        with self.get_connection() as conn:
+            rows = conn.execute(sql + " ORDER BY date, id").fetchall()
+            return [dict(r) for r in rows]
+
+    def update_planned_item(self, item_id: int, **fields) -> bool:
+        """Update planned-item columns; ``None`` clears ``portfolio_id``/``notes``."""
+        return self._update_row(
+            "planned_items",
+            item_id,
+            self._PLANNED_FIELDS,
+            fields,
+            nullable={"portfolio_id", "notes"},
+        )
+
+    def delete_planned_item(self, item_id: int) -> bool:
+        """Delete a planned item; True when a row was removed."""
+        with self.get_connection() as conn:
+            cur = conn.execute("DELETE FROM planned_items WHERE id = ?", (item_id,))
             conn.commit()
             return cur.rowcount > 0
 

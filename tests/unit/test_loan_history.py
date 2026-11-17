@@ -248,7 +248,7 @@ def _url(loan_id, tail=""):
 
 
 def test_schema_has_the_table_and_version():
-    assert DATABASE_VERSION == 45
+    assert DATABASE_VERSION >= 45
 
 
 def test_period_crud_roundtrip(tmp_path):

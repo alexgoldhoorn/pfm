@@ -3,6 +3,8 @@
 import io
 from datetime import date, timedelta
 
+import pytest
+
 from fastapi.testclient import TestClient
 from portf_manager.database import Database
 
@@ -3022,3 +3024,123 @@ def test_compare_endpoint_loads_enough_history_for_a_long_baseline(tmp_path):
         "/api/v1/spending/compare?baseline_months=18", headers=HEADERS
     ).json()
     assert len(body["baseline_months"]) == 18
+
+
+# ── planned items and the forecast extras ───────────────────────────────────
+
+
+def test_planned_items_crud_and_validation(tmp_path):
+    client, db = _make_client(tmp_path)
+    url = "/api/v1/spending/planned"
+    body = {
+        "date": "2027-03-01",
+        "description": "Example Roof",
+        "amount": -1200.0,
+        "kind": "spending",
+    }
+    r = client.post(url, json=body, headers=HEADERS)
+    assert r.status_code == 201
+    item = r.json()
+    assert item["done"] is False and item["currency"] == "EUR"
+    iid = item["id"]
+    # validation: sign vs kind, date, zero, empty text, unknown kind
+    for bad in (
+        {**body, "amount": 100.0},
+        {**body, "kind": "income"},
+        {**body, "date": "2027-13-01"},
+        {**body, "amount": 0},
+        {**body, "description": "  "},
+        {**body, "kind": "gift"},
+        {**body, "portfolio_id": 999},
+    ):
+        assert client.post(url, json=bad, headers=HEADERS).status_code == 400
+    # partial update: the sign is checked against the stored kind
+    assert (
+        client.put(f"{url}/{iid}", json={"amount": 50.0}, headers=HEADERS).status_code
+        == 400
+    )
+    r = client.put(f"{url}/{iid}", json={"amount": -900.0}, headers=HEADERS)
+    assert r.json()["amount"] == -900.0 and r.json()["description"] == "Example Roof"
+    r = client.put(
+        f"{url}/{iid}", json={"kind": "income", "amount": 300.0}, headers=HEADERS
+    )
+    assert r.json()["kind"] == "income"
+    assert (
+        client.put(f"{url}/{iid}", json={"date": None}, headers=HEADERS).status_code
+        == 400
+    )
+    # done items leave the default listing
+    client.put(f"{url}/{iid}", json={"done": True}, headers=HEADERS)
+    assert client.get(url, headers=HEADERS).json() == []
+    listed = client.get(f"{url}?include_done=true", headers=HEADERS).json()
+    assert [i["id"] for i in listed] == [iid] and listed[0]["done"] is True
+    assert client.put(f"{url}/999", json={}, headers=HEADERS).status_code == 404
+    assert client.delete(f"{url}/{iid}", headers=HEADERS).json() == {
+        "deleted": True,
+        "id": iid,
+    }
+    assert client.delete(f"{url}/{iid}", headers=HEADERS).status_code == 404
+
+
+def test_forecast_lists_open_planned_items_and_supports_what_if(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Bank", account_type="bank")
+    today = date.today()
+    db.create_spending_transaction(
+        pid, today.isoformat(), "Example Market", -20.0, balance=1000.0
+    )
+    open_id = db.create_planned_item(
+        (today.replace(day=1) + timedelta(days=62)).isoformat(),
+        "Example Roof",
+        -300.0,
+        "spending",
+    )
+    done_id = db.create_planned_item(
+        (today + timedelta(days=40)).isoformat(), "Example Done", -50.0, "spending"
+    )
+    db.update_planned_item(done_id, done=1)
+    body = client.get("/api/v1/spending/forecast", headers=HEADERS).json()
+    assert [i["id"] for i in body["planned_items"]] == [open_id]
+    assert body["planned_items"][0]["status"] == "projected"
+    assert "what_if" not in body
+    # tax is off by default only in the sense that nothing is ticked: a warning
+    assert any("work-income merchants" in w for w in body["warnings"])
+    assert body["tax_payments"] == []
+    off = client.get(
+        "/api/v1/spending/forecast?include_tax=false", headers=HEADERS
+    ).json()
+    assert not any("work-income merchants" in w for w in off["warnings"])
+
+    wi = client.get(
+        "/api/v1/spending/forecast?extra_amount=5000&extra_date="
+        f"{(today + timedelta(days=45)).strftime('%Y-%m')}",
+        headers=HEADERS,
+    ).json()
+    assert wi["what_if"]["amount_eur"] == -5000.0
+    assert wi["what_if"]["date"].endswith("-15")
+    # one imported row is no baseline: the balance is unknown, never zero
+    assert wi["what_if"]["lowest_balance_without_eur"] is None
+    assert wi["what_if"]["goes_below_zero"] is None
+    assert any(i["status"] == "what_if" for i in wi["planned_items"])
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "extra_amount=100",
+        "extra_date=2027-01",
+        "extra_amount=100&extra_date=2027-1",
+        "extra_amount=100&extra_date=2027-01&extra_kind=gift",
+    ],
+)
+def test_forecast_what_if_input_is_validated(tmp_path, query):
+    client, _ = _make_client(tmp_path)
+    r = client.get(f"/api/v1/spending/forecast?{query}", headers=HEADERS)
+    assert r.status_code == 400
+    assert (
+        client.get(
+            "/api/v1/spending/forecast?extra_amount=0&extra_date=2027-01",
+            headers=HEADERS,
+        ).status_code
+        == 422
+    )

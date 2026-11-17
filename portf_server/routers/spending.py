@@ -42,6 +42,7 @@ from portf_manager.services.merchant import normalize_merchant
 from portf_manager.services.recurring import load_recurring
 from portf_manager.services import (
     cashflow_forecast,
+    planned_items,
     spending_insights,
     spending_review,
 )
@@ -680,6 +681,119 @@ async def preview_own_account_patterns(
             for r in rows[:20]
         ],
     }
+
+
+class PlannedItemCreate(BaseModel):
+    """A planned item: signed amount, negative out and positive in."""
+
+    date: str
+    description: str
+    amount: float
+    kind: str
+    currency: str = "EUR"
+    portfolio_id: Optional[int] = None
+    notes: Optional[str] = None
+
+
+class PlannedItemUpdate(BaseModel):
+    """A partial update; an explicit null clears ``portfolio_id`` / ``notes``."""
+
+    date: Optional[str] = None
+    description: Optional[str] = None
+    amount: Optional[float] = None
+    kind: Optional[str] = None
+    currency: Optional[str] = None
+    portfolio_id: Optional[int] = None
+    notes: Optional[str] = None
+    done: Optional[bool] = None
+
+
+def _check_planned_portfolio(db, portfolio_id: Optional[int]) -> None:
+    """400 unless *portfolio_id* is None or a bank account."""
+    if portfolio_id is None:
+        return
+    p = db.get_portfolio(portfolio_id)
+    if not p or p.get("account_type") != "bank":
+        raise HTTPException(
+            status_code=400, detail="portfolio_id must be a bank account"
+        )
+
+
+def _planned_out(item: dict) -> dict:
+    """A planned item as the API returns it."""
+    return {**item, "done": bool(item["done"])}
+
+
+@router.get("/planned", response_model=List[dict])
+def list_planned_items(
+    include_done: bool = False,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Planned items by date; done ones only with ``include_done=true``."""
+    return [_planned_out(i) for i in db.list_planned_items(include_done=include_done)]
+
+
+@router.post("/planned", response_model=dict, status_code=201)
+def create_planned_item(
+    body: PlannedItemCreate,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Add a future one-off expense, saving or income to the forecast."""
+    try:
+        fields = planned_items.validate_item(body.model_dump())
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    _check_planned_portfolio(db, fields.get("portfolio_id"))
+    item_id = db.create_planned_item(
+        date=fields["date"],
+        description=fields["description"],
+        amount=fields["amount"],
+        kind=fields["kind"],
+        currency=fields.get("currency", "EUR"),
+        portfolio_id=fields.get("portfolio_id"),
+        notes=fields.get("notes"),
+    )
+    return _planned_out(db.get_planned_item(item_id))
+
+
+@router.put("/planned/{item_id}", response_model=dict)
+def update_planned_item(
+    item_id: int,
+    body: PlannedItemUpdate,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Partial update; ``done: true`` stops the forecast projecting the item."""
+    existing = db.get_planned_item(item_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Planned item not found")
+    sent = body.model_dump(exclude_unset=True)
+    # null is only meaningful for the two clearable columns
+    for key in ("date", "description", "amount", "kind", "currency", "done"):
+        if key in sent and sent[key] is None:
+            raise HTTPException(status_code=400, detail=f"{key} must not be null")
+    try:
+        fields = planned_items.validate_item(sent, existing)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    _check_planned_portfolio(db, fields.get("portfolio_id"))
+    if "done" in fields:
+        fields["done"] = int(bool(fields["done"]))
+    if fields:
+        db.update_planned_item(item_id, **fields)
+    return _planned_out(db.get_planned_item(item_id))
+
+
+@router.delete("/planned/{item_id}", response_model=dict)
+def delete_planned_item(
+    item_id: int, db=Depends(get_database), api_key_info: dict = Depends(_auth)
+):
+    """Delete a planned item."""
+    if not db.delete_planned_item(item_id):
+        raise HTTPException(status_code=404, detail="Planned item not found")
+    return {"deleted": True, "id": item_id}
 
 
 @router.put("/{spending_id}", response_model=dict)
@@ -1586,6 +1700,10 @@ def get_cashflow_forecast(
         le=cashflow_forecast.MAX_FORECAST_MONTHS,
     ),
     portfolio_id: Optional[int] = None,
+    extra_amount: Optional[float] = Query(default=None, gt=0),
+    extra_date: Optional[str] = None,
+    extra_kind: str = "spending",
+    include_tax: bool = True,
     db=Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
@@ -1604,11 +1722,46 @@ def get_cashflow_forecast(
     ``savings_eur``, not spending. A source that cannot be read becomes a
     warning and ``null`` figures, never a zero or a 5xx. Plain ``def`` because
     of the FX lookups.
+
+    Open planned items are placed on their dates (``planned_items`` lists them
+    with a status) and the estimated quarterly tax payments are added as
+    ``tax_payments`` / ``tax_eur`` when work-income merchants are ticked in the
+    allocator settings; ``include_tax=false`` leaves the tax out.
+    ``extra_amount`` (a positive magnitude), ``extra_date`` (``YYYY-MM``, taken
+    as the 15th, or ``YYYY-MM-DD``) and ``extra_kind`` add one unsaved item and
+    return a ``what_if`` block with the lowest balance with and without it.
     """
     from datetime import date
 
+    what_if = None
+    if extra_amount is not None or extra_date is not None:
+        if extra_amount is None or not extra_date:
+            raise HTTPException(
+                status_code=400,
+                detail="extra_amount and extra_date must be given together",
+            )
+        if extra_kind not in planned_items.KINDS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"extra_kind must be one of {list(planned_items.KINDS)}",
+            )
+        day = extra_date if len(extra_date) != 7 else f"{extra_date}-15"
+        try:
+            date.fromisoformat(day)
+        except ValueError:
+            raise HTTPException(
+                status_code=400, detail="extra_date must be YYYY-MM or YYYY-MM-DD"
+            )
+        what_if = {"amount": extra_amount, "date": day, "kind": extra_kind}
+
     return cashflow_forecast.load_forecast(
-        db, _fx, date.today(), months, portfolio_id=portfolio_id
+        db,
+        _fx,
+        date.today(),
+        months,
+        portfolio_id=portfolio_id,
+        include_tax=include_tax,
+        what_if=what_if,
     )
 
 
