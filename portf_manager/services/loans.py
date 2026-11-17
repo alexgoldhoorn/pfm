@@ -403,6 +403,35 @@ def payment_rows(loan: dict) -> list[dict]:
     ]
 
 
+def monthly_rows(loan: dict, today: date) -> list[dict]:
+    """Return every payment of the loan, one row per month, oldest first.
+
+    Payments rebuilt from the rate history (before the anchor) come first and
+    carry ``history: True``; the scheduled payments from the anchor follow.
+    An anchored loan without rate periods starts at the anchor: earlier
+    payments are not known.
+
+    Returns:
+        Rows with ``date`` (ISO), ``payment``, ``interest``, ``principal``,
+        ``balance`` (after the payment), ``history`` and ``paid`` (dated on or
+        before ``today``).
+    """
+    hist = [{**r, "history": True} for r in history_rows(loan)]
+    fwd = [{**r, "history": False} for r in payment_rows(loan)]
+    return [
+        {
+            "date": r["date"].isoformat(),
+            "payment": r["payment"],
+            "interest": r["interest"],
+            "principal": r["principal"],
+            "balance": r["balance"],
+            "history": r["history"],
+            "paid": r["date"] <= today,
+        }
+        for r in hist + fwd
+    ]
+
+
 def payment_split(loan: dict, month: str) -> Optional[dict]:
     """Return the scheduled payment falling in ``month`` (``YYYY-MM``).
 

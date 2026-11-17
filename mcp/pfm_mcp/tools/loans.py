@@ -28,6 +28,14 @@ def _loan_block(ov: dict) -> list[str]:
         f" paid this year of {_fmt_currency(s.get('interest_scheduled_this_year_eur') or 0)}"
         f" scheduled; {_fmt_currency(s.get('interest_remaining_eur') or 0)} still to pay",
     ]
+    if s.get("principal_eur") is not None:
+        pct = s.get("repaid_pct")
+        lines.insert(
+            1,
+            f"  Borrowed:          {_fmt_currency(s['principal_eur'])}"
+            f" on {s.get('start_date', '?')}; {_fmt_currency(s.get('repaid_eur') or 0)}"
+            " repaid" + (f" ({pct:.1f}%)" if pct is not None else ""),
+        )
     paid = s.get("paid_to_date") or {}
     if paid.get("complete"):
         lines.append(

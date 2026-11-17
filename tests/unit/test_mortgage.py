@@ -397,3 +397,27 @@ def test_partial_put_keeps_other_fields_and_null_clears(tmp_path):
         ).status_code
         == 404
     )
+
+
+def test_summary_borrowed_and_repaid(tmp_path):
+    db, loan = _db_with_loan(tmp_path)
+    s = mortgage.summary(loan, TODAY)
+    assert s["principal_eur"] == 200000.0
+    assert s["start_date"] == "2020-01-01" and s["term_months"] == 300
+    assert s["repaid_eur"] == pytest.approx(200000.0 - s["balance_eur"], abs=0.01)
+    assert s["repaid_pct"] == pytest.approx(s["repaid_eur"] / 2000, abs=0.05)
+
+
+def test_overview_lists_every_monthly_payment(tmp_path):
+    db, loan = _db_with_loan(tmp_path)
+    ov = mortgage.overview(db, loan, lambda c: 1.0, today=TODAY)
+    pays = ov["payments"]
+    assert len(pays) == 300
+    assert pays[0]["date"] == "2020-02-01" and pays[0]["paid"] is True
+    assert pays[-1]["balance"] == 0.0 and pays[-1]["paid"] is False
+    # the yearly table and the monthly list agree
+    y2026 = next(r for r in ov["schedule"] if r["year"] == 2026)
+    in_2026 = [p for p in pays if p["date"].startswith("2026")]
+    assert sum(p["interest"] for p in in_2026) == pytest.approx(
+        y2026["interest_paid_eur"], abs=0.01
+    )

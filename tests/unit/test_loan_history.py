@@ -440,3 +440,33 @@ def test_before_anchor_keeps_its_old_shape_without_periods(tmp_path):
     )
     recon = mortgage.reconciliation(db, loan, TODAY)
     assert recon["before_anchor"] == [{"month": "2023-10", "actual_eur": 400.0}]
+
+
+# ── month-by-month payments ───────────────────────────────────────────────
+
+
+def test_monthly_rows_put_the_history_before_the_anchor():
+    rows = loans.monthly_rows(_loan(PERIODS), TODAY)
+    hist = [r for r in rows if r["history"]]
+    fwd = [r for r in rows if not r["history"]]
+    assert hist and fwd
+    # history runs from one month after the start up to the anchor, then the schedule
+    assert hist[0]["date"] == "2020-02-01" and hist[-1]["date"] == "2025-01-01"
+    assert fwd[0]["date"] == "2025-02-01"
+    assert [r["date"] for r in rows] == sorted(r["date"] for r in rows)
+    assert len(fwd) == len(loans.payment_rows(_loan(PERIODS)))
+
+
+def test_monthly_rows_without_periods_start_at_the_anchor():
+    rows = loans.monthly_rows(_loan(), TODAY)
+    assert rows[0]["date"] == "2025-02-01"
+    assert not any(r["history"] for r in rows)
+
+
+def test_monthly_rows_mark_what_is_paid():
+    rows = loans.monthly_rows(_loan(), TODAY)
+    paid = [r for r in rows if r["paid"]]
+    assert paid[-1]["date"] == "2026-06-01"
+    assert not any(r["paid"] for r in rows if r["date"] > "2026-06-15")
+    r = paid[-1]
+    assert r["principal"] == pytest.approx(r["payment"] - r["interest"], abs=0.01)

@@ -281,3 +281,36 @@ test("detect query and fill", () => {
     assert.match(fill.message, /Earlier rates to add/);
     assert.match(fill.message, /Rates assume/);
 });
+
+test("borrowed card shows principal and share repaid, and is skipped without a principal", () => {
+    const base = { balance_eur: 150000, months_left: 200, annual_rate_pct: 3, rate_as_of: null,
+        monthly_payment_eur: 900, end_date: "2045-01-01", principal_paid_this_year_eur: 1,
+        interest_paid_this_year_eur: 1, interest_remaining_eur: 50000 };
+    const eq = { equity_eur: null, reason: "x" };
+    assert.equal(win.loanCards({ summary: base, equity: eq }).some(c => c.label === "Borrowed"), false);
+    const cards = win.loanCards({ summary: { ...base, principal_eur: 200000, repaid_eur: 50000,
+        repaid_pct: 25, start_date: "2020-01-01" }, equity: eq });
+    assert.equal(cards[0].label, "Borrowed");
+    assert.match(cards[0].sub, /25\.0%/);
+    assert.equal(cards[0].help, "loanBorrowed");
+});
+
+test("monthly payments are grouped by year with the next payment's year open", () => {
+    const row = (date, paid, history) => ({ date, payment: 900, principal: 500, interest: 400,
+        balance: 1000, paid, history: !!history });
+    const html = win.loanMonthlyHtml([
+        row("2025-11-01", true, true), row("2025-12-01", true),
+        row("2026-01-01", true), row("2026-02-01", false), row("2026-03-01", false),
+    ]);
+    const blocks = html.split("<details").slice(1);
+    assert.equal(blocks.length, 2);
+    assert.doesNotMatch(blocks[0], /^ class="mb-1" open/);
+    assert.match(blocks[1], /^ class="mb-1" open/);
+    assert.match(blocks[1], /3 payments/);
+    assert.equal((html.match(/>next</g) || []).length, 1);
+    assert.match(blocks[0], /history/);
+});
+
+test("monthly payments without rows say so", () => {
+    assert.match(win.loanMonthlyHtml([]), /No payments/);
+});

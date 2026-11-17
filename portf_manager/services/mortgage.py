@@ -68,12 +68,20 @@ def summary(loan: dict, today: date) -> Dict[str, Any]:
             "what was paid before that date is not known. Add the earlier "
             "rates under Rate history to rebuild it."
         )
+    balance = loan_calc.balance_on(loan, today)
+    principal = float(loan["principal"])
+    repaid = round(max(principal - balance, 0.0), 2)
     return {
         "id": loan["id"],
         "name": loan["name"],
+        "principal_eur": round(principal, 2),
+        "start_date": str(loan["start_date"])[:10],
+        "term_months": int(loan["term_months"]),
+        "repaid_eur": repaid,
+        "repaid_pct": round(repaid / principal * 100, 1) if principal > 0 else None,
         "lender": loan.get("lender"),
         "currency": loan.get("currency") or "EUR",
-        "balance_eur": loan_calc.balance_on(loan, today),
+        "balance_eur": balance,
         "annual_rate_pct": loan["annual_rate_pct"],
         "rate_as_of": loan.get("rate_as_of"),
         "monthly_payment_eur": loan_calc.payment_of(loan),
@@ -325,6 +333,7 @@ def overview(
         "summary": summary(loan, today),
         "equity": equity(db, loan, today, fx),
         "schedule": loan_calc.schedule(loan),
+        "payments": loan_calc.monthly_rows(loan, today),
         "rate_periods": [_period_out(p) for p in loan["rate_periods"]],
         "reconciliation": reconciliation(db, loan, today, category),
     }
@@ -359,6 +368,10 @@ def digest(
         "id": s["id"],
         "name": s["name"],
         "lender": s["lender"],
+        "principal_eur": s["principal_eur"],
+        "start_date": s["start_date"],
+        "repaid_eur": s["repaid_eur"],
+        "repaid_pct": s["repaid_pct"],
         "balance_eur": s["balance_eur"],
         "annual_rate_pct": s["annual_rate_pct"],
         "rate_as_of": s["rate_as_of"],

@@ -11,6 +11,10 @@ _OVERVIEW = {
         "id": 3,
         "name": "Example Mortgage",
         "lender": "Example Bank",
+        "principal_eur": 100000.0,
+        "start_date": "2020-01-01",
+        "repaid_eur": 20000.0,
+        "repaid_pct": 20.0,
         "balance_eur": 80000.0,
         "annual_rate_pct": 3.0,
         "rate_as_of": "2025-01-01",
@@ -71,6 +75,7 @@ def test_loans_prints_every_headline_figure():
     for text in (
         "Example Mortgage (Example Bank)",
         "80,000.00 EUR",
+        "Borrowed:          100,000.00 EUR on 2020-01-01; 20,000.00 EUR repaid (20.0%)",
         "180 payments left, ends 2040-01-01",
         "3.00%  (from 2025-01-01)",
         "500.00 EUR",

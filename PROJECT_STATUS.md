@@ -5,7 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-11-16
+Last updated: 2026-11-17
+
+**Recent (v2.5.102):** **Loans & Mortgage: borrowed and month-by-month payments.** A *Borrowed* card (original amount, repaid and % repaid since the start) and a *Monthly payments* list under the yearly table (every payment past and future, grouped by year, history rows marked, next payment highlighted). The overview adds `summary.principal_eur`/`start_date`/`term_months`/`repaid_eur`/`repaid_pct` and `payments` (`loans.monthly_rows`); the MCP `loans` tool and chat `get_loans` print the borrowed line. Docs `docs/features/mortgage.md`.
 
 **Recent (v2.5.101):** **Loan rate history, rate-change what-if, loan detection, agent tools.** Schema v45 (`loan_rate_periods`): rebuild a loan's past from its rates (history years in the schedule, interest/principal paid to date, pre-anchor bank debits compared); the forward projection is unchanged. What-if gains a rate change (not combinable with a lump sum/extra); `GET /networth/loans/detect` proposes a loan from recurring bank debits and the Net Worth loan form can fill from it; MCP `loans`/`loan_what_if` (48 tools) and chat `get_loans`/`loan_what_if` (50 tools). Docs `mortgage.md`. The migration changes the live database on merge.
 

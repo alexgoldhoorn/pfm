@@ -4227,7 +4227,14 @@ window.loanWhatIfHtml = loanWhatIfHtml;
 /** Summary cards: [{label, value, sub, help}]. */
 function loanCards(overview) {
     const s = overview.summary, eq = overview.equity || {};
-    const cards = [
+    const cards = [];
+    if (s.principal_eur !== null && s.principal_eur !== undefined) {
+        const pct = s.repaid_pct === null || s.repaid_pct === undefined ? '' : ` (${Fmt.num(s.repaid_pct, 1, 1)}%)`;
+        cards.push({ label: 'Borrowed', value: fmtEurWhole(s.principal_eur),
+            sub: `${fmtEurWhole(s.repaid_eur)} repaid${pct} since ${Fmt.date(s.start_date)}`,
+            help: 'loanBorrowed' });
+    }
+    cards.push(
         { label: 'Balance today', value: fmtEurWhole(s.balance_eur),
           sub: `${s.months_left} payments left` },
         { label: 'Rate', value: `${Fmt.num(s.annual_rate_pct, 2, 2)}%`,
@@ -4236,7 +4243,7 @@ function loanCards(overview) {
           sub: `this year so far: ${fmtEurWhole(s.principal_paid_this_year_eur)} principal, ${fmtEurWhole(s.interest_paid_this_year_eur)} interest` },
         { label: 'Ends', value: Fmt.date(s.end_date),
           sub: `${fmtEurWhole(s.interest_remaining_eur)} interest to pay`, help: 'loanInterestLeft' },
-    ];
+    );
     const paid = s.paid_to_date;
     if (paid && paid.complete) {
         cards.push({ label: 'Paid so far', value: fmtEurWhole(paid.total_eur),
@@ -4389,6 +4396,37 @@ function loanScheduleRowsHtml(schedule) {
 }
 window.loanScheduleRowsHtml = loanScheduleRowsHtml;
 
+/**
+ * Month-by-month payments grouped by year: one collapsible block per year.
+ * The year of the next payment (or `openYear`) starts open; that payment is
+ * highlighted. Rows rebuilt from the rate history carry a badge.
+ */
+function loanMonthlyHtml(payments, openYear) {
+    const rows = payments || [];
+    if (!rows.length) return '<p class="text-muted small mb-0">No payments scheduled.</p>';
+    const next = rows.find(r => !r.paid);
+    const open = String(openYear || (next ? next.date.slice(0, 4) : rows[rows.length - 1].date.slice(0, 4)));
+    const years = [];
+    rows.forEach(r => {
+        const y = r.date.slice(0, 4);
+        if (!years.length || years[years.length - 1].year !== y) years.push({ year: y, rows: [] });
+        years[years.length - 1].rows.push(r);
+    });
+    return years.map(g => {
+        const sum = k => g.rows.reduce((a, r) => a + (r[k] || 0), 0);
+        const hist = g.rows.every(r => r.history);
+        const body = g.rows.map(r => {
+            const isNext = next && r.date === next.date;
+            const cls = isNext ? 'table-primary' : (r.history ? 'table-secondary text-muted' : (r.paid ? '' : 'text-muted'));
+            const tag = isNext ? ' <span class="badge text-bg-primary">next</span>' : (r.history ? ' <span class="badge text-bg-secondary">history</span>' : '');
+            return `<tr class="${cls}"><td class="text-nowrap">${esc(Fmt.date(r.date))}${tag}</td><td class="text-end">${fmtEurCents(r.payment)}</td><td class="text-end">${fmtEurCents(r.principal)}</td><td class="text-end">${fmtEurCents(r.interest)}</td><td class="text-end">${fmtEurWhole(r.balance)}</td></tr>`;
+        }).join('');
+        return `<details class="mb-1"${g.year === open ? ' open' : ''}><summary class="small"><span class="fw-semibold">${esc(g.year)}</span>${hist ? ' <span class="badge text-bg-secondary">history</span>' : ''} <span class="text-muted">· ${g.rows.length} payments · ${fmtEurWhole(sum('principal'))} principal, ${fmtEurWhole(sum('interest'))} interest</span></summary>
+            <div class="table-responsive"><table class="table table-sm mb-2"><thead><tr><th>Date</th><th class="text-end">Payment</th><th class="text-end">Principal</th><th class="text-end">Interest</th><th class="text-end">Balance after</th></tr></thead><tbody>${body}</tbody></table></div></details>`;
+    }).join('');
+}
+window.loanMonthlyHtml = loanMonthlyHtml;
+
 /** Rate-history table body. */
 function loanPeriodsHtml(periods) {
     if (!(periods || []).length) {
@@ -4533,7 +4571,7 @@ async function _lmLoadOverview() {
         if (id !== _lmLoanId) return;
         $('lmStatus').textContent = '';
         $('lmCards').innerHTML = loanCards(ov).map(c => `
-            <div class="col-6 col-lg"><div class="card h-100"><div class="card-body py-2">
+            <div class="col-6 col-md-4 col-xxl"><div class="card h-100"><div class="card-body py-2">
                 <div class="text-muted small">${esc(c.label)}${c.help ? ` <i class="bi bi-info-circle" data-bs-toggle="tooltip" title="${escapeForAttr((window.METRIC_HELP || {})[c.help] || '')}"></i>` : ''}</div>
                 <div class="fs-5 fw-semibold">${esc(c.value)}</div>
                 <div class="text-muted small">${esc(c.sub)}</div>
@@ -4546,6 +4584,7 @@ async function _lmLoadOverview() {
         $('lmBalanceChart').innerHTML = loanBalanceSvg(model, W);
         $('lmPaidChart').innerHTML = loanPaidSvg(model, W);
         $('lmScheduleBody').innerHTML = loanScheduleRowsHtml(ov.schedule);
+        $('lmMonthlyBody').innerHTML = loanMonthlyHtml(ov.payments);
         const hasHistory = (ov.schedule || []).some(r => r.history);
         $('lmHistoryLegend').style.display = hasHistory ? 'block' : 'none';
         _lmRenderPeriods(ov);

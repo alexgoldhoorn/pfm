@@ -12,6 +12,8 @@ Page (sidebar: Planning, "Loans & Mortgage", page id `loans`) for the loans ente
 
 - `GET /{id}/overview?category=` returns `summary`, `equity`, `schedule` (one row per year) and `reconciliation`.
   - `summary`: balance today, rate and `rate_as_of`, monthly payment, end date, `months_left`, `interest_remaining_eur`, principal/interest paid so far this calendar year and scheduled for the whole year, and `anchor_note` when the schedule runs from a recorded balance (history before it is unknown).
+  - `summary` also carries `principal_eur` (the amount borrowed), `start_date`, `term_months`, `repaid_eur` (principal less the balance today, never negative) and `repaid_pct`.
+  - `payments`: every payment one row per month, oldest first (`loans.monthly_rows`): `date`, `payment`, `interest`, `principal`, `balance` after, `history` (rebuilt from the rate history, before the anchor) and `paid` (dated on or before today). An anchored loan without rate periods starts at the anchor. About 12 rows a year of the term, so a 30-year loan sends ~360.
   - `equity`: manual assets of category `property` (not liabilities) summed, less the loan balance, with `ltv_pct`. No property line gives `equity_eur: null` and a `reason`. With several loans the balance of all loans is used and `note` says so.
   - `reconciliation`: see below.
 - `GET /{id}/what-if` (read-only). Params `lump_sum`, `lump_date` (default today), `extra_monthly`, `mode` (`term` keeps the payment and finishes sooner; `payment` keeps the end date and lowers the payment), `invest_return_pct`. Returns `baseline`, `scenario`, `interest_saved_eur`, `months_saved` and `invest`. 422 for negatives, a lump sum above the balance on that date, an unknown mode, `extra_monthly` with `mode=payment`, or no payments left after the date. The lump sum is applied to the balance as of the last scheduled payment on or before `lump_date`; later payments keep their dates.
@@ -35,7 +37,7 @@ With `invest_return_pct`, the same money (the lump sum, plus the extra monthly a
 
 ## Web client
 
-`loadLoansPage` and the pure helpers (`loanCards`, `loanChartModel`, `loanBalanceSvg`, `loanPaidSvg`, `loanReconHtml`, `loanWhatIfQuery`, `loanWhatIfHtml`, `loanRecentRows`) are in `pfm_analytics.js`, tested in `web_client/js/tests/loans_page.test.mjs`. The what-if call is debounced (350 ms) and stale answers are dropped. The yearly table is collapsed below 768 px. `apiClient.getLoanOverview` replaced the unused `getLoanSchedule`; `GET /{id}/schedule` stays.
+`loadLoansPage` and the pure helpers (`loanCards`, `loanChartModel`, `loanBalanceSvg`, `loanPaidSvg`, `loanReconHtml`, `loanWhatIfQuery`, `loanWhatIfHtml`, `loanRecentRows`) are in `pfm_analytics.js`, tested in `web_client/js/tests/loans_page.test.mjs`. The first card, *Borrowed*, is skipped when the summary has no `principal_eur`. *Monthly payments* (`loanMonthlyHtml`) sits under the yearly table: one collapsed `<details>` per year with its totals, the year of the next payment open and that payment highlighted. The what-if call is debounced (350 ms) and stale answers are dropped. The yearly table is collapsed below 768 px. `apiClient.getLoanOverview` replaced the unused `getLoanSchedule`; `GET /{id}/schedule` stays.
 
 ## Budget link
 

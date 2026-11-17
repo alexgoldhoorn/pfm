@@ -418,6 +418,14 @@ def test_loans_page_rate_history_whatif_and_detect_at_phone_width(page, server_u
         page.evaluate("document.getElementById('lmScheduleDetails').open = true")
         assert page.locator("#lmScheduleBody .badge").count() == 5
         assert page.locator("#lmHistoryLegend").is_visible()
+        # borrowed card and the month-by-month list, open before the overflow check
+        assert "Borrowed" in page.locator("#lmCards").inner_text()
+        page.evaluate("document.getElementById('lmMonthlyDetails').open = true")
+        assert (
+            page.locator("#lmMonthlyBody details[open] .badge", has_text="next").count()
+            == 1
+        )
+        assert page.locator("#lmMonthlyBody details").count() > 5
 
         # add a second period through the form
         page.fill("#lmPeriodFrom", "2023-01-01")
