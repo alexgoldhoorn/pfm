@@ -97,7 +97,10 @@ Never print to stdout from a tool: stdout is the protocol channel.
 | `spending_transactions` | Individual bank transactions |
 | `spending_compare` | One month against its normal and last year |
 | `spending_anomalies` | Unusual charges in the last N days |
-| `cashflow_forecast` | This month's end and the next N months, with bills |
+| `cashflow_forecast` | This month's end and the next N months, with bills, planned items, estimated quarterly tax and an optional unsaved what-if |
+| `planned_items` | Planned future one-off expenses and income, with how the forecast treats each |
+| `spending_year` | One year against the year before, like for like |
+| `uncategorized_queue` | Uncategorised rows grouped by merchant, biggest money first, with a proposed rule |
 | `spending_review` | Monthly spending review in one call |
 | `networth` | Total net worth with accounts and balance sheet |
 | `loans` | Every loan: balance, rate, payment, end date, interest, paid to date with the rate history, equity/LTV and whether the bank charged the scheduled payment |

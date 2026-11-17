@@ -558,3 +558,321 @@ def test_spending_review_prints_parts_and_degrades_per_part():
     assert "Forecast: n/a" in result
     assert "Data freshness: Example Bank through 2026-07-05" in result
     assert "⚠️ Forecast could not be built: boom" in result
+
+
+# ── cost control round 2: planned items, what-if, year view, queue ──────────
+
+_PLANNED_FORECAST = {
+    **_FORECAST,
+    "this_month": {
+        **_FORECAST["this_month"],
+        "planned_spending_eur": 200.0,
+        "planned_savings_eur": 0.0,
+        "planned_income_eur": 0.0,
+        "tax_eur": 0.0,
+    },
+    "next_months": [
+        {
+            **_FORECAST["next_months"][0],
+            "planned_spending_eur": 1000.0,
+            "planned_savings_eur": 0.0,
+            "planned_income_eur": 500.0,
+            "tax_eur": 900.0,
+        }
+    ],
+    "planned_items": [
+        {
+            "id": 7,
+            "date": "2026-08-10",
+            "description": "Example Holiday",
+            "amount_eur": -1000.0,
+            "kind": "spending",
+            "status": "projected",
+        },
+        {
+            "id": 8,
+            "date": "2026-06-01",
+            "description": "Example Old Repair",
+            "amount_eur": -300.0,
+            "kind": "spending",
+            "status": "overdue",
+        },
+    ],
+    "tax_payments": [
+        {
+            "quarter": "2026-Q2",
+            "due": "2026-07-20",
+            "amount_eur": 900.0,
+            "basis": "average",
+        }
+    ],
+    "what_if": {
+        "amount_eur": -500.0,
+        "date": "2026-09-15",
+        "lowest_balance_eur": -550.0,
+        "lowest_balance_month": "2026-09",
+        "lowest_balance_without_eur": -50.0,
+        "goes_below_zero": True,
+    },
+}
+
+
+def test_cashflow_forecast_sends_what_if_and_prints_planned_tax_and_result():
+    with patch("pfm_mcp.client._get", return_value=reply(_PLANNED_FORECAST)) as get:
+        result = spending.cashflow_forecast(
+            months=3, extra_amount=500, extra_month="2026-09", extra_kind="spending"
+        )
+    url = requested_url(get)
+    assert "extra_amount=500" in url and "extra_date=2026-09" in url
+    assert "extra_kind=spending" in url
+    assert "Planned, this month: spending" in result
+    assert "Example Holiday" in result and "overdue" in result
+    assert "Estimated quarterly tax payments (an estimate)" in result
+    assert "2026-Q2" in result and "basis average" in result
+    assert "WHAT IF" in result and "(not saved)" in result
+    assert "lowest month-end balance" in result and "550" in result
+    assert "in 2026-09, against" in result
+    assert "The balance goes below zero." in result
+
+
+def test_cashflow_forecast_without_what_if_has_no_extra_params_or_block():
+    with patch("pfm_mcp.client._get", return_value=reply(_FORECAST)) as get:
+        result = spending.cashflow_forecast(months=3)
+    assert "extra_" not in requested_url(get)
+    assert "WHAT IF" not in result and "Estimated quarterly tax" not in result
+
+
+def test_cashflow_forecast_refuses_a_half_or_bad_what_if_without_a_request():
+    with patch("pfm_mcp.client._get") as get:
+        for kwargs in (
+            {"extra_amount": 100},
+            {"extra_month": "2026-09"},
+            {"extra_amount": 100, "extra_month": "soon"},
+            {"extra_amount": 100, "extra_month": "2026-09", "extra_kind": "x"},
+            {"extra_amount": -1, "extra_month": "2026-09"},
+        ):
+            assert spending.cashflow_forecast(**kwargs).startswith("Error:")
+        get.assert_not_called()
+
+
+def test_planned_items_prints_status_and_na_when_the_forecast_fails():
+    items = [
+        {
+            "id": 7,
+            "date": "2026-08-10",
+            "description": "Example Holiday",
+            "amount": -1000.0,
+            "currency": "EUR",
+            "kind": "spending",
+            "done": False,
+            "notes": None,
+        },
+        {
+            "id": 9,
+            "date": "2026-05-01",
+            "description": "Example Gift",
+            "amount": -50.0,
+            "currency": "EUR",
+            "kind": "spending",
+            "done": True,
+            "notes": "paid",
+        },
+    ]
+
+    def fake(path, params=None):
+        if path.endswith("/planned"):
+            return items
+        return _PLANNED_FORECAST
+
+    with patch("pfm_mcp.client._get", side_effect=fake):
+        result = spending.planned_items(include_done=True)
+    assert "2 listed (data through 2026-07-10)" in result
+    assert "Example Holiday" in result and "[spending, projected]" in result
+    assert "[spending, done]" in result
+
+    def broken(path, params=None):
+        if path.endswith("/planned"):
+            return items[:1]
+        raise urllib.error.URLError("down")
+
+    with patch("pfm_mcp.client._get", side_effect=broken):
+        result = spending.planned_items()
+    assert "data through n/a" in result and "[spending, n/a]" in result
+    assert "no statuses" in result
+
+
+def test_planned_items_reports_an_api_error():
+    with patch("pfm_mcp.client._get", side_effect=urllib.error.URLError("down")):
+        assert spending.planned_items().startswith("Error fetching planned items")
+
+
+_YEAR = {
+    "year": 2026,
+    "previous_year": 2025,
+    "complete": False,
+    "compared_through": "2026-06",
+    "compared_months": ["2026-05", "2026-06"],
+    "data_through": "2026-07-05",
+    "totals": {
+        "this": {
+            "income_eur": 6000.0,
+            "spending_eur": 4000.0,
+            "savings_eur": 500.0,
+            "net_eur": 2000.0,
+            "savings_rate_pct": 33.3,
+            "one_off_eur": 300.0,
+        },
+        "previous": {
+            "income_eur": 5000.0,
+            "spending_eur": 3500.0,
+            "savings_eur": 0.0,
+            "net_eur": 1500.0,
+            "savings_rate_pct": None,
+            "one_off_eur": 0.0,
+        },
+        "previous_full": None,
+    },
+    "months": {
+        "this": [
+            {
+                "month": "2026-05",
+                "income_eur": 3000.0,
+                "spending_eur": 2000.0,
+                "savings_eur": 250.0,
+                "has_imports": True,
+                "complete": True,
+            },
+            {
+                "month": "2026-03",
+                "income_eur": 0.0,
+                "spending_eur": 0.0,
+                "savings_eur": 0.0,
+                "has_imports": False,
+                "complete": False,
+            },
+        ],
+        "previous": [],
+    },
+    "categories": [
+        {
+            "category": "Groceries",
+            "this_eur": 1200.0,
+            "previous_eur": 1000.0,
+            "delta_eur": 200.0,
+            "delta_pct": 20.0,
+            "share_pct": 30.0,
+            "children": [
+                {
+                    "category": "Market",
+                    "this_eur": 700.0,
+                    "previous_eur": 500.0,
+                    "delta_eur": 200.0,
+                    "delta_pct": 40.0,
+                    "share_pct": 17.5,
+                }
+            ],
+        }
+    ],
+    "movers": {
+        "increases": [
+            {
+                "category": "Groceries",
+                "this_eur": 1200.0,
+                "previous_eur": 1000.0,
+                "delta_eur": 200.0,
+                "delta_pct": 20.0,
+            }
+        ],
+        "decreases": [],
+    },
+    "merchants": [
+        {"merchant": "Example Market", "this_eur": 900.0, "previous_eur": 700.0}
+    ],
+    "one_offs": [
+        {
+            "id": 3,
+            "date": "2026-05-04",
+            "description": "Example Laptop",
+            "amount_eur": -300.0,
+            "category": "Shopping",
+            "account": "Example Bank",
+        }
+    ],
+    "warnings": ["No imports for 2026-03: unknown, not zero."],
+}
+
+
+def test_spending_year_prints_like_for_like_and_unknown_months():
+    with patch("pfm_mcp.client._get", return_value=reply(_YEAR)) as get:
+        result = spending.spending_year(year=2026, depth=2)
+    url = requested_url(get)
+    assert "year=2026" in url and "depth=2" in url
+    assert "against 2025" in result and "compared through 2026-06" in result
+    assert "in progress" in result
+    assert "savings rate 33.3%" in result and "savings rate n/a" in result
+    assert "all imported months): n/a" in result
+    assert "2026-03  no imports (unknown)" in result
+    assert "Groceries" in result and "Market" in result and "share 17.5%" in result
+    assert "Example Laptop" in result and "Example Market" in result
+    assert "⚠️ No imports for 2026-03" in result
+
+
+def test_spending_year_defaults_and_reports_errors():
+    with patch("pfm_mcp.client._get", return_value=reply(_YEAR)) as get:
+        spending.spending_year()
+    assert requested_url(get) == "/api/v1/spending/year?depth=1"
+    with patch("pfm_mcp.client._get", side_effect=urllib.error.URLError("down")):
+        assert spending.spending_year().startswith("Error fetching the year view")
+
+
+_QUEUE = {
+    "window_start": "2025-12-01",
+    "total_count": 14,
+    "total_eur": 1500.0,
+    "share_of_spending_pct": 6.5,
+    "last_complete_month": {
+        "month": "2026-06",
+        "count": 3,
+        "total_eur": 210.0,
+        "share_pct": None,
+    },
+    "groups": [
+        {
+            "key": "out:example kiosk",
+            "merchant": "Example Kiosk",
+            "direction": "out",
+            "count": 5,
+            "total_eur": 400.0,
+            "first_date": "2026-01-02",
+            "last_date": "2026-06-20",
+            "sample_descriptions": ["EXAMPLE KIOSK 12", "EXAMPLE KIOSK 14"],
+            "transaction_ids": [1, 2, 3, 4, 5],
+            "proposed_pattern": None,
+            "account_names": ["Example Bank"],
+        }
+    ],
+}
+
+
+def test_uncategorized_queue_prints_groups_share_and_na():
+    with patch("pfm_mcp.client._get", return_value=reply(_QUEUE)) as get:
+        result = spending.uncategorized_queue(limit=5, months=6)
+    url = requested_url(get)
+    assert "limit=5" in url and "months=6" in url
+    assert "14 rows" in result and "share of spending 6.5%" in result
+    assert (
+        "Last complete month 2026-06: 3 rows" in result and "n/a of spending" in result
+    )
+    assert "Example Kiosk" in result and "pattern: none" in result
+    assert "EXAMPLE KIOSK 12" in result
+    assert "nothing is changed here" in result
+    empty = {
+        **_QUEUE,
+        "groups": [],
+        "last_complete_month": None,
+        "share_of_spending_pct": None,
+    }
+    with patch("pfm_mcp.client._get", return_value=reply(empty)):
+        result = spending.uncategorized_queue()
+    assert "Nothing to classify." in result
+    assert "Last complete month: n/a" in result and "share of spending n/a" in result

@@ -332,23 +332,63 @@ def spending_anomalies(days: int = 60) -> str:
     return "\n".join(lines)
 
 
+def _what_if_arg(extra_amount, extra_month, extra_kind) -> Optional[dict]:
+    """Query parameters of an unsaved what-if item, or None; ValueError if bad."""
+    if extra_amount is None and not extra_month:
+        return None
+    if extra_amount is None or not extra_month:
+        raise ValueError("extra_amount and extra_month must be given together")
+    if float(extra_amount) <= 0:
+        raise ValueError("extra_amount is a positive amount")
+    if extra_kind not in ("spending", "savings", "income"):
+        raise ValueError("extra_kind must be spending, savings or income")
+    month = str(extra_month)
+    ok_month = len(month) == 7 and month[4] == "-" and month[:4].isdigit()
+    ok_day = len(month) == 10 and month[4] == "-" and month[7] == "-"
+    if not (ok_month or ok_day):
+        raise ValueError("extra_month must be YYYY-MM (or YYYY-MM-DD)")
+    return {
+        "extra_amount": extra_amount,
+        "extra_date": month,
+        "extra_kind": extra_kind,
+    }
+
+
 @tool
-def cashflow_forecast(months: int = 12) -> str:
+def cashflow_forecast(
+    months: int = 12,
+    extra_amount: Optional[float] = None,
+    extra_month: Optional[str] = None,
+    extra_kind: str = "spending",
+) -> str:
     """
     Where this month ends and the next N months: expected income, recurring
     charges placed on their due dates (quarterly and yearly included),
-    everyday spending, net, and the projected bank balance, plus the known
-    upcoming bills and the first month the balance would go below zero. Every
-    figure is an estimate from past months; the balance covers bank accounts
-    only (moves to brokers are not projected). The rest of this month is
-    measured from the data-through date, not from today. A missing source
-    prints "n/a", never zero.
+    everyday spending, the user's planned one-off items, the estimated
+    quarterly tax payments, net, and the projected bank balance, plus the
+    known upcoming bills and the first month the balance would go below zero.
+    Every figure is an estimate from past months; the balance covers bank
+    accounts only (moves to brokers are not projected). The rest of this
+    month is measured from the data-through date, not from today. A missing
+    source prints "n/a", never zero. With extra_amount and extra_month it
+    also tests one unsaved item ("can I afford X in March") and prints the
+    lowest balance with and without it.
 
     Args:
         months: Months after the current one (default 12).
+        extra_amount: What-if: a positive amount to test (not saved).
+        extra_month: What-if month YYYY-MM (taken as the 15th) or YYYY-MM-DD.
+        extra_kind: What-if kind: spending (default), savings or income.
     """
+    params: dict = {"months": months}
     try:
-        data = client._get("/api/v1/spending/forecast", {"months": months})
+        what_if = _what_if_arg(extra_amount, extra_month, extra_kind)
+    except ValueError as e:
+        return f"Error: {e}"
+    if what_if:
+        params.update(what_if)
+    try:
+        data = client._get("/api/v1/spending/forecast", params)
     except Exception as e:
         return f"Error fetching cash-flow forecast: {e}"
 
@@ -361,6 +401,10 @@ def cashflow_forecast(months: int = 12) -> str:
         f"This month ({tm.get('month')}, {tm.get('status')}):",
         f"  Spent so far:        {_eur(tm.get('spent_to_date_eur'))}",
         f"  Recurring still due: {_eur(tm.get('recurring_remaining_eur'))}",
+        f"  Planned, this month: spending {_eur(tm.get('planned_spending_eur'))},"
+        f" savings {_eur(tm.get('planned_savings_eur'))},"
+        f" income {_eur(tm.get('planned_income_eur'))}",
+        f"  Tax payments (est.): {_eur(tm.get('tax_eur'))}",
         f"  Everyday, rest:      {_eur(tm.get('variable_remaining_eur'))}",
         f"  Projected spending:  {_eur(tm.get('projected_spending_eur'))}"
         f"  (range {_eur(rng.get('spending_low_eur'))} to"
@@ -384,10 +428,23 @@ def cashflow_forecast(months: int = 12) -> str:
         lines.append("\nNext months:")
         for m in nxt:
             flag = "  BELOW ZERO" if m.get("balance_below_zero") else ""
+            extras = ""
+            if m.get("tax_eur"):
+                extras += f"  tax {_eur(m.get('tax_eur')):>10s}"
+            planned = [
+                (lbl, m.get(key))
+                for lbl, key in (
+                    ("planned spending", "planned_spending_eur"),
+                    ("planned savings", "planned_savings_eur"),
+                    ("planned income", "planned_income_eur"),
+                )
+                if m.get(key)
+            ]
+            extras += "".join(f"  {lbl} {_eur(v):>10s}" for lbl, v in planned)
             lines.append(
                 f"  {m.get('month')}  income {_eur(m.get('income_eur')):>12s}"
                 f"  recurring {_eur(m.get('recurring_eur')):>12s}"
-                f"  everyday {_eur(m.get('variable_eur')):>12s}"
+                f"  everyday {_eur(m.get('variable_eur')):>12s}{extras}"
                 f"  net {_signed(m.get('net_eur')):>10s}"
                 f"  balance {_eur(m.get('projected_balance_eur')):>14s}{flag}"
             )
@@ -395,6 +452,19 @@ def cashflow_forecast(months: int = 12) -> str:
         lines.append(
             f"\nThe balance first goes below zero in {data['first_below_zero']}."
         )
+    taxes = data.get("tax_payments") or []
+    if taxes:
+        lines.append("\nEstimated quarterly tax payments (an estimate):")
+        for t in taxes:
+            lines.append(
+                f"  {_na(t.get('due'))}  {_eur(t.get('amount_eur')):>12s}"
+                f"  {_clean(t.get('quarter'))}, basis {_na(t.get('basis'))}"
+            )
+    items = data.get("planned_items") or []
+    if items:
+        lines.append("\nPlanned items:")
+        for it in items:
+            lines.extend(_planned_line(it))
     bills = data.get("known_bills") or []
     if bills:
         lines.append("\nKnown upcoming bills (next 15):")
@@ -403,10 +473,253 @@ def cashflow_forecast(months: int = 12) -> str:
                 f"  {b.get('date')}  {_eur(b.get('amount_eur')):>12s}"
                 f"  {_clean(b.get('merchant'))}"
             )
+    wi = data.get("what_if")
+    if wi:
+        lines.append(
+            f"\nWHAT IF {_eur(wi.get('amount_eur'))} on {_na(wi.get('date'))}"
+            f" (not saved): lowest month-end balance"
+            f" {_eur(wi.get('lowest_balance_eur'))}"
+            f" in {_na(wi.get('lowest_balance_month'))}, against"
+            f" {_eur(wi.get('lowest_balance_without_eur'))} without it."
+        )
+        if wi.get("goes_below_zero") is None:
+            lines.append("  Whether it goes below zero: n/a (no balance known).")
+        else:
+            lines.append(
+                "  The balance goes below zero."
+                if wi["goes_below_zero"]
+                else "  The balance stays above zero."
+            )
     if data.get("assumptions"):
         lines.append("\nAssumptions:")
         lines.extend(f"  - {a}" for a in data["assumptions"])
     lines.extend(_warnings(data.get("warnings")))
+    return "\n".join(lines)
+
+
+def _planned_line(it: dict) -> list[str]:
+    """One printed line for a planned item as the forecast lists it."""
+    status = (it.get("status") or "?").replace("_", " ")
+    return [
+        f"  {_na(it.get('date'))}  {_signed(it.get('amount_eur')):>12s}"
+        f"  {_clean(it.get('description'), 50)}  [{_na(it.get('kind'))},"
+        f" {status}]"
+    ]
+
+
+@tool
+def planned_items(include_done: bool = False) -> str:
+    """
+    The user's planned future one-off expenses, savings and income, entered
+    by hand (a holiday, a car repair, a bonus), by date, and how the
+    forecast treats each: projected on its date, overdue (dated before the
+    data-through date, so not projected: mark it done or move it) or beyond
+    the forecast horizon. Amounts are signed (negative out). Read-only: items
+    are added and edited in the web client.
+
+    Args:
+        include_done: Also list items already marked done (default false).
+    """
+    try:
+        items = client._get(
+            "/api/v1/spending/planned", {"include_done": str(include_done).lower()}
+        )
+    except Exception as e:
+        return f"Error fetching planned items: {e}"
+    status = {}
+    through = None
+    warnings: list = []
+    try:
+        fc = client._get("/api/v1/spending/forecast", {"months": 12})
+        through = fc.get("data_through")
+        warnings = fc.get("warnings") or []
+        status = {i.get("id"): i for i in fc.get("planned_items") or []}
+    except Exception as e:
+        warnings = [f"The forecast could not be read, so no statuses: {e}"]
+
+    lines = [f"PLANNED ITEMS — {len(items)} listed (data through {_na(through)})"]
+    for it in items:
+        st = status.get(it.get("id")) or {}
+        label = "done" if it.get("done") else (st.get("status") or "n/a")
+        lines.append(
+            f"  {_na(it.get('date'))}  {_signed(it.get('amount')):>12s}"
+            f" {it.get('currency') or 'EUR'}  {_clean(it.get('description'), 50)}"
+            f"  [{_na(it.get('kind'))}, {label.replace('_', ' ')}]"
+            + (f"  {_clean(it.get('notes'), 60)}" if it.get("notes") else "")
+        )
+    if not items:
+        lines.append("  Nothing planned.")
+    lines.append(
+        "Planned items sit on top of the forecast and never enter an average;"
+        " the forecast itself is an estimate."
+    )
+    lines.extend(_warnings(warnings))
+    return "\n".join(lines)
+
+
+@tool
+def spending_year(year: Optional[int] = None, depth: int = 1) -> str:
+    """
+    One year of income, spending and savings against the year before, like
+    for like: only months that are complete and have imports in both years
+    count, so a year in progress is compared through its last complete month.
+    Shows totals (savings rate, one-off amounts), top-level categories with
+    the change, the biggest movers, the largest merchants and the one-off
+    rows. A month without imports is unknown, not zero; deltas print "n/a"
+    when nothing can be compared.
+
+    Args:
+        year: Calendar year (default the current one).
+        depth: 1 = top-level categories, 2 = with their children.
+    """
+    params: dict = {"depth": 2 if depth >= 2 else 1}
+    if year is not None:
+        params["year"] = year
+    try:
+        data = client._get("/api/v1/spending/year", params)
+    except Exception as e:
+        return f"Error fetching the year view: {e}"
+
+    lines = [
+        f"SPENDING YEAR {data.get('year')} against {data.get('previous_year')}"
+        f" (data through {_na(data.get('data_through'))};"
+        f" compared through {_na(data.get('compared_through'))};"
+        f" {'complete' if data.get('complete') else 'in progress'})"
+    ]
+    totals = data.get("totals") or {}
+    for key, label in (
+        ("this", str(data.get("year"))),
+        ("previous", f"{data.get('previous_year')} (same months)"),
+        ("previous_full", f"{data.get('previous_year')} (all imported months)"),
+    ):
+        t = totals.get(key)
+        if t is None:
+            lines.append(f"\n{label}: n/a")
+            continue
+        rate = t.get("savings_rate_pct")
+        lines.append(
+            f"\n{label}: income {_eur(t.get('income_eur'))}, spending"
+            f" {_eur(t.get('spending_eur'))}, savings {_eur(t.get('savings_eur'))},"
+            f" net {_signed(t.get('net_eur'))} EUR, savings rate"
+            f" {'n/a' if rate is None else f'{float(rate):.1f}%'},"
+            f" one-off {_eur(t.get('one_off_eur'))}"
+        )
+    months = (data.get("months") or {}).get("this") or []
+    if months:
+        lines.append("\nMonths (this year):")
+        for m in months:
+            if m.get("has_imports"):
+                note = "" if m.get("complete") else "  (not complete)"
+                lines.append(
+                    f"  {m.get('month')}  income {_eur(m.get('income_eur')):>12s}"
+                    f"  spending {_eur(m.get('spending_eur')):>12s}"
+                    f"  savings {_eur(m.get('savings_eur')):>12s}{note}"
+                )
+            else:
+                lines.append(f"  {m.get('month')}  no imports (unknown)")
+    cats = data.get("categories") or []
+    if cats:
+        lines.append("\nCategories (spending, this year vs the same months):")
+        for c in cats:
+            lines.append(_year_category_line(c, "  "))
+            for ch in c.get("children") or []:
+                lines.append(_year_category_line(ch, "      "))
+    movers = data.get("movers") or {}
+    for key, label in (
+        ("increases", "Biggest increases"),
+        ("decreases", "Biggest decreases"),
+    ):
+        entries = movers.get(key) or []
+        if entries:
+            lines.append(f"\n{label}:")
+            for e in entries:
+                lines.append(
+                    f"  {_clean(e.get('category'), 30):30s}"
+                    f" {_signed(e.get('delta_eur')):>12s} EUR"
+                    f"{_pct(e.get('delta_pct'))}"
+                )
+    merchants = data.get("merchants") or []
+    if merchants:
+        lines.append("\nLargest merchants:")
+        for m in merchants:
+            lines.append(
+                f"  {_clean(m.get('merchant'), 30):30s}"
+                f" {_eur(m.get('this_eur')):>12s}  before {_eur(m.get('previous_eur'))}"
+            )
+    one_offs = data.get("one_offs") or []
+    if one_offs:
+        lines.append("\nOne-off rows (counted in the totals):")
+        for r in one_offs:
+            lines.append(
+                f"  {_na(r.get('date'))}  {_eur(r.get('amount_eur')):>12s}"
+                f"  {_clean(r.get('description'), 50)}"
+            )
+    lines.append("Comparisons are like for like over complete months only.")
+    lines.extend(_warnings(data.get("warnings")))
+    return "\n".join(lines)
+
+
+def _year_category_line(c: dict, indent: str) -> str:
+    share = c.get("share_pct")
+    return (
+        f"{indent}{_clean(c.get('category'), 30):30s}"
+        f" {_eur(c.get('this_eur')):>12s}  before {_eur(c.get('previous_eur')):>12s}"
+        f"  {_signed(c.get('delta_eur'))}{_pct(c.get('delta_pct'))}"
+        f"  share {'n/a' if share is None else f'{float(share):.1f}%'}"
+    )
+
+
+@tool
+def uncategorized_queue(limit: int = 20, months: int = 12) -> str:
+    """
+    Bank rows still marked uncategorized, grouped by merchant and ordered by
+    money, each group with a proposed rule pattern, plus the share of
+    spending the uncategorised outflows make up and the last complete
+    month's figure. Read-only: the user classifies a group in the web
+    client. Only imported statements are seen.
+
+    Args:
+        limit: Groups to return (default 20).
+        months: Look-back in calendar months (default 12).
+    """
+    try:
+        data = client._get(
+            "/api/v1/spending/uncategorized-queue", {"limit": limit, "months": months}
+        )
+    except Exception as e:
+        return f"Error fetching the uncategorised queue: {e}"
+
+    share = data.get("share_of_spending_pct")
+    lines = [
+        f"UNCATEGORISED QUEUE — {data.get('total_count', 0)} rows,"
+        f" {_eur(data.get('total_eur'))} since {_na(data.get('window_start'))};"
+        f" share of spending {'n/a' if share is None else f'{float(share):.1f}%'}"
+    ]
+    last = data.get("last_complete_month")
+    if last:
+        pct = last.get("share_pct")
+        lines.append(
+            f"Last complete month {last.get('month')}: {last.get('count')} rows,"
+            f" {_eur(last.get('total_eur'))},"
+            f" {'n/a' if pct is None else f'{float(pct):.1f}%'} of spending"
+        )
+    else:
+        lines.append("Last complete month: n/a")
+    groups = data.get("groups") or []
+    for g in groups:
+        pattern = g.get("proposed_pattern")
+        lines.append(
+            f"  {_clean(g.get('merchant'), 30):30s} {g.get('direction') or '?':3s}"
+            f" {g.get('count')} rows {_eur(g.get('total_eur')):>12s}"
+            f"  {_na(g.get('first_date'))} to {_na(g.get('last_date'))}"
+            f"  pattern: {_clean(pattern) if pattern else 'none'}"
+        )
+        samples = g.get("sample_descriptions") or []
+        if samples:
+            lines.append("      e.g. " + "; ".join(_clean(x, 40) for x in samples))
+    if not groups:
+        lines.append("  Nothing to classify.")
+    lines.append("Classifying is done in the web client; nothing is changed here.")
     return "\n".join(lines)
 
 
