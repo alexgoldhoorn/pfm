@@ -2810,8 +2810,47 @@ function createAPIClient() {
         async getSpendingTiers(months = 12) {
             return this._spendingGet('tiers', { months }, 'Failed to load the spending tiers');
         },
-        async getCashflowForecast(months = 12) {
-            return this._spendingGet('forecast', { months }, 'Failed to load the cash-flow forecast');
+        // `extra` is the unsaved what-if: {amount, date, kind}; tax can be left out.
+        async getCashflowForecast(months = 12, extra = null, includeTax = true) {
+            const params = { months };
+            if (extra) {
+                params.extra_amount = extra.amount;
+                params.extra_date = extra.date;
+                params.extra_kind = extra.kind;
+            }
+            if (!includeTax) params.include_tax = 'false';
+            return this._spendingGet('forecast', params, 'Failed to load the cash-flow forecast');
+        },
+        // JSON writes under /spending/ (planned items, queue classification).
+        async _spendingSend(method, path, body, failMessage) {
+            const response = await fetch(this.baseURL + '/api/v1/spending/' + path, {
+                method,
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: body === undefined ? undefined : JSON.stringify(body)
+            });
+            if (!response.ok) throw new Error(errorDetailFromBody(await response.text(), failMessage));
+            return response.json();
+        },
+        async getPlannedItems(includeDone = true) {
+            return this._spendingGet('planned', { include_done: includeDone ? 'true' : 'false' }, 'Failed to load planned items');
+        },
+        async createPlannedItem(payload) {
+            return this._spendingSend('POST', 'planned', payload, 'Failed to add the planned item');
+        },
+        async updatePlannedItem(id, payload) {
+            return this._spendingSend('PUT', 'planned/' + id, payload, 'Failed to update the planned item');
+        },
+        async deletePlannedItem(id) {
+            return this._spendingSend('DELETE', 'planned/' + id, undefined, 'Failed to delete the planned item');
+        },
+        async getUncategorizedQueue(limit = 20, months = 12) {
+            return this._spendingGet('uncategorized-queue', { limit, months }, 'Failed to load the uncategorised queue');
+        },
+        async classifyUncategorizedGroup(payload) {
+            return this._spendingSend('POST', 'uncategorized-queue/classify', payload, 'Failed to classify the group');
+        },
+        async getSpendingYear(year) {
+            return this._spendingGet('year', { year }, 'Failed to load the year view');
         },
         // One-off rows still count in every total; averages and baselines skip them.
         async setSpendingOneOff(id, oneOff) {

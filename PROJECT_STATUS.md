@@ -7,6 +7,8 @@
 
 Last updated: 2026-11-17
 
+**Recent (cost control 2, web):** **Planned items, what-if, estimated tax, seed suggestions, To classify queue and Year view in the web client.** Budget › Forecast gets a Planned card, a what-if row, a planned/tax chart and table columns and the quarterly tax estimate; the budget seed dialog shows yearly/carry-over suggestions with a period toggle and convert actions; Spending gets a *To classify* card (Transactions) and a *Year* card (Analytics). Pure helpers in `cost_control2.test.mjs`; e2e extended (390px).
+
 **Recent (v2.5.102):** **Loans & Mortgage: borrowed and month-by-month payments.** A *Borrowed* card (original amount, repaid and % repaid since the start) and a *Monthly payments* list under the yearly table (every payment past and future, grouped by year, history rows marked, next payment highlighted). The overview adds `summary.principal_eur`/`start_date`/`term_months`/`repaid_eur`/`repaid_pct` and `payments` (`loans.monthly_rows`); the MCP `loans` tool and chat `get_loans` print the borrowed line. Docs `docs/features/mortgage.md`.
 
 **Recent (v2.5.101):** **Loan rate history, rate-change what-if, loan detection, agent tools.** Schema v45 (`loan_rate_periods`): rebuild a loan's past from its rates (history years in the schedule, interest/principal paid to date, pre-anchor bank debits compared); the forward projection is unchanged. What-if gains a rate change (not combinable with a lump sum/extra); `GET /networth/loans/detect` proposes a loan from recurring bank debits and the Net Worth loan form can fill from it; MCP `loans`/`loan_what_if` (48 tools) and chat `get_loans`/`loan_what_if` (50 tools). Docs `mortgage.md`. The migration changes the live database on merge.

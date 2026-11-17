@@ -281,6 +281,47 @@ API calls: `getSpendingCompare/Anomalies/Tiers`, `getCashflowForecast`,
   layout (390px overflow) cannot be checked there.
 
 
+## Cost control 2 (2026-11-17)
+
+Web side of `feat/cost-control-2`. Pure helpers sit in the "Cost control 2"
+block of `pfm_features.js` (after `forecastBelowZeroText`), are `window.`-exported
+and tested in `js/tests/cost_control2.test.mjs`. API calls (`pfm_core.js`):
+`getCashflowForecast(months, extra, includeTax)`, `getPlannedItems`,
+`create/update/deletePlannedItem`, `getUncategorizedQueue`,
+`classifyUncategorizedGroup`, `getSpendingYear`.
+
+- **Budget › Forecast:** a *Planned* card (`#bgFcPlannedCard`: add/edit form,
+  list with a status badge — projected, overdue, beyond horizon, done —, mark
+  done, delete; the status comes from the forecast's `planned_items` matched by
+  id), an *Include estimated tax* switch (`include_tax`), a *What if I spend…*
+  row (`#bgWhatIfForm`: amount, month, kind; one result line from `what_if`,
+  nothing saved, Clear drops it; a failed forecast also drops it), a stacked
+  bar chart of planned spending, planned savings and estimated tax by month
+  (`#bgFcExtrasCard`, `--viz-3/2/4`), the estimated quarterly tax table
+  (`#bgFcTaxBody`, labelled as an estimate, basis in words) and Planned / Tax
+  columns in the month table (Planned is the signed net of the month's planned
+  income, spending and savings).
+- **Budget seed dialog:** per spending proposal the reason, a "Suggested:
+  yearly/monthly (+ carry-over)" badge with its amount, a Period select (switching
+  moves the amount between the monthly average and the yearly figure), a Carry
+  over box (monthly only) and, for a category that already has a line, a
+  *Convert to yearly* / *Add carry-over* button that uses the existing line PUT.
+  Apply sends `period`/`rollover` through the bulk endpoint, only for spending
+  and debt lines (`seedLinePayload`).
+- **Spending › Transactions (top):** the *To classify* card (`#spQueueCard`,
+  loaded at the end of `_refreshSpendingData`, so a classification refreshes
+  table, rules and queue): groups by merchant with samples and date range, a
+  category input on the shared `#spCategoryList`, "Also add a rule" with the
+  proposed pattern editable, one request per group; five groups shown, the rest
+  behind a toggle; empty state when nothing is uncategorised. Placed at the top
+  of Transactions because that is the tab opened first.
+- **Spending › Analytics (top):** the *Year* card (`#spYearCard`, loaded with
+  `loadSpCostControl`): year picker, like-for-like totals with the "compared
+  through" note and the full previous year, a 12-month bar chart of both years
+  (a month without imports is a gap), category table with deltas, movers, top
+  merchants and one-off rows.
+- Every null figure prints "not available" or a dash, never 0.
+
 ## Loans & Mortgage page (2026-11-15)
 
 Sidebar page `loans` (`#loansPage`, `loadLoansPage` in `pfm_analytics.js`): summary cards, two hand-drawn SVG charts (balance line, stacked principal/interest bars, `data-chart-tip` hover), a collapsible yearly table, the payments-vs-bank table and a debounced what-if panel. The budget editor's link picker (`budgetLinkOptions`, `parseBudgetLink` in `pfm_features.js`) offers manual liabilities and loans. Details: `mortgage.md`.

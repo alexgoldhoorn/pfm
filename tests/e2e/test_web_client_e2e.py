@@ -261,7 +261,7 @@ def _month_back(today, k: int):
 
 def test_cost_control_views_render_against_real_data(page, server_url):
     """Forecast tab, comparison, unusual charges and tiers load without errors."""
-    from datetime import date
+    from datetime import date, timedelta
 
     headers = {"X-API-Key": API_KEY}
     today = date.today()
@@ -334,9 +334,30 @@ def test_cost_control_views_render_against_real_data(page, server_url):
             f"{server_url}/api/v1/budgets/{bid}/lines", json=line, headers=headers
         )
         assert r.status_code in (200, 201), r.text
+    planned = httpx.post(
+        f"{server_url}/api/v1/spending/planned",
+        json={
+            "date": (today.replace(day=1) + timedelta(days=75)).isoformat(),
+            "description": "Example trip",
+            "amount": -800,
+            "kind": "spending",
+        },
+        headers=headers,
+    )
+    assert planned.status_code == 201, planned.text
     try:
+        page.set_viewport_size({"width": 390, "height": 800})
         page.goto(f"{server_url}/index.html")
         page.wait_for_load_state("networkidle")
+
+        def no_overflow(where):
+            overflow = page.evaluate(
+                "document.documentElement.scrollWidth"
+                " - document.documentElement.clientWidth"
+            )
+            assert (
+                overflow <= 0
+            ), f"horizontal overflow of {overflow}px at 390px: {where}"
 
         # Budget page, then the forecast tab (tab events are stubbed: call the loader)
         page.locator(
@@ -352,6 +373,43 @@ def test_cost_control_views_render_against_real_data(page, server_url):
         assert "This month" in page.locator("#bgFcThisMonth").inner_text()
         assert page.locator("#bgFcTableBody tr").count() == 12
         assert page.locator("#bgFcAssumptions li").count() > 0
+        # planned item listed; what-if answers on one line and saves nothing
+        assert "Example trip" in page.locator("#bgPlanBody").inner_text()
+        page.fill("#bgWiAmount", "5000")
+        page.fill("#bgWiMonth", (today + timedelta(days=40)).strftime("%Y-%m"))
+        page.click("#bgWhatIfForm button[type=submit]")
+        page.wait_for_function(
+            "document.getElementById('bgWiResult').textContent.includes('Nothing is saved')"
+            " || document.getElementById('bgWiResult').textContent.includes('Lowest balance')"
+        )
+        assert "Lowest balance" in page.locator("#bgWiResult").inner_text()
+        assert (
+            len(
+                httpx.get(
+                    f"{server_url}/api/v1/spending/planned", headers=headers
+                ).json()
+            )
+            == 1
+        )
+        # a planned item can be added through the form
+        page.fill("#bgPlanDate", (today + timedelta(days=50)).isoformat())
+        page.fill("#bgPlanDesc", "Example bonus")
+        page.fill("#bgPlanAmount", "300")
+        page.select_option("#bgPlanKind", "income")
+        page.click("#bgPlanSubmit")
+        page.wait_for_function(
+            "document.getElementById('bgPlanBody').textContent.includes('Example bonus')"
+        )
+        assert page.locator("#bgFcTaxBody tr").count() >= 1
+        no_overflow("forecast tab")
+        # the seed dialog shows the suggested period, the reason and a period toggle
+        page.evaluate("_bgLoadSeedProposals()")
+        page.wait_for_function(
+            "document.querySelectorAll('#bgSeedRows .bg-seed-check').length > 0"
+        )
+        assert page.locator("#bgSeedRows .bg-seed-period").count() >= 1
+        assert "Suggested:" in page.locator("#bgSeedRows").inner_text()
+        no_overflow("seed dialog")
 
         # Spending analytics cards
         page.locator(
@@ -366,6 +424,22 @@ def test_cost_control_views_render_against_real_data(page, server_url):
         cmp_text = page.locator("#spCmpBody").inner_text()
         assert "Groceries" in cmp_text
         assert "Failed" not in cmp_text
+        # the year card and the queue
+        page.wait_for_function(
+            "!document.getElementById('spYearBody').textContent.includes('Loading')"
+        )
+        assert "Failed" not in page.locator("#spYearBody").inner_text()
+        assert "Spending by month" in page.locator("#spYearBody").inner_text()
+        page.wait_for_function(
+            "!document.getElementById('spQueueBody').textContent.includes('Loading')"
+        )
+        assert "EXAMPLE LANDLORD" in page.locator("#spQueueBody").inner_text()
+        page.fill("#spQueueBody .sp-queue-cat", "Insurance")
+        page.click("#spQueueBody .sp-queue-apply")
+        page.wait_for_function(
+            "document.getElementById('spQueueBody').textContent.includes('Nothing is waiting')"
+        )
+        no_overflow("spending page")
         # the yearly line is labelled as such on the Overview, with its fund
         overview = page.locator("#bgVarianceArea").inner_text()
         assert "yearly" in overview

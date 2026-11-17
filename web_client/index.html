@@ -3439,6 +3439,13 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                     </ul>
                     <div class="tab-content">
                         <div class="tab-pane fade show active" id="spPaneTransactions">
+                            <div class="card mb-3" id="spQueueCard">
+                                <div class="card-header fw-semibold d-flex flex-wrap align-items-center justify-content-between gap-2">
+                                    <span>To classify <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip" id="spQueueHelp"></i></span>
+                                    <span class="small text-muted fw-normal" id="spQueueMeta"></span>
+                                </div>
+                                <div id="spQueueBody"><div class="card-body text-muted small">Loading…</div></div>
+                            </div>
                             <div class="card">
                                 <div class="card-header fw-semibold d-flex align-items-center justify-content-between">
                                     <span>Transactions</span>
@@ -3595,6 +3602,16 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                             </div>
                         </div>
                         <div class="tab-pane fade" id="spPaneAnalytics">
+                            <div class="card mb-3" id="spYearCard">
+                                <div class="card-header fw-semibold d-flex flex-wrap align-items-center justify-content-between gap-2">
+                                    <span>Year against last year <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip" id="spYearHelp"></i></span>
+                                    <span class="d-flex align-items-center gap-2">
+                                        <label class="visually-hidden" for="spYearSelect">Year</label>
+                                        <select class="form-select form-select-sm w-auto" id="spYearSelect"></select>
+                                    </span>
+                                </div>
+                                <div class="card-body" id="spYearBody"><div class="text-muted small">Open this tab to load the year.</div></div>
+                            </div>
                             <div class="card mb-3" id="spCmpCard">
                                 <div class="card-header fw-semibold d-flex flex-wrap align-items-center justify-content-between gap-2">
                                     <span>Month vs normal <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip" id="spCmpHelp"></i></span>
@@ -4549,11 +4566,113 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                             <div id="bgFcWarnings"></div>
                             <div id="bgFcFreshness" class="mb-3"></div>
                             <div id="bgFcThisMonth" class="mb-3"></div>
+                            <div class="card mb-3" id="bgFcPlannedCard">
+                                <div class="card-header py-2 d-flex flex-wrap align-items-center justify-content-between gap-2">
+                                    <span class="fw-semibold small">Planned <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip" id="bgFcPlannedHelp"></i></span>
+                                    <span class="form-check form-switch mb-0 small">
+                                        <input class="form-check-input" type="checkbox" role="switch" id="bgFcIncludeTax" checked>
+                                        <label class="form-check-label" for="bgFcIncludeTax">Include estimated tax</label>
+                                    </span>
+                                </div>
+                                <div class="card-body py-2">
+                                    <form id="bgPlanForm" class="row g-2 align-items-end mb-2" autocomplete="off">
+                                        <input type="hidden" id="bgPlanEditId" value="">
+                                        <div class="col-6 col-md-2">
+                                            <label class="form-label small mb-1" for="bgPlanDate">Date</label>
+                                            <input type="date" class="form-control form-control-sm" id="bgPlanDate" required>
+                                        </div>
+                                        <div class="col-12 col-md-3">
+                                            <label class="form-label small mb-1" for="bgPlanDesc">What</label>
+                                            <input type="text" class="form-control form-control-sm" id="bgPlanDesc" maxlength="120" placeholder="e.g. New laptop" required>
+                                        </div>
+                                        <div class="col-6 col-md-2">
+                                            <label class="form-label small mb-1" for="bgPlanAmount">Amount (EUR)</label>
+                                            <input type="number" min="0.01" step="0.01" class="form-control form-control-sm" id="bgPlanAmount" required>
+                                        </div>
+                                        <div class="col-6 col-md-2">
+                                            <label class="form-label small mb-1" for="bgPlanKind">Kind</label>
+                                            <select class="form-select form-select-sm" id="bgPlanKind">
+                                                <option value="spending">Spending</option>
+                                                <option value="savings">Savings</option>
+                                                <option value="income">Income</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-6 col-md-3 d-flex gap-2">
+                                            <button type="submit" class="btn btn-sm btn-primary flex-grow-1" id="bgPlanSubmit">Add</button>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary" id="bgPlanCancel" style="display:none;">Cancel</button>
+                                        </div>
+                                    </form>
+                                    <div id="bgPlanStatus" class="small text-muted mb-2" aria-live="polite"></div>
+                                </div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm mb-0 align-middle">
+                                        <thead><tr>
+                                            <th class="ps-3">Date</th>
+                                            <th>What</th>
+                                            <th class="d-none d-sm-table-cell">Kind</th>
+                                            <th class="text-end">Amount</th>
+                                            <th>Status</th>
+                                            <th class="pe-3 text-end">&nbsp;</th>
+                                        </tr></thead>
+                                        <tbody id="bgPlanBody"><tr><td colspan="6" class="text-center text-muted py-3">Loading…</td></tr></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <div class="card mb-3" id="bgFcWhatIfCard">
+                                <div class="card-header py-2"><span class="fw-semibold small">What if I spend… <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip" id="bgFcWhatIfHelp"></i></span></div>
+                                <div class="card-body py-2">
+                                    <form id="bgWhatIfForm" class="row g-2 align-items-end" autocomplete="off">
+                                        <div class="col-6 col-md-3">
+                                            <label class="form-label small mb-1" for="bgWiAmount">Amount (EUR)</label>
+                                            <input type="number" min="0.01" step="0.01" class="form-control form-control-sm" id="bgWiAmount" required>
+                                        </div>
+                                        <div class="col-6 col-md-3">
+                                            <label class="form-label small mb-1" for="bgWiMonth">Month</label>
+                                            <input type="month" class="form-control form-control-sm" id="bgWiMonth" required>
+                                        </div>
+                                        <div class="col-6 col-md-3">
+                                            <label class="form-label small mb-1" for="bgWiKind">Kind</label>
+                                            <select class="form-select form-select-sm" id="bgWiKind">
+                                                <option value="spending">Spending</option>
+                                                <option value="savings">Savings</option>
+                                                <option value="income">Income</option>
+                                            </select>
+                                        </div>
+                                        <div class="col-6 col-md-3 d-flex gap-2">
+                                            <button type="submit" class="btn btn-sm btn-outline-primary flex-grow-1">Try it</button>
+                                            <button type="button" class="btn btn-sm btn-outline-secondary" id="bgWiClear">Clear</button>
+                                        </div>
+                                    </form>
+                                    <div id="bgWiResult" class="small mt-2" aria-live="polite"></div>
+                                </div>
+                            </div>
                             <div class="card mb-3">
                                 <div class="card-header py-2"><span class="fw-semibold small">Projected bank balance <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip" id="bgFcBalanceHelp"></i></span></div>
                                 <div class="card-body">
                                     <div style="position: relative; height: 240px;"><canvas id="bgFcChartCanvas"></canvas></div>
                                     <div id="bgFcChartNote" class="small text-muted mt-2"></div>
+                                </div>
+                            </div>
+                            <div class="card mb-3" id="bgFcExtrasCard">
+                                <div class="card-header py-2"><span class="fw-semibold small">Planned items and estimated tax by month</span></div>
+                                <div class="card-body">
+                                    <div style="position: relative; height: 200px;"><canvas id="bgFcExtrasCanvas"></canvas></div>
+                                    <div id="bgFcExtrasLegend" class="small mt-2 d-flex flex-wrap gap-3"></div>
+                                    <div id="bgFcExtrasNote" class="small text-muted mt-1"></div>
+                                </div>
+                            </div>
+                            <div class="card mb-3">
+                                <div class="card-header py-2"><span class="fw-semibold small">Estimated quarterly tax <span class="badge text-bg-warning-subtle border">estimate</span> <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip" id="bgFcTaxHelp"></i></span></div>
+                                <div class="table-responsive">
+                                    <table class="table table-sm mb-0 align-middle">
+                                        <thead><tr>
+                                            <th class="ps-3">Quarter</th>
+                                            <th>Due</th>
+                                            <th class="text-end">Amount</th>
+                                            <th class="pe-3">Based on</th>
+                                        </tr></thead>
+                                        <tbody id="bgFcTaxBody"><tr><td colspan="4" class="text-center text-muted py-3">Loading…</td></tr></tbody>
+                                    </table>
                                 </div>
                             </div>
                             <div class="card mb-3">
@@ -4566,10 +4685,12 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                             <th class="text-end">Recurring</th>
                                             <th class="text-end">Everyday</th>
                                             <th class="text-end">Savings</th>
+                                            <th class="text-end">Planned</th>
+                                            <th class="text-end">Tax</th>
                                             <th class="text-end">Net</th>
                                             <th class="text-end pe-3">Balance</th>
                                         </tr></thead>
-                                        <tbody id="bgFcTableBody"><tr><td colspan="7" class="text-center text-muted py-3">Loading…</td></tr></tbody>
+                                        <tbody id="bgFcTableBody"><tr><td colspan="9" class="text-center text-muted py-3">Loading…</td></tr></tbody>
                                     </table>
                                 </div>
                             </div>

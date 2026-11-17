@@ -8343,6 +8343,8 @@ async function _refreshSpendingData() {
         _renderPossibleDuplicates(categories);
         _populateSpCategoryParentSelect(categoryTree);
         await _fetchAndRenderSpendingTable();
+        // own error handling: a failing queue must not blank the table
+        loadSpUncategorized();
     } catch (err) {
         const body = document.getElementById('spTxBody');
         if (body) body.innerHTML = `<tr><td colspan="6" class="text-center text-danger py-3">${esc(err.message)}</td></tr>`;
@@ -11314,10 +11316,16 @@ async function _bgLoadSeedProposals() {
         <strong>Investment</strong>. Only <strong>Spending</strong> counts toward your spending total, so
         classifying these here is what stops money you kept from inflating it.
     </div>
+    <div class="alert alert-secondary py-2 small mb-2">
+        <i class="bi bi-calendar3 me-1"></i>Costs that land in a few months of the year are suggested as <strong>yearly</strong>
+        (the amount is then a yearly figure); uneven costs as monthly with <strong>carry-over</strong>. You can switch each one.
+        ${ccHelpIcon('budgetYearly')}
+    </div>
     <div class="table-responsive"><table class="table table-sm mb-0 align-middle">
-        <thead><tr><th style="width:2rem;"></th><th>Line</th><th>Treat as</th><th class="text-end">€ / month</th><th class="text-muted small">Based on</th></tr></thead>
+        <thead><tr><th style="width:2rem;"></th><th>Line</th><th>Treat as</th><th>Period</th><th class="text-end">Amount</th><th class="text-muted small">Based on</th></tr></thead>
         <tbody>${window._bgSeedProposals.map((p, i) => {
             const already = budgeted.has(p.line_type + '|' + p.ref_key);
+            const m = seedProposalModel(p);
             const brokerKeyed = p.line_type === 'investment' && /^\d+$/.test(String(p.ref_key));
             const typeCell = brokerKeyed
                 ? `<span class="badge text-bg-secondary">${esc(BG_TYPE_LABELS[p.line_type])}</span>`
@@ -11327,15 +11335,71 @@ async function _bgLoadSeedProposals() {
                         .map(t => `<option value="${t}" ${t === p.line_type ? 'selected' : ''}>${esc(BG_TYPE_LABELS[t])}</option>`)
                         .join('')}
                    </select>`;
+            // only a cost line with a suggestion can be yearly or carry over
+            const periodCell = m.hasSuggestion
+                ? `<select class="form-select form-select-sm bg-seed-period" data-index="${i}" style="width:auto;" aria-label="Period">
+                        <option value="monthly" ${m.period === 'monthly' ? 'selected' : ''}>Monthly</option>
+                        <option value="yearly" ${m.period === 'yearly' ? 'selected' : ''}>Yearly</option>
+                   </select>
+                   <div class="form-check small mt-1 bg-seed-roll-wrap" data-index="${i}">
+                        <input type="checkbox" class="form-check-input bg-seed-roll" id="bgSeedRoll${i}" data-index="${i}" ${m.rollover ? 'checked' : ''}>
+                        <label class="form-check-label" for="bgSeedRoll${i}">Carry over</label>
+                   </div>`
+                : '<span class="text-muted small">Monthly</span>';
+            const reasonCell = m.hasSuggestion
+                ? `<div>${esc(m.reason)}</div><div><span class="badge text-bg-${m.period === 'yearly' ? 'warning' : 'light border'}">Suggested: ${esc(m.period)}${m.rollover ? ' + carry-over' : ''}</span> <span class="text-nowrap">${esc(m.suggestedAmountText)}</span></div>`
+                : `${p.months_seen} month${p.months_seen === 1 ? '' : 's'} of activity`;
+            const changeCell = m.changeLabel
+                ? `<div class="mt-1"><button type="button" class="btn btn-sm btn-outline-primary py-0 bg-seed-change" data-index="${i}">${esc(m.changeLabel)}${m.change === 'to_yearly' ? ' (' + esc(ccMoney(m.yearlyAmount)) + ' / year)' : ''}</button></div>`
+                : '';
+            const startAmount = m.period === 'yearly' ? m.yearlyAmount : p.monthly_amount;
             return `<tr>
                 <td><input type="checkbox" class="form-check-input bg-seed-check" data-index="${i}" ${already ? '' : 'checked'}></td>
-                <td>${esc(p.label)}${already ? ' <span class="badge text-bg-light">already budgeted</span>' : ''}</td>
+                <td class="text-break">${esc(p.label)}${already ? ' <span class="badge text-bg-light">already budgeted</span>' : ''}</td>
                 <td>${typeCell}</td>
-                <td class="text-end"><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end bg-seed-amount" data-index="${i}" value="${escapeForAttr(String(p.monthly_amount))}" style="width:7rem;"></td>
-                <td class="text-muted small">${p.months_seen} month${p.months_seen === 1 ? '' : 's'} of activity</td>
+                <td>${periodCell}</td>
+                <td class="text-end"><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end bg-seed-amount" data-index="${i}" value="${escapeForAttr(String(startAmount))}" style="width:7rem;"></td>
+                <td class="text-muted small">${reasonCell}${changeCell}</td>
             </tr>`;
         }).join('')}</tbody>
     </table></div>`;
+    if (window.initTooltips) window.initTooltips();
+    window._bgSeedProposals.forEach((_, i) => _bgSeedSyncRow(i));
+}
+
+// Show the carry-over box only for a monthly line.
+function _bgSeedSyncRow(index) {
+    const period = document.querySelector(`.bg-seed-period[data-index="${index}"]`);
+    const wrap = document.querySelector(`.bg-seed-roll-wrap[data-index="${index}"]`);
+    if (period && wrap) wrap.classList.toggle('d-none', period.value !== 'monthly');
+}
+
+// Switching monthly/yearly moves the amount to the other period's figure.
+function _bgSeedPeriodChanged(select) {
+    const index = parseInt(select.dataset.index, 10);
+    const m = seedProposalModel(window._bgSeedProposals[index]);
+    const amountEl = document.querySelector(`.bg-seed-amount[data-index="${index}"]`);
+    if (amountEl) amountEl.value = String(select.value === 'yearly' ? m.yearlyAmount : m.monthlyAmount);
+    _bgSeedSyncRow(index);
+}
+
+// "Convert to yearly" / "Add carry-over" on a line that already exists.
+async function _bgSeedChange(button) {
+    const proposal = window._bgSeedProposals[parseInt(button.dataset.index, 10)];
+    const m = seedProposalModel(proposal);
+    const payload = seedChangePayload(m);
+    const statusEl = document.getElementById('bgSeedStatus');
+    if (!payload || !m.existingLineId) return;
+    button.disabled = true;
+    try {
+        await window.apiClient.updateBudgetLine(window._bgSelectedId, m.existingLineId, payload);
+        if (statusEl) statusEl.textContent = `${proposal.label}: ${m.changeLabel.toLowerCase()} done.`;
+        await _refreshBudgetData();
+        await _bgLoadSeedProposals();
+    } catch (err) {
+        button.disabled = false;
+        if (statusEl) statusEl.textContent = err.message;
+    }
 }
 
 async function _bgApplySeed() {
@@ -11350,12 +11414,15 @@ async function _bgApplySeed() {
         const proposal = window._bgSeedProposals[index];
         const amountEl = document.querySelector(`.bg-seed-amount[data-index="${index}"]`);
         const typeEl = document.querySelector(`.bg-seed-type[data-index="${index}"]`);
+        const periodEl = document.querySelector(`.bg-seed-period[data-index="${index}"]`);
+        const rollEl = document.querySelector(`.bg-seed-roll[data-index="${index}"]`);
         const amount = parseFloat(amountEl && amountEl.value);
-        return {
-            line_type: (typeEl && typeEl.value) || proposal.line_type,
-            ref_key: proposal.ref_key,
-            monthly_amount: Number.isFinite(amount) ? amount : proposal.monthly_amount,
-        };
+        return seedLinePayload(proposal, {
+            lineType: (typeEl && typeEl.value) || proposal.line_type,
+            amount: Number.isFinite(amount) ? amount : proposal.monthly_amount,
+            period: (periodEl && periodEl.value) || 'monthly',
+            rollover: !!(rollEl && rollEl.checked),
+        });
     });
     if (statusEl) statusEl.textContent = 'Saving…';
     try {
@@ -11415,6 +11482,13 @@ function _wireBudgetPage() {
     wire('bgAddLineBtn', 'click', _bgAddLine);
     wire('bgSeedBtn', 'click', _bgLoadSeedProposals);
     wire('bgSeedApply', 'click', _bgApplySeed);
+    wire('bgSeedRows', 'change', e => {
+        if (e.target.classList.contains('bg-seed-period')) _bgSeedPeriodChanged(e.target);
+    });
+    wire('bgSeedRows', 'click', e => {
+        const btn = e.target.closest('.bg-seed-change');
+        if (btn) _bgSeedChange(btn);
+    });
     wire('bgSeedClose', 'click', () => {
         const panel = document.getElementById('bgSeedPanel');
         if (panel) panel.style.display = 'none';
@@ -11888,6 +11962,355 @@ window.forecastBillRows = forecastBillRows;
 window.forecastBalancePoints = forecastBalancePoints;
 window.forecastBelowZeroText = forecastBelowZeroText;
 
+// ── Cost control 2: planned items, what-if, tax, seeding, queue, year ──────
+
+/** EUR amount, or a dash for a missing or zero figure (a quiet table cell). */
+function ccMoneyOrDash(value, decimals = 0) {
+    if (value === null || value === undefined || value === '' || Number.isNaN(Number(value))) return CC_NA;
+    if (Math.abs(Number(value)) < 0.005) return '—';
+    return Fmt.money(Number(value), 'EUR', decimals);
+}
+
+const CC_PLANNED_KIND_LABEL = { spending: 'Spending', savings: 'Savings', income: 'Income' };
+const CC_PLANNED_STATUS = {
+    projected: { label: 'Projected', tone: 'primary' },
+    overdue: { label: 'Overdue', tone: 'danger' },
+    beyond_horizon: { label: 'Beyond horizon', tone: 'secondary' },
+    unconverted: { label: 'Not converted', tone: 'warning' },
+    what_if: { label: 'What-if', tone: 'info' },
+    done: { label: 'Done', tone: 'success' },
+};
+
+/** Label and Bootstrap tone for a planned item's status; null for none. */
+function plannedStatusMeta(status) {
+    if (!status) return null;
+    return CC_PLANNED_STATUS[status] || { label: String(status), tone: 'secondary' };
+}
+
+/**
+ * Rows of the Planned card. Items come from /spending/planned (signed amount
+ * in its own currency); the status (projected / overdue / beyond_horizon) comes
+ * from the forecast's planned_items, matched by id. A done item is "done".
+ */
+function plannedItemsModel(items, forecast) {
+    const byId = {};
+    ((forecast && forecast.planned_items) || []).forEach(p => { if (p.id !== null && p.id !== undefined) byId[p.id] = p; });
+    return (Array.isArray(items) ? items : []).map(it => {
+        const amount = Number(it.amount);
+        const status = it.done ? 'done' : ((byId[it.id] || {}).status || null);
+        const currency = it.currency || 'EUR';
+        return {
+            id: it.id,
+            date: it.date,
+            dateText: Fmt.date(it.date),
+            description: it.description,
+            notes: it.notes || '',
+            kind: it.kind,
+            kindLabel: CC_PLANNED_KIND_LABEL[it.kind] || String(it.kind || ''),
+            done: !!it.done,
+            status: plannedStatusMeta(status),
+            amountText: (amount > 0 ? '+' : amount < 0 ? '−' : '') + Fmt.money(Math.abs(amount), currency, 2),
+            amountClass: amount > 0 ? 'text-success' : '',
+            overdue: status === 'overdue',
+        };
+    });
+}
+
+/**
+ * Turn the planned-item form values into an API payload, or an error text.
+ * The user types a positive amount; the kind decides the sign (income is
+ * positive, spending and savings negative).
+ */
+function plannedFormPayload(values) {
+    const description = String((values && values.description) || '').trim();
+    const date = String((values && values.date) || '').trim();
+    const kind = values && values.kind;
+    const raw = parseFloat(values && values.amount);
+    if (!description) return { error: 'Give the item a description.' };
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error: 'Pick a date.' };
+    if (!CC_PLANNED_KIND_LABEL[kind]) return { error: 'Pick spending, savings or income.' };
+    if (!Number.isFinite(raw) || raw === 0) return { error: 'Enter an amount above zero.' };
+    const magnitude = Math.abs(raw);
+    const payload = { date, description, kind, amount: kind === 'income' ? magnitude : -magnitude };
+    const notes = String((values && values.notes) || '').trim();
+    if (notes) payload.notes = notes;
+    return { payload };
+}
+
+/**
+ * One result line for the what-if row, from a forecast fetched with the
+ * extra_* parameters. Returns null when the forecast carries no what-if. A
+ * missing lowest balance is "not available", never zero; nothing is saved.
+ */
+function forecastWhatIfModel(forecast) {
+    const w = forecast && forecast.what_if;
+    if (!w) return null;
+    const low = w.lowest_balance_eur;
+    const without = w.lowest_balance_without_eur;
+    if (low === null || low === undefined) {
+        return {
+            available: false,
+            tone: 'secondary',
+            belowZero: null,
+            text: `Lowest balance ${CC_NA}: the forecast has no starting balance to measure it against.`,
+        };
+    }
+    const month = w.lowest_balance_month ? ' in ' + monthKeyLabel(w.lowest_balance_month) : '';
+    const withoutText = without === null || without === undefined ? CC_NA : ccMoney(without);
+    const verdict = w.goes_below_zero === true
+        ? 'It takes the balance below zero.'
+        : (w.goes_below_zero === false ? 'The balance stays above zero.' : '');
+    return {
+        available: true,
+        tone: w.goes_below_zero === true ? 'danger' : 'success',
+        belowZero: w.goes_below_zero === undefined ? null : w.goes_below_zero,
+        text: `Lowest balance with it: ${ccMoney(low)}${month}; without it: ${withoutText}. ${verdict}`.trim(),
+    };
+}
+
+/** What-if inputs to the forecast's extra parameters, or an error text. */
+function forecastWhatIfParams(values) {
+    const amount = parseFloat(values && values.amount);
+    const month = String((values && values.month) || '');
+    if (!Number.isFinite(amount) || amount <= 0) return { error: 'Enter an amount above zero.' };
+    if (!/^\d{4}-\d{2}$/.test(month)) return { error: 'Pick a month.' };
+    if (!CC_PLANNED_KIND_LABEL[values.kind]) return { error: 'Pick spending, savings or income.' };
+    return { params: { amount, date: month, kind: values.kind } };
+}
+
+/** Series for the planned-and-tax chart: outflows by month, stacked. */
+function forecastExtrasModel(forecast) {
+    const months = (forecast && forecast.next_months) || [];
+    const series = [
+        { key: 'planned_spending_eur', label: 'Planned spending', cssVar: '--viz-3' },
+        { key: 'planned_savings_eur', label: 'Planned savings', cssVar: '--viz-2' },
+        { key: 'tax_eur', label: 'Estimated tax', cssVar: '--viz-4' },
+    ];
+    const datasets = series.map(s => ({
+        label: s.label,
+        cssVar: s.cssVar,
+        data: months.map(m => (m[s.key] === null || m[s.key] === undefined ? null : Number(m[s.key]))),
+    }));
+    return {
+        labels: months.map(m => monthKeyLabel(m.month)),
+        datasets,
+        hasData: datasets.some(d => d.data.some(v => v)),
+    };
+}
+
+/** Rows of the estimated-tax list; the basis is spelled out. */
+function forecastTaxRows(forecast) {
+    const basis = { accrued: 'Accrued so far', average: 'Average of past quarters' };
+    return ((forecast && forecast.tax_payments) || []).map(t => ({
+        quarter: String(t.quarter || '').replace('-', ' '),
+        due: Fmt.date(t.due),
+        amount: ccMoney(t.amount_eur),
+        basis: basis[t.basis] || String(t.basis || ''),
+    }));
+}
+
+/**
+ * Planned, tax and net columns for the month table, one object per next
+ * month. Planned is the signed net of the month's planned income, spending
+ * and savings; a dash means nothing planned.
+ */
+function forecastPlannedColumns(forecast) {
+    return ((forecast && forecast.next_months) || []).map(m => {
+        const parts = [m.planned_income_eur, m.planned_spending_eur, m.planned_savings_eur];
+        const known = parts.every(v => v !== null && v !== undefined);
+        const net = known ? Number(m.planned_income_eur) - Number(m.planned_spending_eur) - Number(m.planned_savings_eur) : null;
+        return {
+            month: m.month,
+            planned: net === null ? CC_NA : (Math.abs(net) < 0.005 ? '—' : ccSignedMoney(net)),
+            plannedClass: net === null || Math.abs(net) < 0.005 ? 'text-muted' : (net < 0 ? 'text-danger' : 'text-success'),
+            tax: ccMoneyOrDash(m.tax_eur),
+        };
+    });
+}
+
+/**
+ * Display model of one budget seed proposal. `period` and `amount` are the
+ * defaults of the toggle; `yearlyAmount` and `monthlyAmount` are what each
+ * side of it would save. Only spending lines carry a suggestion.
+ */
+function seedProposalModel(p) {
+    const hasSuggestion = !!(p && p.suggested_period);
+    const monthly = Number(p && p.monthly_amount) || 0;
+    const suggestedYearly = hasSuggestion && p.suggested_period === 'yearly' && p.suggested_amount !== null && p.suggested_amount !== undefined;
+    const yearlyAmount = suggestedYearly ? Number(p.suggested_amount) : Math.round(monthly * 12);
+    const change = p && p.change ? p.change : null;
+    return {
+        hasSuggestion,
+        period: hasSuggestion ? p.suggested_period : 'monthly',
+        rollover: hasSuggestion && !!p.suggested_rollover,
+        monthlyAmount: monthly,
+        yearlyAmount,
+        suggestedAmountText: hasSuggestion
+            ? ccMoney(suggestedYearly ? yearlyAmount : monthly) + (p.suggested_period === 'yearly' ? ' / year' : ' / month')
+            : null,
+        reason: (p && p.reason) || '',
+        change,
+        changeLabel: change === 'to_yearly' ? 'Convert to yearly' : (change === 'add_rollover' ? 'Add carry-over' : null),
+        existingLineId: (p && p.existing_line_id) || null,
+    };
+}
+
+/** Line payload for the bulk endpoint; period/rollover only for cost lines. */
+function seedLinePayload(proposal, chosen) {
+    const line = { line_type: chosen.lineType, ref_key: proposal.ref_key, monthly_amount: chosen.amount };
+    if (budgetFundControlsAllowed(chosen.lineType) && proposal.suggested_period) {
+        line.period = chosen.period;
+        line.rollover = chosen.period === 'monthly' && !!chosen.rollover;
+    }
+    return line;
+}
+
+/** PUT payload for a proposal's "change" on a line that already exists. */
+function seedChangePayload(model) {
+    if (model.change === 'to_yearly') return { period: 'yearly', monthly_amount: model.yearlyAmount, rollover: false };
+    if (model.change === 'add_rollover') return { rollover: true };
+    return null;
+}
+
+/** Rows of the "To classify" card; every figure is shown as it comes. */
+function uncategorizedQueueModel(queue) {
+    const groups = (queue && queue.groups) || [];
+    const share = queue && queue.share_of_spending_pct;
+    return {
+        empty: groups.length === 0,
+        summary: queue && queue.total_count
+            ? `${queue.total_count} row${queue.total_count === 1 ? '' : 's'}, ${ccMoney(queue.total_eur)}`
+              + (share === null || share === undefined ? '' : `, ${share}% of spending`)
+            : '',
+        hidden: Math.max(0, ((queue && queue.total_count) || 0) - groups.reduce((n, g) => n + (g.count || 0), 0)),
+        groups: groups.map((g, i) => ({
+            index: i,
+            merchant: g.merchant,
+            direction: g.direction,
+            directionLabel: g.direction === 'in' || g.direction === 'income' || g.direction === 'credit' ? 'money in' : 'money out',
+            count: g.count,
+            total: ccMoney(g.total_eur),
+            range: g.first_date === g.last_date ? Fmt.date(g.first_date) : `${Fmt.date(g.first_date)} to ${Fmt.date(g.last_date)}`,
+            samples: g.sample_descriptions || [],
+            ids: g.transaction_ids || [],
+            pattern: g.proposed_pattern || '',
+        })),
+    };
+}
+
+/** Payload for /uncategorized-queue/classify, or an error text. */
+function classifyPayload(group, category, addRule, pattern) {
+    const name = String(category || '').trim();
+    if (!name) return { error: 'Pick a category first.' };
+    const payload = { transaction_ids: group.ids, category: name, create_rule: !!addRule };
+    if (addRule) {
+        const text = String(pattern || '').trim();
+        if (!text) return { error: 'Enter a pattern for the rule, or untick it.' };
+        payload.pattern = text;
+    }
+    return { payload };
+}
+
+/** One-line result of a classification. */
+function classifyResultText(result) {
+    const r = result || {};
+    let text = `Filed ${r.updated || 0} row${r.updated === 1 ? '' : 's'}`;
+    if (r.skipped) text += `, ${r.skipped} already had a category`;
+    if (r.rule_created) text += `; rule added, ${r.recategorized_by_rule || 0} more row(s) filed by it`;
+    else if (r.rule_id) text += '; that rule already existed';
+    return text + '.';
+}
+
+/** Years offered by the Year picker, newest first. */
+function yearChoices(currentYear, count = 6) {
+    return Array.from({ length: count }, (_, i) => currentYear - i);
+}
+
+/** The Year card: totals like for like, month bars, categories, movers. */
+function spendingYearModel(data) {
+    const d = data || {};
+    const totals = d.totals || {};
+    const dash = '—';
+    const pctText = v => (v === null || v === undefined ? dash : `${v > 0 ? '+' : ''}${v}%`);
+    const line = (label, key, goodWhenLower) => {
+        const a = totals.this ? totals.this[key] : null;
+        const b = totals.previous ? totals.previous[key] : null;
+        const full = totals.previous_full ? totals.previous_full[key] : null;
+        const delta = a === null || a === undefined || b === null || b === undefined ? null : a - b;
+        let cls = 'text-muted';
+        if (delta !== null && Math.abs(delta) >= 0.005) cls = (delta < 0) === goodWhenLower ? 'text-success' : 'text-danger';
+        return { label, thisText: ccMoney(a), previousText: ccMoney(b), deltaText: delta === null ? dash : ccSignedMoney(delta), deltaClass: cls, fullText: ccMoney(full) };
+    };
+    const rate = totals.this ? totals.this.savings_rate_pct : null;
+    const prevRate = totals.previous ? totals.previous.savings_rate_pct : null;
+    const compared = !!totals.this;
+    let note;
+    if (!compared) note = 'No month can be compared like for like yet.';
+    else if (d.complete) note = `Compared through ${monthKeyLabel(d.compared_through)} (the full year).`;
+    else note = `Compared through ${monthKeyLabel(d.compared_through)}: ${d.previous_year} is cut to the same months.`;
+    const months = (d.months || {});
+    const labelOf = m => monthKeyLabel(m.month);
+    const series = key => (months[key] || []).map(m => (m.has_imports ? Number(m.spending_eur) : null));
+    const categories = (d.categories || []).map(c => ({
+        name: c.category,
+        thisText: ccMoney(c.this_eur),
+        previousText: ccMoney(c.previous_eur),
+        deltaText: c.delta_eur === null || c.delta_eur === undefined ? dash : ccSignedMoney(c.delta_eur),
+        pctText: pctText(c.delta_pct),
+        deltaClass: compareDeltaClass(c.delta_eur),
+        shareText: c.share_pct === null || c.share_pct === undefined ? dash : `${c.share_pct}%`,
+        children: (c.children || []).map(k => ({ name: k.category, thisText: ccMoney(k.this_eur), deltaText: k.delta_eur === null || k.delta_eur === undefined ? dash : ccSignedMoney(k.delta_eur), deltaClass: compareDeltaClass(k.delta_eur) })),
+    }));
+    const mover = e => ({ name: e.category, deltaText: ccSignedMoney(e.delta_eur), pctText: pctText(e.delta_pct), deltaClass: compareDeltaClass(e.delta_eur) });
+    return {
+        year: d.year,
+        previousYear: d.previous_year,
+        compared,
+        note,
+        rows: [
+            line('Income', 'income_eur', false),
+            line('Spending', 'spending_eur', true),
+            line('Saved (Invest, House purchase)', 'savings_eur', false),
+            line('Net', 'net_eur', false),
+        ],
+        rateText: rate === null || rate === undefined ? CC_NA : `${rate}%` + (prevRate === null || prevRate === undefined ? '' : ` (${prevRate}% before)`),
+        fullPrevious: totals.previous_full
+            ? `Full ${d.previous_year}: spent ${ccMoney(totals.previous_full.spending_eur)}, income ${ccMoney(totals.previous_full.income_eur)}.`
+            : `Full ${d.previous_year} ${CC_NA}: nothing imported.`,
+        oneOffText: totals.this && Number(totals.this.one_off_eur) > 0 ? `${ccMoney(totals.this.one_off_eur)} of this year's spending is one-off.` : null,
+        chart: {
+            labels: (months.this || []).map(labelOf),
+            thisYear: series('this'),
+            previousYear: series('previous'),
+            hasData: series('this').concat(series('previous')).some(v => v !== null),
+        },
+        categories,
+        increases: ((d.movers || {}).increases || []).map(mover),
+        decreases: ((d.movers || {}).decreases || []).map(mover),
+        merchants: (d.merchants || []).map(m => ({ name: m.merchant, thisText: ccMoney(m.this_eur), previousText: ccMoney(m.previous_eur) })),
+        oneOffs: (d.one_offs || []).map(r => ({ date: Fmt.date(r.date), description: r.description, amount: ccMoney(Math.abs(r.amount_eur), 2), category: r.category, account: r.account || '' })),
+        warnings: d.warnings || [],
+    };
+}
+
+window.ccMoneyOrDash = ccMoneyOrDash;
+window.plannedStatusMeta = plannedStatusMeta;
+window.plannedItemsModel = plannedItemsModel;
+window.plannedFormPayload = plannedFormPayload;
+window.forecastWhatIfModel = forecastWhatIfModel;
+window.forecastWhatIfParams = forecastWhatIfParams;
+window.forecastExtrasModel = forecastExtrasModel;
+window.forecastTaxRows = forecastTaxRows;
+window.forecastPlannedColumns = forecastPlannedColumns;
+window.seedProposalModel = seedProposalModel;
+window.seedLinePayload = seedLinePayload;
+window.seedChangePayload = seedChangePayload;
+window.uncategorizedQueueModel = uncategorizedQueueModel;
+window.classifyPayload = classifyPayload;
+window.classifyResultText = classifyResultText;
+window.yearChoices = yearChoices;
+window.spendingYearModel = spendingYearModel;
+
 // One-off flag helpers for the Transactions table.
 function spOneOffBadgeHtml(row) {
     return row && row.one_off
@@ -12114,6 +12537,213 @@ async function loadSpTiers() {
 }
 window.loadSpTiers = loadSpTiers;
 
+// ── Spending › To classify (uncategorised queue) ────────────────────────────
+
+window._spQueue = { data: null, showAll: false };
+const SP_QUEUE_SHOWN = 5;
+
+function _renderSpQueue() {
+    const body = document.getElementById('spQueueBody');
+    const meta = document.getElementById('spQueueMeta');
+    if (!body) return;
+    const q = window._spQueue.data;
+    const model = uncategorizedQueueModel(q);
+    if (meta) meta.textContent = model.summary;
+    if (model.empty) {
+        body.innerHTML = '<div class="card-body text-muted small"><i class="bi bi-check-circle text-success me-1"></i>Nothing is waiting to be classified.</div>';
+        return;
+    }
+    const shown = window._spQueue.showAll ? model.groups : model.groups.slice(0, SP_QUEUE_SHOWN);
+    body.innerHTML = `<ul class="list-group list-group-flush">${shown.map(g => `
+        <li class="list-group-item sp-queue-group" data-index="${g.index}">
+            <div class="d-flex flex-wrap justify-content-between gap-1">
+                <span class="fw-semibold text-break">${esc(g.merchant)} <span class="badge text-bg-light border fw-normal">${esc(g.directionLabel)}</span></span>
+                <span class="small text-nowrap">${g.count} row${g.count === 1 ? '' : 's'} &middot; ${esc(g.total)}</span>
+            </div>
+            <div class="small text-muted">${esc(g.range)}</div>
+            ${g.samples.length ? `<ul class="small text-muted mb-2 ps-3">${g.samples.map(t => `<li class="text-break">${esc(t)}</li>`).join('')}</ul>` : ''}
+            <div class="d-flex flex-wrap align-items-center gap-2">
+                <input type="text" list="spCategoryList" class="form-control form-control-sm w-auto sp-queue-cat" data-index="${g.index}" placeholder="Category" aria-label="Category for ${escapeForAttr(g.merchant)}">
+                <span class="form-check mb-0 small">
+                    <input type="checkbox" class="form-check-input sp-queue-rule" id="spQueueRule${g.index}" data-index="${g.index}" ${g.pattern ? 'checked' : ''}>
+                    <label class="form-check-label" for="spQueueRule${g.index}">Also add a rule</label>
+                </span>
+                <input type="text" class="form-control form-control-sm w-auto sp-queue-pattern" data-index="${g.index}" value="${escapeForAttr(g.pattern)}" placeholder="Text to match" aria-label="Rule pattern" style="max-width:100%;${g.pattern ? '' : 'display:none;'}">
+                <button type="button" class="btn btn-sm btn-primary sp-queue-apply" data-index="${g.index}">Apply</button>
+            </div>
+        </li>`).join('')}</ul>
+        ${model.groups.length > SP_QUEUE_SHOWN ? `<div class="card-body py-2"><button type="button" class="btn btn-sm btn-link p-0" id="spQueueToggle">${window._spQueue.showAll ? 'Show fewer' : `Show all ${model.groups.length} groups`}</button></div>` : ''}
+        ${model.hidden > 0 ? `<div class="card-body py-2 small text-muted">${model.hidden} more row${model.hidden === 1 ? '' : 's'} in smaller groups are not listed here.</div>` : ''}`;
+}
+
+async function loadSpUncategorized() {
+    const body = document.getElementById('spQueueBody');
+    if (!body) return;
+    ccApplyHelpTitle('spQueueHelp', 'uncategorizedQueue');
+    _wireSpQueue();
+    try {
+        window._spQueue.data = await window.apiClient.getUncategorizedQueue(20, 12);
+        _renderSpQueue();
+        if (window.initTooltips) window.initTooltips();
+    } catch (err) {
+        body.innerHTML = `<div class="card-body text-danger small">${esc(err.message)}</div>`;
+    }
+}
+window.loadSpUncategorized = loadSpUncategorized;
+
+async function _spQueueApply(button) {
+    const index = parseInt(button.dataset.index, 10);
+    const model = uncategorizedQueueModel(window._spQueue.data);
+    const group = model.groups.find(g => g.index === index);
+    const li = button.closest('.sp-queue-group');
+    if (!group || !li) return;
+    const result = classifyPayload(
+        group,
+        li.querySelector('.sp-queue-cat').value,
+        li.querySelector('.sp-queue-rule').checked,
+        li.querySelector('.sp-queue-pattern').value,
+    );
+    if (result.error) { notify(result.error, 'warning'); return; }
+    button.disabled = true;
+    try {
+        const done = await window.apiClient.classifyUncategorizedGroup(result.payload);
+        notify(classifyResultText(done), 'success');
+        // the table, rules and the queue all change
+        await _refreshSpendingData();
+    } catch (err) {
+        button.disabled = false;
+        notify('Could not classify: ' + err.message, 'danger');
+    }
+}
+
+function _wireSpQueue() {
+    const body = document.getElementById('spQueueBody');
+    if (!body || body.dataset.wired) return;
+    body.dataset.wired = '1';
+    body.addEventListener('click', e => {
+        const apply = e.target.closest('.sp-queue-apply');
+        if (apply) { _spQueueApply(apply); return; }
+        if (e.target.closest('#spQueueToggle')) {
+            window._spQueue.showAll = !window._spQueue.showAll;
+            _renderSpQueue();
+        }
+    });
+    body.addEventListener('change', e => {
+        if (!e.target.classList.contains('sp-queue-rule')) return;
+        const pattern = e.target.closest('.sp-queue-group').querySelector('.sp-queue-pattern');
+        pattern.style.display = e.target.checked ? '' : 'none';
+    });
+}
+
+// ── Spending › Analytics: Year against last year ────────────────────────────
+
+let _spYearChartInstance = null;
+window._spYear = { year: null };
+
+function _spYearDeltaTable(rows) {
+    return `<div class="table-responsive"><table class="table table-sm mb-0 align-middle">
+        <thead><tr><th class="ps-0">&nbsp;</th><th class="text-end">This year</th><th class="text-end">Last year</th><th class="text-end">Change</th><th class="text-end d-none d-sm-table-cell">Full last year</th></tr></thead>
+        <tbody>${rows.map(r => `<tr>
+            <td class="ps-0">${esc(r.label)}</td>
+            <td class="text-end">${esc(r.thisText)}</td>
+            <td class="text-end">${esc(r.previousText)}</td>
+            <td class="text-end ${r.deltaClass}">${esc(r.deltaText)}</td>
+            <td class="text-end d-none d-sm-table-cell text-muted">${esc(r.fullText)}</td>
+        </tr>`).join('')}</tbody></table></div>`;
+}
+
+function _renderSpYear(data) {
+    const body = document.getElementById('spYearBody');
+    if (!body) return;
+    const m = spendingYearModel(data);
+    if (_spYearChartInstance) { _spYearChartInstance.destroy(); _spYearChartInstance = null; }
+    const moverList = (title, list) => `<div class="col-12 col-md-6"><div class="fw-semibold small mb-1">${esc(title)}</div>
+        ${list.length ? '<ul class="list-unstyled small mb-0">' + list.map(x => `<li class="d-flex justify-content-between gap-2"><span class="text-break">${esc(x.name)}</span><span class="text-nowrap ${x.deltaClass}">${esc(x.deltaText)} <span class="text-muted">${esc(x.pctText)}</span></span></li>`).join('') + '</ul>' : '<div class="small text-muted">none</div>'}</div>`;
+    body.innerHTML = `
+        ${m.warnings.length ? `<div class="alert alert-warning py-2 small"><ul class="mb-0 ps-3">${m.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul></div>` : ''}
+        <div class="small text-muted mb-2">${esc(m.note)}</div>
+        ${m.compared ? _spYearDeltaTable(m.rows) : ''}
+        <div class="small mt-2">Savings rate: ${esc(m.rateText)}</div>
+        <div class="small text-muted">${esc(m.fullPrevious)}</div>
+        ${m.oneOffText ? `<div class="small text-muted">${esc(m.oneOffText)}</div>` : ''}
+        <div class="fw-semibold small mt-3 mb-1">Spending by month</div>
+        <div style="position: relative; height: 240px;"><canvas id="spYearChartCanvas"></canvas></div>
+        <div id="spYearChartNote" class="small text-muted mt-1">A month with no imported statement has no bar: it is unknown, not zero.</div>
+        ${m.compared ? `
+        <div class="fw-semibold small mt-3 mb-1">By category</div>
+        <div class="table-responsive"><table class="table table-sm mb-0 align-middle">
+            <thead><tr><th class="ps-0">Category</th><th class="text-end">${esc(String(m.year))}</th><th class="text-end">${esc(String(m.previousYear))}</th><th class="text-end">Change</th><th class="text-end d-none d-sm-table-cell">Share</th></tr></thead>
+            <tbody>${m.categories.map(c => `<tr>
+                <td class="ps-0 text-break">${esc(c.name)}</td>
+                <td class="text-end">${esc(c.thisText)}</td>
+                <td class="text-end">${esc(c.previousText)}</td>
+                <td class="text-end ${c.deltaClass}">${esc(c.deltaText)} <span class="text-muted small">${esc(c.pctText)}</span></td>
+                <td class="text-end d-none d-sm-table-cell text-muted">${esc(c.shareText)}</td>
+            </tr>`).join('') || '<tr><td colspan="5" class="text-muted text-center py-2">No spending in the compared months.</td></tr>'}</tbody>
+        </table></div>
+        <div class="row g-3 mt-1">${moverList('Biggest increases', m.increases)}${moverList('Biggest decreases', m.decreases)}</div>
+        <div class="fw-semibold small mt-3 mb-1">Top merchants</div>
+        <div class="table-responsive"><table class="table table-sm mb-0 align-middle">
+            <thead><tr><th class="ps-0">Merchant</th><th class="text-end">${esc(String(m.year))}</th><th class="text-end">${esc(String(m.previousYear))}</th></tr></thead>
+            <tbody>${m.merchants.map(x => `<tr><td class="ps-0 text-break">${esc(x.name)}</td><td class="text-end">${esc(x.thisText)}</td><td class="text-end">${esc(x.previousText)}</td></tr>`).join('') || '<tr><td colspan="3" class="text-muted text-center py-2">none</td></tr>'}</tbody>
+        </table></div>
+        <div class="fw-semibold small mt-3 mb-1">One-off payments (counted in the totals)</div>
+        ${m.oneOffs.length ? `<div class="table-responsive"><table class="table table-sm mb-0 align-middle">
+            <tbody>${m.oneOffs.map(r => `<tr><td class="ps-0 text-nowrap">${esc(r.date)}</td><td class="text-break">${esc(r.description)}</td><td class="d-none d-sm-table-cell">${esc(r.category)}</td><td class="text-end">${esc(r.amount)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="small text-muted">none</div>'}` : ''}`;
+    const canvas = document.getElementById('spYearChartCanvas');
+    const note = document.getElementById('spYearChartNote');
+    if (!canvas) return;
+    if (!m.chart.hasData) {
+        canvas.style.display = 'none';
+        if (note) note.textContent = 'No imported statements in these two years.';
+        return;
+    }
+    try {
+        _spYearChartInstance = new Chart(canvas, {
+            type: 'bar',
+            data: {
+                labels: m.chart.labels,
+                datasets: [
+                    { label: String(m.previousYear), data: m.chart.previousYear, backgroundColor: cssVar('--viz-neutral') },
+                    { label: String(m.year), data: m.chart.thisYear, backgroundColor: cssVar('--viz-1') },
+                ],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: true, position: 'top' }, tooltip: { callbacks: chartEurTooltip } },
+                scales: { y: { beginAtZero: true, ticks: { callback: v => Fmt.money(v, 'EUR', 0) } } },
+            },
+        });
+    } catch (err) {
+        canvas.style.display = 'none';
+        if (note) note.textContent = 'Chart unavailable: ' + err.message;
+    }
+}
+
+async function loadSpYear() {
+    const body = document.getElementById('spYearBody');
+    const select = document.getElementById('spYearSelect');
+    if (!body || !select) return;
+    ccApplyHelpTitle('spYearHelp', 'spendingYear');
+    if (!select.options.length) {
+        const current = new Date().getFullYear();
+        select.innerHTML = yearChoices(current).map(y => `<option value="${y}">${y}</option>`).join('');
+    }
+    if (!select.dataset.wired) {
+        select.dataset.wired = '1';
+        select.addEventListener('change', () => loadSpYear());
+    }
+    body.innerHTML = '<div class="text-muted small">Loading…</div>';
+    try {
+        _renderSpYear(await window.apiClient.getSpendingYear(parseInt(select.value, 10)));
+        if (window.initTooltips) window.initTooltips();
+    } catch (err) {
+        body.innerHTML = `<div class="text-danger small">${esc(err.message)}</div>`;
+    }
+}
+window.loadSpYear = loadSpYear;
+
 function loadSpCostControl() {
     ccApplyHelpTitle('spCmpHelp', 'costCompare');
     ccApplyHelpTitle('spAnomHelp', 'costAnomalies');
@@ -12124,6 +12754,7 @@ function loadSpCostControl() {
     loadSpCompare();
     loadSpAnomalies();
     loadSpTiers();
+    loadSpYear();
     if (window.initTooltips) window.initTooltips();
 }
 window.loadSpCostControl = loadSpCostControl;
@@ -12214,7 +12845,7 @@ function _wireSpOneOff() {
 // ── Budget › Forecast tab ───────────────────────────────────────────────────
 
 let _bgFcChartInstance = null;
-window._bgFc = { data: null, showAllBills: false };
+window._bgFc = { data: null, showAllBills: false, planned: [], whatIf: null };
 
 function _bgFcMonths() {
     const value = parseInt((document.getElementById('bgFcMonths') || {}).value, 10);
@@ -12267,16 +12898,19 @@ function _renderBgFcTable(fc) {
     const body = document.getElementById('bgFcTableBody');
     if (!body) return;
     const rows = forecastTableRows(fc);
+    const extras = forecastPlannedColumns(fc);
     if (!rows.length) {
-        body.innerHTML = '<tr><td colspan="7" class="text-center text-muted py-3">No months to project.</td></tr>';
+        body.innerHTML = '<tr><td colspan="9" class="text-center text-muted py-3">No months to project.</td></tr>';
         return;
     }
-    body.innerHTML = rows.map(r => `<tr${r.below ? ' class="table-danger"' : ''}>
+    body.innerHTML = rows.map((r, i) => `<tr${r.below ? ' class="table-danger"' : ''}>
         <td class="ps-3">${esc(r.label)}${r.billCount ? ` <span class="small text-muted" title="Known bills this month">&middot; ${r.billCount} bill${r.billCount === 1 ? '' : 's'}</span>` : ''}</td>
         <td class="text-end">${esc(r.income)}</td>
         <td class="text-end">${esc(r.recurring)}</td>
         <td class="text-end">${esc(r.variable)}</td>
         <td class="text-end">${esc(r.savings)}</td>
+        <td class="text-end ${extras[i].plannedClass}">${esc(extras[i].planned)}</td>
+        <td class="text-end">${esc(extras[i].tax)}</td>
         <td class="text-end ${r.netClass}">${esc(r.net)}</td>
         <td class="text-end pe-3 ${r.below ? 'text-danger fw-bold' : ''}">${esc(r.balance)}${r.below ? ' <i class="bi bi-exclamation-triangle" title="Below zero"></i>' : ''}</td>
     </tr>`).join('');
@@ -12351,26 +12985,191 @@ function _renderBgFcAssumptions(fc) {
         || '<li class="text-muted">No assumptions reported.</li>';
 }
 
+let _bgFcExtrasChart = null;
+
+function _renderBgFcExtras(fc) {
+    const canvas = document.getElementById('bgFcExtrasCanvas');
+    const legend = document.getElementById('bgFcExtrasLegend');
+    const note = document.getElementById('bgFcExtrasNote');
+    if (!canvas) return;
+    if (_bgFcExtrasChart) { _bgFcExtrasChart.destroy(); _bgFcExtrasChart = null; }
+    const model = forecastExtrasModel(fc);
+    if (legend) {
+        legend.innerHTML = model.datasets.map(d => `<span><span style="color:var(${d.cssVar});">&#9632;</span> ${esc(d.label)}</span>`).join('');
+    }
+    if (!model.hasData) {
+        canvas.style.display = 'none';
+        if (note) note.textContent = 'No planned items or estimated tax fall in these months.';
+        return;
+    }
+    canvas.style.display = '';
+    if (note) note.textContent = 'Tax is an estimate from your allocator settings; planned items are the ones you entered above.';
+    try {
+        _bgFcExtrasChart = new Chart(canvas, {
+            type: 'bar',
+            data: {
+                labels: model.labels,
+                datasets: model.datasets.map(d => ({ label: d.label, data: d.data, backgroundColor: cssVar(d.cssVar), stack: 'extras' })),
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false }, tooltip: { callbacks: chartEurTooltip } },
+                scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, ticks: { callback: v => Fmt.money(v, 'EUR', 0) } } },
+            },
+        });
+    } catch (err) {
+        canvas.style.display = 'none';
+        if (note) note.textContent = 'Chart unavailable: ' + err.message;
+    }
+}
+
+function _renderBgFcTax(fc) {
+    const body = document.getElementById('bgFcTaxBody');
+    if (!body) return;
+    const rows = forecastTaxRows(fc);
+    body.innerHTML = rows.length ? rows.map(t => `<tr>
+        <td class="ps-3">${esc(t.quarter)}</td>
+        <td>${esc(t.due)}</td>
+        <td class="text-end">${esc(t.amount)}</td>
+        <td class="pe-3 small">${esc(t.basis)}</td>
+    </tr>`).join('') : '<tr><td colspan="4" class="text-center text-muted py-3">No tax payment is estimated: tick your work-income merchants in Settings > Allocator, or switch the estimate on above.</td></tr>';
+}
+
+function _renderBgFcWhatIf(fc) {
+    const el = document.getElementById('bgWiResult');
+    if (!el) return;
+    if (!window._bgFc.whatIf) { el.innerHTML = ''; return; }
+    const m = forecastWhatIfModel(fc);
+    el.innerHTML = m
+        ? `<div class="alert alert-${m.tone} py-2 mb-0"><i class="bi bi-lightbulb me-1"></i>${esc(m.text)} <span class="text-muted">Nothing is saved.</span></div>`
+        : `<div class="text-muted">What-if ${CC_NA}.</div>`;
+}
+
+function _renderBgPlanned(fc) {
+    const body = document.getElementById('bgPlanBody');
+    if (!body) return;
+    const rows = plannedItemsModel(window._bgFc.planned, fc);
+    if (!rows.length) {
+        body.innerHTML = '<tr><td colspan="6" class="text-center text-muted py-3">Nothing planned. Add a one-off expense or income you know is coming (a trip, a repair, a bonus).</td></tr>';
+        return;
+    }
+    body.innerHTML = rows.map(r => `<tr${r.overdue ? ' class="table-warning"' : ''}${r.done ? ' style="opacity:.6;"' : ''}>
+        <td class="ps-3 text-nowrap">${esc(r.dateText)}</td>
+        <td class="text-break">${esc(r.description)}${r.notes ? `<div class="small text-muted">${esc(r.notes)}</div>` : ''}</td>
+        <td class="d-none d-sm-table-cell">${esc(r.kindLabel)}</td>
+        <td class="text-end text-nowrap ${r.amountClass}">${esc(r.amountText)}</td>
+        <td>${r.status ? `<span class="badge text-bg-${esc(r.status.tone)}">${esc(r.status.label)}</span>` : ''}</td>
+        <td class="pe-3 text-end text-nowrap">
+            ${r.done ? '' : `<button type="button" class="btn btn-sm btn-link p-0 me-2 bg-plan-done" data-id="${Number(r.id)}" title="Mark done (it is now in your statements)" aria-label="Mark done"><i class="bi bi-check2-circle"></i></button>`}
+            <button type="button" class="btn btn-sm btn-link p-0 me-2 bg-plan-edit" data-id="${Number(r.id)}" title="Edit" aria-label="Edit"><i class="bi bi-pencil"></i></button>
+            <button type="button" class="btn btn-sm btn-link p-0 text-danger bg-plan-delete" data-id="${Number(r.id)}" title="Delete" aria-label="Delete"><i class="bi bi-trash"></i></button>
+        </td>
+    </tr>`).join('');
+}
+
+function _bgPlanStatus(text, tone) {
+    const el = document.getElementById('bgPlanStatus');
+    if (!el) return;
+    el.className = 'small mb-2 text-' + (tone || 'muted');
+    el.textContent = text;
+}
+
+function _bgPlanResetForm() {
+    const form = document.getElementById('bgPlanForm');
+    if (form) form.reset();
+    const id = document.getElementById('bgPlanEditId');
+    if (id) id.value = '';
+    const submit = document.getElementById('bgPlanSubmit');
+    if (submit) submit.textContent = 'Add';
+    const cancel = document.getElementById('bgPlanCancel');
+    if (cancel) cancel.style.display = 'none';
+}
+
+async function _bgPlanSubmit(e) {
+    e.preventDefault();
+    const result = plannedFormPayload({
+        date: document.getElementById('bgPlanDate').value,
+        description: document.getElementById('bgPlanDesc').value,
+        amount: document.getElementById('bgPlanAmount').value,
+        kind: document.getElementById('bgPlanKind').value,
+    });
+    if (result.error) { _bgPlanStatus(result.error, 'danger'); return; }
+    const editId = document.getElementById('bgPlanEditId').value;
+    try {
+        if (editId) await window.apiClient.updatePlannedItem(Number(editId), result.payload);
+        else await window.apiClient.createPlannedItem(result.payload);
+        _bgPlanResetForm();
+        _bgPlanStatus(editId ? 'Saved.' : 'Added.', 'success');
+        await loadCashflowForecast();
+    } catch (err) {
+        _bgPlanStatus(err.message, 'danger');
+    }
+}
+
+async function _bgPlanAction(button) {
+    const id = Number(button.dataset.id);
+    const item = (window._bgFc.planned || []).find(i => i.id === id);
+    if (!item) return;
+    try {
+        if (button.classList.contains('bg-plan-done')) {
+            await window.apiClient.updatePlannedItem(id, { done: true });
+            _bgPlanStatus('Marked done: it no longer enters the forecast.', 'success');
+            await loadCashflowForecast();
+        } else if (button.classList.contains('bg-plan-delete')) {
+            if (!(await confirmDialog({ title: 'Delete planned item', message: `Delete "${item.description}"?`, confirmLabel: 'Delete', danger: true }))) return;
+            await window.apiClient.deletePlannedItem(id);
+            _bgPlanStatus('Deleted.', 'success');
+            await loadCashflowForecast();
+        } else if (button.classList.contains('bg-plan-edit')) {
+            document.getElementById('bgPlanEditId').value = String(id);
+            document.getElementById('bgPlanDate').value = item.date;
+            document.getElementById('bgPlanDesc').value = item.description;
+            document.getElementById('bgPlanAmount').value = String(Math.abs(item.amount));
+            document.getElementById('bgPlanKind').value = item.kind;
+            document.getElementById('bgPlanSubmit').textContent = 'Save';
+            document.getElementById('bgPlanCancel').style.display = '';
+            _bgPlanStatus('Editing: change the fields and save.', 'muted');
+        }
+    } catch (err) {
+        _bgPlanStatus(err.message, 'danger');
+    }
+}
+
 async function loadCashflowForecast() {
     const status = document.getElementById('bgFcStatus');
     if (!document.getElementById('bgPaneForecast')) return;
     ccApplyHelpTitle('bgFcHelp', 'cashflowForecast');
     ccApplyHelpTitle('bgFcBalanceHelp', 'cashflowForecast');
+    ccApplyHelpTitle('bgFcPlannedHelp', 'plannedItems');
+    ccApplyHelpTitle('bgFcWhatIfHelp', 'forecastWhatIf');
+    ccApplyHelpTitle('bgFcTaxHelp', 'forecastTax');
     if (status) { status.className = 'small text-muted mb-2'; status.textContent = 'Loading…'; }
     try {
-        const fc = await window.apiClient.getCashflowForecast(_bgFcMonths());
+        const includeTax = !document.getElementById('bgFcIncludeTax') || document.getElementById('bgFcIncludeTax').checked;
+        const [fc, planned] = await Promise.all([
+            window.apiClient.getCashflowForecast(_bgFcMonths(), window._bgFc.whatIf, includeTax),
+            window.apiClient.getPlannedItems(true),
+        ]);
         window._bgFc.data = fc;
+        window._bgFc.planned = planned;
         window._bgFc.showAllBills = false;
         if (status) status.textContent = `As of ${Fmt.date(fc.as_of)}${fc.data_through ? ' · bank data through ' + Fmt.date(fc.data_through) : ' · no bank data'}.`;
         _renderBgFcWarnings(fc);
         _renderBgFcFreshness(fc);
         _renderBgFcThisMonth(fc);
+        _renderBgPlanned(fc);
+        _renderBgFcWhatIf(fc);
         _renderBgFcChart(fc);
+        _renderBgFcExtras(fc);
+        _renderBgFcTax(fc);
         _renderBgFcTable(fc);
         _renderBgFcBills(fc);
         _renderBgFcAssumptions(fc);
         if (window.initTooltips) window.initTooltips();
     } catch (err) {
+        // a rejected what-if must not break every later reload
+        window._bgFc.whatIf = null;
         if (status) { status.className = 'small text-danger mb-2'; status.textContent = err.message; }
     }
 }
@@ -12392,6 +13191,38 @@ function _wireBgForecast() {
         refresh.dataset.wired = '1';
         refresh.addEventListener('click', () => loadCashflowForecast());
     }
+    const wire = (id, event, handler) => {
+        const el = document.getElementById(id);
+        if (el && !el.dataset.wired) {
+            el.dataset.wired = '1';
+            el.addEventListener(event, handler);
+        }
+    };
+    wire('bgFcIncludeTax', 'change', () => loadCashflowForecast());
+    wire('bgPlanForm', 'submit', _bgPlanSubmit);
+    wire('bgPlanCancel', 'click', () => { _bgPlanResetForm(); _bgPlanStatus('', 'muted'); });
+    wire('bgPlanBody', 'click', e => {
+        const btn = e.target.closest('.bg-plan-done, .bg-plan-edit, .bg-plan-delete');
+        if (btn) _bgPlanAction(btn);
+    });
+    wire('bgWhatIfForm', 'submit', e => {
+        e.preventDefault();
+        const result = forecastWhatIfParams({
+            amount: document.getElementById('bgWiAmount').value,
+            month: document.getElementById('bgWiMonth').value,
+            kind: document.getElementById('bgWiKind').value,
+        });
+        const out = document.getElementById('bgWiResult');
+        if (result.error) { if (out) out.innerHTML = `<div class="text-danger">${esc(result.error)}</div>`; return; }
+        window._bgFc.whatIf = result.params;
+        loadCashflowForecast();
+    });
+    wire('bgWiClear', 'click', () => {
+        window._bgFc.whatIf = null;
+        const form = document.getElementById('bgWhatIfForm');
+        if (form) form.reset();
+        loadCashflowForecast();
+    });
     const toggle = document.getElementById('bgFcBillsToggle');
     if (toggle && !toggle.dataset.wired) {
         toggle.dataset.wired = '1';
