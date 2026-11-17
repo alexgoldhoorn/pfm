@@ -46,6 +46,7 @@ from portf_manager.services import (
     spending_insights,
     spending_review,
     spending_uncategorized,
+    spending_year,
 )
 from portf_manager.services.spending_rules import (
     TRANSFER_CATEGORY,
@@ -1892,6 +1893,41 @@ def get_cashflow_forecast(
         include_tax=include_tax,
         what_if=what_if,
     )
+
+
+@router.get("/year", response_model=dict)
+def get_spending_year(
+    year: Optional[int] = Query(default=None, ge=2000),
+    depth: int = Query(default=1, ge=1, le=2),
+    portfolio_id: Optional[int] = None,
+    db=Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """One year of income and spending against the year before.
+
+    Like for like: only months that are complete and have imports in both
+    years are summed, on both sides. For a year in progress the previous year
+    is cut to the same months (``compared_through``) and its full total is
+    given too. ``months`` lists all 12 months of both years; a month without
+    imports is ``has_imports: false`` (unknown, never zero) and named in a
+    warning. ``categories`` are the top-level Spend categories (children with
+    ``depth=2``), ``movers`` the biggest increases and decreases by category,
+    ``merchants`` the largest by spend, ``one_offs`` the rows marked one-off
+    (they count in the totals). Plain ``def`` because of the FX lookups.
+    """
+    from datetime import date
+
+    today = date.today()
+    target = year or today.year
+    rows = spending_insights.load_rows(
+        db, _fx, start_date=f"{target - 1}-01-01", portfolio_id=portfolio_id
+    )
+    try:
+        return spending_year.build_year(
+            rows, _category_tree(db), today, year=year, depth=depth
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/uncategorized-queue", response_model=dict)
