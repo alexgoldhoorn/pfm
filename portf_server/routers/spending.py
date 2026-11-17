@@ -2084,7 +2084,8 @@ def classify_uncategorized_group(
 
     A thin wrapper over the row edit and the rules: every id must exist, not be
     a transfer and be able to hold the category's sign (same check as editing
-    one row), otherwise nothing is written (400). Rows that already have a
+    one row), otherwise nothing is written (400). The rule is created or
+    reused before any row is updated, so a rule failure (500) changes nothing. Rows that already have a
     category are left alone and counted in ``skipped``. With ``create_rule`` a
     rule for ``pattern`` is added (an identical rule is reused), then the rules
     are re-applied to the other still-uncategorised rows. ``Transfer`` cannot
@@ -2129,20 +2130,27 @@ def classify_uncategorized_group(
             continue
         todo.append(tid)
 
+    # the rule first: if it cannot be created or reused, no row has changed
+    rule_id = None
+    rule_created = False
+    if body.create_rule:
+        try:
+            existing = db.find_duplicate_spending_rule(pattern, category)
+            if existing:
+                rule_id = existing["id"]
+            else:
+                rule_id = db.create_spending_rule(pattern=pattern, category=category)
+                rule_created = True
+        except Exception as e:
+            logger.warning(f"Classify: rule could not be created: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"The rule could not be created, nothing was changed: {e}",
+            )
     updated = sum(
         1 for tid in todo if db.update_spending_transaction(tid, category=category)
     )
-    rule_id = None
-    rule_created = False
-    rescanned = 0
-    if body.create_rule:
-        existing = db.find_duplicate_spending_rule(pattern, category)
-        if existing:
-            rule_id = existing["id"]
-        else:
-            rule_id = db.create_spending_rule(pattern=pattern, category=category)
-            rule_created = True
-        rescanned = _rescan_uncategorized(db)
+    rescanned = _rescan_uncategorized(db) if body.create_rule else 0
     return {
         "updated": updated,
         "skipped": skipped,

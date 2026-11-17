@@ -209,3 +209,27 @@ def test_action_item_stays_quiet_when_the_share_and_total_are_small(env):
         db.update_spending_transaction(r["id"], category="Groceries")
     db.create_spending_transaction(bank, f"{_last_month()}-28", "EXAMPLE TINY", -10.0)
     assert action_items.check_uncategorized_spending(db) == []
+
+
+def test_classify_rule_failure_changes_no_row(env, monkeypatch):
+    client, db, _bank = env
+    before = db.list_spending_transactions(category="uncategorized")
+    ids = [r["id"] for r in before if r["amount"] < 0]
+
+    def boom(**_kwargs):
+        raise RuntimeError("rules table locked")
+
+    monkeypatch.setattr(db, "create_spending_rule", boom)
+    r = client.post(
+        "/api/v1/spending/uncategorized-queue/classify",
+        json={
+            "transaction_ids": ids,
+            "category": "Groceries",
+            "create_rule": True,
+            "pattern": "UNKNOWN CORP",
+        },
+        headers=HEADERS,
+    )
+    assert r.status_code == 500
+    assert "nothing was changed" in r.json()["detail"]
+    assert len(db.list_spending_transactions(category="uncategorized")) == len(before)
