@@ -21,6 +21,7 @@ re-derive the direction.
 
 import calendar
 import json
+import math
 from datetime import date, timedelta
 from typing import Any, Callable, Dict, List, Optional
 
@@ -1289,7 +1290,83 @@ def _unbudgeted_for_section(
     return result
 
 
-def propose_budget_lines(db, months: int, fx: Callable[[str], float]) -> List[Dict]:
+# History needed before a yearly or carry-over suggestion is made, and the
+# thresholds that pick them.
+SUGGEST_WINDOW_MONTHS = 12
+SUGGEST_MIN_MONTHS = 6
+SUGGEST_YEARLY_MAX_ACTIVE = 4
+SUGGEST_YEARLY_TOP2_SHARE = 0.70
+SUGGEST_ROLLOVER_MIN_ACTIVE = 6
+SUGGEST_ROLLOVER_CV = 0.5
+
+
+def suggest_period(
+    per_month: Dict[str, float], tier: str, history_months_count: int
+) -> Dict[str, Any]:
+    """Pick monthly, yearly or carry-over for one spending category.
+
+    Args:
+        per_month: spend (positive, EUR) for each complete month with imports.
+        tier: the category's essentiality (own or inherited).
+        history_months_count: number of complete months with imports.
+
+    Returns:
+        ``{months_with_activity, suggested_period, suggested_rollover,
+        yearly_total, reason}``; ``yearly_total`` is the 12-month total.
+    """
+    values = list(per_month.values())
+    total = sum(values)
+    active = sum(1 for v in values if v > 0)
+    out: Dict[str, Any] = {
+        "months_with_activity": active,
+        "suggested_period": "monthly",
+        "suggested_rollover": False,
+        "yearly_total": round(total, 2),
+        "reason": "",
+    }
+    if history_months_count < SUGGEST_MIN_MONTHS:
+        out["reason"] = (
+            f"History is too short ({history_months_count} complete months "
+            f"with imports, {SUGGEST_MIN_MONTHS} needed): monthly."
+        )
+        return out
+    top2 = sum(sorted(values, reverse=True)[:2])
+    if total > 0 and (
+        active <= SUGGEST_YEARLY_MAX_ACTIVE or top2 >= SUGGEST_YEARLY_TOP2_SHARE * total
+    ):
+        out["suggested_period"] = "yearly"
+        if active <= SUGGEST_YEARLY_MAX_ACTIVE:
+            out["reason"] = (
+                f"Spending in only {active} of {history_months_count} months: "
+                "plan it as a yearly amount."
+            )
+        else:
+            out["reason"] = (
+                "Two months hold "
+                f"{round(100 * top2 / total)}% of the year: plan it as a yearly amount."
+            )
+        return out
+    mean = total / len(values) if values else 0.0
+    if mean > 0 and active >= SUGGEST_ROLLOVER_MIN_ACTIVE and tier != "fixed":
+        variance_value = sum((v - mean) ** 2 for v in values) / len(values)
+        cv = (variance_value**0.5) / mean
+        if cv > SUGGEST_ROLLOVER_CV:
+            out["suggested_rollover"] = True
+            out["reason"] = (
+                f"Spending in {active} months but uneven (variation {cv:.2f}): "
+                "monthly with carry-over."
+            )
+            return out
+    out["reason"] = f"Steady spending in {active} of {history_months_count} months."
+    return out
+
+
+def propose_budget_lines(
+    db,
+    months: int,
+    fx: Callable[[str], float],
+    budget_id: Optional[int] = None,
+) -> List[Dict]:
     """Suggest budget lines from the last N complete months of real activity.
 
     One proposal per direct child of Spend and of Income that actually saw
@@ -1300,9 +1377,16 @@ def propose_budget_lines(db, months: int, fx: Callable[[str], float]) -> List[Di
     Writes nothing — the caller reviews the proposals and applies the ones it
     wants via the bulk-upsert path.
 
+    Spending proposals also carry ``months_with_activity``,
+    ``suggested_period``, ``suggested_amount``, ``suggested_rollover`` and
+    ``reason`` from the last 12 complete months with imports (one-off rows and
+    transfers out); with ``budget_id`` they carry ``existing_line_id`` and
+    ``change`` (``to_yearly`` / ``add_rollover`` / ``None``) for a category
+    that already has a line.
+
     Returns:
         Proposals as ``{line_type, ref_key, label, monthly_amount,
-        months_seen, total_eur}``, largest first within each section.
+        months_seen, total_eur, ...}``, largest first within each section.
     """
     today = date.today()
     end_year, end_month_num = today.year, today.month - 1
@@ -1318,13 +1402,33 @@ def propose_budget_lines(db, months: int, fx: Callable[[str], float]) -> List[Di
 
     # A row marked one-off still counts in the budget's actuals, but a plan
     # built from averages must not carry it forward.
+    suggest_window = month_range(period[-1], SUGGEST_WINDOW_MONTHS)
+    window_start = min(period[0], suggest_window[0])
     rows = db.list_spending_transactions(
-        start_date=f"{period[0]}-01",
+        start_date=f"{window_start}-01",
         end_date=_month_end(period[-1]),
         is_transfer=False,
         one_off=False,
     )
+    # A month counts as having imports when any non-transfer row (one-off or
+    # not) sits in it.
+    imported_months = {
+        str(r["date"])[:7]
+        for r in db.list_spending_transactions(
+            start_date=f"{suggest_window[0]}-01",
+            end_date=_month_end(period[-1]),
+            is_transfer=False,
+        )
+    }
+    suggest_months = [m for m in suggest_window if m in imported_months]
     category_actuals = _collect_category_actuals(rows, month_set, fx)
+    suggest_actuals = _collect_category_actuals(rows, set(suggest_months), fx)
+    tier_tree = {row["name"]: row for row in tree}
+    existing_lines: Dict[str, Dict] = {}
+    if budget_id is not None:
+        for line in db.list_budget_lines(budget_id):
+            if line["line_type"] == "spending":
+                existing_lines[line["ref_key"]] = line
     booking_actuals = _collect_booking_actuals(db.get_all_bookings(), month_set, fx)
     portfolio_names = {str(p["id"]): p["name"] for p in db.get_all_portfolios()}
 
@@ -1342,7 +1446,7 @@ def propose_budget_lines(db, months: int, fx: Callable[[str], float]) -> List[Di
 
     def _proposal(line_type: str, ref_key: str, per_month: Dict[str, float]) -> Dict:
         total = sum(per_month.values())
-        return {
+        proposal = {
             "line_type": line_type,
             "ref_key": ref_key,
             "label": category_path(tree, ref_key),
@@ -1350,6 +1454,43 @@ def propose_budget_lines(db, months: int, fx: Callable[[str], float]) -> List[Di
             "months_seen": sum(1 for v in per_month.values() if v > 0),
             "total_eur": round(total, 2),
         }
+        if line_type == "spending":
+            _add_suggestion(proposal, ref_key)
+        return proposal
+
+    def _add_suggestion(proposal: Dict, ref_key: str) -> None:
+        names = subtree_names(children_by_parent, ref_key)
+        spend = {
+            month: sum(
+                suggest_actuals.get(month, {}).get(name, {}).get("spend", 0.0)
+                for name in names
+            )
+            for month in suggest_months
+        }
+        choice = suggest_period(spend, tier_of(ref_key, tier_tree), len(suggest_months))
+        yearly = choice["suggested_period"] == "yearly"
+        proposal["months_with_activity"] = choice["months_with_activity"]
+        proposal["suggested_period"] = choice["suggested_period"]
+        proposal["suggested_rollover"] = choice["suggested_rollover"]
+        proposal["suggested_amount"] = (
+            float(math.ceil(choice["yearly_total"] / 10.0) * 10)
+            if yearly
+            else proposal["monthly_amount"]
+        )
+        proposal["reason"] = choice["reason"]
+        existing = existing_lines.get(ref_key)
+        if existing is not None:
+            proposal["existing_line_id"] = existing["id"]
+            change = None
+            if yearly and (existing.get("period") or "monthly") != "yearly":
+                change = "to_yearly"
+            elif (
+                choice["suggested_rollover"]
+                and (existing.get("period") or "monthly") == "monthly"
+                and not existing.get("rollover")
+            ):
+                change = "add_rollover"
+            proposal["change"] = change
 
     for line_type, root in (("income", "Income"), ("spending", "Spend")):
         field = "income" if line_type == "income" else "spend"

@@ -208,6 +208,14 @@ class BudgetSeedProposal(BaseModel):
     monthly_amount: float
     months_seen: int
     total_eur: float
+    # Spending lines only: what the last 12 complete months suggest.
+    months_with_activity: Optional[int] = None
+    suggested_period: Optional[str] = None
+    suggested_amount: Optional[float] = None
+    suggested_rollover: Optional[bool] = None
+    reason: Optional[str] = None
+    existing_line_id: Optional[int] = None
+    change: Optional[str] = None
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -741,4 +749,4 @@ def get_seed_proposals(
     _require_budget(db, budget_id)
     if months < 1 or months > 36:
         raise HTTPException(status_code=400, detail="months must be between 1 and 36")
-    return budget_service.propose_budget_lines(db, months, _fx)
+    return budget_service.propose_budget_lines(db, months, _fx, budget_id=budget_id)
