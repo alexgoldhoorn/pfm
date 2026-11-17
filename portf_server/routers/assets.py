@@ -474,7 +474,8 @@ def resolve_tickers(
             db.update_asset(asset["id"], ticker=ticker)
             # Clear stale sector/country cache so next diversification call
             # re-fetches with the new ticker.
-            db.cache_clear(f"yf:sectorcountry:{asset['symbol']}")
+            db.cache_delete(f"yf:sectorcountry:{asset['symbol']}")
+            db.cache_delete(f"yf:sectorcountry:{ticker}")
             resolved.append(
                 {
                     "id": asset["id"],

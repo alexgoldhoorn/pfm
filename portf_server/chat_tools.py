@@ -25,12 +25,15 @@ def _j(obj) -> str:
 
 
 def _fx(currency: str) -> float:
-    try:
-        from portf_server.routers.portfolios import _get_fx_rate
+    """EUR rate for *currency*.
 
-        return _get_fx_rate(currency)
-    except Exception:
-        return 1.0
+    ``market.get_fx_eur`` already falls back to the last cached or a static
+    rate, so an exception here is a real fault: let it reach ``execute_tool``
+    (which reports "Error: ...") rather than count USD as EUR at 1.0.
+    """
+    from portf_server.routers.portfolios import _get_fx_rate
+
+    return _get_fx_rate(currency)
 
 
 # ── tool registry ──────────────────────────────────────────────────────────

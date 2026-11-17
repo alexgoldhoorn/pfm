@@ -225,10 +225,7 @@ def get_portfolio_analysis(
 
     # Force-refresh: delete cached entry
     if refresh:
-        try:
-            db.cache_clear(prefix=cache_key)
-        except Exception:
-            pass
+        db.cache_delete(cache_key)
     else:
         # Return cached result if still valid
         cached = db.cache_get(cache_key)

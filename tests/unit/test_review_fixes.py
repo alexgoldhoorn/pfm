@@ -73,3 +73,36 @@ def test_two_pass_chat_without_text_or_tool_raises(tmp_path):
     db = Database(str(tmp_path / "t.db"))
     with pytest.raises(LLMResponseError):
         asyncio.run(engine._generate_with_tool_loop("hi", {}, "s1", db, llm, {}))
+
+
+def test_cache_delete_is_exact_and_clear_prefix_is_literal(tmp_path):
+    from portf_manager.database import Database
+
+    db = Database(str(tmp_path / "c.db"))
+    for k in ("adv:1", "adv:10", "a_b:x", "axb:x"):
+        db.cache_set(k, 1, 3600)
+    assert db.cache_delete("adv:1") == 1
+    assert db.cache_get("adv:10") == 1
+    # "_" is a LIKE wildcard; it must match only itself.
+    assert db.cache_clear("a_b") == 1
+    assert db.cache_get("axb:x") == 1
+
+
+def test_settings_errors_propagate_but_missing_table_heals(tmp_path):
+    import sqlite3
+
+    from portf_manager.database import Database
+
+    db = Database(str(tmp_path / "s.db"))
+    with db.get_connection() as conn:
+        conn.execute("DROP TABLE app_settings")
+        conn.commit()
+    assert db.get_setting("k") is None
+    db.set_setting("k", "v")
+    assert db.get_setting("k") == "v"
+
+    with patch.object(
+        db, "get_connection", side_effect=sqlite3.OperationalError("database is locked")
+    ):
+        with pytest.raises(sqlite3.OperationalError):
+            db.get_setting("k")

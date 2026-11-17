@@ -32,6 +32,12 @@ def _add_column_if_missing(conn, table, column, ddl):
         # Table doesn't exist yet (fresh DB creates it with the column included).
 
 
+def _like_prefix(prefix: str) -> str:
+    """Return a LIKE pattern (``ESCAPE '\\'``) matching *prefix* literally."""
+    escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    return escaped + "%"
+
+
 class DatabaseError(Exception):
     """Custom exception for database-related errors."""
 
@@ -2642,82 +2648,70 @@ class Database:
 
     # ── App settings (persistent key/value) ────────────────────────────────
 
-    def _ensure_app_settings(self, conn: sqlite3.Connection) -> None:
-        """Create app_settings table if missing (defensive — migration may not have run)."""
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS app_settings (
-                key        TEXT PRIMARY KEY,
-                value      TEXT NOT NULL,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-            )
-            """
-        )
-        conn.commit()
+    def _settings_query(self, sql: str, params: tuple = (), write: bool = False):
+        """Run one statement on app_settings and return its rows.
+
+        ``app_settings`` is created by ``_create_all_tables`` and the v21
+        migration. Only a missing table is healed here (create it and retry);
+        any other error propagates, so a locked or broken database is never
+        read as "setting not set" — startup would then regenerate the VAPID
+        keys and break every push subscription.
+        """
+        with self.get_connection() as conn:
+            for attempt in (1, 2):
+                try:
+                    rows = conn.execute(sql, params).fetchall()
+                    if write:
+                        conn.commit()
+                    return rows
+                except sqlite3.OperationalError as e:
+                    if attempt == 2 or "no such table" not in str(e):
+                        raise
+                    conn.execute(
+                        """
+                        CREATE TABLE IF NOT EXISTS app_settings (
+                            key        TEXT PRIMARY KEY,
+                            value      TEXT NOT NULL,
+                            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                        )
+                        """
+                    )
+                    conn.commit()
 
     def get_setting(self, key: str) -> Optional[str]:
         """Return the stored value for *key*, or None if not set."""
-        with self.get_connection() as conn:
-            try:
-                row = conn.execute(
-                    "SELECT value FROM app_settings WHERE key = ?", (key,)
-                ).fetchone()
-                return row["value"] if row else None
-            except Exception:
-                self._ensure_app_settings(conn)
-                return None
+        rows = self._settings_query(
+            "SELECT value FROM app_settings WHERE key = ?", (key,)
+        )
+        return rows[0]["value"] if rows else None
 
     def set_setting(self, key: str, value: str) -> None:
         """Upsert a persistent app setting."""
-        with self.get_connection() as conn:
-            try:
-                conn.execute(
-                    """
-                    INSERT INTO app_settings (key, value, updated_at)
-                    VALUES (?, ?, CURRENT_TIMESTAMP)
-                    ON CONFLICT(key) DO UPDATE SET value = excluded.value,
-                                                   updated_at = CURRENT_TIMESTAMP
-                    """,
-                    (key, value),
-                )
-                conn.commit()
-            except Exception:
-                self._ensure_app_settings(conn)
-                conn.execute(
-                    """
-                    INSERT INTO app_settings (key, value, updated_at)
-                    VALUES (?, ?, CURRENT_TIMESTAMP)
-                    ON CONFLICT(key) DO UPDATE SET value = excluded.value,
-                                                   updated_at = CURRENT_TIMESTAMP
-                    """,
-                    (key, value),
-                )
-                conn.commit()
+        self._settings_query(
+            """
+            INSERT INTO app_settings (key, value, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value,
+                                           updated_at = CURRENT_TIMESTAMP
+            """,
+            (key, value),
+            write=True,
+        )
 
     def delete_setting(self, key: str) -> None:
         """Remove a persistent app setting (no-op when absent)."""
-        with self.get_connection() as conn:
-            try:
-                conn.execute("DELETE FROM app_settings WHERE key = ?", (key,))
-                conn.commit()
-            except Exception:
-                self._ensure_app_settings(conn)
+        self._settings_query(
+            "DELETE FROM app_settings WHERE key = ?", (key,), write=True
+        )
 
     def list_settings(self, prefix: str) -> Dict[str, str]:
         """Return every setting whose key starts with *prefix* as {key: value}."""
-        # Escape LIKE wildcards so a prefix such as "a_b" matches literally.
-        escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        with self.get_connection() as conn:
-            try:
-                rows = conn.execute(
-                    "SELECT key, value FROM app_settings "
-                    "WHERE key LIKE ? ESCAPE '\\' ORDER BY key",
-                    (escaped + "%",),
-                ).fetchall()
-            except Exception:
-                self._ensure_app_settings(conn)
-                return {}
-            return {r["key"]: r["value"] for r in rows}
+        rows = self._settings_query(
+            "SELECT key, value FROM app_settings "
+            "WHERE key LIKE ? ESCAPE '\\' ORDER BY key",
+            (_like_prefix(prefix),),
+        )
+        return {r["key"]: r["value"] for r in rows}
 
     # ── Web Push subscriptions ─────────────────────────────────────────────
 
@@ -3497,12 +3491,25 @@ class Database:
             )
             conn.commit()
 
+    def cache_delete(self, key: str) -> int:
+        """Delete the one cache entry stored under exactly *key*."""
+        with self.get_connection() as conn:
+            cur = conn.execute("DELETE FROM kv_cache WHERE key = ?", (key,))
+            conn.commit()
+            return cur.rowcount
+
     def cache_clear(self, prefix: Optional[str] = None) -> int:
-        """Delete cache entries (all, or those whose key starts with *prefix*)."""
+        """Delete cache entries (all, or those whose key starts with *prefix*).
+
+        The prefix matches literally (LIKE wildcards are escaped). To drop a
+        single key use ``cache_delete``: a prefix such as ``"x:1"`` also
+        matches ``"x:10"``.
+        """
         with self.get_connection() as conn:
             if prefix:
                 cur = conn.execute(
-                    "DELETE FROM kv_cache WHERE key LIKE ?", (prefix + "%",)
+                    "DELETE FROM kv_cache WHERE key LIKE ? ESCAPE '\\'",
+                    (_like_prefix(prefix),),
                 )
             else:
                 cur = conn.execute("DELETE FROM kv_cache")
