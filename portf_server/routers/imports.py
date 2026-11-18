@@ -7,7 +7,8 @@ Provides a separate save endpoint to commit the confirmed transactions.
 Supported brokers:
   - indexacapital  — semicolon CSV (IndexaCapital exports)
   - coinbase        — comma CSV (Coinbase Advanced Trade exports)
-  - pdt             — XLSX (Portfolio Dividend Tracker template)
+  - pdt             — XLSX (Portfolio Dividend Tracker template; web Import
+                      page only, not ``/import-file``)
 """
 
 import csv
@@ -843,16 +844,19 @@ async def upload_broker_file(
 
 
 @router.post("/save", response_model=SaveResponse)
-async def save_imported_transactions(
+def save_imported_transactions(
     body: SaveRequest,
     db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """
     Save a list of preview transactions (and optional bookings) to the database.
-    Assets are created automatically if they don't exist yet.
+    Assets are created automatically if they don't exist yet. Serialised with
+    ``/import-file`` by the import lock (a plain ``def`` endpoint, so waiting
+    for the lock never blocks the event loop).
     """
-    return _save_import(db, body)
+    with _IMPORT_LOCK:
+        return _save_import(db, body)
 
 
 def _save_import(
@@ -1043,9 +1047,16 @@ def _save_import(
                 _fail(f"Booking {bk.action} {bk.date}: {str(e)}")
                 bk_portfolio_id = None
         bk_portfolio_ids.append(bk_portfolio_id)
-    bk_matches = db.match_existing_bookings(
-        [_booking_row(bk, pid) for bk, pid in zip(body.bookings, bk_portfolio_ids)]
-    )
+    try:
+        bk_matches = db.match_existing_bookings(
+            [_booking_row(bk, pid) for bk, pid in zip(body.bookings, bk_portfolio_ids)]
+        )
+    except Exception as e:
+        # without a journal the failure stays a 500, as it always was
+        if journal is None:
+            raise
+        _fail(f"Booking duplicate check: {str(e)}")
+        raise
 
     for bk, bk_portfolio_id, match in zip(body.bookings, bk_portfolio_ids, bk_matches):
         try:
@@ -1188,7 +1199,6 @@ FILE_IMPORT_FORMATS = (
     "coinbase",
     "mintos",
     "generic",
-    "pdt",
 )
 
 # Words in the portfolio's name or entity that point at a format, used only
@@ -1218,10 +1228,20 @@ def _detect_file_format(portfolio: Dict, file_bytes: bytes) -> Optional[str]:
 
     Returns:
         One of ``FILE_IMPORT_FORMATS``, or None when nothing matches.
+
+    Raises:
+        HTTPException: 400 for an .xlsx (a PDT export, not importable here).
     """
-    # An .xlsx is a zip: the PDT template
+    # An .xlsx is a zip: the PDT template, which spans several brokers and so
+    # cannot be saved into one portfolio
     if file_bytes[:4] == b"PK\x03\x04":
-        return "pdt"
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "PDT files span several brokers: import them from the web "
+                "Import page or the PDT sync, not this endpoint"
+            ),
+        )
     try:
         text = file_bytes.decode("utf-8-sig")
     except UnicodeDecodeError:
@@ -1389,6 +1409,14 @@ def import_broker_file(
             detail=f"Portfolio {portfolio_id} is not a brokerage account",
         )
     fmt = (format_ or "").lower().strip() or None
+    if fmt == "pdt":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "PDT files span several brokers: import them from the web "
+                "Import page or the PDT sync, not this endpoint"
+            ),
+        )
     if fmt is not None and fmt not in FILE_IMPORT_FORMATS:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

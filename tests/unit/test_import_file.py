@@ -217,6 +217,20 @@ def test_unknown_format_is_400_and_writes_nothing(tmp_path):
     assert _counts(db) == (0, 0, 0)
 
 
+def test_pdt_is_refused_by_format_and_by_xlsx_content(tmp_path):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Broker")
+
+    r = _post(client, pid, GENERIC, fmt="pdt")
+    assert r.status_code == 400
+    assert "span several brokers" in r.json()["detail"]
+    # an xlsx is a zip
+    r = _post(client, pid, "PK\x03\x04 not really a sheet")
+    assert r.status_code == 400
+    assert "span several brokers" in r.json()["detail"]
+    assert _counts(db) == (0, 0, 0)
+
+
 def test_broker_name_is_the_fallback_when_the_header_matches_nothing(tmp_path):
     client, db = _make_client(tmp_path)
     pid = db.create_portfolio("My Coinbase")
@@ -281,6 +295,44 @@ def test_failure_on_a_booking_removes_the_trades_too(tmp_path, monkeypatch):
     r = _post(client, pid, COINBASE)
     assert r.status_code == 500
     assert _counts(db) == (0, 0, 0)
+
+
+def test_failure_in_the_booking_duplicate_check_rolls_back(tmp_path, monkeypatch):
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Exchange")
+    monkeypatch.setattr(
+        db,
+        "match_existing_bookings",
+        lambda rows: (_ for _ in ()).throw(RuntimeError("lookup broke")),
+    )
+
+    r = _post(client, pid, COINBASE)
+    assert r.status_code == 500
+    assert "nothing was stored" in r.json()["detail"]
+    assert _counts(db) == (0, 0, 0)
+
+
+def test_save_endpoint_takes_the_import_lock(tmp_path):
+    from portf_server.routers import imports
+
+    client, db = _make_client(tmp_path)
+    pid = db.create_portfolio("Example Exchange")
+    payload = {"transactions": [], "bookings": [], "portfolio_id": pid}
+    seen = []
+    real = imports._save_import
+
+    def spy(*args, **kwargs):
+        seen.append(imports._IMPORT_LOCK.locked())
+        return real(*args, **kwargs)
+
+    imports._save_import = spy
+    try:
+        r = client.post("/api/v1/import/save", json=payload, headers=HEADERS)
+    finally:
+        imports._save_import = real
+    assert r.status_code == 200, r.text
+    assert seen == [True]
+    assert not imports._IMPORT_LOCK.locked()
 
 
 def test_settle_failure_keeps_the_rows_and_warns(tmp_path, monkeypatch):
