@@ -432,6 +432,10 @@ def networth_history(period: str = "1m") -> str:
         start = (client._today() - timedelta(days=round(months * 30.44))).isoformat()
     try:
         hist = client._get("/api/v1/networth/history", {"months": months})
+        # "all" starts the split on the first stored snapshot, not the API's
+        # default 30 days
+        if start is None and hist.get("first_date"):
+            start = hist["first_date"]
         change = client._get(
             "/api/v1/networth/history/change", {"start": start} if start else {}
         )

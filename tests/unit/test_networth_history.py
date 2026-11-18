@@ -121,7 +121,6 @@ def _flows(db):
     pid = db.create_portfolio("Example Broker", "EUR")
     stock = db.create_asset("EXC", "Example Corp", "stock", currency="EUR")
     usd = db.create_asset("EXU", "Example Dollar Corp", "stock", currency="USD")
-    cash = db.create_asset("EURCASH", "Example Cash", "cash", currency="EUR")
 
     def tx(asset, kind, amount, day, currency="EUR"):
         db.create_transaction(
@@ -141,7 +140,6 @@ def _flows(db):
     tx(usd, "buy", 100.0, "2026-10-15", currency="USD")
     tx(stock, "sell", 100.0, "2026-10-31")
     # not flows into a holding, or outside the window
-    tx(cash, "buy", 999.0, "2026-10-12")
     tx(stock, "dividend", 20.0, "2026-10-20")
     tx(stock, "buy", 777.0, "2026-11-02")
 
@@ -169,6 +167,21 @@ def test_change_split_sums_to_the_cent(db):
         "change": -50.0,
     }
     assert out["warnings"] == []
+
+
+def test_money_moved_into_a_cash_type_asset_is_neither_saved_nor_market(db):
+    # bank cash 500 -> 400 while a cash-type position (valued under
+    # investments) grows 1000 -> 1100: money moved, nothing saved or earned
+    _snap(db, "2026-10-01", 1000.0, 500.0, 0.0, 0.0, 0.0)
+    _snap(db, "2026-10-31", 1100.0, 400.0, 0.0, 0.0, 0.0)
+    pid = db.create_portfolio("Example Broker", "EUR")
+    jar = db.create_asset("EURCASH", "Example Cash", "cash", currency="EUR")
+    db.create_transaction(jar, "buy", 1, 100.0, 100.0, "2026-10-12", portfolio_id=pid)
+    out = nh.compute_change(db, fx_on=_fx_on)
+    assert out["net_worth_change_eur"] == 0.0
+    assert out["net_invested_eur"] == 100.0
+    assert out["parts"]["saved_eur"] == 0.0
+    assert out["parts"]["market_eur"] == 0.0
 
 
 def test_rounding_remainder_lands_in_other(db):

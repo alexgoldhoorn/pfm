@@ -87,6 +87,33 @@ def test_action_items_unknown_family_and_category_filter():
     assert "suspicious" in out and "recurring charges" not in out
 
 
+def test_action_items_family_filters_ungrouped_singles():
+    def single(n):
+        return {
+            "id": f"research:EX{n}",
+            "family": "price_targets",
+            "severity": "medium",
+            "category": "watchlist",
+            "title": f"Example Corp {n} crossed its target",
+            "status": "open",
+        }
+
+    payload = {
+        "items": [
+            single(1),
+            single(2),
+            {"id": "dq:x", "family": None, "severity": "high", "title": "Other"},
+        ],
+        "summary": {},
+        "acks": {},
+    }
+    with patch("pfm_mcp.client._get", return_value=reply(payload)):
+        out = networth.action_items(family="price_targets")
+    assert "ACTION ITEMS in price_targets (2):" in out
+    assert "Example Corp 1 crossed" in out and "Example Corp 2 crossed" in out
+    assert "Other" not in out
+
+
 def _history():
     snap = {
         "snapshot_date": "2026-11-18",
@@ -165,6 +192,19 @@ def test_networth_history_null_parts_are_not_available():
     assert "No snapshots stored yet." in out
     assert "not available" in out
     assert out.count("Warning: no snapshots stored yet") == 1
+
+
+def test_networth_history_all_starts_the_split_on_the_first_snapshot():
+    calls = []
+
+    def fake(path, params=None):
+        calls.append((path, params))
+        return _history() if path.endswith("/history") else _change()
+
+    with patch("pfm_mcp.client._get", side_effect=fake):
+        networth.networth_history("all")
+    assert calls[1][0].endswith("/history/change")
+    assert calls[1][1] == {"start": "2026-10-20"}
 
 
 def test_networth_history_rejects_bad_period_and_reports_errors():

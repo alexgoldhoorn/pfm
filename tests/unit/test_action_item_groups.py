@@ -238,12 +238,28 @@ class TestReport:
         assert [i["id"] for i in report["items"]] == [i["id"] for i in expected]
         for got, want in zip(report["items"], expected):
             assert got["priority"] == groups.priority(got, TODAY)
+            assert got["family"] == groups.family_of(want)
             rest = {
-                k: v for k, v in got.items() if k not in ("priority", "status", "ack")
+                k: v
+                for k, v in got.items()
+                if k not in ("priority", "status", "ack", "family")
             }
             assert rest == want
         assert "top" not in report
         assert "open_entries" not in report["summary"]
+
+    def test_every_item_carries_its_family_grouped_or_not(
+        self, test_database, fake_checks
+    ):
+        for grouped in (False, True):
+            report = action_items_report(test_database, today=TODAY, grouped=grouped)
+            by_id = {i["id"]: i for i in report["items"]}
+            assert by_id["dq:suspicious"]["family"] is None
+            assert by_id["tax:year-end:2026"]["family"] is None
+        plain = action_items_report(test_database, today=TODAY)
+        assert {
+            i["family"] for i in plain["items"] if i["id"].startswith("research:")
+        } == {"price_targets"}
 
     def test_grouped_report_orders_by_priority_and_has_top_5(
         self, test_database, fake_checks

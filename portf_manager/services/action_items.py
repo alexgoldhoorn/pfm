@@ -1280,7 +1280,8 @@ def action_items_report(
             its check order and only gains ``priority`` on each item.
 
     Returns:
-        ``{"items", "summary", "acks"}`` (plus ``top`` when grouped) —
+        ``{"items", "summary", "acks"}`` (plus ``top`` when grouped); every
+        item carries ``family`` (None in no family) —
         ``summary`` counts every single item (not just the returned ones and
         never a group), ``acks`` is the whole stored map so a client can also
         apply it to findings it computes itself.
@@ -1298,6 +1299,9 @@ def action_items_report(
     items = annotate_items(get_action_items(db), acks, today)
     for item in items:
         item["priority"] = action_item_groups.priority(item, day)
+        # every item names its family (None when in none), so a client can
+        # filter singles the same way it filters a group's children
+        item["family"] = action_item_groups.family_of(item)
     summary = summarize_items(items)
     if status == "open":
         items = [i for i in items if i["status"] == "open"]

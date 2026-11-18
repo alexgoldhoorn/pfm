@@ -189,9 +189,10 @@ def _d10(value: Any) -> str:
 
 
 def net_invested_eur(db: Any, start: date, end: date, fx_on: FxOn) -> float:
-    """Buys minus sells of non-cash assets in ``(start, end]``, in EUR.
+    """Buys minus sells of every asset in ``(start, end]``, in EUR.
 
-    Each row converts at its own currency and date, like ``attribution``.
+    ``cash``-type assets count: the balance sheet values their positions under
+    investments, so moving bank money into one is money invested. Each row converts at its own currency and date, like ``attribution``.
     Dividends, interest and fees are not flows into a holding and stay out.
 
     Args:
@@ -201,9 +202,8 @@ def net_invested_eur(db: Any, start: date, end: date, fx_on: FxOn) -> float:
         fx_on: ``(currency, 'YYYY-MM-DD')`` -> EUR rate.
 
     Returns:
-        Net money put into non-cash holdings, in EUR.
+        Net money put into holdings (cash-type assets included), in EUR.
     """
-    assets = {a["id"]: a for a in db.get_all_assets(active_only=False)}
     total = 0.0
     for tx in db.get_all_transactions():
         kind = (tx.get("transaction_type") or "").lower()
@@ -214,8 +214,6 @@ def net_invested_eur(db: Any, start: date, end: date, fx_on: FxOn) -> float:
         except ValueError:
             continue
         if not start < day <= end:
-            continue
-        if (assets.get(tx["asset_id"]) or {}).get("asset_type") == "cash":
             continue
         rate = fx_on(tx.get("currency") or "EUR", day.isoformat())
         amount = float(tx.get("total_amount") or 0) * rate
