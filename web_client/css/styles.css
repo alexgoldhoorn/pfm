@@ -1177,3 +1177,33 @@ svg[tabindex]:focus-visible { outline: 2px solid var(--viz-1); outline-offset: 4
 .dash-block-bar .btn { padding: .15rem .45rem; color: var(--bs-secondary-color); }
 .dash-block.sortable-ghost { opacity: .35; }
 .dash-block.sortable-chosen .dash-block-handle { cursor: grabbing; }
+
+/* Budget suggestions on a phone: each line is a card, so Period and
+   Carry-over stay in view instead of behind a sideways scroll. */
+@media (max-width: 575.98px) {
+    .bg-seed-table thead { display: none; }
+    .bg-seed-table, .bg-seed-table tbody { display: block; width: 100%; }
+    .bg-seed-table tr {
+        display: grid;
+        grid-template-columns: 2rem 1fr;
+        gap: .25rem .5rem;
+        padding: .5rem 0;
+        border-bottom: 1px solid var(--bs-border-color);
+    }
+    .bg-seed-table td { display: block; border: 0; padding: 0; text-align: left !important; }
+    .bg-seed-table td.bg-seed-pick { grid-row: 1; grid-column: 1; }
+    .bg-seed-table td.bg-seed-label { grid-row: 1; grid-column: 2; font-weight: 500; }
+    .bg-seed-table td[data-label] {
+        grid-column: 2;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: .5rem;
+    }
+    .bg-seed-table td[data-label]::before {
+        content: attr(data-label);
+        color: var(--bs-secondary-color);
+        font-size: .875em;
+    }
+    .bg-seed-table td.bg-seed-reason { grid-column: 2; }
+}

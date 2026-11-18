@@ -8152,13 +8152,14 @@ async function _loadSpRecurring() {
     if (totals) totals.innerHTML = items.length ? recurringTotalsHtml(recurringTotalsModel(data)) : '';
     body.innerHTML = items.length ? items.map(i => `
         <tr class="${(i.status === 'ended' || i.status === 'cancelled') ? 'text-muted' : ''}">
-            <td class="ps-3"><a href="#" class="sp-recurring-merchant" data-merchant="${escapeForAttr(i.merchant)}" data-portfolio-id="${escapeForAttr(i.portfolio_id)}" title="Show these transactions">${esc(i.merchant)}</a>
+            <td class="ps-3 text-break"><a href="#" class="sp-recurring-merchant" data-merchant="${escapeForAttr(i.merchant)}" data-portfolio-id="${escapeForAttr(i.portfolio_id)}" title="Show these transactions">${esc(i.merchant)}</a>
                 <div class="small text-muted">${esc(i.category)}</div>
+                <div class="small text-muted d-sm-none">${esc(recurringCadenceLabel(i.cadence))}${i.next_expected ? ` · next <span class="text-nowrap">${esc(Fmt.date(i.next_expected))}</span>` : ''}</div>
                 ${i.resolution && i.resolution.note ? `<div class="small text-muted text-break"><i class="bi bi-chat-left-text me-1"></i>${esc(i.resolution.note)}</div>` : ''}</td>
             <td class="d-none d-md-table-cell">${esc(i.account_name || '')}</td>
-            <td>${esc(recurringCadenceLabel(i.cadence))}</td>
-            <td class="text-end">${Fmt.money(i.typical_amount, i.currency, 2)}</td>
-            <td>${Fmt.date(i.next_expected)}</td>
+            <td class="d-none d-sm-table-cell">${esc(recurringCadenceLabel(i.cadence))}</td>
+            <td class="text-end text-nowrap">${Fmt.money(i.typical_amount, i.currency, 2)}</td>
+            <td class="text-nowrap d-none d-sm-table-cell">${Fmt.date(i.next_expected)}</td>
             <td class="text-end d-none d-sm-table-cell">${Fmt.money(i.annual_amount, i.currency, 0)}</td>
             <td class="pe-3 text-end"><div class="d-flex flex-wrap justify-content-end align-items-center gap-1">${recurringStatusBadges(i)}${recurringMenuHtml(i)}</div></td>
         </tr>`).join('')
@@ -11593,7 +11594,7 @@ async function _bgLoadSeedProposals() {
         (the amount is then a yearly figure); uneven costs as monthly with <strong>carry-over</strong>. You can switch each one.
         ${ccHelpIcon('budgetYearly')}
     </div>
-    <div class="table-responsive"><table class="table table-sm mb-0 align-middle">
+    <div class="table-responsive"><table class="table table-sm mb-0 align-middle bg-seed-table">
         <thead><tr><th style="width:2rem;"></th><th>Line</th><th>Treat as</th><th>Period</th><th class="text-end">Amount</th><th class="text-muted small">Based on</th></tr></thead>
         <tbody>${window._bgSeedProposals.map((p, i) => {
             const already = budgeted.has(p.line_type + '|' + p.ref_key);
@@ -11626,12 +11627,12 @@ async function _bgLoadSeedProposals() {
                 : '';
             const startAmount = m.period === 'yearly' ? m.yearlyAmount : p.monthly_amount;
             return `<tr>
-                <td><input type="checkbox" class="form-check-input bg-seed-check" data-index="${i}" ${already ? '' : 'checked'}></td>
-                <td class="text-break">${esc(p.label)}${already ? ' <span class="badge text-bg-light">already budgeted</span>' : ''}</td>
-                <td>${typeCell}</td>
-                <td>${periodCell}</td>
-                <td class="text-end"><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end bg-seed-amount" data-index="${i}" value="${escapeForAttr(String(startAmount))}" style="width:7rem;"></td>
-                <td class="text-muted small">${reasonCell}${changeCell}</td>
+                <td class="bg-seed-pick"><input type="checkbox" class="form-check-input bg-seed-check" data-index="${i}" ${already ? '' : 'checked'}></td>
+                <td class="text-break bg-seed-label">${esc(p.label)}${already ? ' <span class="badge text-bg-light">already budgeted</span>' : ''}</td>
+                <td data-label="Treat as">${typeCell}</td>
+                <td data-label="Period">${periodCell}</td>
+                <td class="text-end" data-label="Amount"><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end bg-seed-amount" data-index="${i}" value="${escapeForAttr(String(startAmount))}" style="width:7rem;"></td>
+                <td class="text-muted small bg-seed-reason">${reasonCell}${changeCell}</td>
             </tr>`;
         }).join('')}</tbody>
     </table></div>`;
