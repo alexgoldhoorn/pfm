@@ -109,3 +109,66 @@ class TestXlsxExportUsesMap:
         wb = load_workbook(out)
         assert wb["Transactions"].cell(row=4, column=1).value == "Example Broker"
         assert wb["Bookings"].cell(row=4, column=1).value == "Example Broker"
+
+
+class TestSyntheticAssetsLeftOut:
+    def _db(self):
+        db = MagicMock()
+        db.get_setting.return_value = None
+        tx = dict(
+            portfolio_id=2,
+            quantity=1.0,
+            price=10.0,
+            total_amount=10.0,
+            fees=0,
+            tax=0,
+            currency="EUR",
+            transaction_date="2024-08-27",
+        )
+        db.get_all_transactions.return_value = [
+            {**tx, "id": 1, "asset_id": 10, "transaction_type": "buy"},
+            {**tx, "id": 2, "asset_id": 11, "transaction_type": "buy"},
+            {**tx, "id": 3, "asset_id": 11, "transaction_type": "dividend"},
+        ]
+        assets = {
+            10: {
+                "id": 10,
+                "symbol": "NO0000000001",
+                "name": "Example Bond",
+                "asset_type": "bond",
+                "exchange": None,
+                "currency": "EUR",
+            },
+            11: {
+                "id": 11,
+                "symbol": "MINTOS",
+                "name": "Mintos P2P",
+                "asset_type": "bond",
+                "exchange": None,
+                "currency": "EUR",
+            },
+        }
+        db.get_asset.side_effect = lambda aid: assets.get(aid)
+        db.get_portfolio.return_value = {"id": 2, "name": "Mintos"}
+        db.get_all_bookings.return_value = []
+        return db
+
+    def test_sheets_push_skips_mintos_pool(self):
+        from portf_manager.parsers.pdt_sheets_sync import PDTSheetsSync
+
+        sync = PDTSheetsSync("FAKE", service_account_file="fake.json")
+        sync._service = MagicMock()
+        written = {}
+        sync._write_sheet = lambda name, rows: written.update({name: rows})
+        sync._read_sheet = MagicMock(return_value=[["Mintos"]])
+        counts = sync.push(self._db())
+        names = [r[1] for r in written["Transactions"][3:]]
+        assert names == ["Example Bond"]
+        assert counts["dividends"] == 0
+
+    def test_xlsx_export_skips_mintos_pool(self, tmp_path):
+        out = tmp_path / "pdt.xlsx"
+        PDTXLSXExporter().export(self._db(), str(out))
+        ws = load_workbook(out)["Transactions"]
+        names = [ws.cell(row=r, column=2).value for r in range(4, ws.max_row + 1)]
+        assert names == ["Example Bond"]

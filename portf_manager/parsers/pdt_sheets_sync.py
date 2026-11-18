@@ -48,6 +48,7 @@ from .pdt_xlsx_parser import (
     _asset_type_to_pdt_type,
     _pdt_bond_quantity_price,
     _pdt_exchange,
+    _pdt_exports_asset,
     _tx_type_to_pdt_action,
     _float_or_none,
     _str_or_none,
@@ -579,7 +580,7 @@ class PDTSheetsSync:
             if pdt_action is None:
                 continue
             asset = db_adapter.get_asset(tx["asset_id"])
-            if not asset:
+            if not asset or not _pdt_exports_asset(asset):
                 continue
             broker = self._resolve_broker(db_adapter, tx)
             asset_type = asset.get("asset_type", "stock")
@@ -629,7 +630,7 @@ class PDTSheetsSync:
             if tx.get("transaction_type") != "dividend":
                 continue
             asset = db_adapter.get_asset(tx["asset_id"])
-            if not asset:
+            if not asset or not _pdt_exports_asset(asset):
                 continue
             broker = self._resolve_broker(db_adapter, tx)
             asset_type = asset.get("asset_type", "stock")

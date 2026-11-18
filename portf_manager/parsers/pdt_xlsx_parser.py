@@ -19,6 +19,7 @@ from datetime import date, datetime, time
 from typing import Any, Iterator, List, Optional, Tuple
 
 from .pdt_brokers import load_broker_map, to_pdt
+from .mintos_csv_parser import MINTOS_SYMBOL
 
 try:
     import openpyxl
@@ -642,6 +643,23 @@ def _pdt_exchange(
     return ""
 
 
+# pfm-only assets that stand for no real security: PDT can't look them up,
+# and every row would stop its import as "Onbekend effect"
+_PDT_SKIP_SYMBOLS = frozenset({MINTOS_SYMBOL})
+
+
+def _pdt_exports_asset(asset: dict) -> bool:
+    """Return whether an asset's rows belong in a PDT export.
+
+    Args:
+        asset: The asset record.
+
+    Returns:
+        False for a synthetic pfm asset (the Mintos P2P pool), else True.
+    """
+    return str(asset.get("symbol") or "").upper() not in _PDT_SKIP_SYMBOLS
+
+
 def _pdt_bond_quantity_price(
     asset_type: str,
     quantity: Optional[float],
@@ -728,7 +746,7 @@ class PDTXLSXExporter:
                 continue
 
             asset = db_adapter.get_asset(tx["asset_id"])
-            if not asset:
+            if not asset or not _pdt_exports_asset(asset):
                 continue
 
             broker = self._resolve_broker(db_adapter, tx)
@@ -792,7 +810,7 @@ class PDTXLSXExporter:
                 continue
 
             asset = db_adapter.get_asset(tx["asset_id"])
-            if not asset:
+            if not asset or not _pdt_exports_asset(asset):
                 continue
 
             broker = self._resolve_broker(db_adapter, tx)

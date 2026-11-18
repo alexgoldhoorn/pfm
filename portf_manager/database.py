@@ -7,6 +7,7 @@ including asset tracking, transaction recording, price history, and configuratio
 
 import json
 import sqlite3
+import re
 import logging
 from contextlib import contextmanager
 from datetime import date, datetime, timezone
@@ -36,6 +37,54 @@ def _like_prefix(prefix: str) -> str:
     """Return a LIKE pattern (``ESCAPE '\\'``) matching *prefix* literally."""
     escaped = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return escaped + "%"
+
+
+# Legal-form words that brokers add to or drop from a company name
+_LEGAL_SUFFIXES = frozenset(
+    {
+        "nv",
+        "sa",
+        "plc",
+        "ag",
+        "se",
+        "inc",
+        "corp",
+        "corporation",
+        "ltd",
+        "limited",
+        "spa",
+        "sab",
+        "asa",
+        "oyj",
+        "ab",
+        "kgaa",
+        "bv",
+        "llc",
+        "co",
+    }
+)
+
+
+def normalize_asset_name(name: Optional[str]) -> str:
+    """Return an asset name reduced for loose matching.
+
+    Lower-cases, drops dots (so "N.V." becomes "nv"), turns other punctuation
+    into spaces and removes trailing legal-form words. Share-class words such
+    as ACC or DIST are kept: they name different securities.
+
+    Args:
+        name: The asset name.
+
+    Returns:
+        The normalised name, "" when nothing is left.
+    """
+    if not name:
+        return ""
+    text = re.sub(r"[^0-9a-z ]+", " ", str(name).casefold().replace(".", ""))
+    words = text.split()
+    while len(words) > 1 and words[-1] in _LEGAL_SUFFIXES:
+        words.pop()
+    return " ".join(words)
 
 
 class DatabaseError(Exception):
@@ -4359,7 +4408,23 @@ class Database:
                 (name,),
             )
             row = cursor.fetchone()
-            return dict(row) if row else None
+            if row:
+                return dict(row)
+            # No exact match: compare names without legal-form suffixes, so
+            # "Example Bank NV" finds a stored "EXAMPLE BANK"
+            key = normalize_asset_name(name)
+            if not key:
+                return None
+            matches = [
+                dict(r)
+                for r in conn.execute("SELECT * FROM assets")
+                if normalize_asset_name(r["name"]) == key
+            ]
+        # Prefer the one ISIN-keyed record; anything else ambiguous is no match
+        isin_keyed = [m for m in matches if len(m.get("symbol") or "") == 12]
+        if len(isin_keyed) == 1:
+            return isin_keyed[0]
+        return matches[0] if len(matches) == 1 else None
 
     def get_all_assets(self, active_only: bool = True) -> List[Dict]:
         """Get all assets."""
