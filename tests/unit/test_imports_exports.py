@@ -159,6 +159,61 @@ class TestIndexaCapitalCSVParser:
 
 class TestImportUpload:
     @pytest.mark.asyncio
+    async def test_pdt_upload_maps_broker_back_to_portfolio(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        from datetime import date as _date
+
+        from portf_manager.parsers.pdt_xlsx_parser import (
+            PDTBooking,
+            PDTParseResult,
+            PDTTransaction,
+        )
+
+        await async_test_client.put(
+            "/api/v1/sync/pdt-config",
+            headers=auth_headers,
+            json={"broker_map": {"Example Plan Bank": "Example Broker"}},
+        )
+        parsed = PDTParseResult()
+        parsed.transactions.append(
+            PDTTransaction(
+                broker="Example Broker",
+                name="Example Corp",
+                pdt_type="Stock market",
+                search="DE0000000001",
+                exchange="XETRA Exchange",
+                date=_date(2024, 8, 27),
+                action="Buy",
+                amount=3.0,
+                price=10.0,
+                price_currency="EUR",
+            )
+        )
+        parsed.bookings.append(
+            PDTBooking(
+                broker="Example Broker",
+                date=_date(2024, 2, 5),
+                action="Deposit",
+                amount=250.0,
+                currency="EUR",
+            )
+        )
+        with patch(
+            "portf_server.routers.imports.PDTXLSXParser.parse", return_value=parsed
+        ):
+            response = await async_test_client.post(
+                "/api/v1/import/upload",
+                headers=auth_headers,
+                data={"broker": "pdt"},
+                files={"file": ("pdt.xlsx", b"xlsx", "application/octet-stream")},
+            )
+        assert response.status_code == status.HTTP_200_OK
+        data = response.json()
+        assert data["transactions"][0]["broker"] == "Example Plan Bank"
+        assert data["bookings"][0]["broker"] == "Example Plan Bank"
+
+    @pytest.mark.asyncio
     async def test_upload_unsupported_broker(
         self, async_test_client: AsyncClient, auth_headers
     ):
@@ -990,6 +1045,34 @@ class TestSyncConfig:
         data = response.json()
         assert "service_account_configured" in data
         assert "default_spreadsheet_id" in data
+        assert data["broker_map"] == {}
+
+    @pytest.mark.asyncio
+    async def test_broker_map_round_trip(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        resp = await async_test_client.put(
+            "/api/v1/sync/pdt-config",
+            headers=auth_headers,
+            json={"broker_map": {" Example Plan Bank ": "Example Broker", "X": ""}},
+        )
+        assert resp.status_code == status.HTTP_200_OK
+        assert resp.json()["broker_map"] == {"Example Plan Bank": "Example Broker"}
+
+        resp = await async_test_client.get(
+            "/api/v1/sync/pdt-config", headers=auth_headers
+        )
+        assert resp.json()["broker_map"] == {"Example Plan Bank": "Example Broker"}
+
+        # Setting only the sheet ID leaves the map alone
+        resp = await async_test_client.put(
+            "/api/v1/sync/pdt-config",
+            headers=auth_headers,
+            json={"spreadsheet_id": "FAKE123"},
+        )
+        data = resp.json()
+        assert data["default_spreadsheet_id"] == "FAKE123"
+        assert data["broker_map"] == {"Example Plan Bank": "Example Broker"}
 
 
 class TestSyncPullEndpoint:
@@ -1086,3 +1169,20 @@ class TestSyncPushEndpoint:
         assert data["dividends_written"] == 3
         assert data["bookings_written"] == 5
         assert "spreadsheet_url" in data
+        assert data["warnings"] == []
+
+    @pytest.mark.asyncio
+    async def test_push_passes_warnings_through(
+        self, async_test_client: AsyncClient, auth_headers
+    ):
+        with patch("portf_manager.parsers.pdt_sheets_sync.PDTSheetsSync") as MockCls:
+            MockCls.return_value.push.return_value = {
+                "transactions": 1,
+                "dividends": 0,
+                "bookings": 0,
+                "warnings": ["Broker 'X' is not in PDT's broker list"],
+            }
+            resp = await async_test_client.post(
+                "/api/v1/sync/pdt-push?spreadsheet_id=FAKE123", headers=auth_headers
+            )
+        assert resp.json()["warnings"] == ["Broker 'X' is not in PDT's broker list"]

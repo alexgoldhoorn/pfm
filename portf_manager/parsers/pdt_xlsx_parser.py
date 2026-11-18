@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from typing import Any, Iterator, List, Optional, Tuple
 
+from .pdt_brokers import load_broker_map, to_pdt
+
 try:
     import openpyxl
     from openpyxl import Workbook
@@ -664,6 +666,8 @@ def _pdt_bond_quantity_price(
 class PDTXLSXExporter:
     """Exports portfolio data to the PDT v2 XLSX format."""
 
+    _broker_map: dict = {}
+
     def export(
         self,
         db_adapter: Any,
@@ -678,6 +682,8 @@ class PDTXLSXExporter:
             output_path: Destination .xlsx file path.
             portfolio_id: If given, export only transactions from this portfolio.
         """
+        # Portfolio names PDT doesn't list are written as their mapped broker
+        self._broker_map = load_broker_map(db_adapter)
         wb = Workbook()
         # remove default blank sheet
         wb.remove(wb.active)
@@ -850,7 +856,7 @@ class PDTXLSXExporter:
             if pid:
                 portfolio = db_adapter.get_portfolio(pid)
                 if portfolio:
-                    broker = portfolio.get("name", "")
+                    broker = to_pdt(portfolio.get("name", ""), self._broker_map)
 
             bk_date = bk.get("date")
             if isinstance(bk_date, str):
@@ -887,7 +893,7 @@ class PDTXLSXExporter:
         if portfolio_id:
             data = db_adapter.get_portfolio(portfolio_id)
             if data:
-                return data.get("name", "")
+                return to_pdt(data.get("name", ""), self._broker_map)
         return ""
 
 

@@ -25,6 +25,7 @@ except ImportError as exc:  # pragma: no cover
         "Install: pip install google-api-python-client google-auth"
     ) from exc
 
+from .pdt_brokers import from_pdt, load_broker_map, to_pdt, unknown_brokers
 from .pdt_xlsx_parser import (
     PDTBooking,
     PDTDividend,
@@ -60,6 +61,9 @@ SCOPES = [
 
 # Number of header rows before data starts
 _N_HEADERS = 3
+
+# Last column read from each sheet: column 31 ("AE"), wider than any PDT sheet
+_READ_LAST_COL = "AE"
 
 # Minimum column widths expected per sheet (pad sparse rows to this)
 _TX_NCOLS = 21
@@ -181,6 +185,8 @@ class PDTSheetsSync:
             "GOOGLE_SERVICE_ACCOUNT_FILE", "service-account.json"
         )
         self._service = None
+        # pfm portfolio name -> PDT broker name, set per push/pull
+        self._broker_map: dict = {}
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -199,7 +205,7 @@ class PDTSheetsSync:
             .values()
             .get(
                 spreadsheetId=self.spreadsheet_id,
-                range=f"'{sheet_name}'!A:{chr(ord('A') + 30)}",
+                range=f"'{sheet_name}'!A:{_READ_LAST_COL}",
                 valueRenderOption="UNFORMATTED_VALUE",
                 dateTimeRenderOption="SERIAL_NUMBER",
             )
@@ -243,8 +249,13 @@ class PDTSheetsSync:
     # Pull (Google Sheet → PDTParseResult)
     # ------------------------------------------------------------------
 
-    def pull(self) -> PDTParseResult:
-        """Read all three PDT sheets and return a PDTParseResult."""
+    def pull(self, broker_map: Optional[dict] = None) -> PDTParseResult:
+        """Read all three PDT sheets and return a PDTParseResult.
+
+        Args:
+            broker_map: pfm portfolio name -> PDT broker name; a mapped PDT
+                broker is returned as the pfm portfolio name.
+        """
         result = PDTParseResult()
 
         try:
@@ -265,6 +276,9 @@ class PDTSheetsSync:
         except Exception as e:
             result.skipped.append(("Bookings", f"Sheet read error: {e}"))
 
+        if broker_map:
+            for item in (*result.transactions, *result.dividends, *result.bookings):
+                item.broker = from_pdt(item.broker, broker_map)
         return result
 
     def _parse_transactions(self, rows: List[list], result: PDTParseResult) -> None:
@@ -480,7 +494,13 @@ class PDTSheetsSync:
         return f"https://docs.google.com/spreadsheets/d/{self.spreadsheet_id}"
 
     def push(self, db_adapter: Any, portfolio_id: Optional[int] = None) -> dict:
-        """Write all portfolio data to the PDT-format Google Spreadsheet."""
+        """Write all portfolio data to the PDT-format Google Spreadsheet.
+
+        Portfolio names are mapped to PDT brokers via the ``pdt_broker_map``
+        setting. The result's ``warnings`` lists broker names PDT's import will
+        reject (not in the sheet's ``Brokers`` tab).
+        """
+        self._broker_map = load_broker_map(db_adapter)
         tx_rows = self._build_transactions_rows(db_adapter, portfolio_id)
         div_rows = self._build_dividends_rows(db_adapter, portfolio_id)
         book_rows = self._build_bookings_rows(db_adapter, portfolio_id)
@@ -496,6 +516,7 @@ class PDTSheetsSync:
         )
 
         return {
+            "warnings": self._broker_warnings(tx_rows, div_rows, book_rows),
             "transactions": len(tx_rows) - _N_HEADERS,
             "dividends": len(div_rows) - _N_HEADERS,
             "bookings": len(book_rows) - _N_HEADERS,
@@ -511,8 +532,23 @@ class PDTSheetsSync:
         if pid:
             p = db_adapter.get_portfolio(pid)
             if p:
-                return p.get("name", "")
+                return to_pdt(p.get("name", ""), self._broker_map)
         return ""
+
+    def _broker_warnings(self, *sheets: list) -> List[str]:
+        """Warn about exported broker names missing from the Brokers tab."""
+        names = {row[0] for rows in sheets for row in rows[_N_HEADERS:] if row}
+        try:
+            valid = [r[0] for r in self._read_sheet("Brokers") if r and r[0]]
+        except Exception as e:
+            return [f"Could not read the Brokers tab to check broker names: {e}"]
+        if not valid:
+            return []
+        return [
+            f"Broker '{n}' is not in PDT's broker list; its rows will fail the "
+            f"PDT import. Map it in the pdt_broker_map setting."
+            for n in unknown_brokers(names, valid)
+        ]
 
     def _parse_tx_date(self, tx: dict) -> Optional[date]:
         v = tx.get("transaction_date")
@@ -640,7 +676,7 @@ class PDTSheetsSync:
             if pid:
                 p = db_adapter.get_portfolio(pid)
                 if p:
-                    broker = p.get("name", "")
+                    broker = to_pdt(p.get("name", ""), self._broker_map)
             bk_date = bk.get("date")
             if isinstance(bk_date, str):
                 try:

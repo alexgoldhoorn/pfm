@@ -7,6 +7,8 @@
 
 Last updated: 2026-11-18
 
+**Recent (v2.5.111):** **PDT broker map and a working Sheets pull.** PDT's import rejects any Broker not in its fixed list, and the export writes the portfolio name, so a portfolio named after an unlisted broker failed every row ("Selected broker is invalid"). New `pdt_broker_map` setting (`GET`/`PUT /sync/pdt-config` `broker_map`) maps a portfolio to a PDT broker on Sheets push and XLSX export and back on Sheets pull and PDT XLSX upload; the push returns `warnings` for brokers missing from the sheet's `Brokers` tab (web and CLI show them). Fix: `PDTSheetsSync._read_sheet` asked for the range `A:_` (`chr(ord('A') + 30)`), which Google rejects, so every Sheets pull since June read nothing; now `A:AE`. Docs `imports-exports.md`; asset version `?v=1792000005`.
+
 **Recent (v2.5.110):** **Dashboard: "This week" moved down.** The card with the top Action Items now sits just above *Recent activity*, so the first screen is the KPI tiles and the Needs attention strip. Markup move only (`index.html`).
 
 **Recent (v2.5.109):** **Server-written dates follow the date setting.** `serverTextHtml` also renders ISO dates in server sentences ("on 2026-11-05 and again on …" in Unusual charges, goal and month-close text) through `Fmt.date`, and `YYYY-MM` months spelled out in the number locale ("October 2026"). `pwa_share.test.mjs` takes `File` from `node:buffer` when there is no global one: `make test-js` runs `/usr/bin/node` 18, where its three service-worker tests failed. Asset version `?v=1792000004`.

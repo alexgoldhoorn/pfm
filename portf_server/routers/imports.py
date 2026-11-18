@@ -51,6 +51,7 @@ from portf_manager.parsers.mintos_csv_parser import (
     MINTOS_SYMBOL,
     MINTOS_NAME,
 )
+from portf_manager.parsers.pdt_brokers import from_pdt, load_broker_map
 from portf_manager.parsers.pdt_xlsx_parser import (
     PDTXLSXParser,
     _detect_asset_type,
@@ -829,6 +830,12 @@ async def upload_broker_file(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Failed to parse file: {str(e)}",
         )
+
+    if broker == "pdt":
+        # A PDT broker that stands in for a pfm portfolio maps back to it
+        broker_map = load_broker_map(db)
+        for row in (*previews, *bookings):
+            row.broker = from_pdt(row.broker, broker_map)
 
     dup_count = _flag_duplicates(db, previews, bookings, deposits=deposits)
 

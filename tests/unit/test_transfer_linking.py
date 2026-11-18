@@ -191,7 +191,7 @@ def _pull_with_booking(monkeypatch):
     )
 
     class FakeSync:
-        def pull(self):
+        def pull(self, broker_map=None):
             return result
 
     monkeypatch.setattr(sync_router, "_get_sync", lambda _sid: FakeSync())

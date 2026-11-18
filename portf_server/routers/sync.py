@@ -8,6 +8,7 @@ Endpoints:
   POST /api/v1/sync/pdt-push     – write DB data → Google Sheet
 """
 
+import json
 import logging
 import os
 from typing import Optional
@@ -19,6 +20,11 @@ from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
 from portf_manager.import_dedup import TransactionDeduplicator
 from portf_manager.services.transfer_linking import settle_after_bookings
+from portf_manager.parsers.pdt_brokers import (
+    SETTING_KEY as BROKER_MAP_KEY,
+    load_broker_map,
+    parse_broker_map,
+)
 from portf_manager.parsers.pdt_xlsx_parser import (
     _detect_asset_type,
     _pdt_action_to_tx_type,
@@ -89,10 +95,15 @@ class SyncConfigResponse(BaseModel):
     service_account_configured: bool
     service_account_email: Optional[str] = None
     default_spreadsheet_id: Optional[str] = None
+    # pfm portfolio name -> PDT broker name (setting ``pdt_broker_map``)
+    broker_map: dict[str, str] = {}
 
 
 class SyncConfigUpdate(BaseModel):
-    spreadsheet_id: str
+    # Omitted fields are left unchanged
+    spreadsheet_id: Optional[str] = None
+    # Replaces the whole map; {} clears it
+    broker_map: Optional[dict[str, str]] = None
 
 
 class PullResponse(BaseModel):
@@ -112,6 +123,8 @@ class PushResponse(BaseModel):
     dividends_written: int
     bookings_written: int
     spreadsheet_url: str
+    # Broker names PDT's import will reject, and other non-fatal problems
+    warnings: list[str] = []
 
 
 class BackupResponse(BaseModel):
@@ -124,11 +137,8 @@ class BackupResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-@router.get("/pdt-config", response_model=SyncConfigResponse)
-def get_sync_config(
-    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
-):
-    """Return current Google Sheets sync configuration."""
+def _sync_config(db: Database) -> SyncConfigResponse:
+    """Current sync configuration; the DB-stored sheet ID beats the env var."""
     sa_file = _google_service_account_file()
     email = None
     configured = os.path.exists(sa_file)
@@ -140,13 +150,22 @@ def get_sync_config(
                 email = json.load(f).get("client_email")
         except Exception:
             pass
-    # DB-stored ID takes precedence over env var
-    sheet_id = db.get_setting("google_spreadsheet_id") or _default_spreadsheet_id()
     return SyncConfigResponse(
         service_account_configured=configured,
         service_account_email=email,
-        default_spreadsheet_id=sheet_id,
+        default_spreadsheet_id=(
+            db.get_setting("google_spreadsheet_id") or _default_spreadsheet_id()
+        ),
+        broker_map=load_broker_map(db),
     )
+
+
+@router.get("/pdt-config", response_model=SyncConfigResponse)
+def get_sync_config(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+):
+    """Return current Google Sheets sync configuration."""
+    return _sync_config(db)
 
 
 @router.put("/pdt-config", response_model=SyncConfigResponse)
@@ -155,24 +174,13 @@ def update_sync_config(
     db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
-    """Persist the Google Spreadsheet ID to the database."""
-    db.set_setting("google_spreadsheet_id", body.spreadsheet_id.strip())
-    sa_file = _google_service_account_file()
-    email = None
-    configured = os.path.exists(sa_file)
-    if configured:
-        try:
-            import json
-
-            with open(sa_file) as f:
-                email = json.load(f).get("client_email")
-        except Exception:
-            pass
-    return SyncConfigResponse(
-        service_account_configured=configured,
-        service_account_email=email,
-        default_spreadsheet_id=body.spreadsheet_id.strip(),
-    )
+    """Persist the Google Spreadsheet ID and/or the PDT broker map."""
+    if body.spreadsheet_id is not None:
+        db.set_setting("google_spreadsheet_id", body.spreadsheet_id.strip())
+    if body.broker_map is not None:
+        cleaned = parse_broker_map(json.dumps(body.broker_map))
+        db.set_setting(BROKER_MAP_KEY, json.dumps(cleaned))
+    return _sync_config(db)
 
 
 @router.post("/pdt-pull", response_model=PullResponse)
@@ -209,7 +217,7 @@ def pull_from_sheets(
     sync = _get_sync(sheet_id)
 
     try:
-        result = sync.pull()
+        result = sync.pull(broker_map=load_broker_map(db))
     except Exception as e:
         logger.exception("Google Sheets pull failed")
         raise HTTPException(
@@ -431,6 +439,7 @@ def push_to_sheets(
         dividends_written=counts["dividends"],
         bookings_written=counts["bookings"],
         spreadsheet_url=f"https://docs.google.com/spreadsheets/d/{sheet_id}/",
+        warnings=counts.get("warnings", []),
     )
 
 

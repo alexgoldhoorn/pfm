@@ -2305,7 +2305,11 @@ class PortfolioManagerCLI:
 
         print(f"🔄 Pulling from Google Sheet: {final_sheet_id}")
         try:
-            result = PDTSheetsSync(final_sheet_id).pull()
+            from .parsers.pdt_brokers import load_broker_map
+
+            result = PDTSheetsSync(final_sheet_id).pull(
+                broker_map=load_broker_map(self.db_manager)
+            )
         except Exception as e:
             print(f"❌ Failed to read from Google Sheet: {e}")
             return
@@ -2380,6 +2384,8 @@ class PortfolioManagerCLI:
             f" {counts['dividends']} dividend(s),"
             f" {counts['bookings']} booking(s)."
         )
+        for warning in counts.get("warnings", []):
+            print(f"⚠️  {warning}")
         print(f"🔗 https://docs.google.com/spreadsheets/d/{final_sheet_id}/")
 
     def _process_coinbase_transactions(self, csv_content: str) -> None:

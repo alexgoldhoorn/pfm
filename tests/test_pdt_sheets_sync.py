@@ -604,3 +604,133 @@ class TestConvenienceFunctions:
         MockCls.assert_called_once_with("SHEET_ID", "fake.json")
         mock_sync.push.assert_called_once_with(adapter, None)
         assert counts["transactions"] == 5
+
+
+# ---------------------------------------------------------------------------
+# Sheet read range and broker mapping
+# ---------------------------------------------------------------------------
+
+
+class TestReadSheetRange:
+    def test_range_is_a_valid_a1_range(self):
+        """The range once ended in chr(ord('A') + 30) == '_', which Google rejects."""
+        sync = _make_sync()
+        values = sync._service.spreadsheets.return_value.values.return_value
+        values.get.return_value.execute.return_value = {"values": [["x"]]}
+
+        assert sync._read_sheet("Transactions") == [["x"]]
+        rng = values.get.call_args.kwargs["range"]
+        assert rng == "'Transactions'!A:AE"
+
+
+def _push_adapter(broker_map_json):
+    adapter = _make_db_adapter(
+        transactions=[
+            {
+                "id": 1,
+                "asset_id": 10,
+                "portfolio_id": 2,
+                "transaction_type": "buy",
+                "quantity": 3.0,
+                "price": 10.0,
+                "total_amount": 30.0,
+                "fees": 0,
+                "tax": 0,
+                "currency": "EUR",
+                "transaction_date": "2024-08-27",
+            },
+            {
+                "id": 2,
+                "asset_id": 10,
+                "portfolio_id": 2,
+                "transaction_type": "dividend",
+                "quantity": 1.0,
+                "price": 2.0,
+                "total_amount": 2.0,
+                "fees": 0,
+                "tax": 0,
+                "currency": "EUR",
+                "transaction_date": "2024-09-27",
+            },
+        ],
+        assets=[
+            {
+                "id": 10,
+                "symbol": "DE0000000001",
+                "name": "Example Corp",
+                "asset_type": "stock",
+                "exchange": "XETRA Exchange",
+                "currency": "EUR",
+            }
+        ],
+        portfolios=[{"id": 2, "name": "Example Plan Bank"}],
+        bookings=[
+            {
+                "id": 1,
+                "portfolio_id": 2,
+                "date": "2024-02-05",
+                "action": "Deposit",
+                "amount": 250.0,
+                "currency": "EUR",
+            }
+        ],
+    )
+    adapter.get_setting.side_effect = lambda key: (
+        broker_map_json if key == "pdt_broker_map" else None
+    )
+    return adapter
+
+
+class TestBrokerMapping:
+    def _sync(self, brokers=("Example Broker", "MyInvestor")):
+        sync = _make_sync()
+        written = {}
+        sync._write_sheet = lambda name, rows: written.update({name: rows})
+        sync._read_sheet = MagicMock(
+            side_effect=lambda name: (
+                [[b] for b in brokers] if name == "Brokers" else []
+            )
+        )
+        return sync, written
+
+    def test_push_writes_mapped_broker_everywhere(self):
+        sync, written = self._sync()
+        counts = sync.push(_push_adapter('{"Example Plan Bank": "Example Broker"}'))
+        assert written["Transactions"][3][0] == "Example Broker"
+        assert written["Dividends"][3][0] == "Example Broker"
+        assert written["Bookings"][3][0] == "Example Broker"
+        assert counts["warnings"] == []
+
+    def test_push_warns_about_broker_pdt_does_not_list(self):
+        sync, written = self._sync()
+        counts = sync.push(_push_adapter(None))
+        assert written["Transactions"][3][0] == "Example Plan Bank"
+        assert len(counts["warnings"]) == 1
+        assert "'Example Plan Bank'" in counts["warnings"][0]
+
+    def test_push_warns_when_brokers_tab_unreadable(self):
+        sync, _ = self._sync()
+        sync._read_sheet = MagicMock(side_effect=Exception("no such tab"))
+        counts = sync.push(_push_adapter(None))
+        assert counts["warnings"] == [
+            "Could not read the Brokers tab to check broker names: no such tab"
+        ]
+
+    def test_pull_maps_pdt_broker_back_to_portfolio(self):
+        sync = _make_sync()
+        tx = _tx_rows()
+        tx[3][0] = "example broker"
+        book = _book_rows()
+        book[3][0] = "Example Broker"
+        sync._read_sheet = MagicMock(
+            side_effect=lambda name: {
+                "Transactions": tx,
+                "Dividends": _div_rows(),
+                "Bookings": book,
+            }[name]
+        )
+        result = sync.pull(broker_map={"Example Plan Bank": "Example Broker"})
+        assert result.transactions[0].broker == "Example Plan Bank"
+        assert result.bookings[0].broker == "Example Plan Bank"
+        # Unmapped brokers are left alone
+        assert result.dividends[0].broker == "MyInvestor"

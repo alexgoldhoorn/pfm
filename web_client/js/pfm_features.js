@@ -4045,8 +4045,9 @@ function setupGoogleSheetsPage() {
             setSyncStatus(
                 `Pushed to <a href="${esc(r.spreadsheet_url)}" target="_blank" rel="noopener">${esc(r.spreadsheet_id)}</a>: `
                 + `${r.transactions_written} transactions, ${r.dividends_written} dividends, `
-                + `${r.bookings_written} bookings.`,
-                'success'
+                + `${r.bookings_written} bookings.`
+                + (r.warnings || []).map(w => `<br><i class="bi bi-exclamation-triangle me-1"></i>${esc(w)}`).join(''),
+                (r.warnings || []).length ? 'warning' : 'success'
             );
         } catch (err) {
             if (pushModalStatus) pushModalStatus.innerHTML += `<div class="alert alert-danger py-1 small mb-0">${esc(err.message)}</div>`;
