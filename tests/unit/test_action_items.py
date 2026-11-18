@@ -1018,7 +1018,8 @@ def test_balance_sheet_freshness_flags_bank_without_balance(tmp_path, monkeypatc
     assert [i["id"] for i in items] == [f"balance_sheet_stale:bank:{pid}"]
     assert items[0]["severity"] == "medium"
     assert items[0]["title"] == "Example Bank has no balance"
-    assert items[0]["detail"] == "no statement with a balance"
+    assert "has a balance" in items[0]["detail"]
+    assert "bank_statement" not in items[0]["detail"]
     assert items[0]["link_page"] == "networth"
 
 
@@ -1037,6 +1038,29 @@ def test_balance_sheet_freshness_stale_manual_is_low(tmp_path, monkeypatch):
     assert len(items) == 1
     assert items[0]["severity"] == "low"
     assert items[0]["title"] == "Example Cash is 290 days old"
+    assert items[0]["detail"] == (
+        "You last updated this value on 2026-01-01 (checked after 90 days). "
+        "Update it on the Net Worth page."
+    )
+
+
+def test_stale_line_detail_never_shows_internal_source_names():
+    from portf_manager.services.action_items import _stale_line_detail
+
+    base = {"as_of": "2026-08-01", "max_age_days": 60, "note": None}
+    stale = _stale_line_detail({**base, "source": "cash_ledger", "amount_eur": 50.0})
+    assert "cash_ledger" not in stale and "allowed age" not in stale
+    assert "from 2026-08-01" in stale
+    negative = _stale_line_detail(
+        {
+            **base,
+            "source": "cash_ledger",
+            "amount_eur": -5.0,
+            "note": "ledger cash is negative: deposits missing?",
+        }
+    )
+    assert "deposit is probably missing" in negative
+    assert "ledger cash" not in negative
 
 
 def test_balance_sheet_duplicate_manual_line_is_low(tmp_path, monkeypatch):

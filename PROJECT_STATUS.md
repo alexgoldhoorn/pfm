@@ -7,6 +7,8 @@
 
 Last updated: 2026-11-18
 
+**Recent (v2.5.115):** **Stale Net Worth items in plain words.** An out-of-date balance-sheet line's Action Item detail said "cash_ledger data; allowed age 60 days"; it now says what the figure is based on, how old it is and what to do (import the latest statement, missing deposit, update a manual value, provider never fetched).
+
 **Recent (v2.5.114):** **Phone fixes for Recurring and the budget suggestions.** At 390px the Spending › Recurring table folds *Every* and *Next* into a line under the merchant (the date no longer breaks mid-date) and long merchant names wrap, so the status badges and menu stay on screen; Budget › Suggest lines shows each suggestion as a card (Treat as, Period with Carry over, Amount), so nothing needs a sideways scroll.
 
 **Recent (v2.5.114):** **PDT export skips the Mintos P2P pool; name lookup ignores legal suffixes.** The synthetic `MINTOS` asset is left out of the Sheets push and XLSX export (PDT can't know it and flagged every row as "Onbekend effect"); its bookings still export as cash. `get_asset_by_name` falls back to a match without legal-form suffixes (`normalize_asset_name`: NV, SA, PLC, Inc, …; unique or the single ISIN record, else no match), so a MyInvestor dividend for "… NV" lands on the stored ISIN asset instead of creating a duplicate. Docs `imports-exports.md`.

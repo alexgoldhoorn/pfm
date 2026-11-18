@@ -387,6 +387,75 @@ def check_wealth_scenario(db: Any, today: date | None = None) -> list[dict]:
     ]
 
 
+def _stale_line_detail(line: dict) -> str:
+    """Plain-language reason and next step for a stale balance-sheet line.
+
+    The line's own ``note`` is a short label on the Net Worth page; an Action
+    Item needs a sentence a reader can act on, without internal source names.
+
+    Args:
+        line: One line from ``build_balance_sheet``.
+
+    Returns:
+        The detail text.
+    """
+    source = line.get("source")
+    note = line.get("note") or ""
+    as_of = line.get("as_of")
+    max_age = line.get("max_age_days")
+    since = f"from {as_of}" if as_of else "undated"
+    if source == "cash_ledger":
+        if (line.get("amount_eur") or 0) < 0:
+            return (
+                "The cash worked out from this account's transactions is below "
+                "zero, which a broker account cannot hold: a deposit is probably "
+                "missing. Import the missing deposits; until then this cash is "
+                "left out of net worth."
+            )
+        return (
+            "This cash is worked out from the account's transactions, and the "
+            f"newest one is {since} (checked after {max_age} days). Import the "
+            "latest statement if anything happened since; if nothing did, "
+            "mark this item done."
+        )
+    if source == "bank_statement":
+        if line.get("amount_eur") is None:
+            return (
+                "None of this account's imported statements has a balance, so it "
+                "is left out of net worth. Import a statement that includes the "
+                "balance column."
+            )
+        return (
+            f"The newest balance is {since} (checked after {max_age} days). "
+            "Import a recent statement."
+        )
+    if source == "positions":
+        text = (
+            f"The oldest price for these holdings is {since}; prices refresh "
+            "with the daily price update."
+        )
+        if not note:
+            return text
+        note = note.replace(" unpriced", " without a price")
+        return f"{text} {note[0].upper()}{note[1:]}."
+    if source == "account_valuation":
+        if "never fetched" in note and not as_of:
+            return (
+                "This account's value has never been fetched from the "
+                "provider. Check the account's provider settings."
+            )
+        text = f"The value fetched from the provider is {since}."
+        return f"{text} {note[0].upper()}{note[1:]}." if note else text
+    if source == "manual":
+        when = f"on {as_of}" if as_of else "without a date"
+        text = (
+            f"You last updated this value {when} (checked after {max_age} "
+            "days). Update it on the Net Worth page."
+        )
+        return f"{text} Note: {note}" if note else text
+    return note or f"Last updated {since}."
+
+
 def check_balance_sheet_freshness(db: Any, today: date | None = None) -> list[dict]:
     """Balance-sheet lines whose data is too old, and manual duplicates."""
     from portf_manager.services import balance_sheet
@@ -409,11 +478,7 @@ def check_balance_sheet_freshness(db: Any, today: date | None = None) -> list[di
                         "category": "networth",
                         "severity": "low" if line["source"] == "manual" else "medium",
                         "title": title,
-                        "detail": note
-                        or (
-                            f"{line['source']} data; allowed age "
-                            f"{line['max_age_days']} days"
-                        ),
+                        "detail": _stale_line_detail(line),
                         "link_page": "networth",
                         "context": {"line_id": line["id"]},
                     }
