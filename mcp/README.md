@@ -102,12 +102,15 @@ Never print to stdout from a tool: stdout is the protocol channel.
 | `spending_year` | One year against the year before, like for like |
 | `uncategorized_queue` | Uncategorised rows grouped by merchant, biggest money first, with a proposed rule |
 | `spending_review` | Monthly spending review in one call |
+| `month_close` | Month-end close: checklist per step, the month's figures, closed or stale |
+| `subscriptions` | Recurring charges by yearly cost with status (cancelled, paid elsewhere, came back) and totals |
 | `networth` | Total net worth with accounts and balance sheet |
 | `loans` | Every loan: balance, rate, payment, end date, interest, paid to date with the rate history, equity/LTV and whether the bank charged the scheduled payment |
 | `loan_what_if` | A lump sum, extra monthly payments or a rate change on one loan: new end date, payment and interest (read-only) |
 | `goals` | Financial goals and progress |
 | `retirement_readiness` | Retirement scenarios in today's euros |
-| `action_items` | Open items pfm has detected |
+| `action_items` | Open items pfm has detected, families of three or more folded into one line (`family` lists a group's items) |
+| `networth_history` | Net worth over time from the daily snapshots and what moved it (saved, market, debt, property); history starts at the first snapshot |
 | `next_euro` | What to do with new money |
 | `deployable_cash` | How much cash can be invested now |
 | `allocation_targets` | Target vs current allocation |

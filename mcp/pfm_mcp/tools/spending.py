@@ -1061,3 +1061,121 @@ def spending_transactions(
     if total > shown:
         lines.append(f"\nShowing the newest {min(shown, len(rows))} of {total}.")
     return "\n".join(lines)
+
+
+_STEP_MARK = {"ok": "ok", "todo": "TODO", "warn": "LOOK", "unknown": "unknown"}
+
+
+@tool
+def month_close(month: Optional[str] = None) -> str:
+    """
+    The month-end close of one month: a checklist with a status per step
+    (imports, uncategorized rows, transfers, anomalies, recurring charges,
+    one-offs), the month's figures (all estimates; n/a when nothing is
+    imported or a part could not be built), and whether the month was closed
+    and has changed since (stale). Closing is a mark, not a lock. Read-only.
+
+    Args:
+        month: 'YYYY-MM'; default the last complete month.
+    """
+    try:
+        data = client._get("/api/v1/spending/month-close", {"month": month})
+    except Exception as e:
+        return f"Error fetching month close: {e}"
+
+    lines = [f"MONTH CLOSE {data.get('month') or '?'}:"]
+    closed = data.get("closed")
+    if closed:
+        stale = " - changed since (stale)" if closed.get("stale") else ""
+        lines.append(f"  Closed {str(closed.get('closed_at') or '?')[:10]}{stale}")
+        if closed.get("notes"):
+            lines.append(f"  Notes: {closed['notes']}")
+    else:
+        lines.append("  Not closed.")
+    lines.append(f"  Ready to close: {'yes' if data.get('ready') else 'no'}")
+    lines.append("CHECKLIST:")
+    for step in data.get("checklist") or []:
+        status = step.get("status") or "unknown"
+        lines.append(
+            f"  [{_STEP_MARK.get(status, status)}] {step.get('label') or step.get('key')}"
+            f": {step.get('detail') or ''}"
+        )
+    f = data.get("figures") or {}
+    lines.append("FIGURES (estimates):")
+    lines.append(f"  Income: {_eur(f.get('income_eur'))}")
+    lines.append(f"  Spending: {_eur(f.get('spending_eur'))}")
+    lines.append(f"  Savings and investing: {_eur(f.get('savings_eur'))}")
+    lines.append(f"  Net: {_eur(f.get('net_eur'))}")
+    rate = f.get("savings_rate_pct")
+    lines.append(f"  Net as share of income: {'n/a' if rate is None else f'{rate}%'}")
+    vn = f.get("versus_normal")
+    if vn:
+        lines.append(
+            f"  Versus normal ({vn.get('baseline_months')} months): "
+            f"{_eur(vn.get('actual_eur'))} against {_eur(vn.get('baseline_eur'))}"
+            f" ({_signed(vn.get('delta_eur'))})"
+        )
+    for c in f.get("top_categories") or []:
+        lines.append(f"    {c.get('name')}: {_eur(c.get('actual_eur'))}")
+    budget = f.get("budget")
+    if budget:
+        lines.append(f"  Budget {budget.get('name')}:")
+        for sec in budget.get("sections") or []:
+            lines.append(
+                f"    {sec.get('label')}: planned {_eur(sec.get('planned_total'))}, "
+                f"actual {_eur(sec.get('actual_total'))}"
+            )
+    for w in data.get("warnings") or []:
+        lines.append(f"  Warning: {w}")
+    return "\n".join(lines)
+
+
+_SUB_STATUS = {
+    "paid_elsewhere": "paid elsewhere",
+    "cancelled": "cancelled",
+    "missed": "missed",
+    "ended": "ended",
+    "active": "active",
+}
+
+
+@tool
+def subscriptions() -> str:
+    """
+    Recurring charges (subscriptions, bills) detected from bank outflows,
+    dearest per year first, with each series' status: active, missed, ended,
+    cancelled, or paid elsewhere (marked by the user), and a flag when a
+    charge came back after a cancellation. Amounts are estimates at today's
+    exchange rate. Totals: the yearly total counts active, missed and
+    paid-elsewhere series; cancelled shows what the cancellations save.
+    """
+    try:
+        data = client._get("/api/v1/spending/recurring", {"sort": "yearly_cost"})
+    except Exception as e:
+        return f"Error fetching subscriptions: {e}"
+
+    items = data.get("items") or []
+    if not items:
+        return "No recurring charges detected."
+    lines = [f"RECURRING CHARGES ({len(items)}), dearest per year first:"]
+    for i in items:
+        status = _SUB_STATUS.get(i.get("status"), i.get("status") or "?")
+        came_back = (
+            " - a charge came back after the mark" if i.get("resolution_stale") else ""
+        )
+        lines.append(
+            f"  {i.get('merchant')}: {_eur(i.get('annual_amount_eur'))} a year, "
+            f"{i.get('cadence')}, {status}{came_back}"
+        )
+        note = (i.get("resolution") or {}).get("note")
+        if note:
+            lines.append(f"      Note: {note}")
+    lines.append(f"Monthly total: {_eur(data.get('monthly_total_eur'))}")
+    lines.append(f"Yearly total: {_eur(data.get('annual_total_eur'))}")
+    lines.append(
+        f"  of which paid elsewhere: {_eur(data.get('paid_elsewhere_annual_eur'))}"
+    )
+    lines.append(
+        f"Saved a year by cancellations: {_eur(data.get('cancelled_annual_eur'))}"
+    )
+    return "\n".join(lines)
