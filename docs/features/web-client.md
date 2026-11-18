@@ -352,8 +352,8 @@ the Net Worth chart; the snapshot calls have their own names on purpose.)
   *Recent activity*: the first screen is the KPI tiles and the strip.
 - **Dashboard layout (Customize):** everything below the KPI tiles is a
   `.dash-block[data-block]` directly inside `#dashBlocks` (attention, progress,
-  risk, networth, investments, cashflow, cash, goals, budget, thisweek,
-  activity). *Customize* (`#dashCustomizeBtn`, `setDashEditing`) collapses every
+  risk, networth, investments, movers, cashflow, upcoming, cash, subscriptions,
+  loans, goals, budget, monthclose, thisweek, activity). *Customize* (`#dashCustomizeBtn`, `setDashEditing`) collapses every
   block to a bar (grip, up/down arrows, eye); dragging uses SortableJS from the
   CDN and the arrows work without it. The layout `{order, hidden}` is stored on
   the server (`GET/PUT /api/v1/system/dashboard-layout`, `app_settings`
@@ -374,6 +374,24 @@ the Net Worth chart; the snapshot calls have their own names on purpose.)
   data-through date, projected month end, the lowest projected month-end
   balance ahead and the next five known bills dated on or after data-through.
   A figure the forecast returns as null prints "not available".
+- **Dashboard › Upcoming** (`#dashUpcomingArea`, `loadDashboardUpcoming`,
+  `dashUpcomingModel`): one dated list for the next 30 days from the same
+  forecast call as the outlook (`_dashForecast`: known bills from the
+  data-through date, open planned items, tax payments) plus open journal
+  decisions with a `review_on` in range. Either source failing leaves the other
+  listed with a warning line.
+- **Dashboard › Month close** (`#dashMcArea`, `dashMonthCloseModel`): the default
+  month of `GET /spending/month-close`: state badge, the checks not `ok`, four figures.
+- **Dashboard › Loans** (`#dashLoansCard`, `dashLoansModel`): per loan balance,
+  share repaid (EUR loans with a principal), payment and end date from
+  `GET /networth/loans`; hidden without a loan.
+- **Dashboard › Subscriptions** (`#dashSubsArea`, `dashSubsModel`):
+  `GET /spending/recurring?sort=yearly_cost`: totals, the five dearest live
+  series, missed and returned charges.
+- **Dashboard › Latest movers** (`#dashMoversArea`, `dashMoversModel`):
+  `GET /portfolios/movers` (`services/movers.py`): positions ranked by the EUR
+  effect of the change between their last two stored prices; cash, single-price
+  and stale-price (over 7 days) positions are left out and counted in `skipped`.
 - **Net Worth › History** (`#nwHistory`, `loadNetworthHistory`): a line chart of
   stored snapshots with a toggle to stacked components (investments, cash,
   property, other assets; liabilities drawn below zero; `--viz-*` colours), a

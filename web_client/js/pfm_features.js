@@ -14453,13 +14453,21 @@ function dashCashflowModel(fc, maxBills = 5) {
 }
 window.dashCashflowModel = dashCashflowModel;
 
+// One forecast call feeds both the Cash-flow outlook and the Upcoming card:
+// the outlook asks for a fresh one on each dashboard load, Upcoming reuses it.
+let _dashFcPromise = null;
+function _dashForecast(fresh) {
+    if (fresh || !_dashFcPromise) _dashFcPromise = window.apiClient.getCashflowForecast(3);
+    return _dashFcPromise;
+}
+
 async function loadDashboardCashflow() {
     const area = document.getElementById('dashCfArea');
     if (!area) return;
     ccApplyHelpTitle('dashCfHelp', 'dashCashflow');
     let fc;
     try {
-        fc = await window.apiClient.getCashflowForecast(3);
+        fc = await _dashForecast(true);
     } catch (err) {
         area.innerHTML = `<div class="text-muted small">The cash-flow forecast is ${CC_NA}: ${esc(err.message)}</div>`;
         return;
@@ -14507,3 +14515,323 @@ async function loadDashboardCashflow() {
         </div>`;
 }
 window.loadDashboardCashflow = loadDashboardCashflow;
+
+// ── Dashboard: Upcoming card ────────────────────────────────────────────────
+
+const DASH_UPCOMING_ICONS = { bill: 'bi-receipt', planned: 'bi-calendar-event', tax: 'bi-bank', review: 'bi-journal-check' };
+
+/**
+ * One dated list for the next `days` days: recurring bills, open planned
+ * items, estimated tax and journal decisions due for review. `amount` is the
+ * signed effect on the bank balance (null for a review or an unconverted
+ * item). Bills run from the data-through date, because a charge after the
+ * latest import has not been seen yet; an item dated before `today` is
+ * `overdue`. Either source may be null (it failed): the other still lists.
+ */
+function dashUpcomingModel(fc, decisions, today, days = 30, max = 8) {
+    const f = fc || {};
+    const num = v => (v === null || v === undefined || Number.isNaN(Number(v)) ? null : Number(v));
+    const to = _isoPlusDays(today, days);
+    const from = f.data_through && f.data_through < today ? f.data_through : today;
+    const events = [];
+    (Array.isArray(f.known_bills) ? f.known_bills : []).forEach(b => {
+        if (!b || !b.date || b.date < from || b.date > to) return;
+        const amt = num(b.amount_eur);
+        events.push({ date: b.date, type: 'bill', label: b.merchant || '', amount: amt === null ? null : -amt, tag: b.kind === 'savings' ? 'savings' : '' });
+    });
+    (Array.isArray(f.planned_items) ? f.planned_items : []).forEach(p => {
+        if (!p || !p.date || p.date > to || p.status === 'done' || p.status === 'what_if') return;
+        events.push({ date: p.date, type: 'planned', label: p.description || '', amount: num(p.amount_eur), tag: 'planned' });
+    });
+    (Array.isArray(f.tax_payments) ? f.tax_payments : []).forEach(t => {
+        if (!t || !t.due || t.due < from || t.due > to) return;
+        const amt = num(t.amount_eur);
+        events.push({ date: t.due, type: 'tax', label: 'Quarterly tax ' + (t.quarter || ''), amount: amt === null ? null : -amt, tag: 'estimate' });
+    });
+    ((decisions && Array.isArray(decisions.items)) ? decisions.items : []).forEach(d => {
+        if (!d || !d.review_on || d.review_on > to || d.reviewed_at) return;
+        events.push({ date: d.review_on, type: 'review', label: 'Review: ' + (d.title || d.symbol || 'decision'), amount: null, tag: '' });
+    });
+    events.forEach(e => { e.overdue = e.date < today; });
+    events.sort((a, b) => a.date.localeCompare(b.date) || a.label.localeCompare(b.label));
+    const out = events.reduce((sum, e) => sum + (e.amount !== null && e.amount < 0 ? -e.amount : 0), 0);
+    return { from, to, items: events.slice(0, max), more: Math.max(0, events.length - max), count: events.length, outEur: out };
+}
+window.dashUpcomingModel = dashUpcomingModel;
+
+function _todayIso() {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+async function loadDashboardUpcoming() {
+    const area = document.getElementById('dashUpcomingArea');
+    if (!area) return;
+    ccApplyHelpTitle('dashUpcomingHelp', 'dashUpcoming');
+    const [fc, dec] = await Promise.all([
+        _dashForecast(false).then(v => ({ v }), e => ({ e: e.message })),
+        window.apiClient.getDecisions('open').then(v => ({ v }), e => ({ e: e.message })),
+    ]);
+    const m = dashUpcomingModel(fc.v, dec.v, _todayIso());
+    const missing = [];
+    if (fc.e) missing.push(`Bills, planned items and tax are ${CC_NA}: ${esc(fc.e)}`);
+    if (dec.e) missing.push(`Decision reviews are ${CC_NA}: ${esc(dec.e)}`);
+    const notes = missing.map(t => `<div class="small text-warning"><i class="bi bi-exclamation-triangle me-1"></i>${t}</div>`).join('');
+    if (!m.count) {
+        area.innerHTML = `<div class="text-muted small">Nothing dated in the next 30 days.</div>${notes}`;
+        return;
+    }
+    const rows = m.items.map(e => `
+        <tr>
+            <td class="ps-0 text-nowrap ${e.overdue ? 'text-danger' : 'text-muted'}">${esc(Fmt.date(e.date))}</td>
+            <td class="text-truncate" style="max-width:0;width:100%;">
+                <i class="bi ${DASH_UPCOMING_ICONS[e.type] || 'bi-dot'} text-muted me-1"></i>${esc(e.label)}
+                ${e.overdue ? '<span class="badge text-bg-danger">overdue</span>' : ''}
+                ${e.tag ? `<span class="badge text-bg-secondary">${esc(e.tag)}</span>` : ''}
+            </td>
+            <td class="text-end pe-0 text-nowrap ${e.amount !== null && e.amount > 0 ? 'text-success' : ''}">${e.amount === null ? '' : Fmt.amt(esc(ccSignedMoney(e.amount, 2)))}</td>
+        </tr>`).join('');
+    area.innerHTML = `
+        <table class="table table-sm mb-1"><tbody>${rows}</tbody></table>
+        <div class="d-flex flex-wrap justify-content-between small text-muted">
+            <span>${m.more ? `and ${m.more} more · ` : ''}until ${esc(Fmt.date(m.to))}</span>
+            <span>Going out: ${Fmt.amt(esc(ccMoney(m.outEur)))}</span>
+        </div>${notes}`;
+}
+window.loadDashboardUpcoming = loadDashboardUpcoming;
+
+// ── Dashboard: Month close card ─────────────────────────────────────────────
+
+/** The month-close state for the card: what is still open, and the figures. */
+function dashMonthCloseModel(mc) {
+    const c = mc || {};
+    const list = Array.isArray(c.checklist) ? c.checklist : [];
+    const open = list.filter(i => i && i.status !== 'ok');
+    const fig = c.figures || {};
+    let state;
+    if (c.closed) state = c.closed.stale ? 'closed_stale' : 'closed';
+    else state = c.ready ? 'ready' : 'open';
+    return {
+        month: c.month || null,
+        state,
+        total: list.length,
+        openCount: open.length,
+        open: open.map(i => ({ label: i.label || i.key || '', detail: i.detail || '', page: i.link_page || '' })),
+        figures: [
+            ['Income', fig.income_eur], ['Spending', fig.spending_eur],
+            ['Savings', fig.savings_eur], ['Net', fig.net_eur],
+        ].map(([label, value]) => ({ label, value: value === undefined ? null : value })),
+    };
+}
+window.dashMonthCloseModel = dashMonthCloseModel;
+
+const DASH_MC_STATE = {
+    closed: ['text-bg-success', 'closed'],
+    closed_stale: ['text-bg-warning', 'closed, changed since'],
+    ready: ['text-bg-primary', 'ready to close'],
+    open: ['text-bg-secondary', 'not closed'],
+};
+
+async function loadDashboardMonthClose() {
+    const area = document.getElementById('dashMcArea');
+    if (!area) return;
+    ccApplyHelpTitle('dashMcHelp', 'dashMonthClose');
+    let mc;
+    try {
+        mc = await window.apiClient.getMonthClose();
+    } catch (err) {
+        area.innerHTML = `<div class="text-muted small">The month close is ${CC_NA}: ${esc(err.message)}</div>`;
+        return;
+    }
+    const m = dashMonthCloseModel(mc);
+    const [badgeCls, badgeText] = DASH_MC_STATE[m.state];
+    const checks = m.openCount
+        ? `<ul class="list-unstyled small mb-0">${m.open.map(i => `
+            <li class="mb-1"><i class="bi bi-exclamation-circle text-warning me-1"></i><strong>${esc(i.label)}</strong>${i.detail ? ': ' + serverTextHtml(i.detail) : ''}
+            ${i.page ? `<a href="#" class="ms-1" data-page="${esc(i.page)}">open</a>` : ''}</li>`).join('')}</ul>`
+        : `<div class="small text-muted">${m.total ? `All ${m.total} checks pass.` : 'No checks to show.'}</div>`;
+    area.innerHTML = `
+        <div class="row g-3">
+            <div class="col-12 col-lg-7">
+                <div class="mb-2"><span class="fw-semibold">${esc(m.month ? monthKeyLabel(m.month) : '')}</span>
+                    <span class="badge ${badgeCls} ms-1">${esc(badgeText)}</span>
+                    ${m.openCount ? `<span class="small text-muted ms-1">${m.openCount} of ${m.total} checks need a look</span>` : ''}</div>
+                ${checks}
+            </div>
+            <div class="col-12 col-lg-5">
+                <div class="row g-2">${m.figures.map(f => `
+                    <div class="col-6"><div class="small text-muted">${esc(f.label)}</div><div class="fw-semibold">${Fmt.amt(esc(ccMoney(f.value)))}</div></div>`).join('')}
+                </div>
+            </div>
+        </div>`;
+}
+window.loadDashboardMonthClose = loadDashboardMonthClose;
+
+// ── Dashboard: Loans card ───────────────────────────────────────────────────
+
+/** Per loan: balance, share of the original amount repaid, payment, end date. */
+function dashLoansModel(loans) {
+    const num = v => (v === null || v === undefined || Number.isNaN(Number(v)) ? null : Number(v));
+    const rows = (Array.isArray(loans) ? loans : []).map(l => {
+        const balance = num(l.balance_eur);
+        const principal = num(l.principal);
+        // Only meaningful for a EUR loan with a known original amount
+        const repaid = balance !== null && principal && principal > 0 && (l.currency || 'EUR') === 'EUR'
+            ? Math.min(100, Math.max(0, (1 - balance / principal) * 100)) : null;
+        return {
+            name: l.name || 'Loan', lender: l.lender || '', balance,
+            repaidPct: repaid === null ? null : Math.round(repaid * 10) / 10,
+            payment: num(l.monthly_payment_eur), endDate: l.end_date || null,
+        };
+    });
+    const known = rows.filter(r => r.balance !== null);
+    return { rows, totalBalance: known.length ? known.reduce((s, r) => s + r.balance, 0) : null };
+}
+window.dashLoansModel = dashLoansModel;
+
+async function loadDashboardLoans() {
+    const card = document.getElementById('dashLoansCard');
+    const area = document.getElementById('dashLoansArea');
+    if (!card || !area) return;
+    ccApplyHelpTitle('dashLoansHelp', 'dashLoans');
+    let m;
+    try {
+        m = dashLoansModel(await window.apiClient.getLoans());
+    } catch (err) {
+        card.style.display = 'none';
+        return;
+    }
+    // Hidden until a loan exists, like Goals and Budget
+    card.style.display = m.rows.length ? '' : 'none';
+    area.innerHTML = m.rows.map(r => `
+        <div class="mb-3">
+            <div class="d-flex flex-wrap justify-content-between align-items-baseline gap-2">
+                <span class="fw-semibold">${esc(r.name)}${r.lender ? ` <span class="small text-muted fw-normal">${esc(r.lender)}</span>` : ''}</span>
+                <span class="fs-5 fw-bold">${Fmt.amt(esc(ccMoney(r.balance)))}</span>
+            </div>
+            ${r.repaidPct === null ? '' : `
+            <div class="progress my-1" style="height:.5rem;" role="progressbar" aria-label="Share repaid" aria-valuenow="${r.repaidPct}" aria-valuemin="0" aria-valuemax="100">
+                <div class="progress-bar" style="width:${r.repaidPct}%;background:var(--viz-good, var(--bs-success));"></div>
+            </div>`}
+            <div class="d-flex flex-wrap justify-content-between small text-muted gap-2">
+                <span>${r.repaidPct === null ? '' : esc(Fmt.num(r.repaidPct, 1, 1)) + '% repaid'}</span>
+                <span>${Fmt.amt(esc(ccMoney(r.payment, 2)))} a month${r.endDate ? ' · until ' + esc(Fmt.date(r.endDate)) : ''}</span>
+            </div>
+        </div>`).join('')
+        + (m.rows.length > 1 ? `<div class="small text-muted">Total owed: ${Fmt.amt(esc(ccMoney(m.totalBalance)))}</div>` : '');
+}
+window.loadDashboardLoans = loadDashboardLoans;
+
+// ── Dashboard: Subscriptions card ───────────────────────────────────────────
+
+/**
+ * Recurring charges for the card: the totals, the most expensive live series
+ * and what needs a look (a missed charge, or a charge that came back after the
+ * series was marked cancelled or paid elsewhere).
+ */
+function dashSubsModel(rec, max = 5) {
+    const r = rec || {};
+    const num = v => (v === null || v === undefined || Number.isNaN(Number(v)) ? null : Number(v));
+    const items = Array.isArray(r.items) ? r.items : [];
+    // A series with a live resolution is not being paid; a stale one is again
+    const live = items.filter(i => i && (!i.resolution || i.resolution_stale));
+    const top = live.slice().sort((a, b) => (num(b.annual_amount_eur) || 0) - (num(a.annual_amount_eur) || 0));
+    return {
+        count: live.length,
+        monthly: num(r.monthly_total_eur),
+        yearly: num(r.annual_total_eur),
+        top: top.slice(0, max).map(i => ({ merchant: i.merchant || '', cadence: i.cadence || '', yearly: num(i.annual_amount_eur), missed: i.status === 'missed' })),
+        more: Math.max(0, top.length - max),
+        missed: live.filter(i => i.status === 'missed').map(i => i.merchant || ''),
+        returned: items.filter(i => i && i.resolution && i.resolution_stale).map(i => i.merchant || ''),
+    };
+}
+window.dashSubsModel = dashSubsModel;
+
+async function loadDashboardSubscriptions() {
+    const area = document.getElementById('dashSubsArea');
+    if (!area) return;
+    ccApplyHelpTitle('dashSubsHelp', 'dashSubscriptions');
+    let m;
+    try {
+        m = dashSubsModel(await window.apiClient.getSpendingRecurring({ sort: 'yearly_cost' }));
+    } catch (err) {
+        area.innerHTML = `<div class="text-muted small">Recurring charges are ${CC_NA}: ${esc(err.message)}</div>`;
+        return;
+    }
+    if (!m.count) {
+        area.innerHTML = '<div class="text-muted small">No recurring charges detected yet.</div>';
+        return;
+    }
+    const tile = (label, html) => `<div class="col-4"><div class="small text-muted">${esc(label)}</div><div class="fs-5 fw-bold">${html}</div></div>`;
+    const notes = [];
+    if (m.returned.length) notes.push(`<div class="small text-danger"><i class="bi bi-exclamation-triangle me-1"></i>Charged again after you marked it: ${esc(m.returned.join(', '))}</div>`);
+    if (m.missed.length) notes.push(`<div class="small text-warning"><i class="bi bi-exclamation-triangle me-1"></i>Due but not seen: ${esc(m.missed.join(', '))}</div>`);
+    area.innerHTML = `
+        <div class="row g-3">
+            <div class="col-12 col-lg-6">
+                <div class="row g-2">
+                    ${tile('Per year', Fmt.amt(esc(ccMoney(m.yearly))))}
+                    ${tile('Per month', Fmt.amt(esc(ccMoney(m.monthly))))}
+                    ${tile('Series', esc(String(m.count)))}
+                </div>
+                ${notes.length ? `<div class="mt-2">${notes.join('')}</div>` : ''}
+            </div>
+            <div class="col-12 col-lg-6">
+                <div class="small text-muted mb-1">Most expensive, per year</div>
+                <table class="table table-sm mb-0"><tbody>${m.top.map(t => `
+                    <tr>
+                        <td class="ps-0 text-truncate" style="max-width:0;width:100%;">${esc(t.merchant)} <span class="small text-muted">${esc(t.cadence)}</span></td>
+                        <td class="text-end pe-0 text-nowrap">${Fmt.amt(esc(ccMoney(t.yearly)))}</td>
+                    </tr>`).join('')}</tbody></table>
+                ${m.more ? `<div class="small text-muted mt-1">and ${m.more} more</div>` : ''}
+            </div>
+        </div>`;
+}
+window.loadDashboardSubscriptions = loadDashboardSubscriptions;
+
+// ── Dashboard: Latest movers card ───────────────────────────────────────────
+
+/** Rows for the two columns, plus the note about what the move is measured over. */
+function dashMoversModel(mv) {
+    const d = mv || {};
+    const rows = list => (Array.isArray(list) ? list : []).map(r => ({
+        symbol: r.symbol || '', name: r.name || '',
+        pct: r.change_pct, eur: r.change_eur, priceDate: r.price_date || null,
+    }));
+    const up = rows(d.up);
+    const down = rows(d.down);
+    return { up, down, empty: !up.length && !down.length, asOf: d.as_of || null, counted: d.counted || 0, skipped: d.skipped || 0 };
+}
+window.dashMoversModel = dashMoversModel;
+
+async function loadDashboardMovers() {
+    const area = document.getElementById('dashMoversArea');
+    if (!area) return;
+    ccApplyHelpTitle('dashMoversHelp', 'dashMovers');
+    let m;
+    try {
+        m = dashMoversModel(await window.apiClient.getMovers(3));
+    } catch (err) {
+        area.innerHTML = `<div class="text-muted small">Movers are ${CC_NA}: ${esc(err.message)}</div>`;
+        return;
+    }
+    if (m.empty) {
+        area.innerHTML = `<div class="text-muted small">${m.counted ? 'No price moved since the previous update.' : 'No position has two recent prices to compare yet.'}</div>`;
+        return;
+    }
+    const col = (title, list, cls) => `
+        <div class="col-12 col-md-6">
+            <div class="small text-muted mb-1">${esc(title)}</div>
+            ${list.length ? `<table class="table table-sm mb-0"><tbody>${list.map(r => `
+                <tr>
+                    <td class="ps-0 text-truncate" style="max-width:0;width:100%;" title="${esc(r.name)}"><span class="fw-semibold">${esc(r.symbol)}</span> <span class="small text-muted">${esc(r.name)}</span></td>
+                    <td class="text-end text-nowrap ${cls}">${esc((r.pct > 0 ? '+' : '') + Fmt.num(r.pct, 2, 2))}%</td>
+                    <td class="text-end pe-0 text-nowrap ${cls}">${Fmt.amt(esc(ccSignedMoney(r.eur)))}</td>
+                </tr>`).join('')}</tbody></table>` : '<div class="small text-muted">None.</div>'}
+        </div>`;
+    area.innerHTML = `
+        <div class="row g-3">${col('Up', m.up, 'text-success')}${col('Down', m.down, 'text-danger')}</div>
+        <div class="small text-muted mt-2">Since each asset's previous stored price${m.asOf ? `, latest ${esc(Fmt.date(m.asOf))}` : ''}${m.skipped ? ` · ${m.skipped} positions without a recent pair of prices left out` : ''}.</div>`;
+}
+window.loadDashboardMovers = loadDashboardMovers;

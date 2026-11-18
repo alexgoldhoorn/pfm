@@ -3755,6 +3755,15 @@ function createAPIClient() {
             return resp.json();
         },
 
+        // Held positions with the biggest latest price move: {up, down, as_of, counted, skipped}
+        async getMovers(limit = 3) {
+            const resp = await fetch(this.baseURL + '/api/v1/portfolios/movers?limit=' + encodeURIComponent(limit), {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(errorDetailFromBody(await resp.text(), 'Failed to load the movers'));
+            return resp.json();
+        },
+
         // Dashboard layout: {order: [block id], hidden: [block id]}; empty = default.
         async getDashboardLayout() {
             const resp = await fetch(this.baseURL + '/api/v1/system/dashboard-layout', {

@@ -845,12 +845,26 @@ def test_dashboard_blocks_can_be_moved_and_hidden(page, server_url):
         page.wait_for_load_state("networkidle")
         default = page.evaluate(order_js)
         assert default[0] == "attention" and default[-1] == "activity"
-        assert "networth" in default and "cashflow" in default
-        # The two new cards settle on a message or figures, never on "Loading…"
+        cards = {
+            "networth": "dashNwArea",
+            "cashflow": "dashCfArea",
+            "upcoming": "dashUpcomingArea",
+            "monthclose": "dashMcArea",
+            "subscriptions": "dashSubsArea",
+            "movers": "dashMoversArea",
+        }
+        assert set(cards) | {"loans"} <= set(default)
+        # Every card settles on a message or figures, never on "Loading…"
         page.wait_for_function(
-            "!document.getElementById('dashNwArea').textContent.includes('Loading')"
-            " && !document.getElementById('dashCfArea').textContent.includes('Loading')"
+            "ids => ids.every(i => !document.getElementById(i)"
+            ".textContent.includes('Loading'))",
+            arg=list(cards.values()),
         )
+        overflow = page.evaluate(
+            "document.documentElement.scrollWidth"
+            " - document.documentElement.clientWidth"
+        )
+        assert overflow <= 0, f"horizontal overflow of {overflow}px on the dashboard"
         assert not page.locator("#dashEditBar").is_visible()
         assert not page.locator(".dash-block-bar").first.is_visible()
 

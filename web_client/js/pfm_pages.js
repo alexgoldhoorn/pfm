@@ -457,6 +457,10 @@ function createPageManager() {
             if (window.loadDashboardGoals) window.loadDashboardGoals();
             if (window.loadDashboardNetWorth) window.loadDashboardNetWorth();
             if (window.loadDashboardCashflow) window.loadDashboardCashflow();
+            ['loadDashboardUpcoming', 'loadDashboardMonthClose', 'loadDashboardLoans',
+                'loadDashboardSubscriptions', 'loadDashboardMovers'].forEach(fn => {
+                if (window[fn]) window[fn]();
+            });
 
             // Headline is positions + all idle cash. The positions' current
             // value sits under Invested, next to the cost it compares with.

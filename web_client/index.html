@@ -27,7 +27,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-matrix@2.0.1/dist/chartjs-chart-matrix.min.js"></script>
 
     <!-- Custom CSS -->
-    <link href="css/styles.css?v=1792000006" rel="stylesheet">
+    <link href="css/styles.css?v=1792000007" rel="stylesheet">
     <style>
         /* Privacy mode: blur monetary amounts until hovered */
         body.pfm-privacy .pfm-amt { filter: blur(0.45em); transition: filter .12s ease; user-select: none; }
@@ -597,6 +597,24 @@
                     </div>
                     </div>
 
+                    <!-- Latest movers: held positions with the biggest latest price move, filled by loadDashboardMovers. -->
+                    <div class="dash-block" data-block="movers" data-block-title="Latest movers">
+                    <div class="row g-3 mb-4" id="dashMoversCard">
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <span><i class="bi bi-arrow-down-up me-2"></i>Latest movers
+                                        <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" id="dashMoversHelp"></i></span>
+                                    <a href="#" class="small" data-page="assets">Assets <i class="bi bi-arrow-right"></i></a>
+                                </div>
+                                <div class="card-body">
+                                    <div id="dashMoversArea"><div class="text-muted small">Loading…</div></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    </div>
+
                     <!-- Cash-flow outlook: bank balance now, projected month end, the low point
                          ahead and the next bills, filled by loadDashboardCashflow. -->
                     <div class="dash-block" data-block="cashflow" data-block-title="Cash-flow outlook">
@@ -610,6 +628,24 @@
                                 </div>
                                 <div class="card-body">
                                     <div id="dashCfArea"><div class="text-muted small">Loading…</div></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    </div>
+
+                    <!-- Upcoming: bills, planned items, tax and decision reviews for the next 30 days, filled by loadDashboardUpcoming. -->
+                    <div class="dash-block" data-block="upcoming" data-block-title="Upcoming">
+                    <div class="row g-3 mb-4" id="dashUpcomingCard">
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <span><i class="bi bi-calendar-event me-2"></i>Upcoming
+                                        <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" id="dashUpcomingHelp"></i></span>
+                                    <a href="#" class="small" data-page="budget">Forecast <i class="bi bi-arrow-right"></i></a>
+                                </div>
+                                <div class="card-body">
+                                    <div id="dashUpcomingArea"><div class="text-muted small">Loading…</div></div>
                                 </div>
                             </div>
                         </div>
@@ -667,6 +703,42 @@
                     </div>
                     </div>
 
+                    <!-- Subscriptions: recurring charges by yearly cost, filled by loadDashboardSubscriptions. -->
+                    <div class="dash-block" data-block="subscriptions" data-block-title="Subscriptions">
+                    <div class="row g-3 mb-4" id="dashSubsCard">
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <span><i class="bi bi-arrow-repeat me-2"></i>Subscriptions
+                                        <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" id="dashSubsHelp"></i></span>
+                                    <a href="#" class="small" data-page="spending">Spending <i class="bi bi-arrow-right"></i></a>
+                                </div>
+                                <div class="card-body">
+                                    <div id="dashSubsArea"><div class="text-muted small">Loading…</div></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    </div>
+
+                    <!-- Loans: balance, share repaid and payment per loan, filled by loadDashboardLoans. Hidden without a loan. -->
+                    <div class="dash-block" data-block="loans" data-block-title="Loans">
+                    <div class="row g-3 mb-4" id="dashLoansCard" style="display:none;">
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <span><i class="bi bi-house-door me-2"></i>Loans
+                                        <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" id="dashLoansHelp"></i></span>
+                                    <a href="#" class="small" data-page="loans">Loans &amp; Mortgage <i class="bi bi-arrow-right"></i></a>
+                                </div>
+                                <div class="card-body">
+                                    <div id="dashLoansArea"><div class="text-muted small">Loading…</div></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    </div>
+
                     <div class="dash-block" data-block="goals" data-block-title="Goals">
                     <!-- Goals (hidden until a goal exists) -->
                     <div class="row g-3 mb-4" id="dashGoalsCard" style="display:none;">
@@ -705,6 +777,24 @@
                                     <div id="dashBudgetArea">
                                         <div class="text-muted small">Loading…</div>
                                     </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    </div>
+
+                    <!-- Month close: last month's checklist and figures, filled by loadDashboardMonthClose. -->
+                    <div class="dash-block" data-block="monthclose" data-block-title="Month close">
+                    <div class="row g-3 mb-4" id="dashMcCard">
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <span><i class="bi bi-calendar2-check me-2"></i>Month close
+                                        <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" id="dashMcHelp"></i></span>
+                                    <a href="#" class="small" data-page="budget">Budget <i class="bi bi-arrow-right"></i></a>
+                                </div>
+                                <div class="card-body">
+                                    <div id="dashMcArea"><div class="text-muted small">Loading…</div></div>
                                 </div>
                             </div>
                         </div>
@@ -5765,7 +5855,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 
     <!-- Centralized help text (must load before the app scripts) -->
-    <script src="js/help_text.js?v=1792000006"></script>
+    <script src="js/help_text.js?v=1792000007"></script>
 
     <!-- App scripts: portfolio_debug.js was split into these four classic
          scripts. They share one global scope and MUST load in this order:
@@ -5924,10 +6014,10 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
       </div>
     </div>
 
-    <script src="js/pfm_core.js?v=1792000006"></script>
-    <script src="js/pfm_pages.js?v=1792000006"></script>
-    <script src="js/pfm_analytics.js?v=1792000006"></script>
-    <script src="js/pfm_features.js?v=1792000006"></script>
+    <script src="js/pfm_core.js?v=1792000007"></script>
+    <script src="js/pfm_pages.js?v=1792000007"></script>
+    <script src="js/pfm_analytics.js?v=1792000007"></script>
+    <script src="js/pfm_features.js?v=1792000007"></script>
     <script>
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('/sw.js');

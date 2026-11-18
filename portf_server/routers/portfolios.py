@@ -5,7 +5,7 @@ Handles portfolio management and analysis.
 """
 
 import time
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from typing import Literal, Optional
 from fastapi import APIRouter, HTTPException, status, Depends, Request, Query
 from pydantic import BaseModel, Field
@@ -15,6 +15,7 @@ from portf_manager import market
 from portf_manager.database import Database
 from portf_manager.positions import compute_positions
 from portf_manager.services.cash_ledger import cash_by_portfolio
+from portf_manager.services.movers import compute_movers
 from ..dependencies import get_database
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager
@@ -562,3 +563,24 @@ async def clear_portfolio_transactions(
     if include_bookings:
         deleted_bookings = database.delete_bookings_by_portfolio(portfolio_id)
     return {"deleted": deleted, "deleted_bookings": deleted_bookings}
+
+
+@router.get("/movers")
+def get_movers(
+    limit: int = Query(3, ge=1, le=10, description="Gainers and losers to return"),
+    database: Database = Depends(get_database),
+) -> dict:
+    """Held positions with the biggest latest price move, by EUR effect.
+
+    A move is the change between an asset's last two stored prices, so it reads
+    "since the previous price". Stored prices only: nothing is fetched.
+    """
+    holdings = get_holdings(portfolio_id=None, database=database)["holdings"]
+    today = date.today()
+    # Three weeks back is enough to find the previous price of a weekly-priced asset
+    since = (today - timedelta(days=21)).isoformat()
+    prices = {
+        h["asset_id"]: database.get_price_history(h["asset_id"], start_date=since)
+        for h in holdings
+    }
+    return compute_movers(holdings, prices, today, limit=limit)
