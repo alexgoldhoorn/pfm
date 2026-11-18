@@ -103,7 +103,7 @@ def test_generic_csv_is_detected_and_saved(tmp_path):
         "parsed": 3,
         "imported": 3,
         "duplicates_skipped": 0,
-        "possible_duplicates": 0,
+        "bookings_to_review": 0,
         "bookings_imported": 0,
         "new_assets": 2,
         "first_date": "2026-01-05",
@@ -166,12 +166,12 @@ def test_second_import_of_the_same_file_imports_nothing(tmp_path):
     assert d["imported"] == 0
     assert d["bookings_imported"] == 0
     assert d["duplicates_skipped"] == 2
-    assert d["possible_duplicates"] == 0
+    assert d["bookings_to_review"] == 0
     assert d["first_date"] is None and d["last_date"] is None
     assert _counts(db) == before
 
 
-def test_near_date_booking_is_saved_and_counted_as_possible(tmp_path):
+def test_near_date_booking_is_left_out_and_counted_for_review(tmp_path):
     client, db = _make_client(tmp_path)
     pid = db.create_portfolio("Example Exchange")
     db.create_booking("2026-03-01", "Deposit", 500.0, "EUR", portfolio_id=pid)
@@ -179,11 +179,15 @@ def test_near_date_booking_is_saved_and_counted_as_possible(tmp_path):
     r = _post(client, pid, COINBASE_NEAR)
     assert r.status_code == 200, r.text
     d = r.json()
-    assert d["bookings_imported"] == 2
-    assert d["possible_duplicates"] == 1
+    assert "possible_duplicates" not in d
+    assert d["bookings_to_review"] == 1
+    assert d["bookings_imported"] == 1
     assert d["duplicates_skipped"] == 0
-    assert any("please review" in w for w in d["warnings"])
-    assert _counts(db)[1] == 3
+    assert any(
+        "web Import page" in w and w.startswith("1 booking") for w in d["warnings"]
+    )
+    # the stored deposit, plus the withdrawal; the near deposit is not saved
+    assert _counts(db)[1] == 2
 
 
 def test_bank_portfolio_is_refused(tmp_path):

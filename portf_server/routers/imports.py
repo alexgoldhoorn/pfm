@@ -1292,16 +1292,14 @@ def _import_broker_file(
     _flag_duplicates(db, previews, bookings, portfolio_id)
 
     # The web default: the rows its preview leaves ticked. A duplicate and a
-    # row the parser marked "skip" stay out; a booking matched only by a near
-    # date is saved anyway and counted, for the caller to review.
+    # row the parser marked "skip" stay out, and so does a booking matched only by
+    # a near date (it may be the same transfer under another date).
     tx_dups = [t for t in previews if t.is_duplicate]
     parser_skipped = [t for t in previews if t.skip and not t.is_duplicate]
     selected_tx = [t for t in previews if not t.is_duplicate and not t.skip]
     exact_dups = [b for b in bookings if b.is_duplicate and not b._near_match]
     near = [b for b in bookings if b.is_duplicate and b._near_match]
-    for bk in near:
-        bk.force = True
-    selected_bk = [b for b in bookings if not b.is_duplicate or b._near_match]
+    selected_bk = [b for b in bookings if not b.is_duplicate]
 
     body = SaveRequest(
         transactions=selected_tx,
@@ -1327,8 +1325,8 @@ def _import_broker_file(
         )
     if near:
         warnings.append(
-            f"{len(near)} booking(s) look like stored ones a few days apart: "
-            "saved, please review"
+            f"{len(near)} booking(s) look like stored ones a few days apart and "
+            "were left out: import them from the web Import page if they are real"
         )
     settle = [e for e in saved.errors if e.startswith(_SETTLE_FAILED)]
     if settle:
@@ -1344,7 +1342,7 @@ def _import_broker_file(
         "parsed": len(previews) + len(bookings),
         "imported": saved.saved,
         "duplicates_skipped": len(tx_dups) + len(exact_dups) + late_dups,
-        "possible_duplicates": len(near),
+        "bookings_to_review": len(near),
         "bookings_imported": saved.saved_bookings,
         "new_assets": len(saved.new_assets),
         "first_date": saved.date_from,
@@ -1370,8 +1368,9 @@ def import_broker_file(
     All or nothing: bad input is a 400 and a row that fails to save is a 500;
     in both cases nothing from the call stays stored. Calls are serialised.
 
-    A booking that matches a stored one only by amount a few days apart is saved
-    and counted in ``possible_duplicates``.
+    A booking that matches a stored one only by amount a few days apart may be
+    the same transfer under another date: it is not saved and is counted in
+    ``bookings_to_review``, to import from the web Import page if it is real.
 
     Args:
         file: The statement.
@@ -1380,7 +1379,7 @@ def import_broker_file(
 
     Returns:
         ``{portfolio_id, portfolio_name, format, parsed, imported,
-        duplicates_skipped, possible_duplicates, bookings_imported,
+        duplicates_skipped, bookings_to_review, bookings_imported,
         new_assets, first_date, last_date, warnings}``: counts and dates only.
     """
     portfolio = db.get_portfolio(portfolio_id)
