@@ -215,6 +215,7 @@ def run_price_update(
             yf_to_db[yf_ticker] = sym
             yf_quote_ccy[yf_ticker] = None
 
+    fetch_failed = False
     try:
         prices_raw = api_client.fetch_latest_prices(list(yf_to_db.keys()))
 
@@ -293,13 +294,24 @@ def run_price_update(
                 api_errors.append(f"DB error for {sym}: {e}")
 
     except DataNotFoundError as e:
+        fetch_failed = True
         api_errors.append(f"Data not found: {e}")
     except APIError as e:
+        fetch_failed = True
         api_errors.append(f"API error: {e}")
     except Exception as e:
+        fetch_failed = True
         api_errors.append(f"Unexpected error: {e}")
 
     valuations_refreshed, valuation_errors = _refresh_valuations(db)
+
+    # the day's balance-sheet snapshot; a failure is logged, never a failed run
+    if not fetch_failed:
+        from portf_manager.services.networth_history import (
+            snapshot_after_price_update,
+        )
+
+        snapshot_after_price_update(db)
 
     duration = (datetime.now() - run_started).total_seconds()
     db.record_price_update_run(

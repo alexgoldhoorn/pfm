@@ -17,6 +17,7 @@ from portf_manager.services import loans as loan_calc
 from portf_manager.services import mortgage as mortgage_calc
 from portf_manager.services.balance_sheet import build_balance_sheet
 from portf_manager.services.indexa import refresh_account_valuations
+from portf_manager.services import networth_history
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
@@ -535,6 +536,41 @@ def get_balance_sheet(
 ):
     """Every asset and liability as a sourced, dated line, with totals."""
     return build_balance_sheet(db)
+
+
+@router.post("/history/snapshot")
+def take_history_snapshot(
+    db: Database = Depends(get_database), api_key_info: dict = Depends(_auth)
+) -> dict:
+    """Store today's balance-sheet snapshot (one a day; a repeat replaces it)."""
+    try:
+        return networth_history.take_snapshot(db)
+    except Exception as exc:
+        logger.warning("Net-worth snapshot failed: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Snapshot failed: {exc}")
+
+
+@router.get("/history")
+def get_history(
+    months: int = Query(24, ge=1, le=240),
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+) -> dict:
+    """Stored net-worth snapshots of the last ``months`` months, oldest first."""
+    return networth_history.get_history(db, months)
+
+
+@router.get("/history/change")
+def get_history_change(
+    start: Optional[date] = None,
+    end: Optional[date] = None,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+) -> dict:
+    """What moved net worth between two snapshots: saved, market, debt, property."""
+    if start and end and start >= end:
+        raise HTTPException(status_code=400, detail="start must be before end")
+    return networth_history.compute_change(db, start, end)
 
 
 @router.get("/")
