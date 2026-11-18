@@ -237,6 +237,9 @@ Full reference (dashboard layout, chart helpers, page-by-page wiring):
   (`help_text.js`); call `initTooltips()` after rendering tooltip-bearing markup.
 - Pure helpers are `window.`-exported so the DOM-free JS tests
   (`web_client/js/tests/`) can import them.
+- A new Dashboard block is a `.dash-block` wrapper with its own `data-block` id
+  directly inside `#dashBlocks`; never rename an existing id (saved layouts
+  reference it).
 - Check new pages at 390px width for horizontal overflow.
 - Installed app (PWA): `manifest.json` shortcuts open `/?page=<name>`; a shared
   statement is a `POST /share-target` answered by `sw.js`, never the backend, and

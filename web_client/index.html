@@ -27,7 +27,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-matrix@2.0.1/dist/chartjs-chart-matrix.min.js"></script>
 
     <!-- Custom CSS -->
-    <link href="css/styles.css?v=1792000005" rel="stylesheet">
+    <link href="css/styles.css?v=1792000006" rel="stylesheet">
     <style>
         /* Privacy mode: blur monetary amounts until hovered */
         body.pfm-privacy .pfm-amt { filter: blur(0.45em); transition: filter .12s ease; user-select: none; }
@@ -303,6 +303,9 @@
                             <button class="btn btn-sm btn-outline-primary" id="refreshPricesBtn" onclick="triggerPriceUpdate()" title="Fetch latest prices from Yahoo Finance">
                                 <i class="bi bi-graph-up-arrow me-sm-1" id="refreshPricesIcon"></i><span id="refreshPricesLabel" class="d-none d-sm-inline">Refresh prices</span>
                             </button>
+                            <button class="btn btn-sm btn-outline-secondary" id="dashCustomizeBtn" title="Reorder or hide dashboard blocks" aria-label="Customize dashboard">
+                                <i class="bi bi-sliders me-sm-1"></i><span class="d-none d-sm-inline">Customize</span>
+                            </button>
                             <button class="btn btn-sm btn-outline-secondary" id="refreshTransactions" title="Refresh dashboard data" aria-label="Refresh dashboard data">
                                 <i class="bi bi-arrow-clockwise me-sm-1"></i><span class="d-none d-sm-inline">Refresh</span>
                             </button>
@@ -381,6 +384,17 @@
                         </div>
                     </div>
 
+                    <!-- Customize bar (edit mode only) and the movable blocks. Each .dash-block
+                         is one unit the user can reorder or hide; see initDashLayout. -->
+                    <div id="dashEditBar" class="alert alert-secondary py-2 px-3 mb-3">
+                        <div class="d-flex flex-wrap align-items-center gap-2">
+                            <span class="small flex-grow-1">Drag a block to move it, or use the arrows. The eye hides a block. The KPI tiles stay on top.</span>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="dashLayoutReset">Reset layout</button>
+                            <button type="button" class="btn btn-sm btn-primary" id="dashLayoutDone">Done</button>
+                        </div>
+                    </div>
+                    <div id="dashBlocks">
+                    <div class="dash-block" data-block="attention" data-block-title="Needs attention">
                     <!-- Needs-attention strip: one slim line combining price alerts
                          (BUY/SELL/WATCH/DATA) and action items. Each part expands
                          in place; hidden entirely when both are empty. -->
@@ -393,7 +407,9 @@
                         </div>
                         <div id="dashAttentionDetail" class="pfm-attn-detail" style="display:none;"></div>
                     </div>
+                    </div>
 
+                    <div class="dash-block" data-block="progress" data-block-title="Your progress">
                     <!-- Your progress: rated tiles, filled by loadDashboardProgress.
                          Hidden when there is nothing to show yet. -->
                     <div id="dashProgress" class="mb-4" style="display:none;">
@@ -404,7 +420,9 @@
                         <div class="row g-3 row-cols-2 row-cols-md-4" id="dashProgressTiles"></div>
                         <div class="small text-muted mt-2" id="dashProgressNote"></div>
                     </div>
+                    </div>
 
+                    <div class="dash-block" data-block="risk" data-block-title="Risk">
                     <!-- Risk, last 12 months: rated tiles, filled by loadDashboardRisk.
                          Hidden until there is enough snapshot history. -->
                     <div id="dashRisk" class="mb-4" style="display:none;">
@@ -415,7 +433,28 @@
                         <div class="row g-3 row-cols-2 row-cols-md-4" id="dashRiskTiles"></div>
                         <div class="small text-muted mt-2" id="dashRiskNote"></div>
                     </div>
+                    </div>
 
+                    <!-- Net worth: latest stored balance sheet, what changed and a line chart
+                         of the daily snapshots, filled by loadDashboardNetWorth. -->
+                    <div class="dash-block" data-block="networth" data-block-title="Net worth">
+                    <div class="row g-3 mb-4" id="dashNwCard">
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <span><i class="bi bi-graph-up-arrow me-2"></i>Net worth
+                                        <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" id="dashNwHelp"></i></span>
+                                    <a href="#" class="small" data-page="networth">Net Worth <i class="bi bi-arrow-right"></i></a>
+                                </div>
+                                <div class="card-body">
+                                    <div id="dashNwArea"><div class="text-muted small">Loading…</div></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    </div>
+
+                    <div class="dash-block" data-block="investments" data-block-title="Investments">
                     <!-- Investments -->
                     <div class="dash-section-label">Investments</div>
                     <div class="row g-3 mb-3">
@@ -556,7 +595,28 @@
                             </div>
                         </div>
                     </div>
+                    </div>
 
+                    <!-- Cash-flow outlook: bank balance now, projected month end, the low point
+                         ahead and the next bills, filled by loadDashboardCashflow. -->
+                    <div class="dash-block" data-block="cashflow" data-block-title="Cash-flow outlook">
+                    <div class="row g-3 mb-4" id="dashCfCard">
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <span><i class="bi bi-water me-2"></i>Cash-flow outlook
+                                        <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" id="dashCfHelp"></i></span>
+                                    <a href="#" class="small" data-page="budget">Forecast <i class="bi bi-arrow-right"></i></a>
+                                </div>
+                                <div class="card-body">
+                                    <div id="dashCfArea"><div class="text-muted small">Loading…</div></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    </div>
+
+                    <div class="dash-block" data-block="cash" data-block-title="Cash &amp; spending">
                     <!-- Cash & spending -->
                     <div class="dash-section-label">Cash &amp; spending</div>
                     <div class="row g-3 mb-4">
@@ -605,7 +665,9 @@
                             </div>
                         </div>
                     </div>
+                    </div>
 
+                    <div class="dash-block" data-block="goals" data-block-title="Goals">
                     <!-- Goals (hidden until a goal exists) -->
                     <div class="row g-3 mb-4" id="dashGoalsCard" style="display:none;">
                         <div class="col-12">
@@ -625,7 +687,9 @@
                             </div>
                         </div>
                     </div>
+                    </div>
 
+                    <div class="dash-block" data-block="budget" data-block-title="Budget this month">
                     <!-- Budget (hidden until an active budget exists) -->
                     <div class="row g-3 mb-4" id="dashBudgetCard" style="display:none;">
                         <div class="col-12">
@@ -645,7 +709,9 @@
                             </div>
                         </div>
                     </div>
+                    </div>
 
+                    <div class="dash-block" data-block="thisweek" data-block-title="This week">
                     <!-- This week: the top Action Items (folded groups count as one line),
                          filled by renderDashThisWeek. Hidden when nothing is open. -->
                     <div class="row g-3 mb-4" id="dashThisWeek" style="display:none;">
@@ -662,10 +728,12 @@
                             </div>
                         </div>
                     </div>
+                    </div>
 
+                    <div class="dash-block" data-block="activity" data-block-title="Recent activity">
                     <!-- Activity -->
                     <div class="dash-section-label">Recent activity</div>
-                    <div class="row g-3">
+                    <div class="row g-3 mb-4">
                         <div class="col-12">
                             <div class="card">
                                 <div class="card-header d-flex justify-content-between align-items-center">
@@ -698,6 +766,8 @@
                                 </div>
                             </div>
                         </div>
+                    </div>
+                    </div>
                     </div>
                 </div>
 
@@ -5691,9 +5761,11 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
     <!-- Sanitises that Markdown: model output is untrusted (see safeMarkdownHtml) -->
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+    <!-- SortableJS: drag-to-reorder for the dashboard blocks (arrows work without it) -->
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 
     <!-- Centralized help text (must load before the app scripts) -->
-    <script src="js/help_text.js?v=1792000005"></script>
+    <script src="js/help_text.js?v=1792000006"></script>
 
     <!-- App scripts: portfolio_debug.js was split into these four classic
          scripts. They share one global scope and MUST load in this order:
@@ -5852,10 +5924,10 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
       </div>
     </div>
 
-    <script src="js/pfm_core.js?v=1792000005"></script>
-    <script src="js/pfm_pages.js?v=1792000005"></script>
-    <script src="js/pfm_analytics.js?v=1792000005"></script>
-    <script src="js/pfm_features.js?v=1792000005"></script>
+    <script src="js/pfm_core.js?v=1792000006"></script>
+    <script src="js/pfm_pages.js?v=1792000006"></script>
+    <script src="js/pfm_analytics.js?v=1792000006"></script>
+    <script src="js/pfm_features.js?v=1792000006"></script>
     <script>
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('/sw.js');

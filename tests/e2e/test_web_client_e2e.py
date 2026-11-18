@@ -830,3 +830,67 @@ def test_shortcut_launch_and_shared_statement_import(page, server_url):
     )
     assert again == 0
     assert page.errors == []
+
+
+def test_dashboard_blocks_can_be_moved_and_hidden(page, server_url):
+    headers = {"X-API-Key": API_KEY}
+    layout_url = f"{server_url}/api/v1/system/dashboard-layout"
+    order_js = (
+        "[...document.querySelectorAll('#dashBlocks > .dash-block')]"
+        ".map(b => b.dataset.block)"
+    )
+    try:
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.goto(f"{server_url}/index.html")
+        page.wait_for_load_state("networkidle")
+        default = page.evaluate(order_js)
+        assert default[0] == "attention" and default[-1] == "activity"
+        assert "networth" in default and "cashflow" in default
+        # The two new cards settle on a message or figures, never on "Loading…"
+        page.wait_for_function(
+            "!document.getElementById('dashNwArea').textContent.includes('Loading')"
+            " && !document.getElementById('dashCfArea').textContent.includes('Loading')"
+        )
+        assert not page.locator("#dashEditBar").is_visible()
+        assert not page.locator(".dash-block-bar").first.is_visible()
+
+        # Edit mode: every block is one bar, even one that hides itself when empty
+        page.click("#dashCustomizeBtn")
+        assert page.locator("#dashEditBar").is_visible()
+        assert page.locator(".dash-block-bar:visible").count() == len(default)
+        overflow = page.evaluate(
+            "document.documentElement.scrollWidth"
+            " - document.documentElement.clientWidth"
+        )
+        assert overflow <= 0, f"horizontal overflow of {overflow}px in edit mode"
+
+        # Move "Recent activity" up one place and hide "Risk"; both are saved
+        with page.expect_response(lambda r: r.url == layout_url) as saved:
+            page.click("[data-block='activity'] [data-dash-move='-1']")
+        assert saved.value.status == 200
+        with page.expect_response(lambda r: r.url == layout_url) as saved:
+            page.click("[data-block='risk'] [data-dash-eye]")
+        assert saved.value.status == 200
+        moved = page.evaluate(order_js)
+        assert moved[-2:] == ["activity", default[-2]]
+        page.click("#dashLayoutDone")
+        assert not page.locator("#dashEditBar").is_visible()
+        assert not page.locator("[data-block='risk']").is_visible()
+
+        stored = httpx.get(layout_url, headers=headers).json()
+        assert stored == {"order": moved, "hidden": ["risk"]}
+
+        # A fresh load shows the saved layout
+        page.goto(f"{server_url}/index.html")
+        page.wait_for_load_state("networkidle")
+        assert page.evaluate(order_js) == moved
+        assert page.evaluate(
+            "document.querySelector('[data-block=risk]')"
+            ".classList.contains('dash-block-off')"
+        )
+        assert page.errors == []
+    finally:
+        # The server is shared by the module: leave the default layout behind
+        httpx.put(layout_url, json={"order": [], "hidden": []}, headers=headers)
+        page.evaluate("localStorage.removeItem('pfmDashLayout')")
+        page.set_viewport_size({"width": 1280, "height": 900})

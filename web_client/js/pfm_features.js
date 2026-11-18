@@ -14127,3 +14127,383 @@ function _wireBgMonthClose() {
         window.navigationManager.showPage('reports');
     });
 }
+
+// ── Dashboard layout: movable, hideable blocks ──────────────────────────────
+// Every direct `.dash-block` child of #dashBlocks is one unit. The saved layout
+// is {order, hidden} of block ids, stored on the server (app_settings) so every
+// device shows the same dashboard; localStorage only holds a copy to apply
+// before the server answers, so the page does not jump on load.
+
+/**
+ * The layout to show: the saved order limited to blocks that exist, with any
+ * block the saved layout does not mention placed after its nearest default
+ * predecessor (so a block added in a later version lands where it was designed
+ * to sit). Unknown and repeated ids are dropped.
+ */
+function dashLayoutResolve(defaults, saved) {
+    const known = new Set(defaults);
+    const s = saved || {};
+    const order = [];
+    (Array.isArray(s.order) ? s.order : []).forEach(id => {
+        if (known.has(id) && !order.includes(id)) order.push(id);
+    });
+    defaults.forEach((id, i) => {
+        if (order.includes(id)) return;
+        let at = 0;
+        for (let j = i - 1; j >= 0; j--) {
+            const k = order.indexOf(defaults[j]);
+            if (k !== -1) { at = k + 1; break; }
+        }
+        order.splice(at, 0, id);
+    });
+    const hidden = [];
+    (Array.isArray(s.hidden) ? s.hidden : []).forEach(id => {
+        if (known.has(id) && !hidden.includes(id)) hidden.push(id);
+    });
+    return { order, hidden };
+}
+window.dashLayoutResolve = dashLayoutResolve;
+
+/** `order` with `id` moved one place up (delta -1) or down (+1); ends stay put. */
+function dashLayoutMove(order, id, delta) {
+    const out = order.slice();
+    const i = out.indexOf(id);
+    const j = i + delta;
+    if (i === -1 || j < 0 || j >= out.length) return out;
+    out.splice(i, 1);
+    out.splice(j, 0, id);
+    return out;
+}
+window.dashLayoutMove = dashLayoutMove;
+
+const DASH_LAYOUT_CACHE = 'pfmDashLayout';
+const _dashLayout = { defaults: null, current: null, loaded: false, wired: false, sortable: null };
+
+function _dashBlockEls() {
+    const root = document.getElementById('dashBlocks');
+    return root ? Array.from(root.children).filter(el => el.classList.contains('dash-block')) : [];
+}
+
+function _dashLayoutCacheRead() {
+    try { return JSON.parse(localStorage.getItem(DASH_LAYOUT_CACHE) || 'null'); } catch (e) { return null; }
+}
+
+function _dashLayoutCacheWrite(layout) {
+    try { localStorage.setItem(DASH_LAYOUT_CACHE, JSON.stringify(layout)); } catch (e) { /* private mode */ }
+}
+
+// Put the blocks in the layout's order and mark the hidden ones.
+function applyDashLayout(saved) {
+    const root = document.getElementById('dashBlocks');
+    if (!root) return;
+    const els = _dashBlockEls();
+    if (!_dashLayout.defaults) _dashLayout.defaults = els.map(el => el.dataset.block);
+    const layout = dashLayoutResolve(_dashLayout.defaults, saved);
+    _dashLayout.current = layout;
+    const byId = {};
+    els.forEach(el => { byId[el.dataset.block] = el; });
+    layout.order.forEach(id => root.appendChild(byId[id]));
+    els.forEach(el => {
+        const off = layout.hidden.includes(el.dataset.block);
+        el.classList.toggle('dash-block-off', off);
+        const eye = el.querySelector('[data-dash-eye]');
+        if (eye) {
+            const title = el.dataset.blockTitle || el.dataset.block;
+            eye.setAttribute('aria-label', (off ? 'Show ' : 'Hide ') + title);
+            eye.setAttribute('title', off ? 'Hidden. Show this block' : 'Hide this block');
+            eye.innerHTML = `<i class="bi ${off ? 'bi-eye-slash' : 'bi-eye'}"></i>`;
+        }
+    });
+}
+window.applyDashLayout = applyDashLayout;
+
+async function _dashLayoutSave() {
+    const layout = _dashLayout.current;
+    _dashLayoutCacheWrite(layout);
+    try {
+        await window.apiClient.saveDashboardLayout(layout);
+    } catch (err) {
+        notify('Could not save the dashboard layout: ' + err.message, 'danger');
+    }
+}
+
+function setDashEditing(on) {
+    const root = document.getElementById('dashBlocks');
+    if (!root) return;
+    root.classList.toggle('dash-editing', on);
+    document.getElementById('dashEditBar')?.classList.toggle('dash-edit-on', on);
+    document.getElementById('dashCustomizeBtn')?.classList.toggle('active', on);
+    // Drag is an extra: without the library (blocked CDN) the arrows still work.
+    if (on && !_dashLayout.sortable && window.Sortable && typeof window.Sortable.create === 'function') {
+        try {
+            _dashLayout.sortable = window.Sortable.create(root, {
+                draggable: '.dash-block',
+                handle: '.dash-block-handle',
+                animation: 150,
+                onEnd: () => {
+                    const order = _dashBlockEls().map(el => el.dataset.block);
+                    applyDashLayout({ order, hidden: _dashLayout.current.hidden });
+                    _dashLayoutSave();
+                },
+            });
+        } catch (err) {
+            _dashLayout.sortable = null;
+        }
+    }
+}
+window.setDashEditing = setDashEditing;
+
+function _dashLayoutWire() {
+    const root = document.getElementById('dashBlocks');
+    _dashBlockEls().forEach(el => {
+        if (el.querySelector(':scope > .dash-block-bar')) return;
+        // data-block-title is authored markup; dataset gives it decoded, so escape.
+        const title = esc(el.dataset.blockTitle || el.dataset.block);
+        const bar = document.createElement('div');
+        bar.className = 'dash-block-bar';
+        bar.innerHTML = `
+            <span class="dash-block-handle" title="Drag to move"><i class="bi bi-grip-vertical text-muted"></i><span class="dash-block-title">${title}</span></span>
+            <button type="button" class="btn btn-sm btn-link" data-dash-move="-1" aria-label="Move ${title} up" title="Move up"><i class="bi bi-arrow-up"></i></button>
+            <button type="button" class="btn btn-sm btn-link" data-dash-move="1" aria-label="Move ${title} down" title="Move down"><i class="bi bi-arrow-down"></i></button>
+            <button type="button" class="btn btn-sm btn-link" data-dash-eye></button>`;
+        el.prepend(bar);
+    });
+    root.addEventListener('click', e => {
+        const btn = e.target.closest('[data-dash-move], [data-dash-eye]');
+        const block = btn && btn.closest('.dash-block');
+        if (!block || !_dashLayout.current) return;
+        const id = block.dataset.block;
+        const cur = _dashLayout.current;
+        if (btn.hasAttribute('data-dash-eye')) {
+            const hidden = cur.hidden.includes(id) ? cur.hidden.filter(x => x !== id) : cur.hidden.concat(id);
+            applyDashLayout({ order: cur.order, hidden });
+        } else {
+            applyDashLayout({ order: dashLayoutMove(cur.order, id, Number(btn.dataset.dashMove)), hidden: cur.hidden });
+            btn.focus();
+        }
+        _dashLayoutSave();
+    });
+    document.getElementById('dashCustomizeBtn')?.addEventListener('click', () =>
+        setDashEditing(!root.classList.contains('dash-editing')));
+    document.getElementById('dashLayoutDone')?.addEventListener('click', () => setDashEditing(false));
+    document.getElementById('dashLayoutReset')?.addEventListener('click', async () => {
+        const ok = await confirmDialog({
+            title: 'Reset the dashboard layout?',
+            message: 'Every block goes back to its default place and hidden blocks are shown again.',
+            confirmLabel: 'Reset',
+        });
+        if (!ok) return;
+        applyDashLayout(null);
+        _dashLayoutSave();
+    });
+}
+
+// Called on every dashboard load: wires once, then asks the server once.
+async function initDashLayout() {
+    const root = document.getElementById('dashBlocks');
+    if (!root) return;
+    if (!_dashLayout.wired) {
+        _dashLayout.wired = true;
+        _dashLayoutWire();
+        applyDashLayout(_dashLayoutCacheRead());
+    }
+    if (_dashLayout.loaded) return;
+    try {
+        const saved = await window.apiClient.getDashboardLayout();
+        _dashLayout.loaded = true;
+        // Don't move blocks under the user's hands if they already started editing.
+        if (!root.classList.contains('dash-editing')) applyDashLayout(saved);
+        _dashLayoutCacheWrite(_dashLayout.current);
+    } catch (err) {
+        // The cached (or default) layout stays; the next dashboard load retries.
+    }
+}
+window.initDashLayout = initDashLayout;
+
+// ── Dashboard: Net worth card ───────────────────────────────────────────────
+
+/**
+ * The "what changed" window the card shows: the last month when the history
+ * reaches back that far, else since the first snapshot; null under two snapshots.
+ */
+function dashNwWindow(history) {
+    const wins = nwChangeWindows(history);
+    if (!wins.length) return null;
+    return wins.find(w => w.key === '1m' && w.available) || wins.find(w => w.key === 'all');
+}
+window.dashNwWindow = dashNwWindow;
+
+let _dashNwChart = null;
+
+async function loadDashboardNetWorth() {
+    const area = document.getElementById('dashNwArea');
+    if (!area) return;
+    ccApplyHelpTitle('dashNwHelp', 'dashNetWorth');
+    let history;
+    try {
+        history = await window.apiClient.getNetworthSnapshots(240);
+    } catch (err) {
+        area.innerHTML = `<div class="text-muted small">Net worth history is ${CC_NA}: ${esc(err.message)}</div>`;
+        return;
+    }
+    const m = nwHistoryModel(history, 'total');
+    if (!m.count) {
+        area.innerHTML = `<div class="text-muted small">${esc(m.note)}</div>`;
+        return;
+    }
+    const latest = history.snapshots[m.count - 1];
+    const win = dashNwWindow(history);
+    let change = null;
+    let changeError = null;
+    if (win) {
+        try {
+            change = nwChangeModel(await window.apiClient.getNetworthSnapshotChange(win.start, win.end));
+        } catch (err) {
+            changeError = err.message;
+        }
+    }
+    let changeHtml;
+    if (!win) changeHtml = `<div class="small text-muted mt-2">${esc(m.note)}</div>`;
+    else if (!change) changeHtml = `<div class="small text-muted mt-2">What changed is ${CC_NA}: ${esc(changeError || '')}</div>`;
+    else {
+        const rows = change.rows.filter(r => !r.missing && r.text !== Fmt.money(0, 'EUR', 0));
+        changeHtml = `
+            <div class="small text-muted mt-2">${esc(win.label)}</div>
+            <div class="fs-5 fw-bold ${change.netClass}">${Fmt.amt(esc(change.net))}</div>
+            ${rows.map(r => `<div class="d-flex justify-content-between small"><span class="text-muted">${esc(r.label)}</span><span class="${r.cls}">${Fmt.amt(esc(r.text))}</span></div>`).join('')}`;
+    }
+    area.innerHTML = `
+        <div class="row g-3 align-items-center">
+            <div class="col-12 col-md-4">
+                <div class="small text-muted">As of ${esc(Fmt.date(latest.snapshot_date))}</div>
+                <div class="fs-3 fw-bold">${Fmt.amt(esc(ccMoney(latest.net_worth_eur)))}</div>
+                ${changeHtml}
+            </div>
+            <div class="col-12 col-md-8">
+                <div id="dashNwChartWrap" style="position:relative;height:190px;${m.hasChart ? '' : 'display:none;'}"><canvas id="dashNwChart"></canvas></div>
+            </div>
+        </div>`;
+    if (_dashNwChart) { _dashNwChart.destroy(); _dashNwChart = null; }
+    if (!m.hasChart) return;
+    try {
+        const s = m.series[0];
+        _dashNwChart = new Chart(document.getElementById('dashNwChart'), {
+            type: 'line',
+            data: {
+                labels: m.labels.map(d => Fmt.date(d)),
+                datasets: [{
+                    label: s.label, data: s.data, borderColor: cssVar(s.color), backgroundColor: cssVar(s.color),
+                    pointRadius: m.count > 60 ? 0 : 2, tension: 0.1, spanGaps: false,
+                }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false }, tooltip: { callbacks: chartEurTooltip } },
+                scales: {
+                    x: { ticks: { maxTicksLimit: 6 } },
+                    y: { ticks: { callback: v => Fmt.money(v, 'EUR', 0) } },
+                },
+            },
+        });
+    } catch (err) {
+        const wrap = document.getElementById('dashNwChartWrap');
+        if (wrap) wrap.style.display = 'none';
+    }
+}
+window.loadDashboardNetWorth = loadDashboardNetWorth;
+
+// ── Dashboard: Cash-flow outlook card ───────────────────────────────────────
+
+/**
+ * Text-free model of the forecast for the dashboard card. A figure the
+ * forecast could not work out stays null (the card prints "not available");
+ * bills dated before the data-through date are already in the balance.
+ */
+function dashCashflowModel(fc, maxBills = 5) {
+    const f = fc || {};
+    const num = v => (v === null || v === undefined || Number.isNaN(Number(v)) ? null : Number(v));
+    const through = f.data_through || null;
+    const tm = f.this_month || {};
+    const months = Array.isArray(f.next_months) ? f.next_months : [];
+    let low = null;
+    months.forEach(mo => {
+        const v = num(mo.projected_balance_eur);
+        if (v !== null && (low === null || v < low.value)) low = { value: v, month: mo.month };
+    });
+    const upcoming = (Array.isArray(f.known_bills) ? f.known_bills : [])
+        .filter(b => b && b.date && (!through || String(b.date) >= through))
+        .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    return {
+        hasData: !!through,
+        dataThrough: through,
+        month: tm.month || null,
+        balanceNow: num((f.balance || {}).start_eur),
+        monthEnd: num(tm.projected_balance_end_eur),
+        low: low ? low.value : null,
+        lowMonth: low ? low.month : null,
+        monthsAhead: months.length,
+        bills: upcoming.slice(0, maxBills).map(b => ({
+            date: b.date, merchant: b.merchant || '', amount: num(b.amount_eur), kind: b.kind || 'spending',
+        })),
+        moreBills: Math.max(0, upcoming.length - maxBills),
+        belowZero: f.first_below_zero || null,
+        staleAccounts: (Array.isArray(f.accounts) ? f.accounts : []).filter(a => a && a.stale).map(a => a.name || ''),
+    };
+}
+window.dashCashflowModel = dashCashflowModel;
+
+async function loadDashboardCashflow() {
+    const area = document.getElementById('dashCfArea');
+    if (!area) return;
+    ccApplyHelpTitle('dashCfHelp', 'dashCashflow');
+    let fc;
+    try {
+        fc = await window.apiClient.getCashflowForecast(3);
+    } catch (err) {
+        area.innerHTML = `<div class="text-muted small">The cash-flow forecast is ${CC_NA}: ${esc(err.message)}</div>`;
+        return;
+    }
+    const m = dashCashflowModel(fc);
+    if (!m.hasData) {
+        area.innerHTML = '<div class="text-muted small">No bank statements imported yet, so there is nothing to project.</div>';
+        return;
+    }
+    const tile = (label, value, sub, cls) => `
+        <div class="col-12 col-sm-4">
+            <div class="small text-muted">${esc(label)}</div>
+            <div class="fs-5 fw-bold ${cls || ''}">${Fmt.amt(esc(ccMoney(value)))}</div>
+            <div class="small text-muted">${esc(sub || '')}</div>
+        </div>`;
+    const neg = v => (v !== null && v < 0 ? 'text-danger' : '');
+    const tiles = [
+        tile('Bank balance', m.balanceNow, `data through ${Fmt.date(m.dataThrough)}`, neg(m.balanceNow)),
+        tile('Projected month end', m.monthEnd, m.month ? monthKeyLabel(m.month) : '', neg(m.monthEnd)),
+        tile(`Lowest, next ${m.monthsAhead} months`, m.low, m.lowMonth ? `end of ${monthKeyLabel(m.lowMonth)}` : '', neg(m.low)),
+    ].join('');
+    const bills = m.bills.length
+        ? `<table class="table table-sm mb-0"><tbody>${m.bills.map(b => `
+            <tr>
+                <td class="ps-0 text-nowrap text-muted">${esc(Fmt.date(b.date))}</td>
+                <td class="text-truncate" style="max-width:0;width:100%;">${esc(b.merchant)}${b.kind === 'savings' ? ' <span class="badge text-bg-secondary">savings</span>' : ''}</td>
+                <td class="text-end pe-0 text-nowrap">${Fmt.amt(esc(ccMoney(b.amount, 2)))}</td>
+            </tr>`).join('')}</tbody></table>
+            ${m.moreBills ? `<div class="small text-muted mt-1">and ${m.moreBills} more in the forecast</div>` : ''}`
+        : '<div class="small text-muted">No known bills ahead.</div>';
+    const notes = [];
+    if (m.belowZero) notes.push(`<div class="small text-danger"><i class="bi bi-exclamation-triangle me-1"></i>The projected balance goes below zero in ${esc(monthKeyLabel(m.belowZero))}.</div>`);
+    if (m.staleAccounts.length) notes.push(`<div class="small text-warning"><i class="bi bi-exclamation-triangle me-1"></i>No recent import for ${esc(m.staleAccounts.join(', '))}; the outlook starts from older data.</div>`);
+    area.innerHTML = `
+        <div class="row g-3">
+            <div class="col-12 col-lg-7">
+                <div class="row g-3">${tiles}</div>
+                ${notes.length ? `<div class="mt-2">${notes.join('')}</div>` : ''}
+                <div class="small text-muted mt-2">An estimate from past averages and recurring charges; bank accounts only.</div>
+            </div>
+            <div class="col-12 col-lg-5">
+                <div class="small text-muted mb-1">Next bills</div>
+                ${bills}
+            </div>
+        </div>`;
+}
+window.loadDashboardCashflow = loadDashboardCashflow;

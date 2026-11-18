@@ -3755,6 +3755,25 @@ function createAPIClient() {
             return resp.json();
         },
 
+        // Dashboard layout: {order: [block id], hidden: [block id]}; empty = default.
+        async getDashboardLayout() {
+            const resp = await fetch(this.baseURL + '/api/v1/system/dashboard-layout', {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(errorDetailFromBody(await resp.text(), 'Failed to load the dashboard layout'));
+            return resp.json();
+        },
+
+        async saveDashboardLayout(layout) {
+            const resp = await fetch(this.baseURL + '/api/v1/system/dashboard-layout', {
+                method: 'PUT',
+                headers: { 'X-API-Key': this.apiKey, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ order: layout.order || [], hidden: layout.hidden || [] })
+            });
+            if (!resp.ok) throw new Error(errorDetailFromBody(await resp.text(), 'Failed to save the dashboard layout'));
+            return resp.json();
+        },
+
         async getActionItemAcks() {
             const resp = await fetch(this.baseURL + '/api/v1/action-items/acks', {
                 headers: { 'X-API-Key': this.apiKey }

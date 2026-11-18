@@ -350,6 +350,30 @@ the Net Worth chart; the snapshot calls have their own names on purpose.)
   lists the report's `top` (title, severity, count for a group, link) and hides
   when nothing is open or the call fails. It sits near the bottom, just above
   *Recent activity*: the first screen is the KPI tiles and the strip.
+- **Dashboard layout (Customize):** everything below the KPI tiles is a
+  `.dash-block[data-block]` directly inside `#dashBlocks` (attention, progress,
+  risk, networth, investments, cashflow, cash, goals, budget, thisweek,
+  activity). *Customize* (`#dashCustomizeBtn`, `setDashEditing`) collapses every
+  block to a bar (grip, up/down arrows, eye); dragging uses SortableJS from the
+  CDN and the arrows work without it. The layout `{order, hidden}` is stored on
+  the server (`GET/PUT /api/v1/system/dashboard-layout`, `app_settings`
+  `dashboard_layout`) and saved on every change; `localStorage` `pfmDashLayout`
+  is only a copy applied before the server answers. `dashLayoutResolve` ignores
+  unknown ids and places a block the saved layout does not mention after its
+  nearest default predecessor, so **a new block needs only the wrapper with a
+  new `data-block` id and `data-block-title`** in its default place. A block's
+  own show/hide logic stays on its inner element; the layout only toggles
+  `dash-block-off` on the wrapper. Edit-mode visibility uses rules in
+  `styles.css`, not Bootstrap utilities (the e2e test stubs the CDN CSS).
+- **Dashboard › Net worth** (`#dashNwArea`, `loadDashboardNetWorth`): the latest
+  stored snapshot, "what changed" for the last month (since the first snapshot
+  while the history is shorter, `dashNwWindow`) and a line chart; reuses
+  `nwHistoryModel`/`nwChangeModel`.
+- **Dashboard › Cash-flow outlook** (`#dashCfArea`, `loadDashboardCashflow`,
+  `dashCashflowModel`): from `GET /spending/forecast?months=3`: balance at the
+  data-through date, projected month end, the lowest projected month-end
+  balance ahead and the next five known bills dated on or after data-through.
+  A figure the forecast returns as null prints "not available".
 - **Net Worth › History** (`#nwHistory`, `loadNetworthHistory`): a line chart of
   stored snapshots with a toggle to stacked components (investments, cash,
   property, other assets; liabilities drawn below zero; `--viz-*` colours), a

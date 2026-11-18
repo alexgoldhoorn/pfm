@@ -384,6 +384,7 @@ function createPageManager() {
             // load independently (non-blocking).
             loadDashboardAlerts();
             loadDataFreshness();
+            if (window.initDashLayout) window.initDashLayout();
             if (window.loadDashboardActionItems) window.loadDashboardActionItems();
             if (window.loadDashboardNextEuro) window.loadDashboardNextEuro();
 
@@ -454,6 +455,8 @@ function createPageManager() {
             if (window.loadDashboardNetworthHistory) window.loadDashboardNetworthHistory();
             if (window.loadDashboardBudget) window.loadDashboardBudget();
             if (window.loadDashboardGoals) window.loadDashboardGoals();
+            if (window.loadDashboardNetWorth) window.loadDashboardNetWorth();
+            if (window.loadDashboardCashflow) window.loadDashboardCashflow();
 
             // Headline is positions + all idle cash. The positions' current
             // value sits under Invested, next to the cost it compares with.

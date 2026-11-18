@@ -1154,3 +1154,26 @@ svg[tabindex]:focus-visible { outline: 2px solid var(--viz-1); outline-offset: 4
 /* Narrow screens: the header controls wrap instead of running off the edge. */
 .chat-header > .ms-auto { flex-wrap: wrap; justify-content: flex-end; min-width: 0; }
 .chat-header .chat-model-select { max-width: 100%; }
+
+/* Dashboard: movable blocks. Normal view: a hidden block is gone and the bar is
+   not shown. Edit mode (#dashBlocks.dash-editing): every block collapses to its
+   bar so the list is short enough to drag, on a phone too. */
+#dashEditBar { display: none; }
+#dashEditBar.dash-edit-on { display: block; }
+.dash-block-bar { display: none; }
+.dash-block.dash-block-off { display: none; }
+#dashBlocks.dash-editing .dash-block {
+    display: block; margin-bottom: .5rem; border: 1px dashed var(--bs-border-color);
+    border-radius: .5rem; background: var(--bs-body-bg);
+}
+#dashBlocks.dash-editing .dash-block > :not(.dash-block-bar) { display: none !important; }
+#dashBlocks.dash-editing .dash-block-bar { display: flex; align-items: center; gap: .25rem; padding: .3rem .5rem; }
+.dash-block-handle {
+    flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: .5rem;
+    padding: .25rem 0; cursor: grab; touch-action: none; user-select: none; font-weight: 600; font-size: .9rem;
+}
+.dash-block-handle .dash-block-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dash-block-off .dash-block-handle { opacity: .45; }
+.dash-block-bar .btn { padding: .15rem .45rem; color: var(--bs-secondary-color); }
+.dash-block.sortable-ghost { opacity: .35; }
+.dash-block.sortable-chosen .dash-block-handle { cursor: grabbing; }

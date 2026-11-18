@@ -1,9 +1,11 @@
-"""System administration endpoints: DB restore and the application log."""
+"""System endpoints: DB restore, the application log and the dashboard layout."""
 
 import contextlib
 import gzip
+import json
 import logging
 import os
+import re
 import sqlite3
 import tempfile
 from datetime import datetime
@@ -11,6 +13,7 @@ from datetime import datetime
 from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from pydantic import BaseModel, Field, field_validator
 
 from portf_manager.database import DATABASE_VERSION, Database
 from ..dependencies import get_database
@@ -35,6 +38,62 @@ def _auto_backup(db: Database, backup_dir: str) -> str | None:
         with dst:
             src.backup(dst)
     return out
+
+
+# app_settings key holding the dashboard layout as JSON
+DASHBOARD_LAYOUT_KEY = "dashboard_layout"
+_BLOCK_ID_RE = re.compile(r"^[a-z0-9_-]{1,40}$")
+
+
+class DashboardLayout(BaseModel):
+    """Order and visibility of the dashboard blocks, as block ids."""
+
+    order: list[str] = Field(default_factory=list, max_length=60)
+    hidden: list[str] = Field(default_factory=list, max_length=60)
+
+    @field_validator("order", "hidden")
+    @classmethod
+    def _clean_ids(cls, value: list[str]) -> list[str]:
+        """Reject malformed ids and drop repeats, keeping the first."""
+        out: list[str] = []
+        for item in value:
+            if not _BLOCK_ID_RE.match(item):
+                raise ValueError(f"invalid block id: {item[:40]!r}")
+            if item not in out:
+                out.append(item)
+        return out
+
+
+def _stored_dashboard_layout(db: Database) -> DashboardLayout:
+    """The saved layout, or an empty one when none is stored or it is unreadable."""
+    raw = db.get_setting(DASHBOARD_LAYOUT_KEY)
+    if not raw:
+        return DashboardLayout()
+    try:
+        return DashboardLayout(**json.loads(raw))
+    except (ValueError, TypeError):
+        logger.warning("Stored dashboard layout is unreadable; using the default")
+        return DashboardLayout()
+
+
+@router.get("/dashboard-layout", response_model=DashboardLayout)
+def get_dashboard_layout(db: Database = Depends(get_database)) -> DashboardLayout:
+    """The saved dashboard layout; empty lists mean the default layout.
+
+    The server stores ids only. Which blocks exist is the web client's
+    business: it ignores ids it does not know and places blocks the saved
+    layout does not mention at their default position.
+    """
+    return _stored_dashboard_layout(db)
+
+
+@router.put("/dashboard-layout", response_model=DashboardLayout)
+def put_dashboard_layout(
+    body: DashboardLayout, db: Database = Depends(get_database)
+) -> DashboardLayout:
+    """Replace the saved dashboard layout; empty lists reset it to the default."""
+    db.set_setting(DASHBOARD_LAYOUT_KEY, json.dumps(body.model_dump(), sort_keys=True))
+    return body
 
 
 @router.get("/logs")
