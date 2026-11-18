@@ -14,6 +14,7 @@ import csv
 import logging
 import re
 import tempfile
+import threading
 import os
 from io import StringIO
 from typing import Dict, List, Literal, Optional
@@ -28,7 +29,7 @@ from fastapi import (
     UploadFile,
     status,
 )
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 
 from portf_manager.import_dedup import TransactionDeduplicator
 from portf_manager.currency_utils import normalize_gbx_amounts
@@ -37,7 +38,11 @@ from portf_manager.parsers.indexacapital_csv_parser import parse_indexacapital_c
 from portf_manager.parsers.coinbase_csv_parser import parse_coinbase_csv
 from portf_manager.parsers.bookings_csv_parser import parse_bookings_csv
 from portf_manager.parsers.deposits_csv_parser import parse_deposits_csv
-from portf_manager.parsers.generic_csv_parser import parse_generic_csv
+from portf_manager.parsers.generic_csv_parser import (
+    _detect_delimiter,
+    _resolve_header,
+    parse_generic_csv,
+)
 from portf_manager.parsers.myinvestor_csv_parser import parse_myinvestor_csv
 from portf_manager.parsers.myinvestor_paste_parser import parse_myinvestor_paste
 from portf_manager.parsers.mintos_csv_parser import (
@@ -73,6 +78,74 @@ SUPPORTED_BROKERS = [
 ]
 
 _VALID_ASSET_TYPES = {t.value for t in AssetType}
+
+
+# Text of the error ``_save_import`` records when a strict save kept its rows but
+# could not match own-account transfers afterwards.
+_SETTLE_FAILED = "TRANSFERS NOT SETTLED:"
+
+
+class _ImportAborted(Exception):
+    """A strict save failed; nothing from the call is left stored."""
+
+
+class _ImportJournal:
+    """What one all-or-nothing save has written, so a failure can undo it."""
+
+    def __init__(self) -> None:
+        self.transactions: List[int] = []
+        self.bookings: List[int] = []
+        self.new_assets: List[int] = []
+        # (asset id, the asset_type it had before the import changed it)
+        self.type_changes: List[tuple] = []
+
+    def rollback(self, db, reason: str) -> None:
+        """Remove everything recorded, newest first, then raise.
+
+        Args:
+            db: Database.
+            reason: The failure that triggered the rollback.
+
+        Raises:
+            _ImportAborted: always, naming the failed row and anything that
+                could not be removed again.
+        """
+        stuck: List[str] = []
+        for bid in reversed(self.bookings):
+            try:
+                db.delete_booking(bid)
+            except Exception as e:
+                logger.error(f"Could not roll back booking {bid}: {e}")
+                stuck.append(f"booking {bid}")
+        for tid in reversed(self.transactions):
+            try:
+                db.delete_transaction(tid)
+            except Exception as e:
+                logger.error(f"Could not roll back transaction {tid}: {e}")
+                stuck.append(f"transaction {tid}")
+        for aid, old_type in reversed(self.type_changes):
+            try:
+                db.update_asset(aid, asset_type=old_type)
+            except Exception as e:
+                logger.error(f"Could not restore the type of asset {aid}: {e}")
+                stuck.append(f"asset type {aid}")
+        for aid in reversed(self.new_assets):
+            try:
+                # delete_asset only deactivates; an asset this import created
+                # must leave no trace
+                with db.get_connection() as conn:
+                    conn.execute("DELETE FROM assets WHERE id = ?", (aid,))
+                    conn.commit()
+            except Exception as e:
+                logger.error(f"Could not roll back asset {aid}: {e}")
+                stuck.append(f"asset {aid}")
+        message = f"Import aborted, nothing was stored. Failed row {reason}"
+        if stuck:
+            message = (
+                f"Import aborted but {', '.join(stuck)} could not be removed "
+                f"again. Failed row {reason}"
+            )
+        raise _ImportAborted(message)
 
 
 # ---------------------------------------------------------------------------
@@ -114,6 +187,9 @@ class PreviewBooking(BaseModel):
     # duplicate_action does not apply to bookings: "Import anyway" chosen for
     # a transaction must not copy every duplicate cash movement too.
     force: bool = False
+    # Set by ``_flag_duplicates``: the match was only a near one (same amount a
+    # few days apart), not the same date. Not part of any response.
+    _near_match: bool = PrivateAttr(default=False)
 
 
 class PreviewDeposit(BaseModel):
@@ -644,6 +720,7 @@ def _flag_duplicates(
         for bk, match in zip(bookings, db.match_existing_bookings(rows)):
             bk.is_duplicate = match is not None
             bk.duplicate_reason = _booking_dup_reason(match)
+            bk._near_match = bool(match and match["match"] != "exact")
             if match:
                 n += 1
     except Exception:
@@ -661,6 +738,64 @@ def _flag_duplicates(
             except Exception:
                 continue
     return n
+
+
+def _parse_broker_file(broker: str, file_bytes: bytes):
+    """Parse a broker file with the parser named ``broker``.
+
+    The one parse path of ``/upload`` and ``/import-file``.
+
+    Args:
+        broker: One of ``SUPPORTED_BROKERS``.
+        file_bytes: The raw file.
+
+    Returns:
+        ``(transactions, bookings, deposits, skipped)``.
+
+    Raises:
+        Exception: whatever the parser raises on a malformed file; callers pick
+            the status code.
+    """
+    previews: List[PreviewTransaction] = []
+    bookings: List[PreviewBooking] = []
+    deposits: List[PreviewDeposit] = []
+    skipped: List[dict] = []
+
+    if broker == "indexacapital":
+        content = file_bytes.decode("utf-8-sig")
+        previews, bookings, skipped = _parse_indexacapital(content)
+    elif broker == "coinbase":
+        content = file_bytes.decode("utf-8-sig")
+        previews, bookings, skipped = _parse_coinbase(content)
+    elif broker == "myinvestor":
+        content = file_bytes.decode("utf-8-sig")
+        previews, bookings, skipped = _parse_myinvestor(content)
+    elif broker == "myinvestor_paste":
+        content = file_bytes.decode("utf-8")
+        previews, bookings, skipped = _parse_myinvestor_paste(content)
+    elif broker == "mintos":
+        content = file_bytes.decode("utf-8-sig")
+        previews, bookings, skipped = _parse_mintos(content)
+    elif broker == "pdt":
+        previews, bookings, skipped = _parse_pdt(file_bytes)
+    elif broker == "generic":
+        content = file_bytes.decode("utf-8-sig")
+        previews, bookings, skipped = _parse_generic(content)
+    elif broker == "bookings":
+        content = file_bytes.decode("utf-8-sig")
+        previews = []
+        result = parse_bookings_csv(content)
+        bookings = [PreviewBooking(**bk) for bk in result.bookings]
+        skipped = [{"row": r, "reason": reason} for r, reason in result.skipped]
+    elif broker == "deposits":
+        content = file_bytes.decode("utf-8-sig")
+        previews = []
+        result = parse_deposits_csv(content)
+        deposits = [PreviewDeposit(**d) for d in result.deposits]
+        skipped = [{"row": r, "reason": reason} for r, reason in result.skipped]
+    else:
+        raise HTTPException(status_code=500, detail="Unreachable broker branch")
+    return previews, bookings, deposits, skipped
 
 
 @router.post("/upload", response_model=UploadPreviewResponse)
@@ -683,46 +818,8 @@ async def upload_broker_file(
         )
 
     file_bytes = await file.read()
-    previews: List[PreviewTransaction] = []
-    bookings: List[PreviewBooking] = []
-    deposits: List[PreviewDeposit] = []
-    skipped: List[dict] = []
-
     try:
-        if broker == "indexacapital":
-            content = file_bytes.decode("utf-8-sig")
-            previews, bookings, skipped = _parse_indexacapital(content)
-        elif broker == "coinbase":
-            content = file_bytes.decode("utf-8-sig")
-            previews, bookings, skipped = _parse_coinbase(content)
-        elif broker == "myinvestor":
-            content = file_bytes.decode("utf-8-sig")
-            previews, bookings, skipped = _parse_myinvestor(content)
-        elif broker == "myinvestor_paste":
-            content = file_bytes.decode("utf-8")
-            previews, bookings, skipped = _parse_myinvestor_paste(content)
-        elif broker == "mintos":
-            content = file_bytes.decode("utf-8-sig")
-            previews, bookings, skipped = _parse_mintos(content)
-        elif broker == "pdt":
-            previews, bookings, skipped = _parse_pdt(file_bytes)
-        elif broker == "generic":
-            content = file_bytes.decode("utf-8-sig")
-            previews, bookings, skipped = _parse_generic(content)
-        elif broker == "bookings":
-            content = file_bytes.decode("utf-8-sig")
-            previews = []
-            result = parse_bookings_csv(content)
-            bookings = [PreviewBooking(**bk) for bk in result.bookings]
-            skipped = [{"row": r, "reason": reason} for r, reason in result.skipped]
-        elif broker == "deposits":
-            content = file_bytes.decode("utf-8-sig")
-            previews = []
-            result = parse_deposits_csv(content)
-            deposits = [PreviewDeposit(**d) for d in result.deposits]
-            skipped = [{"row": r, "reason": reason} for r, reason in result.skipped]
-        else:
-            raise HTTPException(status_code=500, detail="Unreachable broker branch")
+        previews, bookings, deposits, skipped = _parse_broker_file(broker, file_bytes)
     except HTTPException:
         raise
     except Exception as e:
@@ -755,6 +852,37 @@ async def save_imported_transactions(
     Save a list of preview transactions (and optional bookings) to the database.
     Assets are created automatically if they don't exist yet.
     """
+    return _save_import(db, body)
+
+
+def _save_import(
+    db, body: SaveRequest, journal: Optional[_ImportJournal] = None
+) -> SaveResponse:
+    """Save the rows of ``body``: the one save path of ``/save`` and ``/import-file``.
+
+    Args:
+        db: Database.
+        body: The rows and the duplicate handling.
+        journal: When given the save is all or nothing: it records everything
+            it writes, and the first row that fails (anything but a skipped
+            duplicate) rolls that back and raises ``_ImportAborted``. When
+            None a failing row is reported in ``errors`` and the rest is
+            saved, as ``/save`` has always done.
+
+    Returns:
+        The counts and the per-row errors.
+
+    Raises:
+        _ImportAborted: ``journal`` was given and a row failed.
+    """
+
+    def _fail(message: str) -> None:
+        errors.append(message)
+        if journal is not None:
+            journal.rollback(db, message)
+
+    if journal is not None and body.deposits:
+        raise ValueError("A strict save does not handle fixed deposits")
     saved = 0
     saved_bookings = 0
     duplicates_skipped = 0
@@ -807,6 +935,8 @@ async def save_imported_transactions(
                     and tx.asset_type in _VALID_ASSET_TYPES
                 ):
                     db.update_asset(asset_id, asset_type=tx.asset_type)
+                    if journal is not None:
+                        journal.type_changes.append((asset_id, asset.get("asset_type")))
                     asset_types_corrected.append(
                         f"{_label(tx.name, symbol)}: "
                         f"{asset.get('asset_type')} → {tx.asset_type}"
@@ -820,6 +950,8 @@ async def save_imported_transactions(
                     currency=currency,
                     description="Auto-created from broker file import",
                 )
+                if journal is not None:
+                    journal.new_assets.append(asset_id)
                 new_assets.append(_label(tx.name, symbol))
 
             # Resolve portfolio: per-transaction broker is only a fallback when the
@@ -883,6 +1015,8 @@ async def save_imported_transactions(
                 portfolio_id=tx_portfolio_id,
                 description=tx.notes or None,
             )
+            if journal is not None:
+                journal.transactions.append(new_id)
             tx_dedup.inserted(new_id)
             saved += 1
             by_type[tx.tx_type] = by_type.get(tx.tx_type, 0) + 1
@@ -891,7 +1025,7 @@ async def save_imported_transactions(
                 portfolio_ids.add(tx_portfolio_id)
 
         except Exception as e:
-            errors.append(f"{tx.symbol} ({tx.date}): {str(e)}")
+            _fail(f"{tx.symbol} ({tx.date}): {str(e)}")
             logger.warning(f"Failed to save transaction {tx.symbol}: {e}")
 
     # Resolve portfolios and match every booking against what is stored
@@ -906,7 +1040,7 @@ async def save_imported_transactions(
                     bk.broker, base_currency=bk.currency or "EUR"
                 )
             except Exception as e:
-                errors.append(f"Booking {bk.action} {bk.date}: {str(e)}")
+                _fail(f"Booking {bk.action} {bk.date}: {str(e)}")
                 bk_portfolio_id = None
         bk_portfolio_ids.append(bk_portfolio_id)
     bk_matches = db.match_existing_bookings(
@@ -926,13 +1060,15 @@ async def save_imported_transactions(
                 )
                 continue
 
-            db.create_booking(
+            new_booking_id = db.create_booking(
                 date=bk.date,
                 action=bk.action,
                 amount=bk.amount,
                 currency=bk.currency,
                 portfolio_id=bk_portfolio_id,
             )
+            if journal is not None:
+                journal.bookings.append(new_booking_id)
             saved_bookings += 1
             ccy = (bk.currency or "EUR").upper()
             per_ccy = booking_totals.setdefault(bk.action, {})
@@ -943,12 +1079,20 @@ async def save_imported_transactions(
                 portfolio_ids.add(bk_portfolio_id)
 
         except Exception as e:
-            errors.append(f"Booking {bk.action} {bk.date}: {str(e)}")
+            _fail(f"Booking {bk.action} {bk.date}: {str(e)}")
             logger.warning(f"Failed to save booking {bk.date}: {e}")
 
     # Once, after the loop, so every new booking is a candidate.
     if saved_bookings:
-        settle_after_bookings(db)
+        if journal is None:
+            settle_after_bookings(db)
+        else:
+            try:
+                settle_after_bookings(db)
+            except Exception as e:
+                # the rows are saved and valid: keep them and say so
+                errors.append(f"{_SETTLE_FAILED} {e}")
+                logger.warning(f"Transfer settling failed after import: {e}")
 
     saved_deposits = 0
     existing_deps = db.get_fixed_deposits() if body.deposits else []
@@ -1031,3 +1175,227 @@ async def check_duplicates(
         "deposits": body.deposits,
         "duplicate_count": n,
     }
+
+
+# ---------------------------------------------------------------------------
+# One-call file import
+# ---------------------------------------------------------------------------
+
+# The deterministic file parsers /import-file can pick, in detection order.
+FILE_IMPORT_FORMATS = (
+    "indexacapital",
+    "myinvestor",
+    "coinbase",
+    "mintos",
+    "generic",
+    "pdt",
+)
+
+# Words in the portfolio's name or entity that point at a format, used only
+# when the file's own header settles nothing.
+_BROKER_NAME_HINTS = {
+    "indexa": "indexacapital",
+    "myinvestor": "myinvestor",
+    "my investor": "myinvestor",
+    "coinbase": "coinbase",
+    "mintos": "mintos",
+}
+
+# One broker file import at a time: a person and an unattended job may post
+# together, and two interleaved imports would both pass the duplicate check.
+_IMPORT_LOCK = threading.Lock()
+
+
+def _detect_file_format(portfolio: Dict, file_bytes: bytes) -> Optional[str]:
+    """Pick the deterministic parser for a file, or None.
+
+    The file's header decides; the portfolio's broker name is only the
+    fallback for a header that matches nothing.
+
+    Args:
+        portfolio: The target portfolio row.
+        file_bytes: The raw file.
+
+    Returns:
+        One of ``FILE_IMPORT_FORMATS``, or None when nothing matches.
+    """
+    # An .xlsx is a zip: the PDT template
+    if file_bytes[:4] == b"PK\x03\x04":
+        return "pdt"
+    try:
+        text = file_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return None
+    lines = [ln for ln in text.splitlines()[:6]]
+    first = lines[0] if lines else ""
+    head = "\n".join(lines)
+    if "Transaction Type" in head and "Timestamp" in head:
+        return "coinbase"
+    if "Tipo de pago" in first and "Volumen de negocios" in first:
+        return "mintos"
+    if ";" in first:
+        low = first.lower()
+        if "fecha de operación" in low and "concepto" in low and "importe" in low:
+            return "myinvestor"
+        if ("código isin" in low and "participaciones" in low) or (
+            "movimiento" in low and "saldo" in low
+        ):
+            return "indexacapital"
+    if first:
+        delimiter = _detect_delimiter(text)
+        resolved = {_resolve_header(h) for h in first.split(delimiter)}
+        if {"date", "symbol", "type", "quantity", "price", "currency"} <= resolved:
+            return "generic"
+    names = f"{portfolio.get('name') or ''} {portfolio.get('entity_name') or ''}"
+    for hint, fmt in _BROKER_NAME_HINTS.items():
+        if hint in names.lower():
+            return fmt
+    return None
+
+
+def _import_broker_file(
+    db, portfolio: Dict, content: bytes, fmt: Optional[str]
+) -> dict:
+    """The body of ``/import-file``, run under the import lock."""
+    if fmt is None:
+        fmt = _detect_file_format(portfolio, content)
+        if fmt is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    "Could not tell the file format from the portfolio's broker "
+                    "name or the file's header. Looked for: "
+                    + ", ".join(FILE_IMPORT_FORMATS)
+                    + ". Pass 'format' to choose one."
+                ),
+            )
+    portfolio_id = portfolio["id"]
+    try:
+        previews, bookings, _deps, skipped = _parse_broker_file(fmt, content)
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Failed to parse the file as {fmt}: {e}",
+        )
+    if not previews and not bookings:
+        reasons = sorted({str(sk.get("reason")) for sk in skipped if sk.get("reason")})
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"No rows found in the file (format {fmt})"
+            + (": " + "; ".join(reasons[:3]) if reasons else ""),
+        )
+
+    # Every row goes to the chosen portfolio, so check duplicates against it
+    # and not against the broker name a parser tagged the row with.
+    for row in [*previews, *bookings]:
+        row.broker = None
+    _flag_duplicates(db, previews, bookings, portfolio_id)
+
+    # The web default: the rows its preview leaves ticked. A duplicate and a
+    # row the parser marked "skip" stay out; a booking matched only by a near
+    # date is saved anyway and counted, for the caller to review.
+    tx_dups = [t for t in previews if t.is_duplicate]
+    parser_skipped = [t for t in previews if t.skip and not t.is_duplicate]
+    selected_tx = [t for t in previews if not t.is_duplicate and not t.skip]
+    exact_dups = [b for b in bookings if b.is_duplicate and not b._near_match]
+    near = [b for b in bookings if b.is_duplicate and b._near_match]
+    for bk in near:
+        bk.force = True
+    selected_bk = [b for b in bookings if not b.is_duplicate or b._near_match]
+
+    body = SaveRequest(
+        transactions=selected_tx,
+        bookings=selected_bk,
+        portfolio_id=portfolio_id,
+        duplicate_action="skip",
+    )
+    journal = _ImportJournal()
+    try:
+        saved = _save_import(db, body, journal)
+    except _ImportAborted as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e)
+        )
+
+    warnings: List[str] = []
+    if skipped:
+        warnings.append(f"{len(skipped)} line(s) in the file were skipped")
+    if parser_skipped:
+        warnings.append(
+            f"{len(parser_skipped)} row(s) were left out because this format "
+            "is only approximate for them"
+        )
+    if near:
+        warnings.append(
+            f"{len(near)} booking(s) look like stored ones a few days apart: "
+            "saved, please review"
+        )
+    settle = [e for e in saved.errors if e.startswith(_SETTLE_FAILED)]
+    if settle:
+        warnings.append(
+            "Rows were saved but own-account transfers were not matched "
+            f"({settle[0][len(_SETTLE_FAILED):].strip()}): run the transfer rescan."
+        )
+    late_dups = len([e for e in saved.errors if e.startswith("DUPLICATE:")])
+    return {
+        "portfolio_id": portfolio_id,
+        "portfolio_name": portfolio.get("name"),
+        "format": fmt,
+        "parsed": len(previews) + len(bookings),
+        "imported": saved.saved,
+        "duplicates_skipped": len(tx_dups) + len(exact_dups) + late_dups,
+        "possible_duplicates": len(near),
+        "bookings_imported": saved.saved_bookings,
+        "new_assets": len(saved.new_assets),
+        "first_date": saved.date_from,
+        "last_date": saved.date_to,
+        "warnings": warnings,
+    }
+
+
+@router.post("/import-file", response_model=dict)
+def import_broker_file(
+    file: UploadFile = File(..., description="Broker statement file (CSV or XLSX)"),
+    portfolio_id: int = Form(...),
+    format_: Optional[str] = Form(None, alias="format"),
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Parse, de-duplicate and save a broker file into a portfolio in one call.
+
+    The same parse and duplicate flagging as ``/upload`` and the same save as
+    ``/save``, with the web client's default: rows already stored (and rows a
+    parser marks as only approximate) are left out, new assets are created, and
+    bookings are settled. Deterministic parsers only; the LLM is never used.
+    All or nothing: bad input is a 400 and a row that fails to save is a 500;
+    in both cases nothing from the call stays stored. Calls are serialised.
+
+    A booking that matches a stored one only by amount a few days apart is saved
+    and counted in ``possible_duplicates``.
+
+    Args:
+        file: The statement.
+        portfolio_id: A ``brokerage`` portfolio.
+        format_: One of ``FILE_IMPORT_FORMATS``; auto-detected when omitted.
+
+    Returns:
+        ``{portfolio_id, portfolio_name, format, parsed, imported,
+        duplicates_skipped, possible_duplicates, bookings_imported,
+        new_assets, first_date, last_date, warnings}``: counts and dates only.
+    """
+    portfolio = db.get_portfolio(portfolio_id)
+    if not portfolio or portfolio.get("account_type") != "brokerage":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Portfolio {portfolio_id} is not a brokerage account",
+        )
+    fmt = (format_ or "").lower().strip() or None
+    if fmt is not None and fmt not in FILE_IMPORT_FORMATS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unsupported format '{fmt}'. Supported: "
+            + ", ".join(FILE_IMPORT_FORMATS),
+        )
+    content = file.file.read()
+    with _IMPORT_LOCK:
+        return _import_broker_file(db, portfolio, content, fmt)
