@@ -24,8 +24,9 @@ from portf_manager.services import (
 from portf_manager.services.action_item_acks import ack_is_active, list_acks
 from portf_manager.services.recurring import load_recurring
 
-# The imports step looks at every account with rows this many months back.
-IMPORT_LOOKBACK_MONTHS = 12
+# The imports step checks an account only when it has a row dated this many days
+# before the month's first day or later (a closed or quiet account is left out).
+IMPORT_ACTIVE_DAYS = 45
 # Figures that moved by more than this many euros since the close make it stale.
 STALE_TOLERANCE_EUR = 1.0
 # The one-offs reminder: the month's largest outflows from this size up (the
@@ -107,32 +108,59 @@ def _names(items: List[str], top: int = 3) -> str:
 
 
 def imports_step(rows: List[dict], month: str) -> dict:
-    """Step 1: every account with recent rows reaches the month's last day.
+    """Step 1: every active account's statement covers the month's last day.
+
+    An account is checked only when it has a row dated within
+    ``IMPORT_ACTIVE_DAYS`` before the month's first day or later. A checked
+    account is fine when its last row is dated on or after the month's last day,
+    or when any of its rows was imported after that day (the statement was
+    fetched after month end, so it covers the month even if the last
+    transaction is earlier). Accounts not checked are only named.
 
     Args:
         rows: ``spending_insights.load_rows`` output (no upper date bound).
         month: ``YYYY-MM``.
 
     Returns:
-        The ``imports`` step; ``todo`` (which blocks) when an account lags or
-        nothing is imported.
+        The ``imports`` step; ``todo`` (which blocks) when a checked account
+        lags or nothing is imported for the month.
     """
     end = spending_insights._month_end(month).isoformat()
     # a month nothing was imported for is never ready, however fresh the accounts
     if not any(r["date"][:7] == month for r in rows):
         return _step("imports", "todo", 0, f"Nothing is imported for {month}.")
-    start = f"{spending_insights.shift_month(month, -IMPORT_LOOKBACK_MONTHS)}-01"
-    info = spending_insights.account_data_through(rows, start=start)
-    counted = [info["by_account"][pid] for pid in info["accounts"]]
-    if not counted:
-        return _step("imports", "todo", 0, "No bank account has recent imports.")
-    lagging = [a for a in counted if a["data_through"] < end]
-    if lagging:
-        who = _names([f"{a['name']} (through {a['data_through']})" for a in lagging])
-        return _step(
-            "imports", "todo", len(lagging), f"Import statements up to {end}: {who}."
+    first = date.fromisoformat(f"{month}-01") - timedelta(days=IMPORT_ACTIVE_DAYS)
+    active_from = first.isoformat()
+    accounts: Dict[Any, dict] = {}
+    for r in rows:
+        acc = accounts.setdefault(
+            r["portfolio_id"],
+            {"name": r.get("account") or f"account {r['portfolio_id']}", "last": ""},
         )
-    return _step("imports", "ok", 0, f"All {len(counted)} account(s) reach {end}.")
+        acc["last"] = max(acc["last"], r["date"])
+        acc["active"] = acc.get("active", False) or r["date"] >= active_from
+        acc["fetched_late"] = acc.get("fetched_late", False) or (
+            bool(r.get("created_at")) and r["created_at"] > end
+        )
+    checked = [a for a in accounts.values() if a["active"]]
+    skipped = [a["name"] for a in accounts.values() if not a["active"]]
+    lagging = [a for a in checked if a["last"] < end and not a["fetched_late"]]
+    note = (
+        f" Accounts not checked (no recent activity): {_names(skipped)}."
+        if skipped
+        else ""
+    )
+    if lagging:
+        who = _names([f"{a['name']} (through {a['last']})" for a in lagging])
+        return _step(
+            "imports",
+            "todo",
+            len(lagging),
+            f"Import statements up to {end}: {who}.{note}",
+        )
+    return _step(
+        "imports", "ok", 0, f"All {len(checked)} account(s) reach {end}.{note}"
+    )
 
 
 def _no_rows(key: str) -> dict:
@@ -583,7 +611,12 @@ def close_month(
     report_id = (previous or {}).get("report_id")
     title = f"Month close {month}"
     body = render_month_close_report(month, state["figures"], state["checklist"])
-    if report_id is not None and db.get_report(report_id):
+    if report_id is None or not db.get_report(report_id):
+        # a reopen deleted the row that held the id: reuse the report it left
+        report_id = next(
+            (r["id"] for r in db.list_reports() if r["title"] == title), None
+        )
+    if report_id is not None:
         db.update_report(report_id, title=title, content_md=body)
     else:
         report_id = db.create_report(title, body)

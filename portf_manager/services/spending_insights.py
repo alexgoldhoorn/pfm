@@ -96,6 +96,7 @@ def load_rows(
                 "portfolio_id": r["portfolio_id"],
                 "account": r.get("portfolio_name"),
                 "date": str(r["date"])[:10],
+                "created_at": str(r.get("created_at") or "")[:10],
                 "description": r.get("description") or "",
                 "merchant": r.get("merchant"),
                 "category": r.get("category") or "uncategorized",

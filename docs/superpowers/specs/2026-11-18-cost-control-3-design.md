@@ -145,7 +145,7 @@ for the pure parts). The checks themselves do not change, and neither do item id
   `{start, end, net_worth_change_eur, parts: {saved_eur, market_eur,
   debt_paid_eur, property_change_eur, other_change_eur}, by_component: {...},
   warnings}` where
-  - `net_invested_eur` = buys − sells of non-cash assets between the two dates,
+  - `net_invested_eur` = buys − sells of every asset (cash-type included: the sheet counts them as investments) between the two dates,
     at transaction-date FX (use the existing attribution/performance flow
     helpers; do not write a new FX path),
   - `market_eur` = Δinvestments − net_invested,
@@ -166,8 +166,10 @@ for the pure parts). The checks themselves do not change, and neither do item id
 - The portfolio must be `account_type='brokerage'`; 400 otherwise.
 - Format: `format` if given, else auto-detected from the portfolio's broker
   name and the file's header, among the deterministic parsers only
-  (Indexa, MyInvestor CSV, Coinbase, Mintos, generic CSV, PDT XLSX). No match:
-  400 naming what was looked for. The LLM text path is never used.
+  (Indexa, MyInvestor CSV, Coinbase, Mintos, generic CSV). PDT is not accepted:
+  an export spans several brokers and this endpoint saves into one portfolio,
+  so an xlsx or `format=pdt` is a 400 pointing at the web Import page or the
+  PDT sync. No match: 400 naming what was looked for. The LLM text path is never used.
 - It runs the same parse and duplicate flagging as `/import/upload` and the
   same save path as `/import/save` (shared functions; never a forked copy),
   with the web default for duplicates (skip). Bookings follow their own
@@ -185,7 +187,7 @@ for the pure parts). The checks themselves do not change, and neither do item id
   No amounts, no descriptions in the response.
 - Every booking-creating path calls `settle_after_bookings`, as today.
 - 400 for bad input, 500 for a save failure, same as the spending endpoint. A
-  module lock serialises calls.
+  module lock serialises calls, and `/import/save` takes the same lock.
 
 ## 4. Recurring resolutions and subscriptions
 
@@ -233,8 +235,12 @@ already exceeds the limit (then it is `over`, as today), and
   ready, checklist: [...], figures, warnings}`.
 - Checklist steps, each `{key, label, status: ok|todo|warn|unknown, count,
   detail, link_page}`; a step whose source fails is `unknown` with a warning:
-  1. `imports`: every bank account with rows in the 12 months before has rows
-     reaching the month's last day or later (names the lagging accounts). `todo` blocks.
+  1. `imports`: an account is checked only if it has a row dated within the 45
+     days before the month's first day or later. A checked account is fine when
+     its last row is on or after the month's last day, or when any of its rows
+     was imported after that day. Lagging accounts are named (`todo` blocks);
+     accounts not checked are named as "not checked (no recent activity)" and
+     never block.
   2. `uncategorized`: uncategorised outflows in the month (count and share). `warn` above 0.
   3. `transfers`: unlinked transfers and unmatched pattern transfers in the month. `warn`.
   4. `anomalies`: open (not checked) anomaly items dated in the month. `warn`.
@@ -250,7 +256,7 @@ already exceeds the limit (then it is `over`, as today), and
   Stores the row, and writes a Markdown report to `reports` (title "Month close
   YYYY-MM", built by a pure function from `figures` and `checklist`, no LLM,
   amounts rounded to whole euros). Closing again replaces the row and updates
-  the same report.
+  the same report (after a reopen it finds the report by its exact title).
 - `DELETE /api/v1/spending/month-close?month=` reopens (the report stays).
 - `closed.stale` is true when the figures recomputed now differ from the stored
   ones by more than 1 EUR on income, spending or net (rows were imported or

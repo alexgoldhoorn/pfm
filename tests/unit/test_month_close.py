@@ -36,10 +36,18 @@ def bank(db):
     return db.get_or_create_portfolio("Example Bank", account_type="bank")
 
 
-def _tx(db, bank, day, description, amount, category, **kw):
-    return db.create_spending_transaction(
+def _tx(db, bank, day, description, amount, category, imported=None, **kw):
+    """Add a row; by default it was imported on its own day."""
+    new_id = db.create_spending_transaction(
         bank, day, description, amount, category=category, **kw
     )
+    with db.get_connection() as conn:
+        conn.execute(
+            "UPDATE spending_transactions SET created_at = ? WHERE id = ?",
+            (f"{imported or day} 12:00:00", new_id),
+        )
+        conn.commit()
+    return new_id
 
 
 def _clean(db, bank):
@@ -107,11 +115,38 @@ def test_lagging_account_blocks_ready(db, bank):
     assert state["ready"] is False
 
 
-def test_account_with_no_recent_rows_is_ignored(db, bank):
+def test_closed_account_does_not_block_and_is_named(db, bank):
     _clean(db, bank)
     old = db.get_or_create_portfolio("Example Closed", account_type="bank")
-    _tx(db, old, "2025-01-10", "Example Old", -5.0, "Groceries")
+    _tx(db, old, "2025-09-10", "Example Old", -5.0, "Groceries")
+    state = _state(db)
+    assert state["ready"] is True
+    assert (
+        "Accounts not checked (no recent activity): Example Closed"
+        in _step(state, "imports")["detail"]
+    )
+
+
+def test_quiet_account_fetched_after_month_end_is_fine(db, bank):
+    _clean(db, bank)
+    quiet = db.get_or_create_portfolio("Example Quiet", account_type="bank")
+    # last row on the 28th, but the statement was imported in July
+    _tx(
+        db, quiet, "2026-06-28", "Example Fee", -2.0, "Groceries", imported="2026-07-03"
+    )
     assert _state(db)["ready"] is True
+
+
+def test_active_account_with_nothing_after_the_20th_blocks(db, bank):
+    _clean(db, bank)
+    active = db.get_or_create_portfolio("Example Active", account_type="bank")
+    # imported on the 21st: the statement cannot cover the rest of the month
+    _tx(db, active, "2026-06-20", "Example Fee", -2.0, "Groceries")
+    state = _state(db)
+    step = _step(state, "imports")
+    assert step["status"] == "todo"
+    assert "Example Active (through 2026-06-20)" in step["detail"]
+    assert state["ready"] is False
 
 
 def test_month_with_no_rows_is_todo_and_figures_are_null(db, bank):
@@ -496,9 +531,7 @@ def test_route_errors(api):
     bank = inst.get_or_create_portfolio("Example Bank", account_type="bank")
     _clean(inst, bank)
     other = inst.get_or_create_portfolio("Example Savings", account_type="bank")
-    inst.create_spending_transaction(
-        other, "2026-06-20", "Example Interest", 5.0, category="Salary"
-    )
+    _tx(inst, other, "2026-06-20", "Example Interest", 5.0, "Salary")
     url = "/api/v1/spending/month-close"
     assert client.post(url, json={"month": MONTH}, headers=HEADERS).status_code == 409
     forced = client.post(url, json={"month": MONTH, "force": True}, headers=HEADERS)
@@ -513,3 +546,13 @@ def test_route_errors(api):
         client.get(url, params={"month": "2026-09"}, headers=HEADERS).status_code == 400
     )
     assert client.get(url, params={"month": "June"}, headers=HEADERS).status_code == 422
+
+
+def test_close_reopen_close_keeps_one_report(db, bank):
+    _clean(db, bank)
+    first = mc.close_month(db, _fx, TODAY, MONTH)
+    mc.reopen_month(db, MONTH)
+    second = mc.close_month(db, _fx, TODAY, MONTH)
+    assert second["closed"]["report_id"] == first["closed"]["report_id"]
+    titles = [r["title"] for r in db.list_reports()]
+    assert titles == [f"Month close {MONTH}"]
