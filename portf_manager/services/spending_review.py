@@ -21,7 +21,7 @@ from portf_manager.services import (
     spending_insights,
     spending_uncategorized,
 )
-from portf_manager.services.recurring import load_recurring
+from portf_manager.services.recurring import RESOLVED_STATUSES, load_recurring
 
 # Items kept per list, so the bundle stays readable in chat and in a tool reply.
 MOVERS_TOP = 5
@@ -143,6 +143,10 @@ def _recurring_part(db, fx, month, portfolio_id):
         }
 
     for s in load_recurring(db, portfolio_id=portfolio_id):
+        # A series the user marked cancelled or paid another way is settled:
+        # it is neither a new charge to look at nor an ended one to explain.
+        if s.status in RESOLVED_STATUSES:
+            continue
         first = date.fromisoformat(s.first_date)
         expected = date.fromisoformat(s.next_expected)
         if window_start <= first <= end:

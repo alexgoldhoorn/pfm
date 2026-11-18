@@ -934,6 +934,26 @@ def check_recurring_charges(db: Any, today: date | None = None) -> list[dict]:
     for s in load_recurring(db):
         key = f"{s.portfolio_id}:{s.merchant}"
         context = {"portfolio_id": s.portfolio_id, "merchant": s.merchant}
+        if s.resolution_stale:
+            items.append(
+                {
+                    "id": f"recurring:returned:{key}:{s.last_date}",
+                    "category": "spending",
+                    "severity": "low",
+                    "title": (
+                        f"Charge from {s.merchant} arrived although it was "
+                        f"marked {s.resolution['status'].replace('_', ' ')}"
+                    ),
+                    "detail": (
+                        f"{s.last_amount:,.2f} {s.currency} on {s.last_date}; "
+                        f"it was marked {s.resolution['status'].replace('_', ' ')} "
+                        f"after the charge of {s.resolution['since']}. Clear the "
+                        f"mark if the subscription is back."
+                    ),
+                    "link_page": "spending",
+                    "context": context,
+                }
+            )
         if s.status == "missed":
             items.append(
                 {

@@ -27,7 +27,8 @@ estimate built from past months**.
   the detection expects them (`due_dates`, quarterly and yearly included, one
   charge per due date; a charge that was due but never imported is not
   counted). A charge due later this month is counted once, as a recurring
-  charge.
+  charge. A series marked cancelled or paid elsewhere (`spending.md` → Recurring
+  resolutions) is not placed at all; its past rows still stay out of the baseline.
 - **Savings.** Money moved to `Invest` / `House purchase` is `savings_eur`
   (baseline average plus recurring savings bills), subtracted from the balance
   but not counted as spending.

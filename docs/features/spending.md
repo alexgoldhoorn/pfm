@@ -213,7 +213,40 @@ kinds of item, both category `spending`:
   up at least `RECURRING_PRICE_RISE_PCT` (10%) on the one before it. Price
   drops are never flagged.
 
-Both link to the Spending page. Deterministic — no LLM involved.
+Both link to the Spending page. Deterministic — no LLM involved. A third,
+**returned charge** (`recurring:returned:<portfolio>:<merchant>:<date of the new
+charge>`, `low`), is raised when a series marked cancelled or paid elsewhere
+(below) charged again; a live resolution raises no missed item.
+
+### Recurring resolutions and subscriptions (2026-11-18)
+
+A series (account + merchant, matched case-insensitively) can be marked
+`cancelled` or `paid_elsewhere` (table `recurring_resolutions`, schema v47).
+`load_recurring` (never the pure `detect_recurring`) attaches it: a series
+whose last charge is on or before the resolution's `since` takes that status
+and carries `resolution {status, since, note}`; a charge after `since` leaves
+the detected status, keeps `resolution` and sets `resolution_stale: true`.
+
+- **`PUT /spending/recurring/resolution`** `{portfolio_id, merchant, status,
+  note?}`: `since` is the series' last charge date, set by the server (400 for
+  any other status, 404 when no such series is detected, upsert otherwise).
+  **`DELETE /spending/recurring/resolution?portfolio_id=&merchant=`** clears it
+  (404 when none).
+- **`GET /spending/recurring`** items gain `resolution` and `resolution_stale`;
+  parameters `include_resolved` (default true) and `sort` (`status`, the
+  default and the old order, now missed, active, paid elsewhere, cancelled,
+  ended; or `yearly_cost`, the subscriptions view, dearest first, no second
+  endpoint). Totals: `annual_total_eur` = active + missed + paid elsewhere
+  (cancelled and ended out; with `include_resolved=false` paid elsewhere is
+  out too), `monthly_total_eur` = that / 12, `paid_elsewhere_annual_eur` and
+  `cancelled_annual_eur` (what the cancellations save a year) always over every
+  resolved series.
+- **Effects of a live resolution.** `due_dates` returns nothing for it (as for
+  `ended`), so it is not among the forecast's known bills and not in the budget
+  pace's recurring charges still due; the review's `recurring.new` and
+  `ended` lists skip it; no missed item. Its past rows stay recognised as
+  recurring, so they never leak into the everyday baseline. A stale resolution
+  changes none of this: the series is live again.
 
 ### Category essentiality (v42)
 

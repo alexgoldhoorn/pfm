@@ -264,12 +264,21 @@ class RecurringItem(BaseModel):
     status: str
     price_change_pct: Optional[float] = None
     transaction_ids: List[int]
+    # Stored resolution (status, since, note) and whether a charge came back
+    # after it; ``status`` is cancelled / paid_elsewhere while it is live.
+    resolution: Optional[dict] = None
+    resolution_stale: bool = False
 
 
 class RecurringResponse(BaseModel):
     items: List[RecurringItem]
     monthly_total_eur: float
+    # Active + missed + paid elsewhere (cancelled and ended are out).
     annual_total_eur: float
+    # The paid-elsewhere share of the total, at its last typical amount.
+    paid_elsewhere_annual_eur: float = 0.0
+    # What the cancellations save a year (not part of ``annual_total_eur``).
+    cancelled_annual_eur: float = 0.0
 
 
 def _sign_matches_root(root: Optional[str], amount: float) -> bool:
@@ -1755,31 +1764,138 @@ def get_spending_summary(
 def list_recurring(
     portfolio_id: Optional[int] = None,
     include_ended: bool = False,
+    include_resolved: bool = True,
+    sort: Literal["status", "yearly_cost"] = "status",
     db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
     """Recurring charges (subscriptions, bills) detected from bank outflows.
 
-    Totals are EUR at today's rate (same convention as /summary) over
-    series that haven't ended. Ended series are hidden unless asked for.
+    Totals are EUR at today's rate (same convention as /summary). Ended series
+    are hidden unless asked for. A series marked cancelled or paid another way
+    (``PUT /recurring/resolution``) shows with that ``status`` unless
+    ``include_resolved=false``; ``annual_total_eur`` counts it only when it is
+    paid elsewhere (still a cost), ``cancelled_annual_eur`` is what the
+    cancellations save and ``paid_elsewhere_annual_eur`` the paid-elsewhere
+    part, both always over every resolved series. ``sort=status`` (default)
+    is missed, active, paid elsewhere, cancelled, ended, each by yearly cost;
+    ``sort=yearly_cost`` is the subscriptions view, dearest first.
     A plain ``def`` because the FX lookup can do blocking network I/O.
     """
     names = {p["id"]: p["name"] for p in db.get_all_portfolios()}
     items: List[RecurringItem] = []
+    paid_elsewhere = cancelled = 0.0
     for s in load_recurring(db, portfolio_id=portfolio_id):
+        annual_eur = round(s.annual_amount * _fx(s.currency), 2)
+        if s.status == "paid_elsewhere":
+            paid_elsewhere += annual_eur
+        elif s.status == "cancelled":
+            cancelled += annual_eur
         if s.status == "ended" and not include_ended:
+            continue
+        if s.status in ("cancelled", "paid_elsewhere") and not include_resolved:
             continue
         items.append(
             RecurringItem(
                 **vars(s),
                 account_name=names.get(s.portfolio_id),
-                annual_amount_eur=round(s.annual_amount * _fx(s.currency), 2),
+                annual_amount_eur=annual_eur,
             )
         )
-    annual = round(sum(i.annual_amount_eur for i in items if i.status != "ended"), 2)
-    return RecurringResponse(
-        items=items, monthly_total_eur=round(annual / 12, 2), annual_total_eur=annual
+    if sort == "yearly_cost":
+        items.sort(key=lambda i: -i.annual_amount_eur)
+    annual = round(
+        sum(
+            i.annual_amount_eur for i in items if i.status not in ("ended", "cancelled")
+        ),
+        2,
     )
+    return RecurringResponse(
+        items=items,
+        monthly_total_eur=round(annual / 12, 2),
+        annual_total_eur=annual,
+        paid_elsewhere_annual_eur=round(paid_elsewhere, 2),
+        cancelled_annual_eur=round(cancelled, 2),
+    )
+
+
+class RecurringResolutionIn(BaseModel):
+    """Key of a series (account + merchant), plus the resolution to store."""
+
+    portfolio_id: int
+    merchant: str = Field(..., min_length=1, max_length=200)
+    status: Optional[str] = None
+    note: Optional[str] = Field(None, max_length=500)
+
+
+def _find_series(db: Database, portfolio_id: int, merchant: str):
+    key = merchant.strip().upper()
+    for s in load_recurring(db, portfolio_id=portfolio_id):
+        if s.merchant.strip().upper() == key:
+            return s
+    return None
+
+
+@router.put("/recurring/resolution")
+def set_recurring_resolution(
+    body: RecurringResolutionIn,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Mark a recurring series ``cancelled`` or ``paid_elsewhere``.
+
+    ``since`` is set here from the series' last charge: a later charge makes
+    the mark stale (``resolution_stale``) and raises an Action Item. The mark
+    drops the series from the forecast's known bills, the budget pace and the
+    monthly review's new/ended lists, and ``cancelled`` leaves the annual
+    total. 400 for another status, 404 when no such series is detected.
+    """
+    if body.status not in ("cancelled", "paid_elsewhere"):
+        raise HTTPException(
+            status_code=400, detail="status must be 'cancelled' or 'paid_elsewhere'"
+        )
+    series = _find_series(db, body.portfolio_id, body.merchant)
+    if series is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No recurring series for that account and merchant",
+        )
+    note = (body.note or "").strip() or None
+    db.set_recurring_resolution(
+        series.portfolio_id, series.merchant, body.status, series.last_date, note
+    )
+    return {
+        "portfolio_id": series.portfolio_id,
+        "merchant": series.merchant,
+        "status": body.status,
+        "since": series.last_date,
+        "note": note,
+    }
+
+
+@router.delete("/recurring/resolution")
+def clear_recurring_resolution(
+    portfolio_id: int,
+    merchant: str,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Clear a series' resolution; the key goes in the query string.
+
+    404 when the series has none.
+    """
+    key = merchant.strip().upper()
+    stored = [
+        r["merchant"]
+        for r in db.list_recurring_resolutions(portfolio_id)
+        if r["merchant"].strip().upper() == key
+    ]
+    cleared = False
+    for merchant in stored:
+        cleared = db.delete_recurring_resolution(portfolio_id, merchant) or cleared
+    if not cleared:
+        raise HTTPException(status_code=404, detail="No resolution for that series")
+    return {"portfolio_id": portfolio_id, "merchant": merchant, "cleared": True}
 
 
 class SpendingTrendMonth(BaseModel):

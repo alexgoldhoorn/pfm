@@ -267,7 +267,7 @@ are unchanged, so variance still reconciles with `/spending/trend` to the cent.
   `actual_to_date_eur`, `limit_eur` (the line's available amount), `method`
   (`baseline` | `run_rate` | `month_complete` | null), `baseline_everyday_eur`,
   `baseline_months`, `expected_recurring_remaining_eur` (per account after its
-  own last import), `everyday_remaining_eur`, `projected_month_end_eur`,
+  own last import; a series marked cancelled or paid elsewhere adds nothing), `everyday_remaining_eur`, `projected_month_end_eur`,
   `projected_over_eur`, `months_with_activity` and `status`: `over` (more than
   the limit is already spent), `at_risk` (projected past the limit by both 50
   EUR and 10 %, the overrun check's thresholds), `on_track`, `irregular` or

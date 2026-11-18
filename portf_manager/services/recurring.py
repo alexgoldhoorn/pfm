@@ -28,7 +28,18 @@ PRICE_CHANGE_MIN_PCT = 5.0
 PRICE_FLAT_TOLERANCE = 0.02
 # Charges in the flat run before the latest one, the anchor included.
 PRICE_FLAT_MIN_RUN = 3
-_STATUS_ORDER = {"missed": 0, "active": 1, "ended": 2}
+# ``cancelled`` and ``paid_elsewhere`` are set only by ``load_recurring`` from a
+# stored resolution, never by detection.
+_STATUS_ORDER = {
+    "missed": 0,
+    "active": 1,
+    "paid_elsewhere": 2,
+    "cancelled": 3,
+    "ended": 4,
+}
+RESOLVED_STATUSES = ("cancelled", "paid_elsewhere")
+# Statuses with no future charge to place in a forecast or a pace.
+_NO_FUTURE_STATUSES = ("ended",) + RESOLVED_STATUSES
 
 
 @dataclass
@@ -48,6 +59,11 @@ class RecurringSeries:
     status: str
     price_change_pct: Optional[float]
     transaction_ids: List[int]
+    # ``{status, since, note}`` of the stored resolution, when there is one.
+    resolution: Optional[Dict[str, Any]] = None
+    # A charge arrived after the resolution's ``since``: the series kept its
+    # detected status and the resolution no longer applies.
+    resolution_stale: bool = False
 
 
 def _add_months(day: date, months: int) -> date:
@@ -245,19 +261,48 @@ def last_import_dates(db: Any) -> Dict[int, date]:
 def load_recurring(
     db: Any, portfolio_id: Optional[int] = None
 ) -> List[RecurringSeries]:
-    """detect_recurring over the database's bank outflows."""
+    """detect_recurring over the database's bank outflows, with resolutions.
+
+    A stored resolution (``cancelled`` / ``paid_elsewhere``) applies to a series
+    whose last charge is on or before the resolution's ``since``: the series
+    takes that status and carries ``resolution``. A charge after ``since`` means
+    the series came back: it keeps its detected status and gets
+    ``resolution_stale``. ``detect_recurring`` itself stays pure.
+    """
     rows = db.list_spending_transactions(
         portfolio_id=portfolio_id, is_transfer=False, amount_sign="negative"
     )
-    return detect_recurring(rows, last_import_dates(db))
+    series = detect_recurring(rows, last_import_dates(db))
+    lister = getattr(db, "list_recurring_resolutions", None)
+    resolutions = {
+        (r["portfolio_id"], r["merchant"].strip().upper()): r
+        for r in (lister(portfolio_id) if lister else [])
+    }
+    if not resolutions:
+        return series
+    for s in series:
+        found = resolutions.get((s.portfolio_id, s.merchant.strip().upper()))
+        if found is None:
+            continue
+        s.resolution = {
+            "status": found["status"],
+            "since": found["since"],
+            "note": found.get("note"),
+        }
+        if s.last_date <= found["since"]:
+            s.status = found["status"]
+        else:
+            s.resolution_stale = True
+    series.sort(key=lambda s: (_STATUS_ORDER[s.status], -s.annual_amount))
+    return series
 
 
 def due_dates(series: RecurringSeries, after: date, until: date) -> List[date]:
     """Dates the series' next charges fall due in ``(after, until]``.
 
     Counted from the last actual charge in whole cadence steps (not by
-    chaining month-end-clamped dates, which drift), oldest first. An ``ended`` series
-    has no future charges. A ``missed`` series is expected to resume, so its
+    chaining month-end-clamped dates, which drift), oldest first. An ``ended``,
+    ``cancelled`` or ``paid_elsewhere`` series has no future charges. A ``missed`` series is expected to resume, so its
     later cycles count, but the charge that failed to arrive does not: it is
     on or before the account's last import.
 
@@ -266,7 +311,7 @@ def due_dates(series: RecurringSeries, after: date, until: date) -> List[date]:
         after: exclusive lower bound, normally the account's last import.
         until: inclusive upper bound.
     """
-    if series.status == "ended" or until <= after:
+    if series.status in _NO_FUTURE_STATUSES or until <= after:
         return []
     # Every cycle is counted from the last actual charge, never from the
     # already-clamped ``next_expected``: a charge on the 31st would otherwise
