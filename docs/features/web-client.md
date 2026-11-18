@@ -377,6 +377,56 @@ the Net Worth chart; the snapshot calls have their own names on purpose.)
 - Every failing call shows "not available" in its own card; nothing was added that
   uses a native dialog, and money goes through `Fmt.money`.
 
+## Installed app: shortcuts and share target (2026-11-18)
+
+The web client is an installable PWA (`manifest.json`, `sw.js`). Two launch
+paths besides the plain start URL, both read once in `authManager.showDashboard`
+through `parseLaunchParams(location.search)` (`pfm_core.js`, pure) and then
+removed from the address with `history.replaceState`, so a reload repeats
+neither:
+
+- **Shortcuts** (`manifest.json` `shortcuts`): `/?page=<name>` opens that page
+  instead of the landing page. The name must be lower-case letters and have a
+  `#<name>Page` element; anything else falls back to the landing page. A new
+  shortcut is only a manifest entry (`pwa_share.test.mjs` checks the page
+  exists).
+- **Share target** (`manifest.json` `share_target`): Android offers PFM in the
+  share sheet for CSV and text files (`.csv`, `.txt`, `.q43`, `.n43`). The
+  share is a multipart `POST /share-target` that never reaches the backend:
+  the service worker (`receiveShare` in `sw.js`) puts the first file in the
+  Cache API (`pfm-share` / `/_shared-file`, name and file count in
+  `X-Share-*` headers) and redirects to `/?shared=file` (`none` when the share
+  held no file, `error` when it could not be read). `handleSharedLaunch`
+  (`pfm_features.js`) takes the file out of the cache (deleted at once, so it
+  is imported at most once), asks for the account in a `confirmDialog` with a
+  select of every bank account and broker, and calls
+  `apiClient.importStatementFile(account, file)`: `/spending/import-file` for a
+  bank account, `/import/import-file` for a broker. The answer is shown with
+  `shareImportResultModel` (built on `spendingImportResultModel` /
+  `importResultModel`, plus a Warnings list) in the normal result dialog, and
+  the current page is reloaded. A failed import (wrong account, unknown format)
+  shows the server's reason and asks again with the same file; Cancel drops it.
+  The account is preselected by `guessShareAccount(fileName, portfolios)` only
+  when the file name contains exactly one account's name, or one word (4+
+  letters) of exactly one; otherwise the user must choose.
+
+The share goes through the one-call endpoints on purpose (no preview): they
+skip stored rows, are all or nothing and leave near-duplicate broker bookings
+out, which suits a phone. A file that needs the preview (an LLM import, a PDT
+export, rows to untick) is imported on the Import / Export page as before.
+
+`SHARE_CACHE`/`SHARE_KEY` are defined in both `sw.js` and `pfm_features.js`
+(the worker cannot share the page's scripts); a test fails when they differ.
+The service worker calls `skipWaiting()` and `clients.claim()`: it caches
+nothing, so a new version can take over at once, and the first share after an
+update does not hit an old worker. When no worker is active the POST reaches
+nginx, whose `location = /share-target` redirects to `/?shared=error`.
+
+An installed app re-reads the manifest only when Chrome checks it (about once
+a day while the app is used); remove and reinstall the app to get new
+shortcuts or the share target at once. The share target exists only for the
+installed app, not for a browser tab, and Android only.
+
 ## Loans & Mortgage page (2026-11-15)
 
 Sidebar page `loans` (`#loansPage`, `loadLoansPage` in `pfm_analytics.js`): summary cards, two hand-drawn SVG charts (balance line, stacked principal/interest bars, `data-chart-tip` hover), a collapsible yearly table, the payments-vs-bank table and a debounced what-if panel. The budget editor's link picker (`budgetLinkOptions`, `parseBudgetLink` in `pfm_features.js`) offers manual liabilities and loans. Details: `mortgage.md`.

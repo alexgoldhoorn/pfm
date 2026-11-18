@@ -238,6 +238,10 @@ Full reference (dashboard layout, chart helpers, page-by-page wiring):
 - Pure helpers are `window.`-exported so the DOM-free JS tests
   (`web_client/js/tests/`) can import them.
 - Check new pages at 390px width for horizontal overflow.
+- Installed app (PWA): `manifest.json` shortcuts open `/?page=<name>`; a shared
+  statement is a `POST /share-target` answered by `sw.js`, never the backend, and
+  imported through the `import-file` endpoints (never a second import path).
+  `SHARE_CACHE`/`SHARE_KEY` must be identical in `sw.js` and `pfm_features.js`.
 - Web files are baked into the image, not live-mounted — redeploy after every
   edit (see the restart table).
 

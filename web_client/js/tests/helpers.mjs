@@ -26,6 +26,7 @@ export function loadAppIntoContext() {
     const store = {};
     const sandbox = {
         console,
+        URLSearchParams,
         setTimeout,
         clearTimeout,
         localStorage: {

@@ -747,3 +747,86 @@ def test_cost_control3_views_render_against_real_data(page, server_url):
             f"{server_url}/api/v1/spending/month-close?month={month}", headers=headers
         )
         httpx.delete(f"{server_url}/api/v1/portfolios/{pid}", headers=headers)
+
+
+def test_shortcut_launch_and_shared_statement_import(page, server_url):
+    """A manifest shortcut opens its page; a shared file is imported once."""
+    headers = {"X-API-Key": API_KEY}
+    pf = httpx.post(
+        f"{server_url}/api/v1/portfolios/",
+        json={"name": "Share Bank", "base_currency": "EUR", "account_type": "bank"},
+        headers=headers,
+    )
+    assert pf.status_code in (200, 201), pf.text
+    pid = pf.json()["id"]
+
+    # A shortcut: the page opens and the flag leaves the address.
+    page.goto(f"{server_url}/index.html?page=spending")
+    page.wait_for_load_state("networkidle")
+    assert page.locator("#spendingPage").is_visible()
+    assert not page.locator("#dashboardPage").is_visible()
+    assert page.evaluate("location.search") == ""
+    # An unknown page falls back to the landing page.
+    page.goto(f"{server_url}/index.html?page=nosuchpage")
+    page.wait_for_load_state("networkidle")
+    assert page.locator("#dashboardPage").is_visible()
+
+    # The share itself: the real service worker takes the POST and parks the file.
+    location = page.evaluate(
+        """async () => {
+            await navigator.serviceWorker.ready;
+            if (!navigator.serviceWorker.controller) {
+                await new Promise(r => navigator.serviceWorker.addEventListener('controllerchange', r, {once: true}));
+            }
+            const form = new FormData();
+            const csv = 'date,description,amount\\n2026-01-05,EXAMPLE SHOP,-10\\n2026-01-06,EXAMPLE CAFE,-5\\n';
+            form.append('file', new File([csv], 'share_bank_january.csv', {type: 'text/csv'}));
+            const resp = await fetch('/share-target', {method: 'POST', body: form});
+            return new URL(resp.url).search;
+        }"""
+    )
+    assert location == "?shared=file"
+
+    # The page side. Dialogs are Bootstrap modals (stubbed here), so the two
+    # dialog helpers are replaced: one picks the guessed account, one records.
+    result = page.evaluate(
+        """async () => {
+            window._shareAsked = [];
+            window.confirmDialog = async (o) => {
+                const box = document.createElement('div');
+                box.innerHTML = o.detailHtml;
+                document.body.appendChild(box);
+                window._shareAsked.push({message: o.message, value: box.querySelector('#pfmShareAccount').value});
+                return true;
+            };
+            window.showResultDialog = (m) => { window._shareModel = m; };
+            await handleSharedLaunch('file');
+            const left = await (await caches.open('pfm-share')).match('/_shared-file');
+            return {asked: window._shareAsked, model: window._shareModel, left: !!left};
+        }"""
+    )
+    assert len(result["asked"]) == 1
+    assert "share_bank_january.csv" in result["asked"][0]["message"]
+    # The file name names the account, so it is preselected.
+    assert result["asked"][0]["value"] == str(pid)
+    assert result["model"]["title"] == "Bank statement imported"
+    assert [c["value"] for c in result["model"]["chips"]][0] == 2
+    assert result["left"] is False
+    stored = httpx.get(
+        f"{server_url}/api/v1/spending/",
+        params={"portfolio_id": pid},
+        headers=headers,
+    )
+    assert stored.status_code == 200, stored.text
+    assert stored.json()["total"] == 2
+
+    # Nothing parked any more: a second launch does nothing.
+    again = page.evaluate(
+        """async () => {
+            window._shareAsked = [];
+            await handleSharedLaunch('file');
+            return window._shareAsked.length;
+        }"""
+    )
+    assert again == 0
+    assert page.errors == []

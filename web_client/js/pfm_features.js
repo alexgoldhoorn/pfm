@@ -1291,6 +1291,111 @@ function createNavigationManager() {
 }
 
 // ---------------------------------------------------------------------------
+// Share target: a statement file shared to the installed app
+// ---------------------------------------------------------------------------
+// Same names as in sw.js, which parks the shared file here.
+const SHARE_CACHE = 'pfm-share';
+const SHARE_KEY = '/_shared-file';
+
+// Take the parked file out of the cache (it is removed at once, so it is
+// imported at most once). Null when there is none.
+async function takeSharedFile() {
+    if (!window.caches) return null;
+    const cache = await window.caches.open(SHARE_CACHE);
+    const resp = await cache.match(SHARE_KEY);
+    if (!resp) return null;
+    await cache.delete(SHARE_KEY);
+    const blob = await resp.blob();
+    let name = 'shared-file';
+    try {
+        name = decodeURIComponent(resp.headers.get('X-Share-Name') || name);
+    } catch (e) { /* keep the fallback name */ }
+    return {
+        file: new File([blob], name, { type: blob.type }),
+        count: parseInt(resp.headers.get('X-Share-Count'), 10) || 1,
+    };
+}
+
+function _shareAccountSelectHtml(portfolios, chosenId) {
+    const opts = type => portfolios
+        .filter(p => (p.account_type === 'bank') === (type === 'bank'))
+        .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+        .map(p => `<option value="${esc(String(p.id))}"${p.id === chosenId ? ' selected' : ''}>${esc(p.name)}</option>`)
+        .join('');
+    const bank = opts('bank');
+    const broker = opts('brokerage');
+    return `
+        <label for="pfmShareAccount" class="form-label small mt-3 mb-1">Account</label>
+        <select class="form-select" id="pfmShareAccount">
+            <option value="">Choose the account…</option>
+            ${bank ? `<optgroup label="Bank accounts">${bank}</optgroup>` : ''}
+            ${broker ? `<optgroup label="Brokers">${broker}</optgroup>` : ''}
+        </select>
+        <div class="form-text">Rows already stored are skipped. If the file cannot be read, nothing is saved.</div>`;
+}
+
+// Ask which account the shared file belongs to and import it in one call.
+// A failed import (wrong account, unknown format) asks again with the same file.
+async function handleSharedLaunch(kind) {
+    if (kind !== 'file') {
+        notify(kind === 'none'
+            ? 'The share contained no file.'
+            : 'The shared file could not be received. Open PFM once, then share it again.', 'warning');
+        return;
+    }
+    let shared = null;
+    try {
+        shared = await takeSharedFile();
+    } catch (e) {
+        notify('The shared file could not be read: ' + e.message, 'danger');
+        return;
+    }
+    if (!shared) return;
+    const file = shared.file;
+    const portfolios = await window.apiClient.getPortfolios();
+    if (!portfolios.length) {
+        notify('Create an account on the Brokers page first, then share the file again.', 'warning');
+        return;
+    }
+    let chosen = guessShareAccount(file.name, portfolios);
+    const kb = Math.max(1, Math.round(file.size / 1024));
+    const extra = shared.count > 1 ? `\nOnly the first of the ${shared.count} shared files is imported.` : '';
+    for (;;) {
+        const ok = await confirmDialog({
+            title: 'Import shared file',
+            message: `${file.name} (${Fmt.num(kb, 0)} kB)${extra}`,
+            detailHtml: _shareAccountSelectHtml(portfolios, chosen),
+            confirmLabel: 'Import',
+        });
+        if (!ok) return;
+        const sel = document.getElementById('pfmShareAccount');
+        chosen = sel && sel.value ? parseInt(sel.value, 10) : null;
+        const account = portfolios.find(p => p.id === chosen);
+        if (!account) {
+            notify('Choose the account this file belongs to.', 'warning');
+            continue;
+        }
+        notify(`Importing ${file.name} into ${account.name}…`, 'info');
+        try {
+            const res = await window.apiClient.importStatementFile(account, file);
+            const model = shareImportResultModel(account, res);
+            const target = account.account_type === 'bank' ? 'spending' : 'transactions';
+            model.actions = [{
+                label: account.account_type === 'bank' ? 'Open Spending' : 'View transactions',
+                onClick: () => window.navigationManager.showPage(target),
+            }];
+            showResultDialog(model);
+            // The page underneath shows figures from before the import.
+            window.navigationManager.showPage(window.navigationManager.currentPage);
+            return;
+        } catch (err) {
+            notify('Import failed: ' + err.message, 'danger');
+        }
+    }
+}
+window.handleSharedLaunch = handleSharedLaunch;
+
+// ---------------------------------------------------------------------------
 // Auth Manager
 // ---------------------------------------------------------------------------
 function createAuthManager() {
@@ -1324,8 +1429,18 @@ function createAuthManager() {
                 if (nav) nav.style.display = "block";
                 if (content) content.style.display = "block";
             }
-            window.navigationManager.showPage((window.PREFS && window.PREFS.landingPage) || 'dashboard');
+            // A manifest shortcut (?page=) or a shared file (?shared=) decides
+            // the first page; the flags are then dropped from the address so a
+            // reload does not repeat them.
+            const launch = parseLaunchParams(window.location.search);
+            const landing = (window.PREFS && window.PREFS.landingPage) || 'dashboard';
+            const page = launch.page && document.getElementById(launch.page + 'Page') ? launch.page : landing;
+            window.navigationManager.showPage(page);
             this.isAuthenticated = true;
+            if (launch.page || launch.shared) {
+                try { window.history.replaceState(null, '', window.location.pathname); } catch (e) { /* ignore */ }
+            }
+            if (launch.shared) handleSharedLaunch(launch.shared);
         },
         setupLogout: function() {
             // Wire both the desktop and mobile-offcanvas logout buttons

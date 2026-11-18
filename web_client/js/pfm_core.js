@@ -2600,6 +2600,25 @@ function createAPIClient() {
             }
             return response.json();
         },
+        // One-call import of a statement file into an existing account: the
+        // bank or the broker import-file endpoint, by the account's type.
+        async importStatementFile(account, file) {
+            const form = new FormData();
+            form.append('file', file, file.name);
+            form.append('portfolio_id', account.id);
+            const path = account.account_type === 'bank'
+                ? '/api/v1/spending/import-file'
+                : '/api/v1/import/import-file';
+            const response = await fetch(this.baseURL + path, {
+                method: 'POST',
+                headers: { 'X-API-Key': this.apiKey },
+                body: form
+            });
+            if (!response.ok) {
+                throw new Error(errorDetailFromBody(await response.text(), 'Import failed'));
+            }
+            return response.json();
+        },
         async saveSpendingTransactions(accountPortfolioId, rows, duplicateAction = 'skip') {
             const response = await fetch(this.baseURL + '/api/v1/spending/save', {
                 method: 'POST',
@@ -5337,6 +5356,87 @@ function importResultText(result) {
     return lines.join('\n');
 }
 window.importResultText = importResultText;
+
+// Pure: what the launch URL asks for. `?page=<name>` comes from the manifest
+// shortcuts, `?shared=file|none|error` from the service worker after a share.
+// The page name is only letters, so it is safe in a selector.
+function parseLaunchParams(search) {
+    let params;
+    try {
+        params = new URLSearchParams(search || '');
+    } catch (e) {
+        return { page: null, shared: null };
+    }
+    const page = params.get('page') || '';
+    const shared = params.get('shared') || '';
+    return {
+        page: /^[a-z]{2,30}$/.test(page) ? page : null,
+        shared: ['file', 'none', 'error'].includes(shared) ? shared : null,
+    };
+}
+window.parseLaunchParams = parseLaunchParams;
+
+function _shareNorm(s) {
+    return String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .toLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+// Pure: the account a shared file most likely belongs to, from its file name.
+// The whole account name in the file name wins over a single word of it; a
+// guess is returned only when exactly one account matches, else null.
+function guessShareAccount(fileName, portfolios) {
+    const name = _shareNorm(fileName);
+    const list = portfolios || [];
+    if (!name) return null;
+    const full = list.filter(p => _shareNorm(p.name).length >= 3 && name.includes(_shareNorm(p.name)));
+    if (full.length === 1) return full[0].id;
+    if (full.length > 1) return null;
+    const word = list.filter(p => String(p.name || '').split(/[^\p{L}\p{N}]+/u)
+        .map(_shareNorm).some(w => w.length >= 4 && name.includes(w)));
+    return word.length === 1 ? word[0].id : null;
+}
+window.guessShareAccount = guessShareAccount;
+
+// Pure: an import-file response (bank or broker) as the result-box model, built
+// on the models of the normal import flows so all of them read the same.
+function shareImportResultModel(account, r) {
+    const acc = account || {};
+    const res = r || {};
+    let model;
+    if (acc.account_type === 'bank') {
+        model = spendingImportResultModel({
+            saved: res.imported || 0,
+            duplicates_skipped: res.duplicates || 0,
+            uncategorized: res.uncategorized || 0,
+            date_from: res.date_from,
+            date_to: res.date_to,
+            account_name: acc.name,
+        });
+    } else {
+        model = importResultModel({
+            saved: res.imported || 0,
+            saved_bookings: res.bookings_imported || 0,
+            duplicates_skipped: res.duplicates_skipped || 0,
+            date_from: res.first_date,
+            date_to: res.last_date,
+            portfolios: [res.portfolio_name || acc.name].filter(Boolean),
+        });
+        if (res.new_assets) {
+            model.chips.push({ label: res.new_assets === 1 ? 'new asset' : 'new assets', value: res.new_assets, cls: 'pfm-stat-info' });
+            model.note = 'New assets get prices on the next price refresh. Check their type and ticker on the Assets page.';
+        }
+        if (res.bookings_to_review) {
+            model.chips.push({ label: 'cash movements to review', value: res.bookings_to_review, cls: 'pfm-stat-warn' });
+        }
+    }
+    const warnings = res.warnings || [];
+    if (warnings.length) {
+        model.lists.push({ title: 'Warnings', items: warnings, level: 'warning', open: true });
+        if (model.level === 'success' || model.level === 'info') model.level = 'warning';
+    }
+    return model;
+}
+window.shareImportResultModel = shareImportResultModel;
 
 const _VIEW_TX_ACTION = { label: 'View transactions', onClick: () => window.navigationManager && window.navigationManager.showPage('transactions') };
 // Kept for existing callers; type now actually selects the style.
