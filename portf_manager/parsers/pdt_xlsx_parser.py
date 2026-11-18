@@ -613,7 +613,7 @@ def _pdt_exchange(
     """Return the PDT-canonical exchange value for a given asset type.
 
     Crypto and commodity assets must have an empty exchange field per PDT spec.
-    Mutual funds must have the literal exchange value "Funds" — PDT's Google
+    Bonds get the literal "Bonds" the same way. Mutual funds must have the literal exchange value "Funds" — PDT's Google
     Sheets import docs (help.portfoliodividendtracker.com/article/126) say
     "wanneer de transactie gaat om een fund type, selecteer dan de beurs
     'Funds'" (for a fund-type transaction, select the exchange "Funds").
@@ -627,6 +627,10 @@ def _pdt_exchange(
         return ""
     if asset_type.lower() == "mutual_fund":
         return "Funds"
+    # Bonds likewise go on PDT's "Bonds" exchange (in its Exchanges tab);
+    # left empty, PDT's import asks to pick an exchange for every bond
+    if asset_type.lower() == "bond":
+        return "Bonds"
     if exchange:
         return exchange
     # Try to infer from ISIN country prefix (first 2 chars)

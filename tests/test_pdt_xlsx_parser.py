@@ -1179,6 +1179,13 @@ class TestPdtExchange:
     def test_mutual_fund_ignores_stored_exchange(self):
         assert _pdt_exchange("XETRA Exchange", "mutual_fund") == "Funds"
 
+    def test_bond_returns_bonds(self):
+        assert _pdt_exchange(None, "bond") == "Bonds"
+        assert _pdt_exchange("", "bond", "NO0000000001") == "Bonds"
+
+    def test_bond_ignores_stored_exchange(self):
+        assert _pdt_exchange("Oslo Bors", "bond") == "Bonds"
+
 
 class TestPdtBondQuantityPrice:
     def test_bond_rescales_to_percent_of_par(self):
