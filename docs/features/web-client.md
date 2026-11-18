@@ -322,6 +322,61 @@ and tested in `js/tests/cost_control2.test.mjs`. API calls (`pfm_core.js`):
   merchants and one-off rows.
 - Every null figure prints "not available" or a dash, never 0.
 
+## Cost control 3 (2026-11-18)
+
+Web side of `feat/cost-control-3`. Pure helpers sit in the "Cost control 3"
+block at the end of `pfm_features.js` (and `actionItemRank`, `isActionGroup`,
+`flattenActionGroups`, `thisWeekModel` next to `mergeActionItems`), are
+`window.`-exported and tested in `js/tests/cost_control3.test.mjs`. API calls
+(`pfm_core.js`): `getActionItems(status, {grouped})`, `getNetworthSnapshots`,
+`getNetworthSnapshotChange`, `takeNetworthSnapshot`, `getSpendingRecurring({includeEnded, sort})`,
+`set/clearRecurringResolution`, `getMonthClose`, `closeMonth`, `reopenMonth`.
+(`getNetworthHistory` is the older portfolio-value history behind Analytics and
+the Net Worth chart; the snapshot calls have their own names on purpose.)
+
+- **Action Items page:** reads `grouped=true&status=all`. A group (`kind: "group"`,
+  id `group:<family>`) is one card with a count badge and a Show/Hide button
+  that expands its children (`_aiState.expanded`); a child keeps its own
+  Checked/Snooze. Checked/Snooze on the group row posts the group id (the server
+  applies it to every open child and stores nothing under the group id), then the
+  page reloads. Acting on a child also reloads, because the folded list does not
+  hold it. `mergeActionItems` still merges the Net Worth checklist and the
+  `dq:`/ack handling is unchanged; items are sorted by the server's `priority`,
+  and an item without one (checklist items, an older server) ranks at its
+  severity base. A group's "Go to page" is hidden when its children link to
+  different pages. The chat hand-offs use `flattenActionGroups`.
+- **Dashboard:** the needs-attention strip also reads `grouped=true` (a folded
+  family is one line). The *This week* card (`#dashThisWeek`, `renderDashThisWeek`)
+  lists the report's `top` (title, severity, count for a group, link) and hides
+  when nothing is open or the call fails.
+- **Net Worth › History** (`#nwHistory`, `loadNetworthHistory`): a line chart of
+  stored snapshots with a toggle to stacked components (investments, cash,
+  property, other assets; liabilities drawn below zero; `--viz-*` colours), a
+  *Snapshot now* button, and *What changed* tiles for the last month, 3 months and
+  since the first snapshot (`nwChangeWindows`: a window longer than the history is
+  not requested and says so). A null part reads "not available" and the server's
+  warnings are printed under the tile. With one snapshot the card says "History
+  starts <date>" and has no chart.
+- **Spending › Recurring:** status/yearly-cost sort buttons (`sort`), a totals
+  line (`recurringTotalsModel`: monthly and yearly, of which paid another way,
+  and what cancellations save), badges for Cancelled, Paid another way and Came
+  back (`resolution_stale`), the resolution note under the merchant, and a per-row
+  `...` menu (Cancelled / Paid another way / Clear) that asks for an optional
+  note. The menu is a Bootstrap dropdown with `strategy: fixed` so the
+  responsive table does not clip it.
+- **Budget pace:** `paceMeta` knows `irregular`: badge "Irregular" and
+  "irregular: spent in N of M months" (`months_with_activity` of `baseline_months`)
+  in the table cell, the mobile line and the title.
+- **Budget › Month close** (`#bgPaneClose`, `loadMonthClose`): month picker (last
+  12 complete months, the server picks the first one), checklist with status
+  icons and a link to the relevant page, the figures (null = "not available"),
+  a notes box, *Close month* / *Close again*, *Close anyway* (shown only when the
+  month is not ready; behind `confirmDialog`), *Reopen* (behind `confirmDialog`),
+  a banner when `closed.stale`, and a link that opens the saved report on the
+  Reports page.
+- Every failing call shows "not available" in its own card; nothing was added that
+  uses a native dialog, and money goes through `Fmt.money`.
+
 ## Loans & Mortgage page (2026-11-15)
 
 Sidebar page `loans` (`#loansPage`, `loadLoansPage` in `pfm_analytics.js`): summary cards, two hand-drawn SVG charts (balance line, stacked principal/interest bars, `data-chart-tip` hover), a collapsible yearly table, the payments-vs-bank table and a debounced what-if panel. The budget editor's link picker (`budgetLinkOptions`, `parseBudgetLink` in `pfm_features.js`) offers manual liabilities and loans. Details: `mortgage.md`.

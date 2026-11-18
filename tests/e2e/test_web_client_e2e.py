@@ -541,3 +541,209 @@ def test_loans_page_rate_history_whatif_and_detect_at_phone_width(page, server_u
         assert page.errors == []
     finally:
         httpx.delete(f"{base}/{lid}", headers=headers)
+
+
+def test_cost_control3_views_render_against_real_data(page, server_url):
+    """Action Items groups, net-worth history, recurring marks and month close."""
+    from calendar import monthrange
+    from datetime import date
+
+    headers = {"X-API-Key": API_KEY}
+    today = date.today()
+    pf = httpx.post(
+        f"{server_url}/api/v1/portfolios/",
+        json={
+            "name": "Example Bank Three",
+            "base_currency": "EUR",
+            "account_type": "bank",
+        },
+        headers=headers,
+    )
+    assert pf.status_code in (200, 201), pf.text
+    pid = pf.json()["id"]
+    last_month = _month_back(today, 1)
+    rows = []
+    # five months of an invented monthly streaming charge, round amounts
+    for k in range(1, 6):
+        first = _month_back(today, k)
+        rows += [
+            {
+                "date": first.replace(day=1).isoformat(),
+                "description": "EXAMPLE EMPLOYER",
+                "amount": 3000,
+                "category": "Salary",
+                "balance": 5000.0,
+            },
+            {
+                "date": first.replace(day=12).isoformat(),
+                "description": "EXAMPLE STREAMING",
+                "amount": -15,
+                "category": "uncategorized",
+                "merchant": "EXAMPLE STREAMING",
+            },
+        ]
+    # the statement reaches the last day of the last complete month
+    rows.append(
+        {
+            "date": last_month.replace(
+                day=monthrange(last_month.year, last_month.month)[1]
+            ).isoformat(),
+            "description": "EXAMPLE GROCER",
+            "amount": -40,
+            "category": "uncategorized",
+            "merchant": "EXAMPLE GROCER",
+        }
+    )
+    saved = httpx.post(
+        f"{server_url}/api/v1/spending/save",
+        json={"account_portfolio_id": pid, "rows": rows, "duplicate_action": "add"},
+        headers=headers,
+    )
+    assert saved.status_code == 200, saved.text
+    month = last_month.strftime("%Y-%m")
+    try:
+        page.set_viewport_size({"width": 390, "height": 800})
+        page.goto(f"{server_url}/index.html")
+        page.wait_for_load_state("networkidle")
+
+        def no_overflow(where):
+            overflow = page.evaluate(
+                "document.documentElement.scrollWidth"
+                " - document.documentElement.clientWidth"
+            )
+            assert overflow <= 0, f"horizontal overflow of {overflow}px: {where}"
+
+        def open_page(name):
+            page.locator(
+                f"#appShell .sidebar-nav-link[data-page='{name}']"
+            ).first.dispatch_event("click")
+            page.wait_for_load_state("networkidle")
+
+        # Action Items: the page loads grouped, a folded group expands
+        open_page("actionitems")
+        page.evaluate("loadActionItemsPage()")
+        page.wait_for_function(
+            "!document.getElementById('actionItemsList').textContent.includes('Loading')"
+        )
+        assert "Could not load" not in page.locator("#actionItemsList").inner_text()
+        page.evaluate(
+            """() => {
+            const kids = ['A', 'B', 'C'].map(n => ({
+                id: 'research:' + n, severity: 'medium', category: 'research',
+                title: 'Example price ' + n, detail: '', link_page: 'research',
+                status: 'open', ack: null, context: {},
+            }));
+            _aiState.items = [{
+                id: 'group:price_targets', kind: 'group', family: 'price_targets',
+                count: 3, severity: 'medium', category: 'research',
+                title: '3 price targets crossed', detail: '2 BUY, 1 SELL',
+                link_page: 'research', status: 'open', ack: null, children: kids,
+            }];
+            _aiState.expanded = new Set();
+            _renderActionItems();
+        }"""
+        )
+        assert (
+            "3 price targets crossed" in page.locator("#actionItemsList").inner_text()
+        )
+        assert "Example price A" not in page.locator("#actionItemsList").inner_text()
+        page.click("[data-ai-toggle='group:price_targets']")
+        assert "Example price A" in page.locator("#actionItemsList").inner_text()
+        assert page.locator("#actionItemsList [data-ai-ack='checked']").count() == 4
+        no_overflow("action items groups")
+        # dashboard "This week" card renders from a report
+        open_page("dashboard")
+        page.evaluate(
+            """() => renderDashThisWeek({
+            top: [{id: 'x', title: 'Example item', detail: 'd', severity: 'high', link_page: 'diagnostics'}],
+            summary: {open_entries: 1}})"""
+        )
+        assert "Example item" in page.locator("#dashThisWeekArea").inner_text()
+        no_overflow("dashboard this week")
+
+        # Net worth history: one snapshot reads "History starts"
+        assert (
+            httpx.post(
+                f"{server_url}/api/v1/networth/history/snapshot", headers=headers
+            ).status_code
+            == 200
+        )
+        open_page("networth")
+        page.evaluate("loadNetworthHistory()")
+        page.wait_for_function(
+            "document.getElementById('nwHistoryNote').textContent.includes('History starts')"
+        )
+        assert "two snapshots" in page.locator("#nwChangeRow").inner_text()
+        no_overflow("net worth history")
+
+        # Recurring: mark the series cancelled, see the badge and the totals
+        marked = httpx.put(
+            f"{server_url}/api/v1/spending/recurring/resolution",
+            json={
+                "portfolio_id": pid,
+                "merchant": "EXAMPLE STREAMING",
+                "status": "cancelled",
+                "note": "ended by phone",
+            },
+            headers=headers,
+        )
+        assert marked.status_code == 200, marked.text
+        open_page("spending")
+        page.evaluate("_wireSpRecurringTab(); _loadSpRecurring()")
+        page.wait_for_function(
+            "document.getElementById('spRecurringBody').textContent.includes('EXAMPLE STREAMING')"
+        )
+        body = page.locator("#spRecurringBody").inner_text()
+        assert "Cancelled" in body
+        assert "ended by phone" in body
+        assert "cancellations save" in page.locator("#spRecurringTotals").inner_text()
+        assert page.locator("#spRecurringBody .sp-rec-res").count() >= 1
+        page.click("#spRecurringSortCost")
+        page.wait_for_function(
+            "document.getElementById('spRecurringSortCost').classList.contains('active')"
+        )
+        page.wait_for_function(
+            "document.getElementById('spRecurringBody').textContent.includes('EXAMPLE STREAMING')"
+        )
+        no_overflow("recurring")
+
+        # Month close: the checklist and figures load, Close marks the month
+        open_page("budget")
+        page.evaluate("_wireBgMonthClose(); loadMonthClose()")
+        page.wait_for_function(
+            "document.querySelectorAll('#bgMcChecklist .list-group-item').length > 0"
+        )
+        assert page.input_value("#bgMcMonth") == month
+        assert (
+            "imported through the month end"
+            in page.locator("#bgMcChecklist").inner_text()
+        )
+        assert "Income" in page.locator("#bgMcFigures").inner_text()
+        no_overflow("month close")
+        page.fill("#bgMcNotes", "Example note")
+        if page.locator("#bgMcForce").is_visible():
+            # Another test's bank account may stop short of the month end: the
+            # month is then not ready, and only "Close anyway" is offered.
+            # That button asks through a dialog (stubbed here), so close
+            # through the API call it makes and render the result.
+            page.evaluate(
+                "window.apiClient.closeMonth({month: _mc.month, notes: 'Example note', force: true})"
+                ".then(_renderMonthClose)"
+            )
+        else:
+            page.click("#bgMcClose")
+        page.wait_for_function(
+            "document.getElementById('bgMcBanner').textContent.includes('Closed on')"
+        )
+        assert page.locator("#bgMcReopen").is_visible()
+        assert page.locator("#bgMcReport").is_visible()
+        stored = httpx.get(
+            f"{server_url}/api/v1/spending/month-close?month={month}", headers=headers
+        ).json()
+        assert stored["closed"]["notes"] == "Example note"
+        assert page.errors == []
+    finally:
+        httpx.delete(
+            f"{server_url}/api/v1/spending/month-close?month={month}", headers=headers
+        )
+        httpx.delete(f"{server_url}/api/v1/portfolios/{pid}", headers=headers)
