@@ -224,7 +224,9 @@ Full reference (dashboard layout, chart helpers, page-by-page wiring):
   `alert()`/`confirm()` (the one `alert()` left, before the DB-restore reload, is
   deliberate).
 - Money via `Fmt.money(v, currency)` only — no `'€' + Fmt.num(…)` strings. Numbers
-  `Fmt.num()`, dates `Fmt.date()`.
+  `Fmt.num()`, dates `Fmt.date()`. A sentence the server wrote (Action Item
+  title/detail, anomaly `detail`) goes through `serverTextHtml(text)`, never
+  bare `esc()`: it escapes and reformats/blurs each "1,234.56 EUR" in it.
 - ⚠️ Formatters built on `Fmt.amt(...)` emit a `<span>` — never interpolate them
   into an attribute; use `esc(fmtEurCents(v))` there.
 - ⚠️ An element with Bootstrap `d-flex`/`d-block` can't be hidden with

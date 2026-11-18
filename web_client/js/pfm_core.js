@@ -150,6 +150,21 @@ function esc(s) {
 }
 window.esc = esc;
 
+// Sentences the server writes (Action Items, Unusual charges) carry amounts in
+// Python's "{:,.2f} EUR" / "{:+,.0f} EUR" form. Escape the text, then show each
+// amount like every other one on the page: the user's number locale, and inside
+// Fmt.amt so privacy mode blurs it. The digits survive esc() unchanged.
+const SERVER_EUR_RE = /(?<![\w.,])([+\-−]?)(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))? EUR\b/g;
+function serverTextHtml(text) {
+    return esc(text).replace(SERVER_EUR_RE, (m, sign, whole, frac) => {
+        const n = parseFloat(whole.replace(/,/g, '') + (frac ? '.' + frac : ''));
+        const v = sign && sign !== '+' ? -n : n;
+        const shown = Fmt.money(v, 'EUR', frac ? frac.length : 0);
+        return Fmt.amt((sign === '+' ? '+' : '') + shown);
+    });
+}
+window.serverTextHtml = serverTextHtml;
+
 // HTML made from model-written Markdown is untrusted: an answer can echo bank
 // text or, with web search on, a web page. Sanitise it, and drop every image
 // that is not an inline PNG/JPEG: a remote image URL could carry private

@@ -363,3 +363,24 @@ test("spOneOffBadgeHtml / spOneOffButtonHtml reflect the flag", () => {
     assert.match(w.spOneOffButtonHtml({ id: 7, one_off: true }), /bi-flag-fill/);
     assert.ok(!/bi-flag-fill/.test(w.spOneOffButtonHtml({ id: 7, one_off: false })));
 });
+
+test("serverTextHtml: server EUR amounts take the page locale and the privacy blur", () => {
+    const prev = w.PREFS.numberLocale;
+    w.PREFS.numberLocale = "de-DE";
+    try {
+        const money = (v, d) => `<span class="pfm-amt">${w.Fmt.money(v, "EUR", d)}</span>`;
+        assert.equal(
+            w.serverTextHtml("1,234.56 EUR at Shop; the usual charge there is 27.68 EUR."),
+            `${money(1234.56, 2)} at Shop; the usual charge there is ${money(27.68, 2)}.`,
+        );
+        assert.match(w.serverTextHtml("27.68 EUR"), /27,68/);
+        // Signed whole amounts ({:+,.0f}) keep the plus; minus becomes a negative amount.
+        assert.equal(w.serverTextHtml("changed +12,000 EUR"), `changed <span class="pfm-amt">+${w.Fmt.money(12000, "EUR", 0)}</span>`);
+        assert.equal(w.serverTextHtml("-350 EUR"), money(-350, 0));
+        // Text is still escaped; numbers that are not EUR amounts are left alone.
+        assert.equal(w.serverTextHtml("<b>v2.5 EUR</b> 10 USD"), "&lt;b&gt;v2.5 EUR&lt;/b&gt; 10 USD");
+        assert.equal(w.serverTextHtml(null), "");
+    } finally {
+        w.PREFS.numberLocale = prev;
+    }
+});

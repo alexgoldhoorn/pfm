@@ -942,8 +942,8 @@ function renderDashThisWeek(report) {
         <li class="d-flex flex-wrap align-items-start gap-2 py-1 border-bottom">
             <span class="badge ${ACTIONITEMS_SEVERITY_BADGE[r.severity] || 'text-bg-secondary'}">${esc(r.severity)}</span>
             <div class="flex-grow-1" style="min-width:0;">
-                <div class="fw-semibold text-break">${esc(r.title)}${r.count ? ` <span class="badge rounded-pill text-bg-primary">${esc(r.count)}</span>` : ''}</div>
-                ${r.detail ? `<div class="small text-muted text-break">${esc(r.detail)}</div>` : ''}
+                <div class="fw-semibold text-break">${serverTextHtml(r.title)}${r.count ? ` <span class="badge rounded-pill text-bg-primary">${esc(r.count)}</span>` : ''}</div>
+                ${r.detail ? `<div class="small text-muted text-break">${serverTextHtml(r.detail)}</div>` : ''}
             </div>
             ${r.page ? `<a href="#" class="small text-nowrap" data-page="${esc(r.page)}">Open <i class="bi bi-arrow-right"></i></a>` : ''}
         </li>`).join('') + '</ul>'
@@ -1033,8 +1033,8 @@ function _aiRowHtml(item, isChild, grp) {
             <div class="flex-grow-1" style="min-width:0;">
                 <span class="badge ${ACTIONITEMS_SEVERITY_BADGE[item.severity] || 'text-bg-secondary'} me-2">${esc(item.severity)}</span>
                 <span class="text-muted small">${esc(ACTIONITEMS_CATEGORY_LABELS[item.category] || item.category)}</span>${countBadge}${statusHtml}
-                <div class="fw-semibold text-break">${esc(item.title)}</div>
-                <div class="small text-muted text-break">${esc(item.detail || '')}</div>
+                <div class="fw-semibold text-break">${serverTextHtml(item.title)}</div>
+                <div class="small text-muted text-break">${serverTextHtml(item.detail)}</div>
                 ${noteHtml}
             </div>
             <div class="d-flex flex-wrap gap-1 ms-auto flex-shrink-0">
@@ -12616,7 +12616,7 @@ async function loadSpAnomalies() {
             return `<div class="list-group-item d-flex flex-wrap justify-content-between align-items-start gap-2" data-anomaly-id="${escapeForAttr(item.id)}">
                 <div style="min-width:0;">
                     <span class="badge ${kind.badge} me-2">${esc(kind.label)}</span><span class="text-muted small">${esc(Fmt.date(item.date))}</span>
-                    <div>${esc(item.detail || '')}</div>
+                    <div>${serverTextHtml(item.detail)}</div>
                 </div>
                 <div class="d-flex gap-1 flex-shrink-0">
                     ${canOneOff ? `<button type="button" class="btn btn-sm btn-outline-secondary sp-anom-oneoff" data-anomaly-id="${escapeForAttr(item.id)}"><i class="bi bi-flag me-1"></i>${esc(anomalyOneOffLabel(item))}</button>` : ''}
@@ -13901,7 +13901,7 @@ function _renderMonthClose(state) {
                 <i class="bi ${r.icon} ${r.cls}" role="img" aria-label="${esc(r.word)}"></i>
                 <div class="flex-grow-1" style="min-width:0;">
                     <div class="fw-semibold small">${esc(r.label)}${r.count ? ` <span class="badge text-bg-light">${esc(r.count)}</span>` : ''}</div>
-                    <div class="small text-muted text-break">${esc(r.status === 'unknown' ? `${CC_NA}: ${r.detail}` : r.detail)}</div>
+                    <div class="small text-muted text-break">${serverTextHtml(r.status === 'unknown' ? `${CC_NA}: ${r.detail}` : r.detail)}</div>
                 </div>
                 ${r.page ? `<a href="#" class="small text-nowrap" data-page="${esc(r.page)}">Open <i class="bi bi-arrow-right"></i></a>` : ''}
             </div>`).join('')
