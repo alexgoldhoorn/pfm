@@ -29,10 +29,10 @@ def db(tmp_path):
     return d
 
 
-def test_tools_list_has_53_entries():
+def test_tools_list_has_55_entries():
     from portf_server.chat_tools import TOOLS
 
-    assert len(TOOLS) == 53
+    assert len(TOOLS) == 55
 
 
 def test_every_tool_definition_has_a_handler():
@@ -896,3 +896,120 @@ def test_loan_what_if_errors_are_text(tmp_path):
     assert execute_tool("loan_what_if", {"loan": "nope"}, d) == "Error: No such loan"
     d.create_loan("Second", 1000, 3, "2020-01-01", 12)
     assert "Several loans" in execute_tool("loan_what_if", {"lump_sum": 1}, d)
+
+
+def test_get_action_items_folds_a_family_and_lists_its_children(eur_db):
+    from portf_server.chat_tools import execute_tool
+
+    def child(n):
+        return {
+            "id": f"recurring:missed:{n}",
+            "severity": "medium",
+            "category": "spending",
+            "status": "open",
+            "title": f"Missed charge {n}",
+            "detail": "d",
+            "link_page": "spending",
+        }
+
+    report = {
+        "items": [child(1), child(2), child(3)],
+        "summary": {"open": 3},
+        "acks": {},
+    }
+    with patch(
+        "portf_manager.services.action_items.get_action_items",
+        return_value=report["items"],
+    ):
+        folded = json.loads(execute_tool("get_action_items", {}, eur_db))
+        groups = [i for i in folded["items"] if i.get("kind") == "group"]
+        assert groups and groups[0]["count"] == 3
+        assert groups[0]["summary"]
+        fam = groups[0]["family"]
+        kids = json.loads(execute_tool("get_action_items", {"family": fam}, eur_db))
+    assert kids["count"] == 3
+    assert {k["id"] for k in kids["items"]} == {
+        "recurring:missed:1",
+        "recurring:missed:2",
+        "recurring:missed:3",
+    }
+
+
+def test_get_action_items_unknown_family_is_empty(eur_db):
+    from portf_server.chat_tools import execute_tool
+
+    out = json.loads(execute_tool("get_action_items", {"family": "nope"}, eur_db))
+    assert out == {"family": "nope", "count": 0, "items": []}
+
+
+def test_networth_history_tool_without_snapshots_says_not_available(eur_db):
+    from portf_server.chat_tools import execute_tool
+
+    out = json.loads(execute_tool("get_networth_history", {"period": "1m"}, eur_db))
+    assert out["snapshots_in_window"] == 0
+    assert out["change"]["parts"]["saved_eur"] is None
+    assert "no snapshots stored yet" in out["warnings"]
+
+
+def test_networth_history_tool_splits_change_between_two_snapshots(eur_db):
+    from datetime import date, timedelta
+
+    from portf_server.chat_tools import execute_tool
+
+    today = date.today()
+    for day, cash in ((today - timedelta(days=20), 1000.0), (today, 1500.0)):
+        eur_db.upsert_networth_snapshot(
+            snapshot_date=day.isoformat(),
+            net_worth_eur=cash,
+            investments_eur=0.0,
+            cash_eur=cash,
+            property_eur=0.0,
+            other_assets_eur=0.0,
+            liabilities_eur=0.0,
+        )
+    out = json.loads(execute_tool("get_networth_history", {"period": "3m"}, eur_db))
+    assert out["snapshots_in_window"] == 2
+    assert out["first_snapshot"] == (today - timedelta(days=20)).isoformat()
+    assert out["latest"]["cash_eur"] == 1500.0
+    assert out["change"]["net_worth_change_eur"] == 500.0
+
+
+def test_networth_history_tool_rejects_bad_period(eur_db):
+    from portf_server.chat_tools import execute_tool
+
+    assert execute_tool("get_networth_history", {"period": "soon"}, eur_db).startswith(
+        "Error:"
+    )
+    assert execute_tool(
+        "get_networth_history", {"start": "2026-02-01", "end": "2026-01-01"}, eur_db
+    ).startswith("Error:")
+
+
+def test_month_close_tool_returns_checklist_for_a_month(bank_db):
+    from portf_server.chat_tools import execute_tool
+
+    with patch("portf_server.chat_tools._fx", return_value=1.0):
+        out = json.loads(execute_tool("get_month_close", {"month": "2020-01"}, bank_db))
+    assert out["month"] == "2020-01"
+    assert {"checklist", "figures", "closed", "ready"} <= set(out)
+
+
+def test_month_close_tool_rejects_bad_month(bank_db):
+    from portf_server.chat_tools import execute_tool
+
+    assert execute_tool("get_month_close", {"month": "March"}, bank_db).startswith(
+        "Error:"
+    )
+    assert execute_tool("get_month_close", {"month": "2999-01"}, bank_db).startswith(
+        "Error:"
+    )
+
+
+def test_recurring_tool_carries_resolution_fields_and_totals(bank_db):
+    from portf_server.chat_tools import execute_tool
+
+    with patch("portf_server.routers.spending._fx", return_value=1.0):
+        data = json.loads(execute_tool("get_recurring_spending", {}, bank_db))
+    assert {"paid_elsewhere_annual_eur", "cancelled_annual_eur"} <= set(data)
+    for item in data["items"]:
+        assert "resolution" in item and "resolution_stale" in item
