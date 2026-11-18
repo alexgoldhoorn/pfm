@@ -401,3 +401,15 @@ filters `is_transfer` itself).
   `get_uncategorized_queue`; MCP `planned_items`, `spending_year`,
   `uncategorized_queue` (read-only; classifying and planned items are written in
   the web client).
+
+### Month close (2026-11-18, `services/month_close.py`, table `month_closes`, schema v47)
+
+A sequence for month end and a "done" mark. No maths of its own and no LLM: it assembles `spending_insights`, `spending_uncategorized`, `spending_year`, `recurring` and the budget part of `spending_review`. A close is a mark, not a freeze: nothing is locked.
+
+- **`GET /spending/month-close?month=`** -> `{month, closed, ready, checklist, figures, warnings}`; `month` defaults to the last complete month, one after the month in progress is 400. `closed` is `null` or `{closed_at, notes, report_id, stale}`.
+- **Checklist** (each step `{key, label, status: ok|todo|warn|unknown, count, detail, link_page}`): `imports` (every bank account with rows in the 12 months before reaches the month's last day; a month with no rows at all is `todo`; the only step that blocks), `uncategorized` (outflows with no category), `transfers` (unlinked transfer rows in the month, with the pattern-flagged ones counted), `anomalies` (anomaly items dated in the month whose Action Item ack is not checked or snoozed, matched by item id), `recurring` (series due in the month that did not arrive and have no resolution), `one_offs` (a reminder only: the month's up to 5 largest outflows of 200 EUR or more, not marked one-off, from a merchant not charged in the 90 days before, so the rent never shows). A step whose source fails is `unknown` with a warning, and a month with no rows leaves the row-based steps `unknown`. `ready` is true when `imports` is `ok`.
+- **`figures`:** `income_eur`, `spending_eur`, `savings_eur`, `net_eur` (income - spending, as in the year view), `savings_rate_pct`, `budget` (active budget: sections planned vs actual; null without one or without activity), `top_categories` (5) and `versus_normal` (the comparison's totals). A month with nothing imported or a part that fails is `null`, never zero.
+- **`POST /spending/month-close`** `{month, notes, force}`: 400 for the month in progress or a future one, 409 when not `ready` and not `force`. It stores figures and checklist and writes a Markdown report to `reports` (title `Month close YYYY-MM`, whole euros, from the pure `render_month_close_report(month, figures, checklist)`). Closing again replaces the row and updates the same report; an omitted `notes` keeps the earlier one.
+- **`DELETE /spending/month-close?month=`** reopens (404 when not closed); the saved report stays. These routes sit before `/{spending_id}`.
+- **`closed.stale`:** the figures recomputed now differ from the stored ones by more than 1 EUR on income, spending or net (rows imported or recategorised after the close).
+- **Action Item** `spending:month-close:<YYYY-MM>`: see `action-items.md`.

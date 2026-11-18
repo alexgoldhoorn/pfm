@@ -45,6 +45,10 @@
   never judged; none complete means no item. Links to the Spending page's To
   classify card. Details: `spending.md` → Cost control 2.
 
+### Month close (2026-11-18)
+
+`check_month_close_ready` (in `_CHECKS`, `services/month_close.py`) raises one low item, `spending:month-close:<YYYY-MM>` ("October is ready to close", category `spending`, `link_page` `budget`), only for the last complete calendar month, only from the 5th of the following month, only while that month's imports step is `ok` (every bank account reaches its last day and rows exist) and the month is not closed. Older months never raise one. Closing the month, or reopening it and the imports no longer reaching, removes it. It carries the `spending` priority weight like the other spending items. See `spending.md` -> Month close.
+
 ### Triage: groups, priority, top 5 (2026-11-18, `services/action_item_groups.py`)
 - **Pure module, no new checks.** Ids and checks are unchanged. A *family* is picked by id prefix from one table (`FAMILY_PREFIXES`): `price_targets` (`research:*`, `watchlist:*`), `budget_pace` (`budget:pace:*`), `budget_overrun` (`budget:line:*`), `recurring_missed`, `fund_exposure` (`exposure:*`), `stale_imports` (`import:portfolio:*`), `cash_freshness` (`balance_sheet_stale:*`). An item in no family stays alone.
 - **Folding.** `fold(items)` replaces 3 or more `open` items of a family with one group: `id` `group:<family>`, `kind: "group"`, `family`, `count`, `children` (the original items, priority order), the highest child severity, a count `title` ("22 price targets crossed"), a one-line `detail` (price targets: BUY/SELL counts and how many are new in the last 7 days; pace: the three largest projected overshoots by label; others: the first titles) and the children's `link_page` (null when they differ). Checked and snoozed items are never folded or counted. The group's `priority` is its severity + category weight + the most urgent child's urgency. The price-target and pace items carry `context.triggers`/`since` and `context.label`/`projected_over_eur` for these summaries.

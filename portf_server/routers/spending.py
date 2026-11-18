@@ -43,6 +43,7 @@ from portf_manager.services.merchant import normalize_merchant
 from portf_manager.services.recurring import load_recurring
 from portf_manager.services import (
     cashflow_forecast,
+    month_close,
     planned_items,
     spending_insights,
     spending_review,
@@ -62,6 +63,9 @@ from ..dependencies import get_api_key_manager
 from portf_manager.database import Database
 
 router = APIRouter()
+
+# A calendar month as ``YYYY-MM``.
+_MONTH_PATTERN = r"^\d{4}-(0[1-9]|1[0-2])$"
 logger = logging.getLogger(__name__)
 
 
@@ -1036,6 +1040,78 @@ def delete_planned_item(
     return {"deleted": True, "id": item_id}
 
 
+class MonthCloseBody(BaseModel):
+    month: str = Field(pattern=_MONTH_PATTERN)
+    notes: Optional[str] = Field(default=None, max_length=2000)
+    force: bool = False
+
+
+def _today():
+    """Today's date; one seam for the month-close routes' clock."""
+    from datetime import date
+
+    return date.today()
+
+
+def _month_close_error(e: month_close.MonthCloseError) -> HTTPException:
+    return HTTPException(status_code=e.status, detail=e.message)
+
+
+@router.get("/month-close", response_model=dict)
+def get_month_close(
+    month: Optional[str] = Query(default=None, pattern=_MONTH_PATTERN),
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """The close state of a month: checklist, figures and the stored mark.
+
+    ``month`` defaults to the last complete month; one after the month in
+    progress is 400. Deterministic, no LLM. Each checklist step and figure is
+    built on its own: a source that fails is ``unknown`` / null with a warning,
+    never a 5xx. ``ready`` is true when every bank account with recent rows is
+    imported through the month's last day. ``closed.stale`` is true when
+    income, spending or net moved by more than 1 EUR since the close. Plain
+    ``def`` because of the FX lookups.
+    """
+    try:
+        return month_close.build_month_close(db, _fx, _today(), month)
+    except month_close.MonthCloseError as e:
+        raise _month_close_error(e)
+
+
+@router.post("/month-close", response_model=dict)
+def post_month_close(
+    body: MonthCloseBody,
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Close a month: store its figures and checklist and save the report.
+
+    400 for the month in progress or a future one, 409 when the month is not
+    ready and ``force`` is false. Closing again replaces the stored close and
+    updates the same saved report. A close is a mark, not a freeze.
+    """
+    try:
+        return month_close.close_month(
+            db, _fx, _today(), body.month, body.notes, body.force
+        )
+    except month_close.MonthCloseError as e:
+        raise _month_close_error(e)
+
+
+@router.delete("/month-close", response_model=dict)
+def delete_month_close(
+    month: str = Query(pattern=_MONTH_PATTERN),
+    db: Database = Depends(get_database),
+    api_key_info: dict = Depends(_auth),
+):
+    """Reopen a month. The saved report stays; 404 when it was not closed."""
+    try:
+        return month_close.reopen_month(db, month)
+    except month_close.MonthCloseError as e:
+        raise _month_close_error(e)
+
+
 @router.put("/{spending_id}", response_model=dict)
 async def update_spending_category(
     spending_id: int,
@@ -1964,9 +2040,6 @@ def get_spending_trend(
             m = 1
             y += 1
     return result
-
-
-_MONTH_PATTERN = r"^\d{4}-(0[1-9]|1[0-2])$"
 
 
 def _category_tree(db) -> Dict[str, dict]:

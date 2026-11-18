@@ -21,6 +21,7 @@ from datetime import date, datetime, timedelta
 from portf_manager.services import action_item_groups
 from portf_manager.services import budget as budget_service
 from portf_manager.services.caps import check_position_caps
+from portf_manager.services.month_close import check_month_close_ready
 from portf_manager.services.year_end_tax import check_year_end_tax
 
 STALE_IMPORT_DAYS = 60
@@ -1235,6 +1236,7 @@ _CHECKS = (
     check_decision_reviews,
     check_year_end_tax,
     check_position_caps,
+    check_month_close_ready,
 )
 
 
