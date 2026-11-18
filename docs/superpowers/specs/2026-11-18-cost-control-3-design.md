@@ -160,7 +160,7 @@ for the pure parts). The checks themselves do not change, and neither do item id
 
 ## 3. Broker import-file
 
-`POST /api/v1/imports/import-file` (multipart: `portfolio_id`, `file`, optional
+`POST /api/v1/import/import-file` (multipart: `portfolio_id`, `file`, optional
 `format`), the broker counterpart of `/spending/import-file`.
 
 - The portfolio must be `account_type='brokerage'`; 400 otherwise.
@@ -168,8 +168,8 @@ for the pure parts). The checks themselves do not change, and neither do item id
   name and the file's header, among the deterministic parsers only
   (Indexa, MyInvestor CSV, Coinbase, Mintos, generic CSV, PDT XLSX). No match:
   400 naming what was looked for. The LLM text path is never used.
-- It runs the same parse and duplicate flagging as `/imports/upload` and the
-  same save path as `/imports/save` (shared functions; never a forked copy),
+- It runs the same parse and duplicate flagging as `/import/upload` and the
+  same save path as `/import/save` (shared functions; never a forked copy),
   with the web default for duplicates (skip). Bookings follow their own
   duplicate rule as today.
 - All or nothing: if the save fails part-way, what this call wrote is removed
@@ -177,10 +177,12 @@ for the pure parts). The checks themselves do not change, and neither do item id
   made transactional without a rewrite, say so in the batch report and stop;
   do not ship a partial-write version.
 - Response: `{portfolio_id, portfolio_name, format, parsed, imported,
-  duplicates_skipped, possible_duplicates, bookings_imported, new_assets,
-  first_date, last_date, warnings}`. `possible_duplicates` counts rows saved
-  although the checker called them "possible": the caller prints it as "to
-  review". No amounts, no descriptions in the response.
+  duplicates_skipped, bookings_to_review, bookings_imported, new_assets,
+  first_date, last_date, warnings}`. `bookings_to_review` counts bookings left out because they match a
+  stored one only by amount a few days apart (possibly the same transfer under
+  another date); the warning tells the caller to import them from the web Import
+  page if they are real. Exact booking duplicates count in `duplicates_skipped`.
+  No amounts, no descriptions in the response.
 - Every booking-creating path calls `settle_after_bookings`, as today.
 - 400 for bad input, 500 for a save failure, same as the spending endpoint. A
   module lock serialises calls.
