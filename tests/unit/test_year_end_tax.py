@@ -88,6 +88,7 @@ def test_action_item_inside_window(test_database):
     assert item["title"] == (
         "Year-end tax check: €600 of losses could offset €500 of gains"
     )
+    assert item["context"]["days_left"] == 51
 
 
 def test_action_item_silent_outside_window(test_database):

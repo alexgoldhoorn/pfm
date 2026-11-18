@@ -17,7 +17,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 
 from portf_manager.services.action_item_acks import list_acks, set_ack
-from portf_manager.services.action_items import action_items_report
+from portf_manager.services.action_items import (
+    action_items_report,
+    open_family_item_ids,
+)
 
 from ..auth_middleware import APIKeyManager, require_api_key
 from ..dependencies import get_api_key_manager, get_database
@@ -41,6 +44,13 @@ def list_action_items(
             "all: every item, annotated with its status and ack."
         ),
     ),
+    grouped: bool = Query(
+        False,
+        description=(
+            "Fold families of 3+ open items into one group item, sort by "
+            "priority and add ``top`` (the first 5 open entries)."
+        ),
+    ),
     db: Database = Depends(get_database),
     api_key_info: dict = Depends(_auth),
 ):
@@ -55,7 +65,7 @@ def list_action_items(
     the whole stored follow-up map, so the web client can apply it to the
     Net Worth checklist items it computes on its own.
     """
-    report = action_items_report(db, status=status)
+    report = action_items_report(db, status=status, grouped=grouped)
     report["generated_at"] = datetime.now(timezone.utc).isoformat()
     return report
 
@@ -82,6 +92,26 @@ class AckIn(BaseModel):
     )
 
 
+def _ack_group(body: AckIn, db: Database) -> dict:
+    family = body.id.strip().removeprefix("group:")
+    try:
+        ids = open_family_item_ids(db, family)
+        for child_id in ids:
+            set_ack(
+                db,
+                child_id,
+                body.status,
+                note=body.note,
+                until=body.until,
+                days=body.days,
+            )
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except NotImplementedError as e:
+        raise HTTPException(status_code=501, detail=str(e))
+    return {"id": body.id.strip(), "status": body.status, "children": ids}
+
+
 @router.post("/ack")
 def ack_action_item(
     body: AckIn,
@@ -90,8 +120,13 @@ def ack_action_item(
 ) -> dict:
     """Mark a finding checked or snoozed, or reopen it (``status: open``).
 
-    Returns ``{"id", "status", "ack"}``; ``ack`` is null once reopened.
+    Returns ``{"id", "status", "ack"}``; ``ack`` is null once reopened. An id
+    ``group:<family>`` applies the ack to every currently open child of that
+    family instead, stores nothing under the group id and returns
+    ``{"id", "status", "children"}`` with the child ids it touched.
     """
+    if body.id.strip().startswith("group:"):
+        return _ack_group(body, db)
     try:
         ack = set_ack(
             db,

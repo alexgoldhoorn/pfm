@@ -18,6 +18,7 @@ import logging
 import re
 from datetime import date, datetime, timedelta
 
+from portf_manager.services import action_item_groups
 from portf_manager.services import budget as budget_service
 from portf_manager.services.caps import check_position_caps
 from portf_manager.services.year_end_tax import check_year_end_tax
@@ -639,7 +640,7 @@ def check_price_alerts(db: Any) -> list[dict]:
             "title": f"{_name_code(a.get('name'), a['symbol'])} dropped into its buy zone",
             "detail": (f"Price {a['price']} at or below buy-below {a['buy_below']}."),
             "link_page": "watchlist",
-            "context": {"symbol": a["symbol"]},
+            "context": {"symbol": a["symbol"], "triggers": ["BUY"]},
         }
         items.append(item)
         watch_items[a["symbol"].upper()] = item
@@ -669,7 +670,11 @@ def check_price_alerts(db: Any) -> list[dict]:
                     f"{since_tag}"
                 ),
                 "link_page": "research",
-                "context": {"symbol": a["symbol"]},
+                "context": {
+                    "symbol": a["symbol"],
+                    "triggers": [t["type"] for t in a["triggers"]],
+                    "since": since,
+                },
             }
         )
     return items
@@ -727,6 +732,8 @@ def _budget_pace_items(summary: dict, overrun_ids: set) -> list[dict]:
                         "line_id": line["line_id"],
                         "ref_key": line["ref_key"],
                         "month": pace["month"],
+                        "label": line["label"],
+                        "projected_over_eur": pace["projected_over_eur"],
                     },
                 }
             )
@@ -1232,7 +1239,10 @@ def get_action_items(db: Any) -> list[dict]:
 
 
 def action_items_report(
-    db: Any, status: str = "open", today: date | None = None
+    db: Any,
+    status: str = "open",
+    today: date | None = None,
+    grouped: bool = False,
 ) -> dict:
     """The items with their follow-up state, plus the counts and stored acks.
 
@@ -1240,12 +1250,18 @@ def action_items_report(
         db: Database.
         status: ``open`` keeps only items nobody has checked or snoozed;
             ``all`` returns every item annotated with its ``status``/``ack``.
-        today: Injectable clock, decides whether a snooze has expired.
+        today: Injectable clock, decides whether a snooze has expired and
+            feeds the priority's urgency.
+        grouped: Fold families of 3+ open items into ``group:<family>``
+            entries and sort by ``priority``; adds ``top`` (the first 5 open
+            entries) and ``summary.open_entries``. Without it the list keeps
+            its check order and only gains ``priority`` on each item.
 
     Returns:
-        ``{"items", "summary", "acks"}`` — ``summary`` counts every item
-        (not just the returned ones), ``acks`` is the whole stored map so a
-        client can also apply it to findings it computes itself.
+        ``{"items", "summary", "acks"}`` (plus ``top`` when grouped) —
+        ``summary`` counts every single item (not just the returned ones and
+        never a group), ``acks`` is the whole stored map so a client can also
+        apply it to findings it computes itself.
     """
     from portf_manager.services.action_item_acks import (
         annotate_items,
@@ -1255,9 +1271,40 @@ def action_items_report(
 
     if status not in ("open", "all"):
         raise ValueError("status must be 'open' or 'all'")
+    day = today or date.today()
     acks = list_acks(db)
     items = annotate_items(get_action_items(db), acks, today)
+    for item in items:
+        item["priority"] = action_item_groups.priority(item, day)
     summary = summarize_items(items)
     if status == "open":
         items = [i for i in items if i["status"] == "open"]
-    return {"items": items, "summary": summary, "acks": acks}
+    report = {"items": items, "summary": summary, "acks": acks}
+    if grouped:
+        entries = action_item_groups.sort_by_priority(
+            action_item_groups.fold(items, day)
+        )
+        report["items"] = entries
+        open_entries = [e for e in entries if e["status"] == "open"]
+        report["top"] = open_entries[: action_item_groups.TOP_N]
+        summary["open_entries"] = len(open_entries)
+    return report
+
+
+def open_family_item_ids(db: Any, family: str, today: date | None = None) -> list[str]:
+    """Ids of the currently open items of one family (what a group ack hits).
+
+    Args:
+        db: Database.
+        family: A family name from ``action_item_groups.FAMILY_TITLES``.
+        today: Injectable clock for snooze expiry.
+
+    Raises:
+        ValueError: ``family`` is not a known family.
+    """
+    if family not in action_item_groups.FAMILY_TITLES:
+        raise ValueError(f"unknown action-item family: {family}")
+    report = action_items_report(db, status="open", today=today)
+    return [
+        i["id"] for i in report["items"] if action_item_groups.family_of(i) == family
+    ]

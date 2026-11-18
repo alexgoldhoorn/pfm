@@ -335,6 +335,7 @@ def check_year_end_tax(db: Any, today: Optional[date] = None) -> list[dict]:
             "link_page": "analytics",
             "context": {
                 "year": today.year,
+                "days_left": data["deadline"]["days_left"],
                 "harvestable_loss_eur": data["harvestable_loss_eur"],
                 "realised_gain_eur": data["realised_gain_eur"],
                 "carry_forward_eur": carry,
