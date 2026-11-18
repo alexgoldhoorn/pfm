@@ -348,7 +348,8 @@ the Net Worth chart; the snapshot calls have their own names on purpose.)
 - **Dashboard:** the needs-attention strip also reads `grouped=true` (a folded
   family is one line). The *This week* card (`#dashThisWeek`, `renderDashThisWeek`)
   lists the report's `top` (title, severity, count for a group, link) and hides
-  when nothing is open or the call fails.
+  when nothing is open or the call fails. It sits near the bottom, just above
+  *Recent activity*: the first screen is the KPI tiles and the strip.
 - **Net Worth › History** (`#nwHistory`, `loadNetworthHistory`): a line chart of
   stored snapshots with a toggle to stacked components (investments, cash,
   property, other assets; liabilities drawn below zero; `--viz-*` colours), a

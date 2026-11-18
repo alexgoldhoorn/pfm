@@ -394,23 +394,6 @@
                         <div id="dashAttentionDetail" class="pfm-attn-detail" style="display:none;"></div>
                     </div>
 
-                    <!-- This week: the top Action Items (folded groups count as one line),
-                         filled by renderDashThisWeek. Hidden when nothing is open. -->
-                    <div class="row g-3 mb-4" id="dashThisWeek" style="display:none;">
-                        <div class="col-12">
-                            <div class="card">
-                                <div class="card-header d-flex justify-content-between align-items-center">
-                                    <span><i class="bi bi-calendar-check me-2"></i>This week
-                                        <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" id="dashThisWeekHelp"></i></span>
-                                    <a href="#" class="small" data-page="actionitems">All action items <i class="bi bi-arrow-right"></i></a>
-                                </div>
-                                <div class="card-body py-2">
-                                    <div id="dashThisWeekArea"><div class="text-muted small">Loading…</div></div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
                     <!-- Your progress: rated tiles, filled by loadDashboardProgress.
                          Hidden when there is nothing to show yet. -->
                     <div id="dashProgress" class="mb-4" style="display:none;">
@@ -658,6 +641,23 @@
                                     <div id="dashBudgetArea">
                                         <div class="text-muted small">Loading…</div>
                                     </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- This week: the top Action Items (folded groups count as one line),
+                         filled by renderDashThisWeek. Hidden when nothing is open. -->
+                    <div class="row g-3 mb-4" id="dashThisWeek" style="display:none;">
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <span><i class="bi bi-calendar-check me-2"></i>This week
+                                        <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" id="dashThisWeekHelp"></i></span>
+                                    <a href="#" class="small" data-page="actionitems">All action items <i class="bi bi-arrow-right"></i></a>
+                                </div>
+                                <div class="card-body py-2">
+                                    <div id="dashThisWeekArea"><div class="text-muted small">Loading…</div></div>
                                 </div>
                             </div>
                         </div>
