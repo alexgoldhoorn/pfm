@@ -718,7 +718,10 @@ def _push_adapter(broker_map_json):
 
 
 class TestBrokerMapping:
-    def _sync(self, brokers=("Example Broker", "MyInvestor")):
+    def _sync(
+        self,
+        brokers=("Example Broker", "MyInvestor", *(f"Broker {i}" for i in range(30))),
+    ):
         sync = _make_sync()
         written = {}
         sync._write_sheet = lambda name, rows: written.update({name: rows})
@@ -743,6 +746,12 @@ class TestBrokerMapping:
         assert written["Transactions"][3][0] == "Example Plan Bank"
         assert len(counts["warnings"]) == 1
         assert "'Example Plan Bank'" in counts["warnings"][0]
+
+    def test_push_skips_check_while_brokers_tab_loads(self):
+        sync, _ = self._sync(brokers=("Bezig met laden... (Loading data…)",))
+        counts = sync.push(_push_adapter(None))
+        assert len(counts["warnings"]) == 1
+        assert "hasn't loaded yet" in counts["warnings"][0]
 
     def test_push_warns_when_brokers_tab_unreadable(self):
         sync, _ = self._sync()

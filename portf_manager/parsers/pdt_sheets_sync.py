@@ -63,6 +63,10 @@ SCOPES = [
 # Number of header rows before data starts
 _N_HEADERS = 3
 
+# Fewer names than this in the Brokers tab means its formula is still loading
+# (PDT lists about 170 brokers)
+_MIN_BROKERS_LOADED = 20
+
 # Last column read from each sheet: column 31 ("AE"), wider than any PDT sheet
 _READ_LAST_COL = "AE"
 
@@ -550,8 +554,13 @@ class PDTSheetsSync:
             valid = [r[0] for r in self._read_sheet("Brokers") if r and r[0]]
         except Exception as e:
             return [f"Could not read the Brokers tab to check broker names: {e}"]
-        if not valid:
-            return []
+        # The tab is a formula that fetches PDT's list; while it loads it holds
+        # one "Loading data…" cell, and checking against that flags everyone
+        if len(valid) < _MIN_BROKERS_LOADED:
+            return [
+                "PDT's broker list in the Brokers tab hasn't loaded yet; broker "
+                "names were not checked. Push again in a minute to check them."
+            ]
         return [
             f"Broker '{n}' is not in PDT's broker list; its rows will fail the "
             f"PDT import. Map it in the pdt_broker_map setting."
