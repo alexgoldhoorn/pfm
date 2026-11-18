@@ -141,6 +141,23 @@ class TestDividendDuplicate:
         )
         assert dup is None
 
+    def test_zero_price_sell_is_a_duplicate_of_itself(self, db):
+        # A dust sale stored at price 0 must still match on a re-pull
+        pid = db.create_portfolio("Example Broker")
+        aid = db.create_asset("EXCOIN", "Example Coin", "crypto")
+        db.create_transaction(
+            aid, "sell", 0.000001, 0.0, 0.0, "2025-06-14", portfolio_id=pid
+        )
+        same = dict(
+            asset_id=aid,
+            transaction_type="sell",
+            quantity=0.000001,
+            transaction_date="2025-06-14",
+            portfolio_id=pid,
+        )
+        assert db.find_duplicate_transaction(price=0.0, **same) is not None
+        assert db.find_duplicate_transaction(price=1.5, **same) is None
+
     def test_buys_still_require_matching_quantity(self, db):
         # Buying 2 @ 50 and 1 @ 100 on one day are different trades.
         pid = db.create_portfolio("Example Broker")

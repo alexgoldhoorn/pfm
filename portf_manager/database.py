@@ -4448,11 +4448,14 @@ class Database:
             amount_clause = "ABS(quantity * price - ?) < 0.005"
             amount_params: tuple = (quantity * price,)
         else:
+            # A zero price (dust sales) has no ratio, so match it exactly;
+            # NULLIF alone made such a row never a duplicate
             amount_clause = (
                 "ABS(quantity - ?) < 0.0001"
-                " AND ABS((price - ?) / NULLIF(price, 0)) < 0.00001"
+                " AND (ABS((price - ?) / NULLIF(price, 0)) < 0.00001"
+                " OR (price = 0 AND ? = 0))"
             )
-            amount_params = (quantity, price)
+            amount_params = (quantity, price, price)
         with self.get_connection() as conn:
             cursor = conn.execute(
                 f"""

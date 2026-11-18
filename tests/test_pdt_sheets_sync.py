@@ -298,6 +298,42 @@ class TestPullTransactions:
         assert any("Transactions" in s for s, _ in result.skipped)
 
 
+class TestPullZeroPrice:
+    def test_zero_price_sell_is_kept(self):
+        """A dust sale at price 0 is a real row, not a missing price."""
+        rows = _tx_rows()
+        rows[3][7] = "Sell"
+        rows[3][8] = 0.000001
+        rows[3][9] = 0
+        sync = _make_sync()
+        sync._read_sheet = MagicMock(
+            side_effect=lambda name: {
+                "Transactions": rows,
+                "Dividends": [],
+                "Bookings": [],
+            }[name]
+        )
+        result = sync.pull()
+        assert result.skipped == []
+        assert len(result.transactions) == 1
+        assert result.transactions[0].price == 0
+
+    def test_missing_price_is_still_skipped(self):
+        rows = _tx_rows()
+        rows[3][9] = None
+        sync = _make_sync()
+        sync._read_sheet = MagicMock(
+            side_effect=lambda name: {
+                "Transactions": rows,
+                "Dividends": [],
+                "Bookings": [],
+            }[name]
+        )
+        result = sync.pull()
+        assert result.transactions == []
+        assert len(result.skipped) == 1
+
+
 class TestPullDividends:
     def _sync_with_data(self):
         sync = _make_sync()

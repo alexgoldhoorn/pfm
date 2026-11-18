@@ -296,8 +296,12 @@ class PDTSheetsSync:
                 price = _float_or_none(row[9])
                 price_currency = _str_or_none(row[10])
 
-                if not all(
-                    [broker, name, tx_date, action, amount, price, price_currency]
+                # A price of 0 is a real value (dust sales), so test for None
+                # like the XLSX parser does
+                if (
+                    not all([broker, name, tx_date, action, price_currency])
+                    or amount is None
+                    or price is None
                 ):
                     result.skipped.append(
                         ("Transactions", f"Row {row_idx}: missing required fields")
@@ -345,7 +349,10 @@ class PDTSheetsSync:
                 amount = _float_or_none(row[8])
                 amount_currency = _str_or_none(row[9])
 
-                if not all([broker, name, tx_date, action, amount, amount_currency]):
+                if (
+                    not all([broker, name, tx_date, action, amount_currency])
+                    or amount is None
+                ):
                     result.skipped.append(
                         ("Dividends", f"Row {row_idx}: missing required fields")
                     )
