@@ -16,7 +16,7 @@ from pathlib import Path
 from portf_manager.services.merchant import fold_for_search, normalize_merchant
 
 # Database version for migration tracking
-DATABASE_VERSION = 46
+DATABASE_VERSION = 47
 
 
 # black
@@ -607,6 +607,51 @@ class Database:
 
         conn.execute(
             """
+            CREATE TABLE IF NOT EXISTS networth_snapshots (
+                snapshot_date TEXT PRIMARY KEY,
+                net_worth_eur REAL NOT NULL,
+                investments_eur REAL NOT NULL,
+                cash_eur REAL NOT NULL,
+                property_eur REAL NOT NULL,
+                other_assets_eur REAL NOT NULL,
+                liabilities_eur REAL NOT NULL,
+                detail TEXT,
+                warnings TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS recurring_resolutions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                portfolio_id INTEGER NOT NULL,
+                merchant TEXT NOT NULL,
+                status TEXT NOT NULL
+                    CHECK (status IN ('cancelled', 'paid_elsewhere')),
+                since TEXT NOT NULL,
+                note TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (portfolio_id, merchant)
+            )
+        """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS month_closes (
+                month TEXT PRIMARY KEY,
+                closed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                figures TEXT,
+                checklist TEXT,
+                report_id INTEGER,
+                notes TEXT
+            )
+        """
+        )
+
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS account_valuations (
                 portfolio_id INTEGER PRIMARY KEY
                     REFERENCES portfolios(id) ON DELETE CASCADE,
@@ -1080,6 +1125,8 @@ class Database:
             self._migrate_to_v45(conn)
         if current_version < 46:
             self._migrate_to_v46(conn)
+        if current_version < 47:
+            self._migrate_to_v47(conn)
 
         self._set_database_version(conn, DATABASE_VERSION)
 
@@ -2264,6 +2311,60 @@ class Database:
         )
         conn.commit()
 
+    def _migrate_to_v47(self, conn: sqlite3.Connection) -> None:
+        """Migrate from v46 to v47 — cost control round 3.
+
+        Adds ``networth_snapshots`` (one balance-sheet row per day),
+        ``recurring_resolutions`` (a series marked cancelled or paid elsewhere)
+        and ``month_closes`` (a stored month close). Nothing is backfilled; the
+        step is guarded so a rerun is harmless.
+        """
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS networth_snapshots (
+                snapshot_date TEXT PRIMARY KEY,
+                net_worth_eur REAL NOT NULL,
+                investments_eur REAL NOT NULL,
+                cash_eur REAL NOT NULL,
+                property_eur REAL NOT NULL,
+                other_assets_eur REAL NOT NULL,
+                liabilities_eur REAL NOT NULL,
+                detail TEXT,
+                warnings TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS recurring_resolutions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                portfolio_id INTEGER NOT NULL,
+                merchant TEXT NOT NULL,
+                status TEXT NOT NULL
+                    CHECK (status IN ('cancelled', 'paid_elsewhere')),
+                since TEXT NOT NULL,
+                note TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (portfolio_id, merchant)
+            )
+        """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS month_closes (
+                month TEXT PRIMARY KEY,
+                closed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                figures TEXT,
+                checklist TEXT,
+                report_id INTEGER,
+                notes TEXT
+            )
+        """
+        )
+        conn.commit()
+
     def _migrate_to_v46(self, conn: sqlite3.Connection) -> None:
         """Migrate from v45 to v46 — planned items for the cash-flow forecast.
 
@@ -3153,6 +3254,184 @@ class Database:
         """Delete a planned item; True when a row was removed."""
         with self.get_connection() as conn:
             cur = conn.execute("DELETE FROM planned_items WHERE id = ?", (item_id,))
+            conn.commit()
+            return cur.rowcount > 0
+
+    # ------------------------------------------------------------------
+    # Net-worth snapshots, recurring resolutions, month closes (v47)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _decode_json_columns(row: Any, columns: tuple) -> Dict:
+        """Row as a dict with the named JSON text columns decoded."""
+        out = dict(row)
+        for col in columns:
+            raw = out.get(col)
+            out[col] = json.loads(raw) if raw else None
+        return out
+
+    def upsert_networth_snapshot(
+        self,
+        snapshot_date: str,
+        net_worth_eur: float,
+        investments_eur: float,
+        cash_eur: float,
+        property_eur: float,
+        other_assets_eur: float,
+        liabilities_eur: float,
+        detail: Optional[Dict] = None,
+        warnings: Optional[List] = None,
+    ) -> None:
+        """Store the balance sheet for a day; a second write that day replaces it."""
+        with self.get_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO networth_snapshots "
+                "(snapshot_date, net_worth_eur, investments_eur, cash_eur, "
+                "property_eur, other_assets_eur, liabilities_eur, detail, warnings) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    snapshot_date,
+                    net_worth_eur,
+                    investments_eur,
+                    cash_eur,
+                    property_eur,
+                    other_assets_eur,
+                    liabilities_eur,
+                    json.dumps(detail if detail is not None else {}),
+                    json.dumps(warnings if warnings is not None else []),
+                ),
+            )
+            conn.commit()
+
+    def get_networth_snapshot(self, snapshot_date: str) -> Optional[Dict]:
+        """The snapshot of one day, JSON columns decoded, or None."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM networth_snapshots WHERE snapshot_date = ?",
+                (snapshot_date,),
+            ).fetchone()
+        return self._decode_json_columns(row, ("detail", "warnings")) if row else None
+
+    def list_networth_snapshots(
+        self, start: Optional[str] = None, end: Optional[str] = None
+    ) -> List[Dict]:
+        """Snapshots oldest first, optionally within ``start``..``end`` inclusive."""
+        clauses: List[str] = []
+        params: List[Any] = []
+        if start:
+            clauses.append("snapshot_date >= ?")
+            params.append(start)
+        if end:
+            clauses.append("snapshot_date <= ?")
+            params.append(end)
+        sql = "SELECT * FROM networth_snapshots"
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        with self.get_connection() as conn:
+            rows = conn.execute(sql + " ORDER BY snapshot_date", params).fetchall()
+        return [self._decode_json_columns(r, ("detail", "warnings")) for r in rows]
+
+    def delete_networth_snapshot(self, snapshot_date: str) -> bool:
+        """Delete a day's snapshot; True when a row was removed."""
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                "DELETE FROM networth_snapshots WHERE snapshot_date = ?",
+                (snapshot_date,),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def set_recurring_resolution(
+        self,
+        portfolio_id: int,
+        merchant: str,
+        status: str,
+        since: str,
+        note: Optional[str] = None,
+    ) -> None:
+        """Mark a series cancelled or paid elsewhere (upsert on account+merchant).
+
+        A violated status CHECK surfaces as ``DatabaseError``.
+        """
+        with self.get_connection() as conn:
+            conn.execute(
+                "INSERT INTO recurring_resolutions "
+                "(portfolio_id, merchant, status, since, note) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT (portfolio_id, merchant) DO UPDATE SET "
+                "status = excluded.status, since = excluded.since, "
+                "note = excluded.note, updated_at = CURRENT_TIMESTAMP",
+                (portfolio_id, merchant, status, since, note),
+            )
+            conn.commit()
+
+    def list_recurring_resolutions(
+        self, portfolio_id: Optional[int] = None
+    ) -> List[Dict]:
+        """Resolutions, optionally for one bank account."""
+        sql = "SELECT * FROM recurring_resolutions"
+        params: List[Any] = []
+        if portfolio_id is not None:
+            sql += " WHERE portfolio_id = ?"
+            params.append(portfolio_id)
+        with self.get_connection() as conn:
+            rows = conn.execute(sql + " ORDER BY portfolio_id, merchant", params)
+            return [dict(r) for r in rows.fetchall()]
+
+    def delete_recurring_resolution(self, portfolio_id: int, merchant: str) -> bool:
+        """Clear a resolution; True when a row was removed."""
+        with self.get_connection() as conn:
+            cur = conn.execute(
+                "DELETE FROM recurring_resolutions "
+                "WHERE portfolio_id = ? AND merchant = ?",
+                (portfolio_id, merchant),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def upsert_month_close(
+        self,
+        month: str,
+        figures: Optional[Dict],
+        checklist: Optional[List],
+        report_id: Optional[int] = None,
+        notes: Optional[str] = None,
+    ) -> None:
+        """Store a month close; closing again replaces the row (new ``closed_at``)."""
+        with self.get_connection() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO month_closes "
+                "(month, closed_at, figures, checklist, report_id, notes) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    month,
+                    datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    json.dumps(figures if figures is not None else {}),
+                    json.dumps(checklist if checklist is not None else []),
+                    report_id,
+                    notes,
+                ),
+            )
+            conn.commit()
+
+    def get_month_close(self, month: str) -> Optional[Dict]:
+        """The stored close of ``YYYY-MM``, JSON columns decoded, or None."""
+        with self.get_connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM month_closes WHERE month = ?", (month,)
+            ).fetchone()
+        return self._decode_json_columns(row, ("figures", "checklist")) if row else None
+
+    def list_month_closes(self) -> List[Dict]:
+        """All stored closes, oldest month first."""
+        with self.get_connection() as conn:
+            rows = conn.execute("SELECT * FROM month_closes ORDER BY month").fetchall()
+        return [self._decode_json_columns(r, ("figures", "checklist")) for r in rows]
+
+    def delete_month_close(self, month: str) -> bool:
+        """Reopen a month; True when a row was removed."""
+        with self.get_connection() as conn:
+            cur = conn.execute("DELETE FROM month_closes WHERE month = ?", (month,))
             conn.commit()
             return cur.rowcount > 0
 
