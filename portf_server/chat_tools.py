@@ -705,6 +705,8 @@ def _get_recurring_spending(db: Database, include_ended: bool = False) -> str:
     out = res.model_dump()
     # Cap the list: a long tail of tiny charges adds tokens, not insight.
     out["items"] = sorted(out["items"], key=lambda i: -i["annual_amount_eur"])[:40]
+    # Totals: annual_total_eur counts active, missed and paid-elsewhere series;
+    # cancelled_annual_eur is what the cancellations save.
     return _j(out)
 
 
@@ -916,37 +918,167 @@ def _financial_news(db: Database, query: str) -> str:
         return _j({"query": query, "error": str(e), "news": []})
 
 
+def _action_item_row(i: dict) -> dict:
+    """One action item (or a group's child) as the assistant sees it."""
+    return {
+        "id": i["id"],
+        "severity": i["severity"],
+        "category": i["category"],
+        "status": i["status"],
+        "title": i["title"],
+        "detail": i.get("detail"),
+        "page": i.get("link_page"),
+        "note": (i.get("ack") or {}).get("note"),
+        "snoozed_until": (i.get("ack") or {}).get("until"),
+    }
+
+
 @_tool("get_action_items")
-def _get_action_items(db: Database, include_resolved: bool = False) -> str:
-    """Open action items (what needs attention) with their follow-up state."""
+def _get_action_items(
+    db: Database,
+    include_resolved: bool = False,
+    family: Optional[str] = None,
+) -> str:
+    """Open action items, families of 3+ folded into one group each."""
+    from portf_manager.services import action_item_groups
     from portf_manager.services.action_items import action_items_report
 
-    report = action_items_report(db, status="all" if include_resolved else "open")
-    items = [
-        {
-            "id": i["id"],
-            "severity": i["severity"],
-            "category": i["category"],
-            "status": i["status"],
-            "title": i["title"],
-            "detail": i.get("detail"),
-            "page": i.get("link_page"),
-            "note": (i.get("ack") or {}).get("note"),
-            "snoozed_until": (i.get("ack") or {}).get("until"),
-        }
-        for i in report["items"]
-    ]
+    report = action_items_report(
+        db, status="all" if include_resolved else "open", grouped=True
+    )
+    if family:
+        group = next((i for i in report["items"] if i["id"] == f"group:{family}"), None)
+        if group is not None:
+            children = group["children"]
+        else:
+            # A family below the grouping size is listed as single items.
+            children = [
+                i
+                for i in report["items"]
+                if i.get("kind") != "group"
+                and action_item_groups.family_of(i) == family
+            ]
+        if not children:
+            return _j({"family": family, "count": 0, "items": []})
+        return _j(
+            {
+                "family": family,
+                "count": len(children),
+                "items": [_action_item_row(c) for c in children],
+            }
+        )
+    items = []
+    for i in report["items"]:
+        if i.get("kind") == "group":
+            items.append(
+                {
+                    "id": i["id"],
+                    "kind": "group",
+                    "family": i["family"],
+                    "count": i["count"],
+                    "severity": i["severity"],
+                    "category": i["category"],
+                    "title": i["title"],
+                    "summary": i.get("detail"),
+                    "page": i.get("link_page"),
+                }
+            )
+        else:
+            items.append(_action_item_row(i))
     return _j(
         {
             "items": items,
             "count": len(items),
             "summary": report["summary"],
             "how_to_follow_up": (
-                "set_action_item_status marks an item checked or snoozed once "
-                "the user has looked at it; ids are stable per finding."
+                "A group stands for several similar items; call get_action_items "
+                "with its family to list them. set_action_item_status marks a "
+                "single item checked or snoozed once the user has looked at "
+                "it; ids are stable per finding."
             ),
         }
     )
+
+
+@_tool("get_networth_history")
+def _get_networth_history(
+    db: Database,
+    period: str = "3m",
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> str:
+    """Stored net-worth snapshots plus the what-changed split."""
+    import re
+    from datetime import date, timedelta
+
+    from portf_manager.services import networth_history
+
+    def _day(value: Optional[str]) -> Optional[date]:
+        return date.fromisoformat(value) if value else None
+
+    try:
+        start_d, end_d = _day(start), _day(end)
+    except ValueError:
+        return "Error: start and end must be YYYY-MM-DD"
+    if start_d and end_d and start_d >= end_d:
+        return "Error: start must be before end"
+    today = date.today()
+    months = 240
+    if not (start_d or end_d):
+        p = (period or "3m").strip().lower()
+        if p == "all":
+            start_d = None
+        else:
+            m = re.fullmatch(r"(\d{1,3})([my])", p)
+            if not m:
+                return "Error: period must be like 1m, 3m, 12m, 1y or all"
+            months = int(m.group(1)) * (12 if m.group(2) == "y" else 1)
+            start_d = today - timedelta(days=round(months * 30.44))
+    history = networth_history.get_history(db, min(max(months, 1), 240), today)
+    snaps = history["snapshots"]
+    if (
+        start_d
+        and not end_d
+        and snaps
+        and snaps[0]["snapshot_date"] > start_d.isoformat()
+    ):
+        # Asking for more than the history holds: compare from its first day.
+        start_d = None
+    change = networth_history.compute_change(db, start_d, end_d)
+    return _j(
+        {
+            "first_snapshot": history["first_date"],
+            "last_snapshot": history["last_date"],
+            "snapshots_in_window": history["count"],
+            "latest": snaps[-1] if snaps else None,
+            "change": change,
+            "note": (
+                "History starts on the first snapshot date; it is not "
+                "backfilled. All figures are estimates. A part that is null is "
+                "not available (see warnings)."
+            ),
+            "warnings": list(
+                dict.fromkeys(history["warnings"] + change.get("warnings", []))
+            ),
+        }
+    )
+
+
+@_tool("get_month_close")
+def _get_month_close(db: Database, month: Optional[str] = None) -> str:
+    """The close state of a month: checklist, figures, closed mark."""
+    import re
+    from datetime import date
+
+    from portf_manager.services import month_close
+
+    if month and not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", month):
+        return "Error: month must be YYYY-MM"
+    try:
+        res = month_close.build_month_close(db, _fx, date.today(), month)
+    except month_close.MonthCloseError as e:
+        return f"Error: {e.message}"
+    return _j(res)
 
 
 @_tool("set_action_item_status")
@@ -1574,7 +1706,7 @@ TOOLS: list[ToolDefinition] = [
     ),
     ToolDefinition(
         name="get_recurring_spending",
-        description="Recurring charges (subscriptions, bills) detected from bank outflows, with the monthly and annual totals in EUR, biggest annual cost first. Use it to find subscriptions to cancel or fixed costs.",
+        description="Recurring charges (subscriptions, bills) detected from bank outflows, biggest annual cost first. Each series has a status: active, missed, ended, cancelled or paid_elsewhere (the user marked it; resolution holds the note and date, resolution_stale true means a charge came back after it). Totals in EUR (estimates): monthly_total_eur and annual_total_eur count active, missed and paid-elsewhere series; cancelled_annual_eur is what the cancellations save a year and paid_elsewhere_annual_eur the share of the total paid another way. Use it to find subscriptions to cancel or fixed costs.",
         parameters=[
             {
                 "name": "include_ended",
@@ -1693,14 +1825,74 @@ TOOLS: list[ToolDefinition] = [
             "held prices, off-track goals, price alerts, budget overruns, fund "
             "look-through gaps, balance-sheet staleness, retirement readiness). "
             "Each item has a stable id, severity, status (open/checked/snoozed) "
-            "and the page it lives on. Call this for 'what needs my attention', "
-            "'anything wrong', 'what should I check'."
+            "and the page it lives on. Three or more similar items come folded "
+            "into one group (id group:<family>, with a count and a summary); "
+            "pass its family to list the items inside. Call this for 'what "
+            "needs my attention', 'anything wrong', 'what should I check'."
         ),
         parameters=[
             {
                 "name": "include_resolved",
                 "type": "boolean",
                 "description": "Also return items already checked or snoozed (default false).",
+                "required": False,
+            },
+            {
+                "name": "family",
+                "type": "string",
+                "description": "A group's family (the part after 'group:' in its id): returns the items inside that group.",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="get_networth_history",
+        description=(
+            "Net worth over time from the stored snapshots (first and last "
+            "date, how many, the latest five components) and what changed in "
+            "a period, split into saved, market, debt paid, property and "
+            "other. History starts on the first snapshot date and is not "
+            "backfilled; every figure is an estimate; a part that is null is "
+            "not available (say so, with the warning). Use for 'how has my "
+            "net worth moved', 'did I save or did the market do it'."
+        ),
+        parameters=[
+            {
+                "name": "period",
+                "type": "string",
+                "description": "1m, 3m, 12m, 1y or all (default 3m). Ignored when start or end is given.",
+                "required": False,
+            },
+            {
+                "name": "start",
+                "type": "string",
+                "description": "YYYY-MM-DD; the nearest stored snapshot is used.",
+                "required": False,
+            },
+            {
+                "name": "end",
+                "type": "string",
+                "description": "YYYY-MM-DD; the nearest stored snapshot is used.",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="get_month_close",
+        description=(
+            "The month-end close of one month: a checklist (imports, "
+            "uncategorized rows, transfers, anomalies, recurring, one-offs) "
+            "with a status per step, the month's figures (income, spending, "
+            "savings, net, budget result, top categories; estimates, null "
+            "when nothing is imported), and whether the month was closed and "
+            "whether it changed since (stale). Closing is a mark, not a lock. "
+            "Defaults to the last complete month."
+        ),
+        parameters=[
+            {
+                "name": "month",
+                "type": "string",
+                "description": "YYYY-MM (default: the last complete month).",
                 "required": False,
             },
         ],

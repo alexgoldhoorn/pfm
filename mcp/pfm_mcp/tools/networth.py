@@ -319,27 +319,46 @@ def retirement_readiness() -> str:
 
 
 @tool
-def action_items(category: Optional[str] = None) -> str:
+def action_items(category: Optional[str] = None, family: Optional[str] = None) -> str:
     """
-    Open action items pfm has detected, most severe first: stale broker/bank
-    imports (with the date to upload from), data-quality issues, failed price
-    updates, stale research on held positions, off-track goals, budget overruns,
-    missed recurring charges / price rises on bank accounts and
-    watchlist/price-target alerts. Items dismissed in the web UI still show
-    here (dismissal is per-browser), and the Net Worth setup checklist is not
+    Open action items pfm has detected, most urgent first. Families of three or
+    more similar items (price targets crossed, budget lines over plan, missed
+    recurring charges, stale imports, ...) come folded into one line with a
+    count and a summary; pass that line's family to list the items inside.
+    Other items: data-quality issues, failed price updates, off-track goals,
+    stale research and so on. Items checked or snoozed in the app are left out.
+    Figures in the details are estimates. The Net Worth setup checklist is not
     included (it is computed in the web client).
 
     Args:
-        category: Optional filter — 'import', 'data_quality', 'errors', 'goals',
+        category: Optional filter - 'import', 'data_quality', 'errors', 'goals',
             'budget', 'spending' (missed recurring charges / price rises) or
             'watchlist'.
+        family: Optional group family (shown in brackets on a group line, for
+            example 'price_targets'); lists that group's items.
     """
     try:
-        data = client._get("/api/v1/action-items/")
+        data = client._get("/api/v1/action-items/", {"grouped": "true"})
     except Exception as e:
         return f"Error fetching action items: {e}"
 
     items = data.get("items") or []
+    if family:
+        group = next((i for i in items if i.get("id") == f"group:{family}"), None)
+        children = (group or {}).get("children") or [
+            i for i in items if i.get("kind") != "group" and i.get("family") == family
+        ]
+        if not children:
+            return f"No open action items in family '{family}'."
+        lines = [f"ACTION ITEMS in {family} ({len(children)}):"]
+        for i in children:
+            lines.append(
+                f"  [{(i.get('severity') or '?').upper()}] {i.get('title') or ''}"
+            )
+            if i.get("detail"):
+                lines.append(f"      {i['detail']}")
+        return "\n".join(lines)
+
     if category:
         items = [
             i for i in items if (i.get("category") or "").lower() == category.lower()
@@ -351,10 +370,100 @@ def action_items(category: Optional[str] = None) -> str:
 
     lines = [f"ACTION ITEMS ({len(items)}):"]
     for i in items:
-        lines.append(
-            f"  [{(i.get('severity') or '?').upper()}] {i.get('title') or ''}"
-            f"  ({i.get('category') or '?'})"
-        )
+        sev = (i.get("severity") or "?").upper()
+        if i.get("kind") == "group":
+            lines.append(
+                f"  [{sev}] {i.get('count')} x {i.get('title') or ''}"
+                f"  [family: {i.get('family')}]"
+            )
+            if i.get("detail"):
+                lines.append(f"      {i['detail']}")
+            continue
+        lines.append(f"  [{sev}] {i.get('title') or ''}  ({i.get('category') or '?'})")
         if i.get("detail"):
             lines.append(f"      {i['detail']}")
+    return "\n".join(lines)
+
+
+_PART_LABELS = (
+    ("saved_eur", "Saved (cash added plus net buys)"),
+    ("market_eur", "Market (investment value change beyond buys)"),
+    ("debt_paid_eur", "Debt paid down"),
+    ("property_change_eur", "Property value change"),
+    ("other_change_eur", "Other"),
+)
+_COMPONENT_LABELS = (
+    ("investments_eur", "Investments"),
+    ("cash_eur", "Cash"),
+    ("property_eur", "Property"),
+    ("other_assets_eur", "Other assets"),
+    ("liabilities_eur", "Liabilities"),
+)
+
+
+def _eur_na(value) -> str:
+    return _na(value, lambda v: _fmt_currency(float(v)))
+
+
+@tool
+def networth_history(period: str = "1m") -> str:
+    """
+    Net worth over time from the stored daily snapshots, and what moved it:
+    saved, market, debt paid down, property and other. All figures are
+    estimates. History starts on the first snapshot date and is not
+    backfilled, so a long period is cut to what exists. A part shown as n/a is
+    not available (the warnings say why).
+
+    Args:
+        period: '1m', '3m', '12m', '1y' or 'all' (default '1m').
+    """
+    import re
+    from datetime import timedelta
+
+    p = (period or "1m").strip().lower()
+    months = 240
+    start = None
+    if p != "all":
+        m = re.fullmatch(r"(\d{1,3})([my])", p)
+        if not m:
+            return "Error: period must be like 1m, 3m, 12m, 1y or all"
+        months = int(m.group(1)) * (12 if m.group(2) == "y" else 1)
+        months = min(max(months, 1), 240)
+        start = (client._today() - timedelta(days=round(months * 30.44))).isoformat()
+    try:
+        hist = client._get("/api/v1/networth/history", {"months": months})
+        change = client._get(
+            "/api/v1/networth/history/change", {"start": start} if start else {}
+        )
+    except Exception as e:
+        return f"Error fetching net worth history: {e}"
+
+    snaps = hist.get("snapshots") or []
+    lines = ["NET WORTH HISTORY (estimates):"]
+    if not snaps:
+        lines.append("  No snapshots stored yet.")
+    else:
+        last = snaps[-1]
+        lines.append(
+            f"  {hist.get('count')} snapshots, {hist.get('first_date')} to "
+            f"{hist.get('last_date')} (history starts on the first snapshot date)"
+        )
+        lines.append(f"  Latest net worth: {_eur_na(last.get('net_worth_eur'))}")
+        for key, label in _COMPONENT_LABELS:
+            lines.append(f"    {label}: {_eur_na(last.get(key))}")
+    parts = change.get("parts") or {}
+    if change.get("start"):
+        lines.append(
+            f"WHAT CHANGED {change.get('start')} to {change.get('end')}: "
+            f"{_eur_na(change.get('net_worth_change_eur'))}"
+        )
+        for key, label in _PART_LABELS:
+            lines.append(f"    {label}: {_eur_na(parts.get(key))}")
+    else:
+        lines.append("WHAT CHANGED: not available (needs two snapshots).")
+    warnings = list(
+        dict.fromkeys((hist.get("warnings") or []) + (change.get("warnings") or []))
+    )
+    for w in warnings:
+        lines.append(f"  Warning: {w}")
     return "\n".join(lines)
