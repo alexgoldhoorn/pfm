@@ -7,8 +7,11 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import vm from "node:vm";
+import { File as BufferFile } from "node:buffer";
 import { loadAppIntoContext } from "./helpers.mjs";
 
+// `make test-js` runs /usr/bin/node (18), which has no global File; 20+ does.
+const File = globalThis.File ?? BufferFile;
 const WEB_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const read = (name) => readFileSync(join(WEB_DIR, name), "utf8");
 const w = loadAppIntoContext();

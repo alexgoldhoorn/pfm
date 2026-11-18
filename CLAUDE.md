@@ -226,7 +226,7 @@ Full reference (dashboard layout, chart helpers, page-by-page wiring):
 - Money via `Fmt.money(v, currency)` only — no `'€' + Fmt.num(…)` strings. Numbers
   `Fmt.num()`, dates `Fmt.date()`. A sentence the server wrote (Action Item
   title/detail, anomaly `detail`) goes through `serverTextHtml(text)`, never
-  bare `esc()`: it escapes and reformats/blurs each "1,234.56 EUR" in it.
+  bare `esc()`: it escapes and reformats/blurs each "1,234.56 EUR" and formats ISO dates/months.
 - ⚠️ Formatters built on `Fmt.amt(...)` emit a `<span>` — never interpolate them
   into an attribute; use `esc(fmtEurCents(v))` there.
 - ⚠️ An element with Bootstrap `d-flex`/`d-block` can't be hidden with
@@ -268,7 +268,8 @@ Full reference (dashboard layout, chart helpers, page-by-page wiring):
   decorators — never from test names.
 - Assert the exact outcome. No "any of 200/403/500" or
   `if "id" in data: … else: pass` tests — they pass against missing endpoints.
-- `make test-js` names `web_client/js/tests/*.test.mjs` explicitly; on Node 24
+- `make test-js` runs `/usr/bin/node` (18; the nvm shell node is 24): no global
+  `File`, so take it from `node:buffer`. It names `web_client/js/tests/*.test.mjs` explicitly; on Node 24
   `node --test <dir>` fails with a misleading `MODULE_NOT_FOUND`.
 - Pre-push hook runs the full unit suite. F541 fixer:
   `uv run python scripts/fix_f541.py`. Reset the LLM singleton with

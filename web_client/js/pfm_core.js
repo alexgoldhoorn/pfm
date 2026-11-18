@@ -150,10 +150,14 @@ function esc(s) {
 }
 window.esc = esc;
 
-// Sentences the server writes (Action Items, Unusual charges) carry amounts in
-// Python's "{:,.2f} EUR" / "{:+,.0f} EUR" form. Escape the text, then show each
-// amount like every other one on the page: the user's number locale, and inside
-// Fmt.amt so privacy mode blurs it. The digits survive esc() unchanged.
+// Sentences the server writes (Action Items, Unusual charges, month close)
+// carry amounts in Python's "{:,.2f} EUR" / "{:+,.0f} EUR" form and ISO dates
+// and months ("2026-11-05", "2026-10"). Escape the text, then show each amount
+// like every other one on the page (number locale, inside Fmt.amt so privacy
+// mode blurs it), dates through Fmt.date (the date-format setting) and months
+// spelled out ("October 2026": the axis form "Oct 26" reads as a day here).
+// Digits and dashes survive esc() unchanged.
+const SERVER_DATE_RE = /(?<![\w-])(\d{4})-(\d{2})(?:-(\d{2}))?(?![\w-])/g;
 const SERVER_EUR_RE = /(?<![\w.,])([+\-−]?)(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))? EUR\b/g;
 function serverTextHtml(text) {
     return esc(text).replace(SERVER_EUR_RE, (m, sign, whole, frac) => {
@@ -161,6 +165,11 @@ function serverTextHtml(text) {
         const v = sign && sign !== '+' ? -n : n;
         const shown = Fmt.money(v, 'EUR', frac ? frac.length : 0);
         return Fmt.amt((sign === '+' ? '+' : '') + shown);
+    }).replace(SERVER_DATE_RE, (m, y, mo, d) => {
+        if (+mo < 1 || +mo > 12) return m;
+        if (d) return esc(Fmt.date(m));
+        const dt = new Date(+y, +mo - 1, 1);
+        return esc(dt.toLocaleDateString(Fmt.loc(), { month: 'long', year: 'numeric' }));
     });
 }
 window.serverTextHtml = serverTextHtml;

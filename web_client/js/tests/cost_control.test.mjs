@@ -384,3 +384,21 @@ test("serverTextHtml: server EUR amounts take the page locale and the privacy bl
         w.PREFS.numberLocale = prev;
     }
 });
+
+test("serverTextHtml: ISO dates follow the date setting, months are spelled out", () => {
+    const prev = [w.PREFS.dateFormat, w.PREFS.numberLocale];
+    w.PREFS.dateFormat = "dmy";
+    w.PREFS.numberLocale = "en-GB";
+    try {
+        assert.equal(
+            w.serverTextHtml("Shop on 2026-11-05 and again on 2026-11-08."),
+            "Shop on 05-11-2026 and again on 08-11-2026.",
+        );
+        assert.equal(w.serverTextHtml("Groceries came to 10 EUR in 2026-10;").replace(/<[^>]+>/g, ""),
+            `Groceries came to ${w.Fmt.money(10, "EUR", 0)} in October 2026;`);
+        // Not a date: ids, out-of-range months, longer digit runs.
+        assert.equal(w.serverTextHtml("id dq:2026-13 x12026-11-05 2026-11-05T10"), "id dq:2026-13 x12026-11-05 2026-11-05T10");
+    } finally {
+        [w.PREFS.dateFormat, w.PREFS.numberLocale] = prev;
+    }
+});
