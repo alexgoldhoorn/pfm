@@ -268,9 +268,17 @@ are unchanged, so variance still reconciles with `/spending/trend` to the cent.
   (`baseline` | `run_rate` | `month_complete` | null), `baseline_everyday_eur`,
   `baseline_months`, `expected_recurring_remaining_eur` (per account after its
   own last import), `everyday_remaining_eur`, `projected_month_end_eur`,
-  `projected_over_eur` and `status`: `over` (more than the limit is already
-  spent), `at_risk` (projected past the limit by both 50 EUR and 10 %, the
-  overrun check's thresholds), `on_track` or `too_early`. **The elapsed share
+  `projected_over_eur`, `months_with_activity` and `status`: `over` (more than
+  the limit is already spent), `at_risk` (projected past the limit by both 50
+  EUR and 10 %, the overrun check's thresholds), `on_track`, `irregular` or
+  `too_early`. **Lumpy lines.** A line with a reliable baseline of at least 6
+  months whose categories had everyday spending in at most a third of those
+  months (and at least one) is `irregular` (`method: "irregular"`): no
+  everyday average is added, the projection is actual to date plus recurring
+  charges still due, `meaningful_overshoot` is false and no Action Item is
+  raised; more than the limit already spent is still `over`. The activity count
+  is `count_active_months`, the same one the yearly suggestion uses, and the
+  rule is `is_lumpy`. The section-level pace is unchanged. **The elapsed share
   and the baseline months are measured to the earliest last-import date over
   the accounts that have rows in the window** (see `spending.md`), not to
   today and not to the freshest account. **No pace for a month with nothing

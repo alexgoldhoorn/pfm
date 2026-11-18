@@ -526,6 +526,43 @@ def rollover_ledger(
     }
 
 
+# History needed before a yearly or carry-over suggestion is made, and the
+# thresholds that pick them. SUGGEST_MIN_MONTHS also gates the lumpy pace.
+SUGGEST_WINDOW_MONTHS = 12
+SUGGEST_MIN_MONTHS = 6
+SUGGEST_YEARLY_MAX_ACTIVE = 4
+SUGGEST_YEARLY_TOP2_SHARE = 0.70
+SUGGEST_ROLLOVER_MIN_ACTIVE = 6
+SUGGEST_ROLLOVER_CV = 0.5
+# A cost line is lumpy (pace ``irregular``) when it had spending in at most this
+# share of the baseline months.
+LUMPY_MAX_ACTIVE_SHARE = 1 / 3
+
+
+def count_active_months(values: Any) -> int:
+    """Months with spending: the one activity count behind the yearly
+    suggestion and the lumpy pace.
+
+    Args:
+        values: spend per month (positive EUR), one value per month in the
+            window, zero or less for a month without spending.
+    """
+    return sum(1 for v in values if v > 0)
+
+
+def is_lumpy(active_months: int, window_months: int) -> bool:
+    """True when a category is spent in a few large months only.
+
+    Needs at least ``SUGGEST_MIN_MONTHS`` months of window, then some activity
+    (a line with none, such as a pure recurring charge, has nothing lumpy to
+    say) in at most ``LUMPY_MAX_ACTIVE_SHARE`` of them.
+    """
+    return (
+        window_months >= SUGGEST_MIN_MONTHS
+        and 0 < active_months <= window_months * LUMPY_MAX_ACTIVE_SHARE
+    )
+
+
 def pace_status(
     actual_to_date: float, projected: float, limit: float
 ) -> Dict[str, Any]:
@@ -568,6 +605,12 @@ class _PaceContext:
     complete months) the month-to-date run rate stands in once at least
     ``PACE_MIN_ELAPSED_SHARE`` of the month has elapsed; before that the pace
     says ``too_early``.
+
+    A lumpy line (everyday spending in at most a third of at least 6 baseline
+    months, ``is_lumpy``) is ``irregular``: no everyday average is added, so
+    the projection is actual to date plus recurring charges still due, and it
+    never raises a pace warning; more than the limit already spent is still
+    ``over``.
 
     Elapsed share is measured to the date the data runs to: the earliest
     last-import date over the accounts, not today. Recurring charges still to
@@ -627,8 +670,21 @@ class _PaceContext:
             amount for category, amount in self.upcoming if category in names
         )
         base_avg = self.baseline_everyday(names)
+        active = None
+        if base_avg is not None:
+            active = count_active_months(
+                sum(
+                    amount
+                    for category, amount in self.base_by_month.get(m, {}).items()
+                    if category in names
+                )
+                for m in self.base_months
+            )
+        lumpy = active is not None and is_lumpy(active, len(self.base_months))
         everyday_left: Optional[float]
-        if self.elapsed >= 1.0:
+        if lumpy:
+            everyday_left, method = 0.0, "irregular"
+        elif self.elapsed >= 1.0:
             everyday_left, method = 0.0, "month_complete"
         elif base_avg is not None:
             everyday_left, method = base_avg * (1.0 - self.elapsed), "baseline"
@@ -651,6 +707,7 @@ class _PaceContext:
             "everyday_remaining_eur": (
                 None if everyday_left is None else round(everyday_left, 2)
             ),
+            "months_with_activity": active,
         }
         if everyday_left is None:
             out.update(
@@ -663,6 +720,10 @@ class _PaceContext:
         projected = spent + remaining_recurring + everyday_left
         out["projected_month_end_eur"] = round(projected, 2)
         out.update(pace_status(spent, projected, limit))
+        if lumpy and out["status"] != "over":
+            # spent in a few large months: no everyday average, so no warning
+            out["status"] = "irregular"
+            out["meaningful_overshoot"] = False
         return out
 
 
@@ -1291,16 +1352,6 @@ def _unbudgeted_for_section(
     return result
 
 
-# History needed before a yearly or carry-over suggestion is made, and the
-# thresholds that pick them.
-SUGGEST_WINDOW_MONTHS = 12
-SUGGEST_MIN_MONTHS = 6
-SUGGEST_YEARLY_MAX_ACTIVE = 4
-SUGGEST_YEARLY_TOP2_SHARE = 0.70
-SUGGEST_ROLLOVER_MIN_ACTIVE = 6
-SUGGEST_ROLLOVER_CV = 0.5
-
-
 def suggest_period(
     per_month: Dict[str, float], tier: str, history_months_count: int
 ) -> Dict[str, Any]:
@@ -1317,7 +1368,7 @@ def suggest_period(
     """
     values = list(per_month.values())
     total = sum(values)
-    active = sum(1 for v in values if v > 0)
+    active = count_active_months(values)
     out: Dict[str, Any] = {
         "months_with_activity": active,
         "suggested_period": "monthly",

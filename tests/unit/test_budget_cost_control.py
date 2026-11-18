@@ -584,3 +584,88 @@ def test_response_carries_as_of_and_data_through(db, bank):
     result = bs.compute_budget_variance(db, budget, ["2026-07"], _fx, today=TODAY)
     assert result["as_of"] == "2026-07-15"
     assert result["data_through"] == "2026-07-01"
+
+
+# ── lumpy pace ──────────────────────────────────────────────────────────────
+
+
+def _spread_history(db, bank, months, category="Gadgets"):
+    """Jan-Jun 2026 baseline: spending (uneven amounts, so never a recurring
+    series) in the given month numbers, a salary row in every month."""
+    for n, m in enumerate(months):
+        _tx(db, bank, f"2026-{m:02d}-12", "Example Shop", -(200.0 + 70 * n), category)
+    for m in range(1, 7):
+        _tx(db, bank, f"2026-{m:02d}-25", "Example Employer", 3000.0, "Salary")
+
+
+def _gadgets_pace(db, bank, spent=0.0, limit=100.0):
+    if spent:
+        _tx(db, bank, "2026-07-03", "Example Shop", -spent, "Gadgets")
+    _tx(db, bank, "2026-07-25", "Example Employer", 3000.0, "Salary")
+    budget = db.create_budget("Base", is_active=True)
+    db.create_budget_line(budget, "spending", "Gadgets", limit)
+    result = bs.compute_budget_variance(db, budget, ["2026-07"], _fx, today=TODAY)
+    return _line(result, "spending", "Gadgets")["pace"], result
+
+
+def test_a_category_spent_in_2_of_6_months_is_irregular(db, bank):
+    _spread_history(db, bank, [2, 5])
+    pace, _ = _gadgets_pace(db, bank, spent=40.0)
+    assert pace["status"] == "irregular"
+    assert pace["method"] == "irregular"
+    assert pace["months_with_activity"] == 2
+    assert pace["everyday_remaining_eur"] == 0.0
+    assert pace["projected_month_end_eur"] == 40.0
+    assert pace["meaningful_overshoot"] is False
+
+
+def test_a_category_spent_in_4_of_6_months_is_projected_as_before(db, bank):
+    _spread_history(db, bank, [1, 2, 4, 6])
+    pace, _ = _gadgets_pace(db, bank, spent=40.0)
+    assert pace["method"] == "baseline"
+    assert pace["months_with_activity"] == 4
+    assert pace["everyday_remaining_eur"] > 0
+    assert pace["status"] != "irregular"
+
+
+def test_fewer_than_6_baseline_months_is_never_irregular(db, bank):
+    # five baseline months, one of them active (1 of 5 would be lumpy)
+    for ym in ["2026-02", "2026-03", "2026-04", "2026-05", "2026-06"]:
+        _tx(db, bank, f"{ym}-25", "Example Employer", 3000.0, "Salary")
+    _tx(db, bank, "2026-03-12", "Example Shop", -300.0, "Gadgets")
+    pace, _ = _gadgets_pace(db, bank, spent=40.0)
+    assert pace["baseline_months"] == 5
+    assert pace["method"] == "baseline"
+    assert pace["status"] != "irregular"
+
+
+def test_an_irregular_line_over_its_limit_is_still_over(db, bank):
+    _spread_history(db, bank, [3])
+    pace, _ = _gadgets_pace(db, bank, spent=150.0, limit=100.0)
+    assert pace["method"] == "irregular"
+    assert pace["status"] == "over"
+
+
+def test_no_action_item_for_an_irregular_pace(db, bank):
+    from portf_manager.services import action_items
+
+    _spread_history(db, bank, [3])
+    pace, result = _gadgets_pace(db, bank, spent=40.0)
+    assert pace["status"] == "irregular"
+    assert action_items._budget_pace_items(result, set()) == []
+
+
+def test_lumpy_helpers_share_the_yearly_suggestion_activity_count():
+    values = [0, 300, 0, 0, 0, 0, 300, 0, 0, 0, 0, 0]
+    assert bs.count_active_months(values) == 2
+    assert (
+        bs.suggest_period({f"m{i}": v for i, v in enumerate(values)}, "flexible", 12)[
+            "months_with_activity"
+        ]
+        == 2
+    )
+    assert bs.is_lumpy(2, 12) is True
+    assert bs.is_lumpy(4, 12) is True
+    assert bs.is_lumpy(5, 12) is False
+    assert bs.is_lumpy(0, 12) is False
+    assert bs.is_lumpy(1, 5) is False
