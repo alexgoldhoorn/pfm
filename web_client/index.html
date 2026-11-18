@@ -394,6 +394,23 @@
                         <div id="dashAttentionDetail" class="pfm-attn-detail" style="display:none;"></div>
                     </div>
 
+                    <!-- This week: the top Action Items (folded groups count as one line),
+                         filled by renderDashThisWeek. Hidden when nothing is open. -->
+                    <div class="row g-3 mb-4" id="dashThisWeek" style="display:none;">
+                        <div class="col-12">
+                            <div class="card">
+                                <div class="card-header d-flex justify-content-between align-items-center">
+                                    <span><i class="bi bi-calendar-check me-2"></i>This week
+                                        <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" id="dashThisWeekHelp"></i></span>
+                                    <a href="#" class="small" data-page="actionitems">All action items <i class="bi bi-arrow-right"></i></a>
+                                </div>
+                                <div class="card-body py-2">
+                                    <div id="dashThisWeekArea"><div class="text-muted small">Loading…</div></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <!-- Your progress: rated tiles, filled by loadDashboardProgress.
                          Hidden when there is nothing to show yet. -->
                     <div id="dashProgress" class="mb-4" style="display:none;">
@@ -3680,7 +3697,11 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                             <div class="card">
                                 <div class="card-header d-flex flex-wrap align-items-center gap-2">
                                     <span class="fw-semibold">Recurring charges</span>
-                                    <span class="small text-muted ms-auto" id="spRecurringTotals"></span>
+                                    <span class="btn-group btn-group-sm" role="group" aria-label="Sort recurring charges">
+                                        <button type="button" class="btn btn-outline-secondary active" id="spRecurringSortStatus" title="Missed first, then active, paid another way, cancelled">By status</button>
+                                        <button type="button" class="btn btn-outline-secondary" id="spRecurringSortCost" title="Dearest first">By yearly cost</button>
+                                    </span>
+                                    <span class="small text-muted ms-auto text-end" id="spRecurringTotals"></span>
                                 </div>
                                 <div class="table-responsive">
                                     <table class="table table-sm mb-0">
@@ -3935,6 +3956,28 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                                 <tbody id="nwBalanceSheetBody"><tr><td colspan="5" class="text-center text-muted py-4">Loading…</td></tr></tbody>
                                 <tfoot id="nwBalanceSheetFoot"></tfoot>
                             </table>
+                        </div>
+                    </div>
+
+                    <!-- History: stored daily snapshots, what moved net worth -->
+                    <div class="card mb-4" id="nwHistory">
+                        <div class="card-header fw-semibold d-flex flex-wrap align-items-center justify-content-between gap-2">
+                            <span><i class="bi bi-graph-up me-2"></i>History
+                                <i class="bi bi-info-circle text-muted ms-1" data-bs-toggle="tooltip" id="nwHistoryHelp"></i></span>
+                            <span class="d-flex flex-wrap align-items-center gap-2">
+                                <span class="btn-group btn-group-sm" role="group" aria-label="Chart view">
+                                    <button type="button" class="btn btn-outline-secondary active" id="nwHistModeTotal">Net worth</button>
+                                    <button type="button" class="btn btn-outline-secondary" id="nwHistModeParts">Components</button>
+                                </span>
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="nwHistSnapshot" title="Store today's snapshot now"><i class="bi bi-camera me-1"></i>Snapshot now</button>
+                            </span>
+                        </div>
+                        <div class="card-body">
+                            <div id="nwHistoryNote" class="small text-muted mb-2">Loading…</div>
+                            <div style="position: relative; height: 240px;" id="nwHistChartWrap"><canvas id="nwHistChart"></canvas></div>
+                            <div id="nwHistLegend" class="small text-muted mt-2"></div>
+                            <h6 class="mt-4 mb-2">What changed <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip" id="nwChangeHelp"></i></h6>
+                            <div class="row g-2" id="nwChangeRow"></div>
                         </div>
                     </div>
 
@@ -4397,6 +4440,9 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                             <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#bgPaneForecast" id="bgTabBtnForecast"><i class="bi bi-graph-up-arrow me-1"></i>Forecast</button>
                         </li>
                         <li class="nav-item">
+                            <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#bgPaneClose" id="bgTabBtnClose"><i class="bi bi-calendar-check me-1"></i>Month close</button>
+                        </li>
+                        <li class="nav-item">
                             <button type="button" class="nav-link" data-bs-toggle="tab" data-bs-target="#bgPaneScenarios" id="bgTabBtnScenarios"><i class="bi bi-diagram-3 me-1"></i>Scenarios</button>
                         </li>
                     </ul>
@@ -4718,6 +4764,40 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                         </div>
 
                         <!-- ── Scenarios ────────────────────────────────── -->
+                        <!-- ── Month close ──────────────────────────────── -->
+                        <div class="tab-pane fade" id="bgPaneClose">
+                            <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-2">
+                                <span class="fw-semibold">Month close <i class="bi bi-info-circle text-muted" data-bs-toggle="tooltip" id="bgMcHelp"></i></span>
+                                <span class="d-flex align-items-center gap-2">
+                                    <label class="small text-muted mb-0" for="bgMcMonth">Month</label>
+                                    <select class="form-select form-select-sm w-auto" id="bgMcMonth"></select>
+                                    <button class="btn btn-sm btn-outline-secondary" id="bgMcRefresh" title="Reload"><i class="bi bi-arrow-clockwise"></i></button>
+                                </span>
+                            </div>
+                            <div id="bgMcStatus" class="small text-muted mb-2"></div>
+                            <div id="bgMcBanner"></div>
+                            <div class="card mb-3">
+                                <div class="card-header py-2"><span class="fw-semibold small">Checklist</span></div>
+                                <div id="bgMcChecklist" class="list-group list-group-flush"><div class="list-group-item text-muted small">Loading…</div></div>
+                            </div>
+                            <div class="card mb-3">
+                                <div class="card-header py-2"><span class="fw-semibold small">Figures</span></div>
+                                <div class="card-body py-2" id="bgMcFigures"><span class="text-muted small">Loading…</span></div>
+                            </div>
+                            <div class="card mb-3">
+                                <div class="card-body py-2">
+                                    <label class="form-label small mb-1" for="bgMcNotes">Notes (optional, kept with the close)</label>
+                                    <textarea class="form-control form-control-sm mb-2" id="bgMcNotes" rows="2" maxlength="2000" placeholder="e.g. the insurance renewal is in March"></textarea>
+                                    <div class="d-flex flex-wrap gap-2 align-items-center">
+                                        <button class="btn btn-sm btn-primary" id="bgMcClose"><i class="bi bi-check2-square me-1"></i>Close month</button>
+                                        <button class="btn btn-sm btn-outline-warning" id="bgMcForce" style="display:none;">Close anyway</button>
+                                        <button class="btn btn-sm btn-outline-secondary" id="bgMcReopen" style="display:none;"><i class="bi bi-unlock me-1"></i>Reopen</button>
+                                        <a href="#" class="small" id="bgMcReport" style="display:none;"><i class="bi bi-file-earmark-text me-1"></i>Open the saved report</a>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         <div class="tab-pane fade" id="bgPaneScenarios">
                             <div class="card mb-3">
                                 <div class="card-header py-2"><span class="fw-semibold small">Create a budget</span></div>

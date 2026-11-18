@@ -38,6 +38,7 @@ async function loadNetworthPage() {
     _loadLoans();
     _loadValuations();
     loadRetirementCard();
+    if (window.loadNetworthHistory) window.loadNetworthHistory();
     const body = $('nwItemsBody');
     if (body) body.innerHTML = '<tr><td colspan="5" class="text-center text-muted py-4"><span class="spinner-border spinner-border-sm me-2"></span>Loading…</td></tr>';
     try {

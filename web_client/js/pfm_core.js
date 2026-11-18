@@ -2742,12 +2742,65 @@ function createAPIClient() {
             }
             return response.json();
         },
-        async getSpendingRecurring({ includeEnded = false } = {}) {
-            const qs = includeEnded ? '?include_ended=true' : '';
+        // sort: 'status' (default) or 'yearly_cost'
+        async getSpendingRecurring({ includeEnded = false, sort = 'status' } = {}) {
+            const params = [];
+            if (includeEnded) params.push('include_ended=true');
+            if (sort && sort !== 'status') params.push('sort=' + encodeURIComponent(sort));
+            const qs = params.length ? '?' + params.join('&') : '';
             const response = await fetch(this.baseURL + '/api/v1/spending/recurring' + qs, {
                 headers: { 'X-API-Key': this.apiKey }
             });
             if (!response.ok) throw new Error('Failed to load recurring charges');
+            return response.json();
+        },
+        // status: 'cancelled' | 'paid_elsewhere'
+        async setRecurringResolution({ portfolio_id, merchant, status, note }) {
+            const response = await fetch(this.baseURL + '/api/v1/spending/recurring/resolution', {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify({ portfolio_id, merchant, status, note: note || null })
+            });
+            if (!response.ok) throw new Error(errorDetailFromBody(await response.text(), 'Failed to save'));
+            return response.json();
+        },
+        async clearRecurringResolution(portfolioId, merchant) {
+            const qs = '?portfolio_id=' + encodeURIComponent(portfolioId) + '&merchant=' + encodeURIComponent(merchant);
+            const response = await fetch(this.baseURL + '/api/v1/spending/recurring/resolution' + qs, {
+                method: 'DELETE',
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) throw new Error(errorDetailFromBody(await response.text(), 'Failed to clear'));
+            return response.json();
+        },
+        // month: 'YYYY-MM' (default: the last complete month)
+        async getMonthClose(month) {
+            const qs = month ? '?month=' + encodeURIComponent(month) : '';
+            const response = await fetch(this.baseURL + '/api/v1/spending/month-close' + qs, {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) throw new Error(errorDetailFromBody(await response.text(), 'Failed to load the month close'));
+            return response.json();
+        },
+        async closeMonth({ month, notes, force }) {
+            const response = await fetch(this.baseURL + '/api/v1/spending/month-close', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-API-Key': this.apiKey },
+                body: JSON.stringify({ month, notes: notes || null, force: !!force })
+            });
+            if (!response.ok) {
+                const err = new Error(errorDetailFromBody(await response.text(), 'Failed to close the month'));
+                err.status = response.status;
+                throw err;
+            }
+            return response.json();
+        },
+        async reopenMonth(month) {
+            const response = await fetch(this.baseURL + '/api/v1/spending/month-close?month=' + encodeURIComponent(month), {
+                method: 'DELETE',
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!response.ok) throw new Error(errorDetailFromBody(await response.text(), 'Failed to reopen the month'));
             return response.json();
         },
         async getSpendingCategories() {
@@ -3619,11 +3672,43 @@ function createAPIClient() {
 
         // status: 'open' (default) hides checked/snoozed items; 'all' returns
         // every item with its status/ack. Both carry {summary, acks}.
-        async getActionItems(status = 'open') {
-            const resp = await fetch(this.baseURL + '/api/v1/action-items/?status=' + encodeURIComponent(status), {
+        // grouped: fold families of 3+ open items into one group entry and add
+        // `top` (the first 5 open entries).
+        async getActionItems(status = 'open', { grouped = false } = {}) {
+            const qs = '?status=' + encodeURIComponent(status) + (grouped ? '&grouped=true' : '');
+            const resp = await fetch(this.baseURL + '/api/v1/action-items/' + qs, {
                 headers: { 'X-API-Key': this.apiKey }
             });
             if (!resp.ok) throw new Error('Failed to load action items');
+            return resp.json();
+        },
+
+        async getNetworthSnapshots(months = 24) {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/history?months=' + encodeURIComponent(months), {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(errorDetailFromBody(await resp.text(), 'Failed to load net-worth history'));
+            return resp.json();
+        },
+
+        // start/end: 'YYYY-MM-DD' (both optional; the server snaps to stored snapshots)
+        async getNetworthSnapshotChange(start, end) {
+            const params = [];
+            if (start) params.push('start=' + encodeURIComponent(start));
+            if (end) params.push('end=' + encodeURIComponent(end));
+            const resp = await fetch(this.baseURL + '/api/v1/networth/history/change' + (params.length ? '?' + params.join('&') : ''), {
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(errorDetailFromBody(await resp.text(), 'Failed to load what changed'));
+            return resp.json();
+        },
+
+        async takeNetworthSnapshot() {
+            const resp = await fetch(this.baseURL + '/api/v1/networth/history/snapshot', {
+                method: 'POST',
+                headers: { 'X-API-Key': this.apiKey }
+            });
+            if (!resp.ok) throw new Error(errorDetailFromBody(await resp.text(), 'Snapshot failed'));
             return resp.json();
         },
 

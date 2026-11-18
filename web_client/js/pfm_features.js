@@ -779,11 +779,60 @@ function mergeActionItems(backendItems, netWorthResult, dismissedIds) {
     }));
 
     const dismissedSet = new Set(dismissedIds);
+    // The server sends a `priority` (severity base + category weight + urgency)
+    // and sorts by it; keep that order. An item without one (the checklist
+    // items computed here, or an older server) ranks at its severity's base,
+    // so severity still dominates. The sort is stable.
     return backendItems.concat(nwItems, attentionItems)
         .filter(i => !dismissedSet.has(i.id))
-        .sort((a, b) => (ACTIONITEMS_SEVERITY_ORDER[a.severity] ?? 99) - (ACTIONITEMS_SEVERITY_ORDER[b.severity] ?? 99));
+        .sort((a, b) => actionItemRank(b) - actionItemRank(a));
 }
 window.mergeActionItems = mergeActionItems;
+
+// Sort key of an item or group: the server's priority, else the severity base.
+const ACTIONITEMS_SEVERITY_BASE = { high: 300, medium: 200, low: 100 };
+function actionItemRank(item) {
+    if (item && typeof item.priority === 'number') return item.priority;
+    return ACTIONITEMS_SEVERITY_BASE[item && item.severity] ?? 0;
+}
+window.actionItemRank = actionItemRank;
+
+// A group entry ("22 price targets crossed") folds several open items.
+function isActionGroup(item) {
+    return !!item && item.kind === 'group' && Array.isArray(item.children);
+}
+window.isActionGroup = isActionGroup;
+
+// Every real item: groups replaced by their children (chat prompts and counts
+// work on items, not on entries).
+function flattenActionGroups(items) {
+    const out = [];
+    (items || []).forEach(i => {
+        if (isActionGroup(i)) i.children.forEach(c => out.push(Object.assign({ status: 'open' }, c)));
+        else out.push(i);
+    });
+    return out;
+}
+window.flattenActionGroups = flattenActionGroups;
+
+// The "This week" card: the server's `top` entries as text-ready rows.
+function thisWeekModel(report) {
+    const top = (report && Array.isArray(report.top)) ? report.top : [];
+    const summary = (report && report.summary) || {};
+    const total = Number.isFinite(summary.open_entries) ? summary.open_entries : top.length;
+    return {
+        rows: top.map(i => ({
+            id: i.id,
+            title: i.title || '',
+            detail: i.detail || '',
+            severity: i.severity || 'low',
+            count: isActionGroup(i) ? (i.count || i.children.length) : null,
+            page: i.link_page || null,
+        })),
+        more: Math.max(0, total - top.length),
+    };
+}
+window.thisWeekModel = thisWeekModel;
 
 const ACTIONITEMS_CATEGORY_LABELS = ACTIONITEM_CATEGORY_NAMES;
 const ACTIONITEMS_SEVERITY_BADGE = {
@@ -793,7 +842,8 @@ const ACTIONITEMS_SEVERITY_BADGE = {
 // "3 open · 1 checked · 2 snoozed" for the filter bar and the dashboard.
 function actionItemsSummaryText(items) {
     const n = { open: 0, checked: 0, snoozed: 0 };
-    (items || []).forEach(i => { n[i.status || 'open'] = (n[i.status || 'open'] || 0) + 1; });
+    // A group counts as the items it folds.
+    flattenActionGroups(items).forEach(i => { n[i.status || 'open'] = (n[i.status || 'open'] || 0) + 1; });
     const parts = [`${n.open} open`];
     if (n.checked) parts.push(`${n.checked} checked`);
     if (n.snoozed) parts.push(`${n.snoozed} snoozed`);
@@ -810,10 +860,11 @@ async function loadDashboardActionItems() {
     try {
         await migrateLocalDismissals();
         const [backendData, nwData, cfData] = await Promise.all([
-            window.apiClient.getActionItems('open'),
+            window.apiClient.getActionItems('open', { grouped: true }),
             window.apiClient.getNetworth(),
             window.apiClient.getCashflow(),
         ]);
+        renderDashThisWeek(backendData);
         const nwResult = computeNetWorthChecklist(nwData.items, (cfData && cfData.items) || [], nwData.deposits, nwData.bank_accounts);
         // The server already filtered its own items; the Net Worth checklist
         // items are computed here, so hide the ones checked/snoozed by id.
@@ -866,17 +917,42 @@ async function loadDashboardActionItems() {
                 const a = e.target.closest('[data-ai-dash-chat]');
                 if (!a) return;
                 e.preventDefault();
-                openChatWithContext(`Action items ${localIsoDay()}`, actionItemsChatPrompt(window._dashActionItems || []));
+                openChatWithContext(`Action items ${localIsoDay()}`, actionItemsChatPrompt(flattenActionGroups(window._dashActionItems || [])));
             });
         }
     } catch (e) {
         dashAttentionSet('dashActionItems', null);
+        renderDashThisWeek(null);
     }
 }
 window.loadDashboardActionItems = loadDashboardActionItems;
 
+// "This week" card: the server's top entries (a folded group is one line).
+// Hidden when there is nothing open or the call failed.
+function renderDashThisWeek(report) {
+    const card = document.getElementById('dashThisWeek');
+    const area = document.getElementById('dashThisWeekArea');
+    if (!card || !area) return;
+    const m = thisWeekModel(report);
+    if (!m.rows.length) { card.style.display = 'none'; return; }
+    card.style.display = '';
+    ccApplyHelpTitle('dashThisWeekHelp', 'thisWeek');
+    if (window.initTooltips) window.initTooltips();
+    area.innerHTML = '<ul class="list-unstyled mb-0">' + m.rows.map(r => `
+        <li class="d-flex flex-wrap align-items-start gap-2 py-1 border-bottom">
+            <span class="badge ${ACTIONITEMS_SEVERITY_BADGE[r.severity] || 'text-bg-secondary'}">${esc(r.severity)}</span>
+            <div class="flex-grow-1" style="min-width:0;">
+                <div class="fw-semibold text-break">${esc(r.title)}${r.count ? ` <span class="badge rounded-pill text-bg-primary">${esc(r.count)}</span>` : ''}</div>
+                ${r.detail ? `<div class="small text-muted text-break">${esc(r.detail)}</div>` : ''}
+            </div>
+            ${r.page ? `<a href="#" class="small text-nowrap" data-page="${esc(r.page)}">Open <i class="bi bi-arrow-right"></i></a>` : ''}
+        </li>`).join('') + '</ul>'
+        + (m.more ? `<div class="small text-muted mt-2">+${m.more} more on the Action Items page.</div>` : '');
+}
+window.renderDashThisWeek = renderDashThisWeek;
+
 // Page state: every item (annotated with status/ack) plus the filters.
-const _aiState = { items: [], acks: {}, severity: 'all', showResolved: false };
+const _aiState = { items: [], acks: {}, severity: 'all', showResolved: false, expanded: new Set() };
 
 function _renderActionItems() {
     const wrap = document.getElementById('actionItemsList');
@@ -891,64 +967,91 @@ function _renderActionItems() {
         wrap.innerHTML = `<div class="alert alert-success"><i class="bi bi-check-circle me-1"></i>All clear — nothing needs your attention${_aiState.severity !== 'all' ? ' at this severity' : ''}.${hint}</div>`;
         return;
     }
-    wrap.innerHTML = items.map(item => {
-        // Research-linked items carry the specific symbol in context — pass it
-        // through as data-symbol so the nav click handler (createNavigationManager
-        // in this file) can load it straight into the Workbench instead of
-        // landing on a blank Research page.
-        const sym = item.link_page === 'research' && item.context && item.context.symbol;
-        const symAttr = sym ? ` data-symbol="${esc(sym)}"` : '';
-        // Import-stale items carry enough context (which portfolio, since
-        // what date) to jump straight to the right upload form pre-filled,
-        // instead of leaving the user to figure out where/what to import.
-        const imp = item.category === 'import' && item.context && item.context.portfolio_id != null
-            ? item.context : null;
-        const impAttr = imp
-            ? ` data-portfolio-id="${esc(imp.portfolio_id)}" data-account-type="${esc(imp.account_type || 'brokerage')}"`
-              + ` data-since-date="${esc(imp.since_date || '')}" data-portfolio-name="${esc(imp.portfolio_name || '')}"`
-            : '';
-        // Diagnostics items name the tab they live on (price / dq).
-        const tabAttr = item.link_page === 'diagnostics' && item.context && item.context.tab
-            ? ` data-diag-tab="${esc(item.context.tab)}"` : '';
-        const resolved = item.status !== 'open';
-        const ack = item.ack || {};
-        const statusHtml = resolved
-            ? `<span class="badge text-bg-secondary ms-1"><i class="bi ${item.status === 'snoozed' ? 'bi-alarm' : 'bi-check2'} me-1"></i>${esc(ackLabel(ack))}</span>` : '';
-        const noteHtml = ack.note ? `<div class="small text-muted"><i class="bi bi-chat-left-text me-1"></i>${esc(ack.note)}</div>` : '';
-        const followUp = resolved
-            ? `<button class="btn btn-sm btn-outline-secondary" data-ai-ack="open" data-ai-id="${esc(item.id)}" title="Reopen"><i class="bi bi-arrow-counterclockwise"></i></button>`
-            : `<button class="btn btn-sm btn-outline-success" data-ai-ack="checked" data-ai-id="${esc(item.id)}" title="Mark checked (looked at, fine)"><i class="bi bi-check2"></i><span class="d-none d-md-inline ms-1">Checked</span></button>
-               <div class="btn-group btn-group-sm">
-                   <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" title="Snooze"><i class="bi bi-alarm"></i></button>
-                   <ul class="dropdown-menu dropdown-menu-end">
-                       <li><button type="button" class="dropdown-item" data-ai-ack="snoozed" data-ai-days="7" data-ai-id="${esc(item.id)}">Snooze 7 days</button></li>
-                       <li><button type="button" class="dropdown-item" data-ai-ack="snoozed" data-ai-days="30" data-ai-id="${esc(item.id)}">Snooze 30 days</button></li>
-                   </ul>
-               </div>`;
-        return `
-        <div class="card mb-2${resolved ? ' opacity-75' : ''}">
-            <div class="card-body py-2 d-flex flex-wrap justify-content-between align-items-start gap-2">
-                <div class="flex-grow-1" style="min-width:0;">
-                    <span class="badge ${ACTIONITEMS_SEVERITY_BADGE[item.severity] || 'text-bg-secondary'} me-2">${esc(item.severity)}</span>
-                    <span class="text-muted small">${esc(ACTIONITEMS_CATEGORY_LABELS[item.category] || item.category)}</span>${statusHtml}
-                    <div class="fw-semibold">${esc(item.title)}</div>
-                    <div class="small text-muted">${esc(item.detail || '')}</div>
-                    ${noteHtml}
-                </div>
-                <div class="d-flex flex-wrap gap-1 ms-auto flex-shrink-0">
-                    <a href="#" data-page="${esc(item.link_page)}"${symAttr}${impAttr}${tabAttr} class="btn btn-sm btn-outline-primary">Go to page</a>
-                    <button class="btn btn-sm btn-outline-primary" data-ai-chat="${esc(item.id)}" title="Ask AI about this item"><i class="bi bi-robot"></i></button>
-                    ${followUp}
-                </div>
+    wrap.innerHTML = items.map(item => _aiEntryHtml(item)).join('');
+}
+
+// One entry: a plain item card, or a group card that expands to its children.
+function _aiEntryHtml(item) {
+    if (!isActionGroup(item)) return _aiRowHtml(item, false);
+    const open = _aiState.expanded.has(item.id);
+    const count = item.count || item.children.length;
+    const children = open
+        ? `<div class="border-top px-2 pt-2">${item.children.map(c => _aiRowHtml(Object.assign({ status: 'open', ack: null }, c), true)).join('')}</div>`
+        : '';
+    return `
+    <div class="card mb-2 ai-group" data-ai-group="${esc(item.id)}">
+        ${_aiRowHtml(item, false, { count, open, wrap: false })}
+        ${children}
+    </div>`;
+}
+
+// Card (or, for a child, a slim row) with the follow-up buttons. For a group
+// the Check/Snooze buttons carry the group id and act on every open child.
+function _aiRowHtml(item, isChild, grp) {
+    // Research-linked items carry the specific symbol in context — pass it
+    // through as data-symbol so the nav click handler (createNavigationManager
+    // in this file) can load it straight into the Workbench instead of
+    // landing on a blank Research page.
+    const sym = item.link_page === 'research' && item.context && item.context.symbol;
+    const symAttr = sym ? ` data-symbol="${esc(sym)}"` : '';
+    // Import-stale items carry enough context (which portfolio, since
+    // what date) to jump straight to the right upload form pre-filled,
+    // instead of leaving the user to figure out where/what to import.
+    const imp = item.category === 'import' && item.context && item.context.portfolio_id != null
+        ? item.context : null;
+    const impAttr = imp
+        ? ` data-portfolio-id="${esc(imp.portfolio_id)}" data-account-type="${esc(imp.account_type || 'brokerage')}"`
+          + ` data-since-date="${esc(imp.since_date || '')}" data-portfolio-name="${esc(imp.portfolio_name || '')}"`
+        : '';
+    // Diagnostics items name the tab they live on (price / dq).
+    const tabAttr = item.link_page === 'diagnostics' && item.context && item.context.tab
+        ? ` data-diag-tab="${esc(item.context.tab)}"` : '';
+    const resolved = item.status !== 'open';
+    const ack = item.ack || {};
+    const statusHtml = resolved
+        ? `<span class="badge text-bg-secondary ms-1"><i class="bi ${item.status === 'snoozed' ? 'bi-alarm' : 'bi-check2'} me-1"></i>${esc(ackLabel(ack))}</span>` : '';
+    const noteHtml = ack.note ? `<div class="small text-muted"><i class="bi bi-chat-left-text me-1"></i>${esc(ack.note)}</div>` : '';
+    const followUp = resolved
+        ? `<button class="btn btn-sm btn-outline-secondary" data-ai-ack="open" data-ai-id="${esc(item.id)}" title="Reopen"><i class="bi bi-arrow-counterclockwise"></i></button>`
+        : `<button class="btn btn-sm btn-outline-success" data-ai-ack="checked" data-ai-id="${esc(item.id)}" title="${grp ? 'Mark all checked (looked at, fine)' : 'Mark checked (looked at, fine)'}"><i class="bi bi-check2"></i><span class="d-none d-md-inline ms-1">${grp ? 'Check all' : 'Checked'}</span></button>
+           <div class="btn-group btn-group-sm">
+               <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" title="${grp ? 'Snooze all' : 'Snooze'}"><i class="bi bi-alarm"></i></button>
+               <ul class="dropdown-menu dropdown-menu-end">
+                   <li><button type="button" class="dropdown-item" data-ai-ack="snoozed" data-ai-days="7" data-ai-id="${esc(item.id)}">Snooze ${grp ? 'all ' : ''}7 days</button></li>
+                   <li><button type="button" class="dropdown-item" data-ai-ack="snoozed" data-ai-days="30" data-ai-id="${esc(item.id)}">Snooze ${grp ? 'all ' : ''}30 days</button></li>
+               </ul>
+           </div>`;
+    const countBadge = grp
+        ? `<span class="badge rounded-pill text-bg-primary ms-1" title="${grp.count} items folded into this entry">${esc(grp.count)}</span>` : '';
+    const toggle = grp
+        ? `<button class="btn btn-sm btn-outline-secondary" data-ai-toggle="${esc(item.id)}" aria-expanded="${grp.open ? 'true' : 'false'}" title="${grp.open ? 'Hide the items' : 'Show the items'}"><i class="bi ${grp.open ? 'bi-chevron-up' : 'bi-chevron-down'}"></i><span class="ms-1">${grp.open ? 'Hide' : 'Show ' + esc(grp.count)}</span></button>` : '';
+    const link = item.link_page
+        ? `<a href="#" data-page="${esc(item.link_page)}"${symAttr}${impAttr}${tabAttr} class="btn btn-sm btn-outline-primary">Go to page</a>` : '';
+    const chatBtn = grp ? '' : `<button class="btn btn-sm btn-outline-primary" data-ai-chat="${esc(item.id)}" title="Ask AI about this item"><i class="bi bi-robot"></i></button>`;
+    const inner = `
+        <div class="${isChild ? 'py-2 border-bottom ' : 'card-body py-2 '}d-flex flex-wrap justify-content-between align-items-start gap-2">
+            <div class="flex-grow-1" style="min-width:0;">
+                <span class="badge ${ACTIONITEMS_SEVERITY_BADGE[item.severity] || 'text-bg-secondary'} me-2">${esc(item.severity)}</span>
+                <span class="text-muted small">${esc(ACTIONITEMS_CATEGORY_LABELS[item.category] || item.category)}</span>${countBadge}${statusHtml}
+                <div class="fw-semibold text-break">${esc(item.title)}</div>
+                <div class="small text-muted text-break">${esc(item.detail || '')}</div>
+                ${noteHtml}
+            </div>
+            <div class="d-flex flex-wrap gap-1 ms-auto flex-shrink-0">
+                ${link}
+                ${chatBtn}
+                ${toggle}
+                ${followUp}
             </div>
         </div>`;
-    }).join('');
+    if (isChild || (grp && grp.wrap === false)) return inner;
+    return `<div class="card mb-2${resolved ? ' opacity-75' : ''}">${inner}</div>`;
 }
 
 // Writes the follow-up state for one item and re-renders.
 window.setActionItemStatus = async function(id, status, opts) {
     const o = opts || {};
-    const item = _aiState.items.find(i => i.id === id);
+    const item = flattenActionGroups(_aiState.items).concat(_aiState.items).find(i => i.id === id);
     if (status === 'checked' && !o.skipNote) {
         const note = await noteDialog({
             title: 'Mark as checked',
@@ -960,7 +1063,23 @@ window.setActionItemStatus = async function(id, status, opts) {
         if (note) o.note = note;
     }
     try {
+        // A group id acts on every open child on the server and stores
+        // nothing under the group id, so reload instead of patching state.
+        if (String(id).startsWith('group:')) {
+            const resp = await window.apiClient.setActionItemStatus({ id, status, note: o.note, days: o.days, until: o.until });
+            const n = (resp.children || []).length;
+            notify(status === 'snoozed' ? `Snoozed ${n} items for ${o.days} days` : `Marked ${n} items as checked`, 'success');
+            await loadActionItemsPage();
+            return;
+        }
         const ack = await setFindingStatus(id, status, o);
+        // A child of a group is not in the folded list: reload so the group's
+        // count and children are recomputed by the server.
+        if (!_aiState.items.some(i => i.id === id)) {
+            notify(status === 'open' ? 'Item reopened' : status === 'snoozed' ? `Snoozed for ${o.days} days` : 'Marked as checked', 'success');
+            await loadActionItemsPage();
+            return;
+        }
         if (ack) _aiState.acks[id] = ack; else delete _aiState.acks[id];
         _aiState.items = annotateActionItems(_aiState.items, _aiState.acks);
         _renderActionItems();
@@ -983,7 +1102,7 @@ async function loadActionItemsPage() {
     if (askBtn && !askBtn._wired) {
         askBtn._wired = true;
         askBtn.addEventListener('click', () => {
-            openChatWithContext(`Action items ${localIsoDay()}`, actionItemsChatPrompt(_aiState.items));
+            openChatWithContext(`Action items ${localIsoDay()}`, actionItemsChatPrompt(flattenActionGroups(_aiState.items)));
         });
     }
     const bar = document.getElementById('aiFilterBar');
@@ -1012,9 +1131,16 @@ async function loadActionItemsPage() {
                 window.setActionItemStatus(ackBtn.dataset.aiId, ackBtn.dataset.aiAck, opts);
                 return;
             }
+            const toggleBtn = e.target.closest('[data-ai-toggle]');
+            if (toggleBtn) {
+                const gid = toggleBtn.dataset.aiToggle;
+                if (_aiState.expanded.has(gid)) _aiState.expanded.delete(gid); else _aiState.expanded.add(gid);
+                _renderActionItems();
+                return;
+            }
             const chatBtn = e.target.closest('[data-ai-chat]');
             if (chatBtn) {
-                const item = _aiState.items.find(i => i.id === chatBtn.dataset.aiChat);
+                const item = flattenActionGroups(_aiState.items).find(i => i.id === chatBtn.dataset.aiChat);
                 if (item) openChatWithContext(`Action item: ${item.title.slice(0, 60)}`, actionItemChatPrompt(item));
             }
         });
@@ -1024,7 +1150,7 @@ async function loadActionItemsPage() {
     try {
         await migrateLocalDismissals();
         const [backendData, nwData, cfData] = await Promise.all([
-            window.apiClient.getActionItems('all'),
+            window.apiClient.getActionItems('all', { grouped: true }),
             window.apiClient.getNetworth(),
             window.apiClient.getCashflow(),
         ]);
@@ -7877,6 +8003,9 @@ function recurringStatusBadges(item) {
     const badges = [];
     if (item.status === 'missed') badges.push('<span class="badge bg-danger" title="A statement covering the due date is imported, but the charge isn\'t in it">Missed</span>');
     if (item.status === 'ended') badges.push('<span class="badge bg-secondary">Ended</span>');
+    if (item.status === 'cancelled') badges.push('<span class="badge bg-secondary" title="You marked this as cancelled; it is left out of the yearly total and the forecast">Cancelled</span>');
+    if (item.status === 'paid_elsewhere') badges.push('<span class="badge bg-info text-dark" title="You pay this another way (cash, another account); it still counts in the yearly total but not in the forecast">Paid another way</span>');
+    if (item.resolution_stale) badges.push('<span class="badge bg-warning text-dark" title="Charged again since you marked it. It counts as active; clear the mark or mark it again.">Came back</span>');
     const pct = item.price_change_pct;
     if (pct != null) {
         badges.push(pct > 0
@@ -7892,29 +8021,30 @@ async function _loadSpRecurring() {
     const totals = document.getElementById('spRecurringTotals');
     if (!body) return;
     const includeEnded = !!document.getElementById('spRecurringShowEnded')?.checked;
+    const sort = window._spRecurringSort || 'status';
+    document.getElementById('spRecurringSortStatus')?.classList.toggle('active', sort === 'status');
+    document.getElementById('spRecurringSortCost')?.classList.toggle('active', sort === 'yearly_cost');
     let data;
     try {
-        data = await window.apiClient.getSpendingRecurring({ includeEnded });
+        data = await window.apiClient.getSpendingRecurring({ includeEnded, sort });
     } catch (err) {
-        body.innerHTML = `<tr><td colspan="7" class="text-center text-danger py-3">${esc(err.message)}</td></tr>`;
+        if (totals) totals.textContent = '';
+        body.innerHTML = `<tr><td colspan="7" class="text-center text-danger py-3">Recurring charges are ${CC_NA}: ${esc(err.message)}</td></tr>`;
         return;
     }
     const items = data.items || [];
-    if (totals) {
-        totals.innerHTML = items.length
-            ? `≈ ${Fmt.money(data.monthly_total_eur, 'EUR', 0)}/month · ${Fmt.money(data.annual_total_eur, 'EUR', 0)}/year`
-            : '';
-    }
+    if (totals) totals.innerHTML = items.length ? recurringTotalsHtml(recurringTotalsModel(data)) : '';
     body.innerHTML = items.length ? items.map(i => `
-        <tr class="${i.status === 'ended' ? 'text-muted' : ''}">
+        <tr class="${(i.status === 'ended' || i.status === 'cancelled') ? 'text-muted' : ''}">
             <td class="ps-3"><a href="#" class="sp-recurring-merchant" data-merchant="${escapeForAttr(i.merchant)}" data-portfolio-id="${escapeForAttr(i.portfolio_id)}" title="Show these transactions">${esc(i.merchant)}</a>
-                <div class="small text-muted">${esc(i.category)}</div></td>
+                <div class="small text-muted">${esc(i.category)}</div>
+                ${i.resolution && i.resolution.note ? `<div class="small text-muted text-break"><i class="bi bi-chat-left-text me-1"></i>${esc(i.resolution.note)}</div>` : ''}</td>
             <td class="d-none d-md-table-cell">${esc(i.account_name || '')}</td>
             <td>${esc(recurringCadenceLabel(i.cadence))}</td>
             <td class="text-end">${Fmt.money(i.typical_amount, i.currency, 2)}</td>
             <td>${Fmt.date(i.next_expected)}</td>
             <td class="text-end d-none d-sm-table-cell">${Fmt.money(i.annual_amount, i.currency, 0)}</td>
-            <td class="pe-3 text-end">${recurringStatusBadges(i)}</td>
+            <td class="pe-3 text-end"><div class="d-flex flex-wrap justify-content-end align-items-center gap-1">${recurringStatusBadges(i)}${recurringMenuHtml(i)}</div></td>
         </tr>`).join('')
         : '<tr><td colspan="7" class="text-center text-muted py-3">No recurring charges found yet. They show up after three regular charges (two for yearly ones).</td></tr>';
 }
@@ -7930,12 +8060,30 @@ function _wireSpRecurringTab() {
         showEnded.dataset.wired = '1';
         showEnded.addEventListener('change', _loadSpRecurring);
     }
+    const setSort = sort => { window._spRecurringSort = sort; _loadSpRecurring(); };
+    const sortStatus = document.getElementById('spRecurringSortStatus');
+    if (sortStatus && !sortStatus.dataset.wired) {
+        sortStatus.dataset.wired = '1';
+        sortStatus.addEventListener('click', () => setSort('status'));
+    }
+    const sortCost = document.getElementById('spRecurringSortCost');
+    if (sortCost && !sortCost.dataset.wired) {
+        sortCost.dataset.wired = '1';
+        sortCost.addEventListener('click', () => setSort('yearly_cost'));
+    }
     const body = document.getElementById('spRecurringBody');
     if (body && !body.dataset.wired) {
         body.dataset.wired = '1';
         body.addEventListener('click', async (e) => {
             const link = e.target.closest('.sp-recurring-merchant');
-            if (!link) return;
+            if (!link) {
+                const resBtn = e.target.closest('.sp-rec-res');
+                if (resBtn) {
+                    e.preventDefault();
+                    await _spRecurringResolve(resBtn.dataset.action, parseInt(resBtn.dataset.portfolioId, 10), resBtn.dataset.merchant);
+                }
+                return;
+            }
             e.preventDefault();
             const search = document.getElementById('spSearch');
             if (search) search.value = link.dataset.merchant;
@@ -10658,7 +10806,7 @@ function _renderBgVariance() {
                 <td class="text-end">${_bgEur(line.actual_total)}</td>
                 <td class="text-end">${_bgVarianceCell(line.variance_eur, line.favourable)}</td>
                 <td class="text-end text-muted small">${line.variance_pct === null || line.variance_pct === undefined ? '—' : Fmt.num(line.variance_pct, 1, 1) + '%'}</td>
-                <td class="text-end small d-none d-md-table-cell">${pace ? `<span class="badge ${pace.badge}" title="${escapeForAttr(pace.text)}">${esc(pace.label)}</span><div class="text-muted">&rarr; ${esc(pace.projected)}</div>` : '<span class="text-muted">—</span>'}</td>
+                <td class="text-end small d-none d-md-table-cell">${pace ? `<span class="badge ${pace.badge}" title="${escapeForAttr(pace.text)}">${esc(pace.label)}</span><div class="text-muted">&rarr; ${esc(pace.projected)}</div>${pace.months ? `<div class="text-muted">${esc(pace.months)}</div>` : ''}` : '<span class="text-muted">—</span>'}</td>
             </tr>`;
         }).join('');
 
@@ -11515,6 +11663,7 @@ function _wireBudgetPage() {
     wire('bgNewLinePeriod', 'change', _bgSyncNewLineFundRow);
     _wireBgFundControls();
     _wireBgForecast();
+    _wireBgMonthClose();
     _bgSyncNewLineFundRow();
     wire('bgNewLineType', 'change', e => {
         _bgSyncNewLineFundRow();
@@ -11783,6 +11932,7 @@ const CC_PACE_STATUS = {
     at_risk: { label: 'At risk', badge: 'text-bg-warning' },
     over: { label: 'Over', badge: 'text-bg-danger' },
     too_early: { label: 'Too early', badge: 'text-bg-secondary' },
+    irregular: { label: 'Irregular', badge: 'text-bg-info' },
 };
 
 /** Badge and sentence for a line's (or the section's) pace; null when there is none. */
@@ -11799,6 +11949,17 @@ function paceMeta(pace) {
             status: pace.status, label: meta.label, badge: meta.badge, projected: '—', limit,
             text: `Too early to project: ${ccMoney(pace.actual_to_date_eur)} spent so far of ${limit}.${through}`,
             short: `${ccMoney(pace.actual_to_date_eur)} so far of ${limit}`,
+        };
+    }
+    // A lumpy line (spent in only a few months): no everyday average is added,
+    // so the figure is what is already spent plus the recurring charges due.
+    if (pace.status === 'irregular') {
+        const months = irregularMonthsText(pace);
+        return {
+            status: pace.status, label: meta.label, badge: meta.badge, projected, limit,
+            months,
+            text: `${months}. ${ccMoney(pace.actual_to_date_eur)} spent so far of ${limit}; counting only that and the recurring charges still due, ${projected} by month end.${through}`,
+            short: months,
         };
     }
     const text = pace.status === 'over'
@@ -13306,3 +13467,547 @@ async function loadDashboardBudget() {
         </div>`);
 }
 window.loadDashboardBudget = loadDashboardBudget;
+
+// ─────────────────────────────────────────────────────────────────────────
+// Cost control 3: net-worth history, recurring resolutions, month close.
+// Pure helpers first (window-exported, tested in tests/cost_control3.test.mjs),
+// DOM code after. A null figure is "not available", never 0; a failing call
+// shows "not available" in its own card and never blanks the page.
+// ─────────────────────────────────────────────────────────────────────────
+
+// ── Net-worth history ───────────────────────────────────────────────────────
+
+const NW_HIST_PARTS = [
+    { key: 'investments_eur', label: 'Investments', color: '--viz-1' },
+    { key: 'cash_eur', label: 'Cash', color: '--viz-3' },
+    { key: 'property_eur', label: 'Property', color: '--viz-4' },
+    { key: 'other_assets_eur', label: 'Other assets', color: '--viz-neutral' },
+    { key: 'liabilities_eur', label: 'Liabilities', color: '--viz-bad', negative: true },
+];
+
+/**
+ * Chart-ready model of /networth/history. `mode` is 'total' (one line) or
+ * 'parts' (stacked components, liabilities drawn below zero).
+ */
+function nwHistoryModel(history, mode) {
+    const snaps = (history && Array.isArray(history.snapshots)) ? history.snapshots : [];
+    const count = snaps.length;
+    const first = count ? snaps[0].snapshot_date : null;
+    const last = count ? snaps[count - 1].snapshot_date : null;
+    let note;
+    if (count === 0) note = 'No snapshots yet. One is stored after each price update, or press Snapshot now.';
+    else if (count === 1) note = `History starts ${Fmt.date(first)}. A second snapshot is needed before there is a line to draw.`;
+    else note = `${count} snapshots from ${Fmt.date(first)} to ${Fmt.date(last)}.`;
+    const num = v => (v === null || v === undefined || Number.isNaN(Number(v)) ? null : Number(v));
+    const series = mode === 'parts'
+        ? NW_HIST_PARTS.map(p => ({
+            key: p.key, label: p.label, color: p.color,
+            data: snaps.map(s => { const v = num(s[p.key]); return v === null ? null : (p.negative ? -v : v); }),
+        }))
+        : [{ key: 'net_worth_eur', label: 'Net worth', color: '--viz-1', data: snaps.map(s => num(s.net_worth_eur)) }];
+    return {
+        count, first, last, note,
+        hasChart: count >= 2,
+        labels: snaps.map(s => s.snapshot_date),
+        series,
+        warnings: (history && history.warnings) || [],
+    };
+}
+window.nwHistoryModel = nwHistoryModel;
+
+function _isoPlusDays(iso, days) {
+    const d = new Date(iso + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() + days);
+    return d.toISOString().slice(0, 10);
+}
+
+/**
+ * The three "what changed" windows ending at the latest snapshot. A window
+ * that starts before the first snapshot is `available: false` (the history is
+ * shorter than that), so it is never asked for and never padded.
+ */
+function nwChangeWindows(history) {
+    const snaps = (history && Array.isArray(history.snapshots)) ? history.snapshots : [];
+    if (snaps.length < 2) return [];
+    const first = snaps[0].snapshot_date;
+    const last = snaps[snaps.length - 1].snapshot_date;
+    return [
+        { key: '1m', label: 'Last month', start: _isoPlusDays(last, -30) },
+        { key: '3m', label: 'Last 3 months', start: _isoPlusDays(last, -91) },
+        { key: 'all', label: 'Since the first snapshot', start: first },
+    ].map(w => ({ ...w, end: last, available: w.start >= first }));
+}
+window.nwChangeWindows = nwChangeWindows;
+
+const NW_CHANGE_PARTS = [
+    ['saved_eur', 'Saved'],
+    ['market_eur', 'Market moves'],
+    ['debt_paid_eur', 'Debt paid down'],
+    ['property_change_eur', 'Property'],
+    ['other_change_eur', 'Other'],
+];
+
+function nwDeltaClass(value) {
+    if (value === null || value === undefined || Number.isNaN(Number(value)) || Math.abs(Number(value)) < 0.005) return 'text-muted';
+    return Number(value) > 0 ? 'text-success' : 'text-danger';
+}
+
+/** Text-ready "what changed" tile; null parts read "not available". */
+function nwChangeModel(change) {
+    const c = change || {};
+    const parts = c.parts || {};
+    return {
+        range: c.start && c.end ? `${Fmt.date(c.start)} to ${Fmt.date(c.end)}` : '',
+        net: ccSignedMoney(c.net_worth_change_eur),
+        netClass: nwDeltaClass(c.net_worth_change_eur),
+        rows: NW_CHANGE_PARTS.map(([key, label]) => ({
+            label,
+            text: ccSignedMoney(parts[key]),
+            cls: nwDeltaClass(parts[key]),
+            missing: parts[key] === null || parts[key] === undefined,
+        })),
+        warnings: Array.isArray(c.warnings) ? c.warnings : [],
+    };
+}
+window.nwChangeModel = nwChangeModel;
+
+let _nwHistChart = null;
+const _nwHist = { mode: 'total', history: null };
+
+function _renderNwHistChart() {
+    const canvas = document.getElementById('nwHistChart');
+    const wrap = document.getElementById('nwHistChartWrap');
+    const legend = document.getElementById('nwHistLegend');
+    if (!canvas || !wrap) return;
+    if (_nwHistChart) { _nwHistChart.destroy(); _nwHistChart = null; }
+    const m = nwHistoryModel(_nwHist.history, _nwHist.mode);
+    wrap.style.display = m.hasChart ? '' : 'none';
+    if (legend) legend.innerHTML = m.hasChart && _nwHist.mode === 'parts'
+        ? m.series.map(s => `<span class="me-3"><span style="color:var(${s.color});">&#9632;</span> ${esc(s.label)}</span>`).join('')
+        : '';
+    if (!m.hasChart) return;
+    const parts = _nwHist.mode === 'parts';
+    try {
+        _nwHistChart = new Chart(canvas, {
+            type: parts ? 'bar' : 'line',
+            data: {
+                labels: m.labels.map(d => Fmt.date(d)),
+                datasets: m.series.map(s => ({
+                    label: s.label,
+                    data: s.data,
+                    borderColor: cssVar(s.color),
+                    backgroundColor: cssVar(s.color),
+                    pointRadius: m.count > 60 ? 0 : 2,
+                    tension: 0.1,
+                    spanGaps: false,
+                    stack: parts ? 'nw' : undefined,
+                })),
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { display: false }, tooltip: { callbacks: chartEurTooltip } },
+                scales: {
+                    x: { stacked: parts, ticks: { maxTicksLimit: 8 } },
+                    y: { stacked: parts, ticks: { callback: v => Fmt.money(v, 'EUR', 0) } },
+                },
+            },
+        });
+    } catch (err) {
+        wrap.style.display = 'none';
+        const note = document.getElementById('nwHistoryNote');
+        if (note) note.textContent = 'Chart unavailable: ' + err.message;
+    }
+}
+
+function _nwChangeTileHtml(win, change, error) {
+    const head = `<div class="fw-semibold small">${esc(win.label)}</div>`;
+    if (!win.available) {
+        return `<div class="col-12 col-md-4"><div class="card h-100"><div class="card-body py-2">${head}<div class="small text-muted">History is shorter than this.</div></div></div></div>`;
+    }
+    if (error) {
+        return `<div class="col-12 col-md-4"><div class="card h-100"><div class="card-body py-2">${head}<div class="small text-muted">What changed is ${CC_NA}: ${esc(error)}</div></div></div></div>`;
+    }
+    const m = nwChangeModel(change);
+    return `<div class="col-12 col-md-4"><div class="card h-100"><div class="card-body py-2">
+        ${head}
+        <div class="small text-muted">${esc(m.range)}</div>
+        <div class="fs-5 fw-bold ${m.netClass}">${esc(m.net)}</div>
+        <table class="table table-sm mb-1"><tbody>${m.rows.map(r => `<tr><td class="ps-0">${esc(r.label)}</td><td class="text-end pe-0 ${r.cls}">${esc(r.text)}</td></tr>`).join('')}</tbody></table>
+        ${m.warnings.map(w => `<div class="small text-warning text-break"><i class="bi bi-exclamation-triangle me-1"></i>${esc(w)}</div>`).join('')}
+    </div></div></div>`;
+}
+
+async function loadNetworthHistory() {
+    const note = document.getElementById('nwHistoryNote');
+    const row = document.getElementById('nwChangeRow');
+    if (!note || !row) return;
+    ccApplyHelpTitle('nwHistoryHelp', 'netWorthHistory');
+    ccApplyHelpTitle('nwChangeHelp', 'netWorthChange');
+    const wire = (id, handler) => {
+        const el = document.getElementById(id);
+        if (el && !el.dataset.wired) { el.dataset.wired = '1'; el.addEventListener('click', handler); }
+    };
+    const setMode = mode => {
+        _nwHist.mode = mode;
+        document.getElementById('nwHistModeTotal')?.classList.toggle('active', mode === 'total');
+        document.getElementById('nwHistModeParts')?.classList.toggle('active', mode === 'parts');
+        _renderNwHistChart();
+    };
+    wire('nwHistModeTotal', () => setMode('total'));
+    wire('nwHistModeParts', () => setMode('parts'));
+    wire('nwHistSnapshot', async () => {
+        const btn = document.getElementById('nwHistSnapshot');
+        if (btn) btn.disabled = true;
+        try {
+            const snap = await window.apiClient.takeNetworthSnapshot();
+            notify(`Snapshot stored for ${Fmt.date(snap.snapshot_date)}`, 'success');
+            await loadNetworthHistory();
+        } catch (err) {
+            notify('Could not store a snapshot: ' + err.message, 'danger');
+        } finally {
+            if (btn) btn.disabled = false;
+        }
+    });
+    if (window.initTooltips) window.initTooltips();
+
+    let history;
+    try {
+        history = await window.apiClient.getNetworthSnapshots(240);
+    } catch (err) {
+        _nwHist.history = null;
+        _renderNwHistChart();
+        note.textContent = `History is ${CC_NA}: ${err.message}`;
+        row.innerHTML = '';
+        return;
+    }
+    _nwHist.history = history;
+    const m = nwHistoryModel(history, _nwHist.mode);
+    // The server's own "history starts" / "no snapshots" warnings repeat the note.
+    const extra = m.warnings.filter(x => !/^(history starts|no snapshots)/i.test(x));
+    note.innerHTML = esc(m.note) + (extra.length ? ' ' + extra.map(x => `<span class="text-warning">${esc(x)}</span>`).join(' ') : '');
+    _renderNwHistChart();
+
+    const windows = nwChangeWindows(history);
+    if (!windows.length) {
+        row.innerHTML = `<div class="col-12"><div class="small text-muted">${esc(m.count === 1 ? `History starts ${Fmt.date(m.first)}: what changed needs two snapshots.` : 'What changed needs two snapshots.')}</div></div>`;
+        return;
+    }
+    const results = await Promise.all(windows.map(w => w.available
+        ? window.apiClient.getNetworthSnapshotChange(w.start, w.end).then(c => ({ c }), e => ({ e: e.message }))
+        : Promise.resolve({})));
+    row.innerHTML = windows.map((w, i) => _nwChangeTileHtml(w, results[i].c, results[i].e)).join('');
+}
+window.loadNetworthHistory = loadNetworthHistory;
+
+// ── Recurring: resolutions and totals ───────────────────────────────────────
+
+/** The totals line: yearly and monthly cost, of which paid another way, and what cancellations save. */
+function recurringTotalsModel(data) {
+    const d = data || {};
+    const paidElsewhere = Number(d.paid_elsewhere_annual_eur) || 0;
+    const cancelled = Number(d.cancelled_annual_eur) || 0;
+    return {
+        monthly: ccMoney(d.monthly_total_eur),
+        yearly: ccMoney(d.annual_total_eur),
+        paidElsewhere: paidElsewhere > 0 ? ccMoney(paidElsewhere) : null,
+        saved: cancelled > 0 ? ccMoney(cancelled) : null,
+    };
+}
+window.recurringTotalsModel = recurringTotalsModel;
+
+function recurringTotalsHtml(m) {
+    const bits = [`≈ ${esc(m.monthly)}/month · ${esc(m.yearly)}/year`];
+    if (m.paidElsewhere) bits.push(`of which paid another way ${esc(m.paidElsewhere)}/year`);
+    if (m.saved) bits.push(`<span class="text-success">cancellations save ${esc(m.saved)}/year</span>`);
+    return bits.join('<br class="d-sm-none"><span class="d-none d-sm-inline"> · </span>');
+}
+window.recurringTotalsHtml = recurringTotalsHtml;
+
+/** What the per-row menu offers for a series: mark as, and Clear when it has a mark. */
+function recurringMenuActions(item) {
+    const marked = !!(item && item.resolution);
+    const actions = [];
+    if (!item || item.status !== 'cancelled') actions.push({ action: 'cancelled', label: 'Cancelled' });
+    if (!item || item.status !== 'paid_elsewhere') actions.push({ action: 'paid_elsewhere', label: 'Paid another way' });
+    if (marked) actions.push({ action: 'clear', label: 'Clear' });
+    return actions;
+}
+window.recurringMenuActions = recurringMenuActions;
+
+function recurringMenuHtml(item) {
+    // An ended series has nothing left to resolve.
+    if (item.status === 'ended') return '';
+    const attrs = `data-portfolio-id="${escapeForAttr(item.portfolio_id)}" data-merchant="${escapeForAttr(item.merchant)}"`;
+    return `<div class="btn-group btn-group-sm">
+        <button class="btn btn-sm btn-outline-secondary dropdown-toggle" data-bs-toggle="dropdown" data-bs-popper-config='{"strategy":"fixed"}' aria-label="Mark ${escapeForAttr(item.merchant)} as" title="Mark this charge as"><i class="bi bi-three-dots"></i></button>
+        <ul class="dropdown-menu dropdown-menu-end">${recurringMenuActions(item).map(a =>
+            `<li><button type="button" class="dropdown-item sp-rec-res" data-action="${a.action}" ${attrs}>${esc(a.label)}</button></li>`).join('')}</ul>
+    </div>`;
+}
+
+const SP_REC_RES_TITLES = {
+    cancelled: { title: 'Mark as cancelled', ok: 'Marked as cancelled' },
+    paid_elsewhere: { title: 'Mark as paid another way', ok: 'Marked as paid another way' },
+};
+
+async function _spRecurringResolve(action, portfolioId, merchant) {
+    try {
+        if (action === 'clear') {
+            await window.apiClient.clearRecurringResolution(portfolioId, merchant);
+            notify('Mark cleared', 'success');
+        } else {
+            const t = SP_REC_RES_TITLES[action];
+            if (!t) return;
+            const note = await noteDialog({
+                title: t.title,
+                message: `${merchant}\n\nAdd a note if you like (optional).`,
+                placeholder: 'e.g. cancelled by phone on the 3rd',
+                confirmLabel: 'Save',
+            });
+            if (note === null) return;
+            await window.apiClient.setRecurringResolution({ portfolio_id: portfolioId, merchant, status: action, note });
+            notify(t.ok, 'success');
+        }
+        await _loadSpRecurring();
+    } catch (err) {
+        notify('Could not save: ' + err.message, 'danger');
+    }
+}
+
+// ── Budget: irregular pace ──────────────────────────────────────────────────
+
+/** "irregular: spent in 2 of 12 months" (the counts come from the server). */
+function irregularMonthsText(pace) {
+    const active = pace && pace.months_with_activity;
+    const total = pace && pace.baseline_months;
+    if (active === null || active === undefined || total === null || total === undefined) return 'irregular: spent in only a few months';
+    return `irregular: spent in ${active} of ${total} months`;
+}
+window.irregularMonthsText = irregularMonthsText;
+
+// ── Month close ─────────────────────────────────────────────────────────────
+
+const MC_STEP_ICONS = {
+    ok: { icon: 'bi-check-circle-fill', cls: 'text-success', word: 'done' },
+    todo: { icon: 'bi-x-circle-fill', cls: 'text-danger', word: 'to do' },
+    warn: { icon: 'bi-exclamation-triangle-fill', cls: 'text-warning', word: 'check' },
+    unknown: { icon: 'bi-question-circle', cls: 'text-muted', word: CC_NA },
+};
+
+/** Checklist rows with status icon, text and the page each step links to. */
+function monthCloseChecklistModel(checklist) {
+    return (Array.isArray(checklist) ? checklist : []).map(step => {
+        const meta = MC_STEP_ICONS[step.status] || MC_STEP_ICONS.unknown;
+        return {
+            key: step.key,
+            label: step.label || step.key,
+            status: step.status,
+            icon: meta.icon,
+            cls: meta.cls,
+            word: meta.word,
+            count: (step.count === null || step.count === undefined) ? null : step.count,
+            detail: step.detail || '',
+            page: step.link_page || null,
+        };
+    });
+}
+window.monthCloseChecklistModel = monthCloseChecklistModel;
+
+/** Text-ready figures; a null figure is "not available", never zero. */
+function monthCloseFiguresModel(figures) {
+    const f = figures || {};
+    const rate = f.savings_rate_pct;
+    const vs = f.versus_normal;
+    return {
+        tiles: [
+            { label: 'Income', text: ccMoney(f.income_eur) },
+            { label: 'Spending', text: ccMoney(f.spending_eur) },
+            { label: 'Saved or invested', text: ccMoney(f.savings_eur) },
+            { label: 'Net (income - spending)', text: ccSignedMoney(f.net_eur), cls: nwDeltaClass(f.net_eur) },
+            { label: 'Savings rate', text: (rate === null || rate === undefined) ? CC_NA : `${Number(rate).toFixed(1)}%` },
+        ],
+        versus: vs && vs.delta_eur !== null && vs.delta_eur !== undefined
+            ? `${ccSignedMoney(vs.delta_eur)} against a normal month of ${ccMoney(vs.baseline_eur)}`
+            : null,
+        topCategories: (f.top_categories || []).map(c => ({
+            name: c.name,
+            actual: ccMoney(c.actual_eur),
+            delta: (c.delta_eur === null || c.delta_eur === undefined) ? null : ccSignedMoney(c.delta_eur),
+            deltaClass: compareDeltaClass(c.delta_eur),
+        })),
+        budget: f.budget ? {
+            name: f.budget.name,
+            sections: (f.budget.sections || []).map(s => ({
+                label: s.label, planned: ccMoney(s.planned_total), actual: ccMoney(s.actual_total),
+            })),
+        } : null,
+    };
+}
+window.monthCloseFiguresModel = monthCloseFiguresModel;
+
+/**
+ * What the buttons and banners do for a month's state: Close is the normal
+ * action when the month is ready; "Close anyway" (force) only when it is not.
+ */
+function monthCloseStateModel(state) {
+    const s = state || {};
+    const closed = s.closed || null;
+    return {
+        ready: !!s.ready,
+        isClosed: !!closed,
+        stale: !!(closed && closed.stale),
+        closeLabel: closed ? 'Close again' : 'Close month',
+        showForce: !s.ready,
+        showReopen: !!closed,
+        reportId: closed && closed.report_id != null ? closed.report_id : null,
+        closedAt: closed && closed.closed_at ? String(closed.closed_at).slice(0, 10) : null,
+        notes: (closed && closed.notes) || '',
+    };
+}
+window.monthCloseStateModel = monthCloseStateModel;
+
+const _mc = { month: null, state: null };
+
+/** Last 12 complete months, newest first. */
+function monthCloseChoices(todayIso) {
+    const current = String(todayIso).slice(0, 7);
+    return ccMonthChoices(ccPreviousMonth(current), 12);
+}
+window.monthCloseChoices = monthCloseChoices;
+
+function _renderMonthClose(state) {
+    _mc.state = state;
+    const m = monthCloseStateModel(state);
+    const status = document.getElementById('bgMcStatus');
+    const banner = document.getElementById('bgMcBanner');
+    const list = document.getElementById('bgMcChecklist');
+    const figs = document.getElementById('bgMcFigures');
+    const notes = document.getElementById('bgMcNotes');
+    if (status) {
+        status.className = 'small text-muted mb-2';
+        status.textContent = (state.warnings || []).join(' ');
+    }
+    if (banner) {
+        let html = '';
+        if (m.isClosed) html += `<div class="alert alert-success py-2 small"><i class="bi bi-lock me-1"></i>Closed on ${esc(Fmt.date(m.closedAt))}.</div>`;
+        if (m.stale) html += '<div class="alert alert-warning py-2 small"><i class="bi bi-exclamation-triangle me-1"></i>The figures have changed since this month was closed (rows imported or recategorised afterwards). Close it again to refresh the saved report.</div>';
+        banner.innerHTML = html;
+    }
+    if (list) {
+        const rows = monthCloseChecklistModel(state.checklist);
+        list.innerHTML = rows.length ? rows.map(r => `
+            <div class="list-group-item d-flex flex-wrap align-items-start gap-2">
+                <i class="bi ${r.icon} ${r.cls}" role="img" aria-label="${esc(r.word)}"></i>
+                <div class="flex-grow-1" style="min-width:0;">
+                    <div class="fw-semibold small">${esc(r.label)}${r.count ? ` <span class="badge text-bg-light">${esc(r.count)}</span>` : ''}</div>
+                    <div class="small text-muted text-break">${esc(r.status === 'unknown' ? `${CC_NA}: ${r.detail}` : r.detail)}</div>
+                </div>
+                ${r.page ? `<a href="#" class="small text-nowrap" data-page="${esc(r.page)}">Open <i class="bi bi-arrow-right"></i></a>` : ''}
+            </div>`).join('')
+            : `<div class="list-group-item text-muted small">The checklist is ${CC_NA}.</div>`;
+    }
+    if (figs) {
+        const f = monthCloseFiguresModel(state.figures);
+        figs.innerHTML = `
+            <div class="row g-2 mb-2">${f.tiles.map(t => `<div class="col-6 col-md"><div class="small text-muted">${esc(t.label)}</div><div class="fw-bold ${t.cls || ''}">${esc(t.text)}</div></div>`).join('')}</div>
+            ${f.versus ? `<div class="small mb-2">${esc(f.versus)}</div>` : ''}
+            ${f.topCategories.length ? `<div class="table-responsive"><table class="table table-sm mb-2"><thead><tr><th class="ps-0">Biggest categories</th><th class="text-end">Spent</th><th class="text-end pe-0">Against normal</th></tr></thead><tbody>${f.topCategories.map(c => `<tr><td class="ps-0 text-break">${esc(c.name)}</td><td class="text-end">${esc(c.actual)}</td><td class="text-end pe-0 ${c.deltaClass}">${esc(c.delta === null ? '—' : c.delta)}</td></tr>`).join('')}</tbody></table></div>` : ''}
+            ${f.budget ? `<div class="small fw-semibold">Budget: ${esc(f.budget.name)}</div><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th class="ps-0">Section</th><th class="text-end">Planned</th><th class="text-end pe-0">Actual</th></tr></thead><tbody>${f.budget.sections.map(s => `<tr><td class="ps-0">${esc(s.label)}</td><td class="text-end">${esc(s.planned)}</td><td class="text-end pe-0">${esc(s.actual)}</td></tr>`).join('')}</tbody></table></div>` : '<div class="small text-muted">Budget: ' + CC_NA + ' (no active budget, or nothing imported for the month).</div>'}`;
+    }
+    if (notes && document.activeElement !== notes) notes.value = m.notes;
+    const closeBtn = document.getElementById('bgMcClose');
+    if (closeBtn) closeBtn.innerHTML = `<i class="bi bi-check2-square me-1"></i>${esc(m.closeLabel)}`;
+    const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+    show('bgMcForce', m.showForce);
+    show('bgMcReopen', m.showReopen);
+    const rep = document.getElementById('bgMcReport');
+    if (rep) {
+        rep.style.display = m.reportId !== null ? '' : 'none';
+        rep.dataset.reportId = m.reportId !== null ? String(m.reportId) : '';
+    }
+}
+
+async function loadMonthClose() {
+    const select = document.getElementById('bgMcMonth');
+    const status = document.getElementById('bgMcStatus');
+    if (!select) return;
+    ccApplyHelpTitle('bgMcHelp', 'monthClose');
+    if (!select.options.length) {
+        select.innerHTML = monthCloseChoices(localIsoDay()).map(mo => `<option value="${mo}">${mo}</option>`).join('');
+    }
+    if (status) { status.className = 'small text-muted mb-2'; status.textContent = 'Loading…'; }
+    try {
+        // First load: let the server pick the last complete month.
+        const state = await window.apiClient.getMonthClose(_mc.month || undefined);
+        _mc.month = state.month;
+        if (![...select.options].some(o => o.value === state.month)) {
+            select.insertAdjacentHTML('afterbegin', `<option value="${esc(state.month)}">${esc(state.month)}</option>`);
+        }
+        select.value = state.month;
+        _renderMonthClose(state);
+        if (window.initTooltips) window.initTooltips();
+    } catch (err) {
+        _mc.state = null;
+        if (status) { status.className = 'small text-danger mb-2'; status.textContent = `The month close is ${CC_NA}: ${err.message}`; }
+        ['bgMcBanner', 'bgMcChecklist', 'bgMcFigures'].forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = ''; });
+    }
+}
+window.loadMonthClose = loadMonthClose;
+
+async function _mcClose(force) {
+    if (!_mc.month) return;
+    if (force) {
+        const ok = await confirmDialog({
+            title: 'Close anyway?',
+            message: `${_mc.month} is not fully imported. Closing now saves a report from the data that is there, and the figures may change when the rest is imported. You can close again later.`,
+            confirmLabel: 'Close anyway',
+            danger: true,
+        });
+        if (!ok) return;
+    }
+    const notes = (document.getElementById('bgMcNotes')?.value || '').trim();
+    try {
+        const state = await window.apiClient.closeMonth({ month: _mc.month, notes, force });
+        notify(`${_mc.month} closed`, 'success');
+        _renderMonthClose(state);
+    } catch (err) {
+        if (err.status === 409) notify(`${_mc.month} is not ready to close: ${err.message}. Use "Close anyway" to close it regardless.`, 'warning');
+        else notify('Could not close the month: ' + err.message, 'danger');
+    }
+}
+
+function _wireBgMonthClose() {
+    const wire = (id, event, handler) => {
+        const el = document.getElementById(id);
+        if (el && !el.dataset.wired) { el.dataset.wired = '1'; el.addEventListener(event, handler); }
+    };
+    wire('bgTabBtnClose', 'shown.bs.tab', () => loadMonthClose());
+    wire('bgMcRefresh', 'click', () => loadMonthClose());
+    wire('bgMcMonth', 'change', e => { _mc.month = e.target.value; loadMonthClose(); });
+    wire('bgMcClose', 'click', () => _mcClose(false));
+    wire('bgMcForce', 'click', () => _mcClose(true));
+    wire('bgMcReopen', 'click', async () => {
+        if (!_mc.month) return;
+        const ok = await confirmDialog({
+            title: 'Reopen this month?',
+            message: `${_mc.month} loses its closed mark. The saved report stays in Reports.`,
+            confirmLabel: 'Reopen',
+        });
+        if (!ok) return;
+        try {
+            await window.apiClient.reopenMonth(_mc.month);
+            notify(`${_mc.month} reopened`, 'success');
+            await loadMonthClose();
+        } catch (err) {
+            notify('Could not reopen: ' + err.message, 'danger');
+        }
+    });
+    wire('bgMcReport', 'click', e => {
+        e.preventDefault();
+        const id = e.currentTarget.dataset.reportId;
+        if (!id) return;
+        window._reportsOpenId = id;
+        window.navigationManager.showPage('reports');
+    });
+}
