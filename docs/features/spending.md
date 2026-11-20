@@ -56,7 +56,11 @@ processor prefixes (`PAYPAL *`, `SumUp *`), masked card numbers, order codes
 after a star, short dates and trailing reference numbers; `normalize_merchant`
 strips all of that in a fixed pipeline and falls back to the
 whitespace-collapsed raw description when cleaning would otherwise leave
-nothing. It is computed once at import time (`POST /spending/upload`) and
+nothing. A tax-agency direct debit (`IMP:<form><reference>,NIF:<tax id>`)
+becomes `AEAT MODELO <form>` (e.g. `AEAT MODELO 130`): the reference changes
+with every payment, so without it each quarter looked like a new merchant to
+recurring detection, the anomalies and the month-close one-off check; the tax
+id is left out of the name. It is computed once at import time (`POST /spending/upload`) and
 persisted, not recomputed on read. The v32 migration backfills `merchant` for
 every existing row from its stored `description`.
 

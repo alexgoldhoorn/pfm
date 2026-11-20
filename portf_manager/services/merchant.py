@@ -33,6 +33,12 @@ _SHORT_DATE = re.compile(r"\b\d{2}/\d{2}(?:/\d{2,4})?\b")
 # Trailing reference numbers: " 010012345", " 1234-567890-123 45-".
 _TRAILING_NUMBERS = re.compile(r"(?:\s+\d[\d\-]*)+\s*$")
 _WHITESPACE = re.compile(r"\s+")
+# Tax-agency direct debit: "IMP:<3-digit form><reference>,NIF:<tax id>". The
+# reference changes with every payment, so without this each quarter of the
+# same form looked like a new merchant; the tax id is dropped on purpose.
+_TAX_FORM = re.compile(
+    r"IMP:\s*(\d{3})\d*\s*,\s*NIF:\s*\S+|AEAT MODELO (\d{3})", re.IGNORECASE
+)
 
 
 def normalize_merchant(description: str) -> str:
@@ -49,6 +55,9 @@ def normalize_merchant(description: str) -> str:
     raw = _WHITESPACE.sub(" ", description or "").strip()
     text = _LOCATION_SUFFIX.sub("", description or "").strip()
     text = _LEADING_REF.sub("", text).strip()
+    tax_form = _TAX_FORM.fullmatch(text)
+    if tax_form:
+        return f"AEAT MODELO {tax_form.group(1) or tax_form.group(2)}"
     text = _RECEIPT_PREFIX.sub("", text).strip()
     text = _PROCESSOR_PREFIX.sub("", text).strip()
     text = _CARD_MASK.sub(" ", text)

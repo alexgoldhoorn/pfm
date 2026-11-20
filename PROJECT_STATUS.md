@@ -5,7 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-11-18
+Last updated: 2026-11-20
+
+**Recent (v2.5.116):** **Quarterly tax payments keep one merchant name.** A tax-agency direct debit (`IMP:130…,NIF:…`) is now merchant `AEAT MODELO 130` instead of a new name each quarter, so the payment is no longer flagged as a new merchant or a one-off candidate and recurring detection can see the series; the tax id is left out of the name.
 
 **Recent (v2.5.115):** **Stale Net Worth items in plain words.** An out-of-date balance-sheet line's Action Item detail said "cash_ledger data; allowed age 60 days"; it now says what the figure is based on, how old it is and what to do (import the latest statement, missing deposit, update a manual value, provider never fetched).
 

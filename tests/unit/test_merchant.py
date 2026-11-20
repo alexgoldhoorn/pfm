@@ -30,6 +30,25 @@ def test_normalize_merchant(description, expected):
     assert normalize_merchant(description) == expected
 
 
+@pytest.mark.parametrize(
+    "description",
+    [
+        "000000000001IMP:130000000001,NIF:X0000000A",
+        "000000000001IMP:130999999999,NIF:X0000000A",
+        "IMP:130123,NIF:00000000T",
+    ],
+)
+def test_tax_form_payments_share_one_merchant(description):
+    # the reference changes every quarter; the form number is what repeats
+    merchant = normalize_merchant(description)
+    assert merchant == "AEAT MODELO 130"
+    assert normalize_merchant(merchant) == merchant
+
+
+def test_tax_form_keeps_the_form_number():
+    assert normalize_merchant("IMP:303000000001,NIF:X0000000A") == "AEAT MODELO 303"
+
+
 def test_all_digit_description_falls_back():
     assert normalize_merchant("123456789") == "123456789"
 
