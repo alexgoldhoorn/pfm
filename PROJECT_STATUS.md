@@ -5,7 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-11-20
+Last updated: 2026-11-24
+
+**Recent (v2.5.117):** **Broker imports match "… CORP" to a stored "… CP".** `CP` is now a legal-form word in loose asset-name matching, so a bank statement naming a company "CORP" no longer creates a duplicate asset (which PDT then reported as an unknown security).
 
 **Recent (v2.5.116):** **Quarterly tax payments keep one merchant name.** A tax-agency direct debit (`IMP:130…,NIF:…`) is now merchant `AEAT MODELO 130` instead of a new name each quarter, so the payment is no longer flagged as a new merchant or a one-off candidate and recurring detection can see the series; the tax id is left out of the name.
 

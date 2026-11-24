@@ -49,6 +49,8 @@ _LEGAL_SUFFIXES = frozenset(
         "se",
         "inc",
         "corp",
+        # Some brokers abbreviate "corp" to "cp"
+        "cp",
         "corporation",
         "ltd",
         "limited",

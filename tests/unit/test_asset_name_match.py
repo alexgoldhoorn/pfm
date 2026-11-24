@@ -17,6 +17,11 @@ class TestNormalizeAssetName:
         assert normalize_asset_name("Example Corp, Inc.") == "example"
         assert normalize_asset_name("Example Group plc") == "example group"
 
+    def test_corp_and_its_abbreviation_match(self):
+        assert normalize_asset_name("EXAMPLE CORP") == normalize_asset_name(
+            "EXAMPLE CP"
+        )
+
     def test_keeps_share_class(self):
         assert normalize_asset_name("EXAMPLE WORLD ETF ACC") == "example world etf acc"
         assert normalize_asset_name("EXAMPLE WORLD ETF DIST") != normalize_asset_name(
@@ -39,6 +44,10 @@ class TestGetAssetByName:
         aid = db.create_asset("NL0000000001", "EXAMPLE BANK", "stock")
         assert db.get_asset_by_name("EXAMPLE BANK NV")["id"] == aid
         assert db.get_asset_by_name("Example Bank N.V.")["id"] == aid
+
+    def test_corp_finds_asset_stored_as_cp(self, db):
+        aid = db.create_asset("US0000000001", "EXAMPLE CP", "stock")
+        assert db.get_asset_by_name("EXAMPLE CORP")["id"] == aid
 
     def test_prefers_the_single_isin_record(self, db):
         db.create_asset("EXBANK", "Example Bank SA", "stock")
