@@ -505,6 +505,9 @@ Full reference (dashboard layout, chart helpers, page-by-page wiring):
   SVG axes use `SVG_GRID`/`SVG_AXIS`/`SVG_LABEL`, never hard-coded hex.
 - New pages or non-obvious cards get entries in `METRIC_HELP`/`PAGE_HELP`
   (`help_text.js`); call `initTooltips()` after rendering tooltip-bearing markup.
+- After any edit to `help_text.js` (page help, metric help, `HELP_GLOSSARY`) run
+  `node scripts/export_app_help.mjs`: the chat's `get_app_help` reads the
+  generated `portf_server/data/app_help.json`, and a JS test fails while it is stale.
 - Pure helpers are `window.`-exported so the DOM-free JS tests
   (`web_client/js/tests/`) can import them.
 - A new Dashboard block is a `.dash-block` wrapper with its own `data-block` id
