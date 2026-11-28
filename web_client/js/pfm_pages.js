@@ -992,22 +992,7 @@ function showPageHelp(key) {
 window.showPageHelp = showPageHelp;
 
 // Render the Help page: an accordion of per-page guides (from PAGE_HELP) plus
-// a glossary of the abbreviations used across the app.
-const HELP_GLOSSARY = [
-    ['FIRE', 'Financial Independence, Retire Early — a savings/investing target where assets cover your living costs.'],
-    ['IRR', 'Internal Rate of Return — the money-weighted annual return that accounts for the timing and size of your buys/sells.'],
-    ['TWR', 'Time-Weighted Return — return that strips out the effect of deposits/withdrawals, for comparing to a benchmark.'],
-    ['FIFO', 'First-In, First-Out — the oldest shares are sold first when computing cost basis and realised gains.'],
-    ['HHI', 'Herfindahl-Hirschman Index — a 0–10000 concentration score; lower means more diversified.'],
-    ['IRPF', 'Impuesto sobre la Renta de las Personas Físicas — Spanish personal income tax; investment income sits in the “savings base”.'],
-    ['PDT', 'Portfolio Dividend Tracker — the spreadsheet format this app imports/exports and syncs with Google Sheets.'],
-    ['GBM', 'Geometric Brownian Motion — the stochastic model the Wealth Simulator uses to project future value.'],
-    ['Yield on cost', 'Trailing-12-month dividends from a position divided by what you paid for it.'],
-    ['Max drawdown', 'The largest peak-to-trough drop in portfolio value over the recorded history.'],
-    ['ETF / Index', 'ETF = exchange-traded fund; Index = index mutual fund (e.g. Indexa Capital holdings). Tracked as separate asset types.'],
-    ['GBX', 'UK pence — some London-listed prices are quoted in pence (÷100 for GBP).'],
-];
-
+// the glossary (HELP_GLOSSARY, defined in help_text.js), grouped by category.
 function renderHelpPage() {
     const acc = document.getElementById('helpAccordion');
     if (acc && window.PAGE_HELP) {
@@ -1029,14 +1014,7 @@ function renderHelpPage() {
         }).join('');
     }
     const gl = document.getElementById('helpGlossary');
-    if (gl) {
-        gl.innerHTML = HELP_GLOSSARY.map(([term, def]) =>
-            `<div class="mb-2" data-search-type="glossary"
-                  data-search-title="${esc(term)}" data-search-body="${esc(def)}">
-               <strong>${term}</strong><div class="text-muted">${def}</div>
-             </div>`
-        ).join('');
-    }
+    if (gl) gl.innerHTML = helpGlossaryHtml(window.HELP_GLOSSARY || []);
     const theoryGrid = document.getElementById('helpTheoryResources');
     if (theoryGrid) {
         theoryGrid.innerHTML = RESOURCE_LINKS
@@ -1068,71 +1046,47 @@ function renderHelpPage() {
 }
 window.renderHelpPage = renderHelpPage;
 
+// Glossary markup: one block per category, terms in source order. Each entry
+// carries data-search-* so the Help search finds it.
+function helpGlossaryHtml(entries) {
+    const groups = new Map();
+    entries.forEach(e => {
+        const cat = e.cat || 'Other';
+        if (!groups.has(cat)) groups.set(cat, []);
+        groups.get(cat).push(e);
+    });
+    return [...groups.entries()].map(([cat, items]) => `
+        <div class="mb-3">
+          <div class="fw-semibold text-uppercase text-muted small mb-2">${esc(cat)}</div>
+          ${items.map(e => `
+            <div class="mb-2" data-search-type="glossary"
+                 data-search-title="${esc(e.term)}" data-search-body="${esc(e.def)}">
+              <strong>${esc(e.term)}</strong><div class="text-muted">${esc(e.def)}</div>
+            </div>`).join('')}
+        </div>`).join('');
+}
+window.helpGlossaryHtml = helpGlossaryHtml;
+
+// The opening message of a help thread in the AI Chat. The chat answers app
+// and terminology questions with its get_app_help tool, and can also look at
+// the user's own data, which the old Help-page box could not.
+function helpChatMessage(question) {
+    return `${question}\n\n(Asked from the Help page: use get_app_help for how the app works and for terms; look at my data only if the question needs it.)`;
+}
+window.helpChatMessage = helpChatMessage;
+
+// "Ask the AI Chat" box: opens a new thread in the main chat with the question.
 function setupHelpAi() {
     const sendBtn = document.getElementById('helpAiSend');
     const input = document.getElementById('helpAiInput');
-    const historyEl = document.getElementById('helpAiHistory');
     if (!sendBtn || !input || sendBtn._helpAiReady) return;
     sendBtn._helpAiReady = true;
 
-    const sessionId = 'help-' + Math.random().toString(36).slice(2);
-    let contextSent = false;
-
-    function buildContext() {
-        const lines = ['You are a concise help assistant for Portfolio Manager, a self-hosted investment tracker. Answer questions using only the documentation below. Be brief.\n\n## Pages'];
-        if (window.PAGE_HELP) {
-            Object.entries(window.PAGE_HELP).forEach(([key, h]) => {
-                const text = (h.body || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
-                lines.push(`### ${h.title || key}\n${text}`);
-            });
-        }
-        lines.push('\n## Glossary');
-        if (typeof HELP_GLOSSARY !== 'undefined') {
-            HELP_GLOSSARY.forEach(([term, def]) => lines.push(`${term}: ${def}`));
-        }
-        if (window.METRIC_HELP) {
-            lines.push('\n## Metrics');
-            Object.entries(window.METRIC_HELP).forEach(([k, v]) => lines.push(`${k}: ${v}`));
-        }
-        return lines.join('\n');
-    }
-
-    function appendMsg(role, text) {
-        if (!historyEl) return;
-        historyEl.style.display = '';
-        const isUser = role === 'user';
-        const div = document.createElement('div');
-        div.className = `d-flex mb-2${isUser ? ' justify-content-end' : ''}`;
-        const bubble = document.createElement('div');
-        bubble.className = `rounded p-2 small ${isUser ? 'bg-primary text-white' : 'bg-body-secondary'}`;
-        bubble.style.maxWidth = '85%';
-        if (isUser) {
-            bubble.textContent = text;
-        } else {
-            bubble.innerHTML = window.marked ? safeMarkdownHtml(marked.parse(text), text) : esc(text);
-        }
-        div.appendChild(bubble);
-        historyEl.appendChild(div);
-        historyEl.scrollTop = historyEl.scrollHeight;
-    }
-
-    async function send() {
+    function send() {
         const q = (input.value || '').trim();
         if (!q) return;
         input.value = '';
-        sendBtn.disabled = true;
-        appendMsg('user', q);
-        const message = contextSent ? q : buildContext() + '\n\nUser question: ' + q;
-        contextSent = true;
-        try {
-            const res = await window.apiClient.sendChat(message, sessionId);
-            appendMsg('assistant', res.answer || '(no response)');
-        } catch (e) {
-            appendMsg('assistant', 'Error: ' + e.message);
-        } finally {
-            sendBtn.disabled = false;
-            input.focus();
-        }
+        openChatWithContext(`Help: ${q.slice(0, 60)}`, helpChatMessage(q));
     }
 
     sendBtn.addEventListener('click', send);

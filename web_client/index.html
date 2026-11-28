@@ -27,7 +27,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chartjs-chart-matrix@2.0.1/dist/chartjs-chart-matrix.min.js"></script>
 
     <!-- Custom CSS -->
-    <link href="css/styles.css?v=1792000008" rel="stylesheet">
+    <link href="css/styles.css?v=1792000009" rel="stylesheet">
     <style>
         /* Privacy mode: blur monetary amounts until hovered */
         body.pfm-privacy .pfm-amt { filter: blur(0.45em); transition: filter .12s ease; user-select: none; }
@@ -3303,19 +3303,18 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
                             <div class="row g-3" id="helpTheoryResources"></div>
                         </div>
                     </div>
-                    <!-- AI Help Assistant -->
+                    <!-- Ask the AI Chat (opens a thread in the main chat) -->
                     <div class="card mt-4">
                         <div class="card-header fw-semibold">
-                            <i class="bi bi-robot me-2 text-primary"></i>Ask AI about this app
+                            <i class="bi bi-robot me-2 text-primary"></i>Ask the AI Chat
                         </div>
-                        <div id="helpAiHistory" class="px-3 pt-2" style="max-height: 320px; overflow-y: auto; display: none;"></div>
                         <div class="card-body pt-2">
                             <div class="input-group">
                                 <input id="helpAiInput" type="text" class="form-control" aria-label="Ask a question about the app"
-                                       placeholder="e.g. How do I import from Coinbase? What does IRR mean? How do I back up my data?">
-                                <button id="helpAiSend" class="btn btn-primary" type="button" title="Send" aria-label="Send"><i class="bi bi-send"></i></button>
+                                       placeholder="e.g. How do I import from Coinbase? What is capex? Why is my IRR lower than my return?">
+                                <button id="helpAiSend" class="btn btn-primary" type="button" title="Ask in AI Chat" aria-label="Ask in AI Chat"><i class="bi bi-send"></i></button>
                             </div>
-                            <div class="text-muted small mt-1">Uses the app's own documentation as context — not your portfolio data.</div>
+                            <div class="text-muted small mt-1">Opens a new AI Chat thread. The assistant reads this guide and the glossary, and can look at your own data when the question needs it.</div>
                         </div>
                     </div>
                 </div>
@@ -5855,7 +5854,7 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
     <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
 
     <!-- Centralized help text (must load before the app scripts) -->
-    <script src="js/help_text.js?v=1792000008"></script>
+    <script src="js/help_text.js?v=1792000009"></script>
 
     <!-- App scripts: portfolio_debug.js was split into these four classic
          scripts. They share one global scope and MUST load in this order:
@@ -6014,10 +6013,10 @@ Principal payment = monthly_payment &minus; monthly_interest</pre>
       </div>
     </div>
 
-    <script src="js/pfm_core.js?v=1792000008"></script>
-    <script src="js/pfm_pages.js?v=1792000008"></script>
-    <script src="js/pfm_analytics.js?v=1792000008"></script>
-    <script src="js/pfm_features.js?v=1792000008"></script>
+    <script src="js/pfm_core.js?v=1792000009"></script>
+    <script src="js/pfm_pages.js?v=1792000009"></script>
+    <script src="js/pfm_analytics.js?v=1792000009"></script>
+    <script src="js/pfm_features.js?v=1792000009"></script>
     <script>
       if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('/sw.js');

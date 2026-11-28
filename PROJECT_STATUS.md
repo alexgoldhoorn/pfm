@@ -5,7 +5,9 @@
 > Data Import table) may lag the code — verify against `CLAUDE.md` and the
 > codebase before relying on them.
 
-Last updated: 2026-11-24
+Last updated: 2026-11-28
+
+**Recent (v2.5.118):** **Help glossary and one AI chat.** The Help glossary grew from 12 to 82 terms in five groups (company fundamentals such as CapEx, FCF, EBITDA, P/E and ROE; returns and risk; funds and ETFs; Spanish tax; personal finance and loans). The Help page's separate "Ask AI" box now opens a thread in the main AI Chat, and the chat has a new `get_app_help` tool that searches the page guides, the glossary and the metric help (56 chat tools).
 
 **Recent (v2.5.117):** **Broker imports match "… CORP" to a stored "… CP".** `CP` is now a legal-form word in loose asset-name matching, so a bank statement naming a company "CORP" no longer creates a duplicate asset (which PDT then reported as an unknown security).
 

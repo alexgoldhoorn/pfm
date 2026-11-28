@@ -57,6 +57,7 @@ test-results/
 *.json
 !web_client/manifest.json
 !portf_manager/data/benchmarks.json
+!portf_server/data/app_help.json
 *.xlsx
 *.xls
 

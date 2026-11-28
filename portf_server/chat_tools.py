@@ -1409,6 +1409,16 @@ def _get_diagnostics(db: Database) -> str:
     return _j(out)
 
 
+@_tool("get_app_help")
+def _get_app_help(
+    db: Database, query: Optional[str] = None, page: Optional[str] = None
+) -> str:
+    """The app's own guide, glossary and metric explanations (app_help.json)."""
+    from portf_server.app_help import search_app_help
+
+    return _j(search_app_help(query=query, page=page))
+
+
 # ── public catalog ─────────────────────────────────────────────────────────
 
 TOOLS: list[ToolDefinition] = [
@@ -2669,6 +2679,32 @@ TOOLS: list[ToolDefinition] = [
                 "name": "top",
                 "type": "integer",
                 "description": "Rows to list (default 25, max 40); the rest is summed.",
+                "required": False,
+            },
+        ],
+    ),
+    ToolDefinition(
+        name="get_app_help",
+        description=(
+            "Search this app's own Help: the per-page guides (what a page or "
+            "button does, how to import, how a figure is computed), the "
+            "glossary of financial terms (capex, FCF, EBITDA, P/E, TER, "
+            "traspaso, antiaplicación, Euribor…) and the metric tooltips. Use "
+            "it for 'how do I…', 'where is…', 'what does X mean' and before "
+            "explaining how the app calculates something. Without arguments "
+            "it lists the pages and glossary terms."
+        ),
+        parameters=[
+            {
+                "name": "query",
+                "type": "string",
+                "description": "Words to look for, e.g. 'capex' or 'import coinbase'.",
+                "required": False,
+            },
+            {
+                "name": "page",
+                "type": "string",
+                "description": "A page key from the list (e.g. 'budget') to get its full guide.",
                 "required": False,
             },
         ],
