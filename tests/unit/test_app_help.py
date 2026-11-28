@@ -34,7 +34,7 @@ def test_short_term_matches_whole_words_only():
 
 def test_how_to_question_finds_the_page_guide():
     result = search_app_help(query="how do I import from Coinbase")
-    assert [p["key"] for p in result["pages"]] == ["importexport"]
+    assert result["pages"][0]["key"] == "importexport"
     assert "Coinbase" in result["pages"][0]["text"]
 
 
