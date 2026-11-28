@@ -38,3 +38,9 @@ last two stored prices (`portf_manager/services/movers.py`, pure). Nothing is
 fetched. A move is "since the previous stored price", not strictly one day.
 Cash, positions with a single price and positions whose newest price is older
 than 7 days are skipped. Feeds the Dashboard's *Latest movers* card.
+
+## Must-know gotchas before editing
+
+_Area: Price updates, market data. Kept here from the CLAUDE.md feature table._
+
+The chat's `get_market_data` reads `market.get_market_profile` (`mkt:profile:{SYM}`, 6 h): a new Yahoo per-share price field must also go in `_PROFILE_PENCE_KEYS` or UK listings show it 100× too high. `run_price_update(db)` takes the real `Database`, never `PortfolioHTTPClient`: in server mode the CLI delegates to `POST /analytics/trigger-price-update` (`symbols`, `source`) and reports the run record (adding a DB method to the updater broke every cron run for four nights in 2026-10). A fetched price far outside the band around the last stored one is held, not stored (`services/price_guard.py`; held state is `app_settings` `price_guard:{asset_id}`) and shown as an Action Item until a later fetch confirms it; manual prices skip the guard. yfinance returns UK prices in GBX — ÷100 when `fast_info.currency == "GBp"`. `_CRYPTO_YF_OVERRIDES` lives only in `price_updater.py`. Read `previous_close` by subscript, never `fast_info.get()` (silently None). Currency self-healing skips crypto.

@@ -158,3 +158,9 @@ Code: `services/planned_items.py` (rules), the `planned_items` table, CRUD under
 - Tax payments are an estimate with a `basis`; label them as such, and never add them to the recurring bills yourself.
 - Changing what counts as income or recurring changes the review and the chat
   figures at once, since they all call `load_forecast`.
+
+## Must-know gotchas before editing
+
+_Area: Cash-flow forecast. Kept here from the CLAUDE.md feature table._
+
+Income is the average of ALL incoming non-transfer, non-one-off money; recurring charges are taken out of the variable baseline and placed on their due dates, never both. The balance is bank-only (broker moves are not projected). The rest of the month is measured from the effective `data_through` (earliest last import over the accounts in the window), not today; bills dated before the 1st move the balance but are not this month's spending. A source that fails is a warning and `null`, never zero or a 5xx; clients print "not available". Planned items are placed once and never enter an average or the budget pace; an open item dated before data-through is `overdue`, not projected. Tax payments come from `deployable.quarter_reserve` only when work-income merchants are ticked, and then the quarterly tax series leave the known bills and the tax-paid rows the forecast baseline (the past-due rule is judged at data-through) (not the budget pace's `everyday_outflows`).

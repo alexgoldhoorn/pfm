@@ -554,3 +554,35 @@ async def test_create_portfolio_with_entity_relationship(
 ```
 
 This comprehensive testing suite ensures high code quality, reliability, and maintainability of the Portfolio Management System across all components and deployment modes.
+
+## Rules summary (from CLAUDE.md)
+
+- Unit: `uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e`
+  (~1.9k tests, 1–2 min; also passes as root). JS: `make test-js`.
+- Integration + e2e: `uv run pytest tests/integration tests/e2e` (~30s). Each
+  starts the real app in a **spawned** (not forked — a fork inherits
+  already-imported settings) process on a temp DB with `SERVER_API_KEY` seeded.
+  The e2e smoke test mounts `web_client/`, stubs the CDN libraries, and fails on
+  any uncaught JS error or 5xx across every sidebar page. Needs Chromium; not in CI.
+- **Tests can't reach the network.** An autouse guard in `tests/conftest.py` fails
+  any real HTTP call, even one the app swallows. Mock at the seam:
+  `portf_manager.market._fetch_quote_live`, `currency_utils.is_gbx`,
+  `portf_server.routers.llm.get_llm_client`. `PORTF_LLM_RETRY_DELAY=0` is set
+  autouse. Genuine live tests are `@pytest.mark.network`, run only with
+  `PFM_LIVE_NETWORK_TESTS=1`. Loopback is allowed only in integration/e2e.
+- Every test gets its own empty `HOME` (the CLI writes `~/.portf_session`). Write
+  test files under `tmp_path`, never the working directory.
+- `pytest.ini` must start with `[pytest]` — `[tool:pytest]` is silently ignored.
+  Unknown-key warnings are hidden by `filterwarnings`; check with `-W default`.
+  `timeout = 300` needs the `pytest-timeout` dev dep.
+- Markers come from the directory (`unit`/`integration`/`e2e`) plus explicit
+  decorators — never from test names.
+- Assert the exact outcome. No "any of 200/403/500" or
+  `if "id" in data: … else: pass` tests — they pass against missing endpoints.
+- `make test-js` runs `/usr/bin/node` (18; the nvm shell node is 24): no global
+  `File`, so take it from `node:buffer`. It names `web_client/js/tests/*.test.mjs` explicitly; on Node 24
+  `node --test <dir>` fails with a misleading `MODULE_NOT_FOUND`.
+- Pre-push hook runs the full unit suite. F541 fixer:
+  `uv run python scripts/fix_f541.py`. Reset the LLM singleton with
+  `portf_manager.llm_client.reset_llm_client()`.
+- DB version bump: update every `== 47` assertion in `tests/test_database.py`, and check `tests/unit/test_schema_v*.py` — a per-version module may pin the number too (v37's did, and failed on the v38 bump); new ones compare with `DATABASE_VERSION`.

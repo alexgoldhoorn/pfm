@@ -473,3 +473,45 @@ installed app, not for a browser tab, and Android only.
 ## Loans & Mortgage page (2026-11-15)
 
 Sidebar page `loans` (`#loansPage`, `loadLoansPage` in `pfm_analytics.js`): summary cards, two hand-drawn SVG charts (balance line, stacked principal/interest bars, `data-chart-tip` hover), a collapsible yearly table, the payments-vs-bank table and a debounced what-if panel. The budget editor's link picker (`budgetLinkOptions`, `parseBudgetLink` in `pfm_features.js`) offers manual liabilities and loans. Details: `mortgage.md`.
+
+## Rules summary (from CLAUDE.md)
+
+Vanilla JS + Bootstrap 5.3, no build step. `index.html` loads five files **in this
+order**, sharing one global scope: `help_text.js` → `pfm_core.js` (prefs, `Fmt`,
+`esc`, API/modal managers, shared chart helpers, `notify`/`confirmDialog`) →
+`pfm_pages.js` (page manager: dashboard, transactions, assets, help) →
+`pfm_analytics.js` (charts, net worth) → `pfm_features.js` (nav and auth
+managers, all other pages + `DOMContentLoaded` bootstrap).
+Full reference (dashboard layout, chart helpers, page-by-page wiring):
+`docs/features/web-client.md`.
+
+- Escape dynamic text before `innerHTML` (`esc(err.message)`) — imported data and
+  backend errors are untrusted.
+- Messages via `notify(msg, level?)`; questions via
+  `await confirmDialog({title, message, confirmLabel, danger})`. No native
+  `alert()`/`confirm()` (the one `alert()` left, before the DB-restore reload, is
+  deliberate).
+- Money via `Fmt.money(v, currency)` only — no `'€' + Fmt.num(…)` strings. Numbers
+  `Fmt.num()`, dates `Fmt.date()`. A sentence the server wrote (Action Item
+  title/detail, anomaly `detail`) goes through `serverTextHtml(text)`, never
+  bare `esc()`: it escapes and reformats/blurs each "1,234.56 EUR" and formats ISO dates/months.
+- ⚠️ Formatters built on `Fmt.amt(...)` emit a `<span>` — never interpolate them
+  into an attribute; use `esc(fmtEurCents(v))` there.
+- ⚠️ An element with Bootstrap `d-flex`/`d-block` can't be hidden with
+  `style.display = 'none'` (`!important`) — swap classes instead.
+- Colours: `--viz-*` CSS tokens; asset types map to a fixed colour, never by rank.
+  SVG axes use `SVG_GRID`/`SVG_AXIS`/`SVG_LABEL`, never hard-coded hex.
+- New pages or non-obvious cards get entries in `METRIC_HELP`/`PAGE_HELP`
+  (`help_text.js`); call `initTooltips()` after rendering tooltip-bearing markup.
+- Pure helpers are `window.`-exported so the DOM-free JS tests
+  (`web_client/js/tests/`) can import them.
+- A new Dashboard block is a `.dash-block` wrapper with its own `data-block` id
+  directly inside `#dashBlocks`; never rename an existing id (saved layouts
+  reference it).
+- Check new pages at 390px width for horizontal overflow.
+- Installed app (PWA): `manifest.json` shortcuts open `/?page=<name>`; a shared
+  statement is a `POST /share-target` answered by `sw.js`, never the backend, and
+  imported through the `import-file` endpoints (never a second import path).
+  `SHARE_CACHE`/`SHARE_KEY` must be identical in `sw.js` and `pfm_features.js`.
+- Web files are baked into the image, not live-mounted — redeploy after every
+  edit (see the restart table).

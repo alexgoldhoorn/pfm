@@ -319,3 +319,9 @@ before the earliest last import over the accounts that have rows in the window:
 - With a budget, a category that already has a line carries `existing_line_id`
   and `change` (`to_yearly`, `add_rollover` or null). Applying a change uses the
   existing bulk and line `PUT` endpoints; the proposal itself changes nothing.
+
+## Must-know gotchas before editing
+
+_Area: Budgeting. Kept here from the CLAUDE.md feature table._
+
+`GET /summary` must stay before `/{budget_id}`. Positive variance always means favourable. Attribute unbudgeted actuals by SIGN, not tree root. Budget and `/spending/trend` must reconcile to the cent. An all-digits investment `ref_key` is a broker — use `line_uses_category()`. `net` is cash flow, not "better off". Never show a flattering variance for a month with nothing imported. On a yearly line `monthly_amount` is the YEARLY figure and `planned_total` only the set-aside; its limit is a rolling 12 months (yearly amount less the 11 months before, no January reset). Variance on fund/rollover lines is against `available_total`; a rollover window total is carry-in + planned - actual and the January reset only touches the per-month carry. Pace = actual + recurring still due + baseline everyday average x share of month left (`cashflow_forecast.everyday_outflows`, not a run rate); without a baseline it is a run rate from 25% of the month, else `too_early` (null projection, no Action Item). It exists only for a month with imports and is an estimate. Seed proposals only suggest `yearly`/rollover (`existing_line_id` + `change`) and write nothing; a suggested yearly `suggested_amount` is the YEARLY figure. A lumpy line (everyday spending in at most a third of a 6+ month baseline) has pace status `irregular`: no everyday average, no Action Item.

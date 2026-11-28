@@ -89,3 +89,9 @@ the loop.
 - No LLM-written outcomes. The review is the owner's judgement.
 - Tests: `tests/unit/test_decisions.py` (router, Action Item, chat tools),
   `mcp/tests/test_attribution_decisions.py`.
+
+## Must-know gotchas before editing
+
+_Area: Decision journal. Kept here from the CLAUDE.md feature table._
+
+A known `symbol` gets its latest stored price attached on create; an unknown one is kept as typed with no price. `record_decision` is a write-capable chat tool: only a decision the user confirmed, never a suggestion. `POST /{id}/review` with `reviewed: false` clears the review.

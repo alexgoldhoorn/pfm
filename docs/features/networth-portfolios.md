@@ -112,3 +112,9 @@ Answers one question: if the household keeps living at today's financial level, 
 ## Loans & Mortgage page (2026-11-15)
 
 A read-only page per loan (overview, equity, payments vs bank, what-if) now sits on top of the loans described above, and `PUT /networth/loans/{id}` takes a partial body. Reference: `mortgage.md`.
+
+## Must-know gotchas before editing
+
+_Area: Net worth, balance sheet, loans, retirement, brokers/portfolios, goals, sync. Kept here from the CLAUDE.md feature table._
+
+Goal figures (status, projection, pace) come only from `services/goals.py` — the router, the `get_goals` chat tool and the Action Items check share it; `PUT /goals/{id}` treats a missing `start_networth_eur`/`notes` as "leave unchanged". `net_worth_eur(db)` is the one total (Goals uses it) and is `build_balance_sheet(db)["totals"]["net_worth_eur"]`. A fresh account valuation (≤ 7 days) replaces the portfolio's positions and cash lines. Ledger cash excludes buys/sells of `asset_type='cash'` assets (their interest/dividends count, net of `tax`); a negative ledger line is shown but not counted. Bank balances come from the latest `spending_transactions.balance`; an account with none is excluded, not zero. `account_type` is create-only. `cash_eur`/`cost_eur` use transaction-date FX from the row's own `t.currency` (not the asset's — EUR buys of USD-based ETFs), `value_eur` the live rate; a ~1–2% gap vs the broker's own EUR figure is expected FX noise. Net-worth history is not backfilled (it starts at the first snapshot); the five stored components must sum to the balance-sheet total to the cent, and the snapshot hook after a price run must never fail the run.

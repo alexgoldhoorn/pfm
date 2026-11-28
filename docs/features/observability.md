@@ -83,3 +83,9 @@ Langfuse's OTLP endpoint).
 
 The backend container must be able to reach those services, so either put them on
 `portf_net` or use an address the container can route to.
+
+## Must-know gotchas before editing
+
+_Area: Metrics, error tracking, traces. Kept here from the CLAUDE.md feature table._
+
+All off unless configured (`PORTF_METRICS_ENABLED`, `PORTF_SENTRY_DSN`, `PORTF_OTEL_ENDPOINT`). Telemetry must never stop the API: a feature that fails to start is logged and skipped. LLM metrics/spans hook `_call_with_retry`/`_log_llm_call`, so every `_instrument`-wrapped call is covered. Prompt text goes on spans only with `PORTF_OTEL_CAPTURE_LLM_CONTENT`. `/metrics` is `include_in_schema=False` and outside the API-key dependency, so protect it with `PORTF_METRICS_TOKEN`.

@@ -3,399 +3,108 @@
 ## Project Overview
 Portfolio Manager: a Python CLI + FastAPI server + web client for tracking stocks, ETFs, funds, bonds, crypto and commodities across multiple brokers, with LLM-powered import, file import/export, web chat, Spanish IRPF tax reporting, and Google Sheets PDT sync.
 
-## Exposed via the internet-facing MCP gateway
-The MCP server is a small Python package, `mcp/pfm_mcp/` (one module per area in
-`pfm_mcp/tools/`, shared HTTP helpers in `client.py`, settings in `config.py`).
-`mcp/server.py` is only a compatibility shim: it is symlinked from
-`~/mcp/pfm/server.py` and imported live by `~/mcp/remote_gateway/server.py`, the
-always-on, internet-facing `mcp-remote-gateway.service`
-(host in `~/mcp/CLAUDE.md`), which re-exports most of its tools. A change here
-affects that surface too — see `~/mcp/CLAUDE.md`, "Exception:
-remote_gateway/server.py".
-
-- The tools are read-only wrappers over the HTTP API. Every test lives in
-  `mcp/tests/` and runs without pfm's own dependencies:
-  `cd mcp && python3 -m pytest -q` (patch `pfm_mcp.client._get`; a conftest
-  blocks the real network). A new tool uses `@tool` from `pfm_mcp`, goes in the
-  matching `tools/` module and in the README's tool table
-  (`tests/test_readme.py` fails if the table and the registered tools differ;
-  `tests/test_package.py` pins the tool count).
-- Configuration, first hit wins: `PFM_URL` / `PFM_API_KEY`, then the dotenv file
-  named by `PFM_ENV_FILE`, then the legacy `~/repos/pfm/.env.local`, then
-  `http://127.0.0.1:8000` with an empty key (warning on stderr, never stdout).
-  The package must not import `portf_manager`/`portf_server`.
-- When an API response changes shape, update the matching tool. Tools read fields
-  with `.get(..., 0)`, so a renamed field silently becomes zero, and a test that
-  pins the old field names stays green.
-- `budget_summary` mirrors `months_without_activity`: no verdicts for a month with
-  nothing imported, and it flags a month still in progress.
-- `wash_sale_check` applies art. 33.5 LIRPF: a 2-month window, or 1 year for
-  unlisted fund units, matched against FIFO lots from `/analytics/tax-report` for
-  this year and last. "Bought recently" lists only positions still held.
-  ⚠️ **Don't trust `asset_type` to spot a fund** — no live asset is typed
-  `mutual_fund` (heuristic imports store index funds as `stock`; Indexa's funds
-  are `etf` on exchange `"Funds"`). The server-side rule (`services/wash_sale.py`) counts an asset as a
-  fund if it is typed `mutual_fund`, OR its exchange is `"Funds"`, OR it isn't
-  `etf` and its name contains fund/idx/fondo/fonds — erring towards the year.
-  Crypto, cash and the synthetic `MINTOS` asset are excluded.
-- `spending_transactions` returns raw bank descriptions (tax ids, account
-  numbers, other people's names) and is on the gateway since 2026-10-08, so
-  keep it read-only and don't widen what each row prints without asking.
-- A new tool must be registered in three places or it stays local-only: the
-  gateway (`~/mcp/remote_gateway/server.py`, including `TOOL_SPECIALIST`), the
-  finance agent's tools line (`~/.claude/agents/finance.md`), and the persona
-  (`~/agents/finance/persona.md`).
+## Hard rules
+- ⚠️ **`~/repos/pfm` is the live checkout.** `portf_backend_dev` runs `uvicorn --reload` on it (bind-mounted at `/app`), half-written code and migrations included. Develop in a separate git worktree, never in `~/repos/pfm`.
+- **Public repo: never commit real personal or financial data.** Forbidden: real API keys/tokens/passwords; real Spreadsheet IDs (use `YOUR_SPREADSHEET_ID`); real ISINs for held assets (use `US0000000001`/`LU0000000001`/`ES0000000001` family); real portfolio amounts/prices; home directory paths (`/home/agoldhoorn/` → use `~/`). <!-- allow-financial: this line must quote the forbidden pattern --> Invent asset names in tests and plan docs ("Example Corp"). Enforced by the `scripts/check_no_real_financials.py` pre-commit hook; mark a genuine exception with an `allow-financial` comment on the line. Details, what is OK, and how to scrub history: `docs/claude-reference/privacy.md`.
+- **Migrations:** a new table goes in BOTH `_create_all_tables` (fresh DBs) AND `_migrate_to_vN` (existing DBs). CHECK-constraint rebuilds need `PRAGMA legacy_alter_table=ON` around the `RENAME` (see `_migrate_to_v13`). The next reload migrates the **live** DB.
+- **LLM failures are errors, never an empty result** (raise `LLMError`, routers return 502; never a fallback that looks like "nothing found").
+- **The MCP server (`mcp/pfm_mcp/`) is re-exported by the internet-facing gateway.** Before changing it or an API response shape it reads, read `docs/claude-reference/mcp-server.md`.
 
 ## Code Style
-- Use **black** code formatting (line length 88). Run: `uv run black <file>`.
+- **black** (line length 88): `uv run black <file>`.
 - Comments go on the **line before** the code they describe, not inline.
-- Use type hints on all function signatures.
-- Docstrings: Google style.
+- Type hints on all function signatures. Google-style docstrings.
 
 ## Python
-- Target Python **3.13**. Virtual env managed with **uv** (`uv sync`).
-- Dependencies in `pyproject.toml`. Dev deps under `[tool.uv] dev-dependencies`. Lockfile: `uv.lock`.
+- Python **3.13**, **uv** (`uv sync`). Deps in `pyproject.toml`, dev deps under `[tool.uv] dev-dependencies`, lockfile `uv.lock`.
+- The `.venv` is root-owned (Docker-created); run tooling with `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run …`.
+- Lint: `uv run flake8 portf_manager/ portf_server/ --max-line-length=88 --extend-ignore=E203,W503,E501` — 0 warnings, keep it that way.
 
 ## Architecture
-- `portf_manager/` — Core package: CLI, models, database, parsers, LLM client, tax calculator.
-- `portf_server/` — FastAPI REST API server with routers, schemas, auth middleware.
-- `web_client/` — Vanilla JS + Bootstrap 5 frontend (static files, no build step). See the Web Client section for load order.
-- `tests/` — pytest test suite. `tests/unit/`, `tests/integration/`, `tests/e2e/`.
-- `docs/features/` — full per-feature reference (see the Feature reference table). `docs/superpowers/` holds specs and plans. `docs/api-specification/` is the original 2025 design spec (JWT, React SPA — never built), kept for history; only `portfolio-management-api.md` there is maintained.
+- `portf_manager/` — core package: CLI, models, database, parsers, LLM client, tax calculator.
+- `portf_server/` — FastAPI REST API (routers, schemas, auth middleware).
+- `web_client/` — vanilla JS + Bootstrap 5 frontend, no build step.
+- `mcp/` — read-only MCP tools over the HTTP API (own tests: `cd mcp && python3 -m pytest -q`).
+- `tests/` — `unit/`, `integration/`, `e2e/`.
+- `docs/features/` — per-feature reference. `docs/claude-reference/` — detail moved out of this file. `docs/superpowers/` — specs and plans. `docs/api-specification/` is the original 2025 design spec (JWT, React SPA — never built), kept for history; only `portfolio-management-api.md` there is maintained.
 
 ## Key Patterns
+- **Database:** SQLite by default (`portfolio.db`), PostgreSQL via `DATABASE_URL`; `database_factory.get_database_adapter(url)` raises on an unknown scheme (no silent fallback). **Current schema version: 47**; migrations run on startup. Before adding a migration or touching the schema, read `docs/claude-reference/database-and-migrations.md` (per-version history).
+- **Transaction SELECTs** use an explicit column list with `COALESCE(t.currency, a.currency) AS currency`, never `t.*` (`sqlite3.Row` takes the first of two same-named columns). `_TX_COLS` queries are f-strings — the `f` is load-bearing; never run F541-fixers on triple-quoted strings in `database.py` (`uv run python scripts/fix_f541.py` is the safe one).
+- **New `asset_type` value:** add to BOTH Pydantic (`portf_server/schemas/assets.py`) AND the `models.py` enum, or `/assets` 500s. **New `transaction_type`:** `models.py TransactionType` + SQLAlchemy CHECK + `transactions` table rebuild.
+- **Transactions:** `create_transaction()` needs `portfolio_id` and `asset_id` (`get_asset_by_symbol` / `create_asset`), and always `currency=`. Use `db.get_or_create_portfolio(name, base_currency="EUR")`.
+- **Positions:** `portf_manager/positions.py` `compute_positions()` is the single source of truth (chronological; splits scale quantity, cost unchanged).
+- **Blocking I/O endpoints** (yfinance) are plain `def`, not `async`.
+- **Auth:** `X-API-Key`; `SERVER_API_KEY` is auto-seeded at startup.
+- **LLM:** `get_llm_client(tier="fast"|"main"|"heavy")`, never a model slug; no `temperature` on Claude 5. `docker-compose.yml` sets `PORTF_LLM_PROVIDER` under `environment:`, overriding `.env*`. Never instantiate `EnhancedChatEngine` at module level. Only `configure_logging()` configures logging. Model Markdown is untrusted (`safeMarkdownHtml`). Before touching LLM/chat code, read `docs/features/llm.md` (its "Rules summary" section).
+- More patterns and gotchas (auth caching, GBX ÷100, ISIN→ticker, `auto_price`, Spanish tax FIFO, PDT XLSX, env prefixes, compose interpolation, European number parsing, MyInvestor CSV): read `docs/claude-reference/core-patterns-and-gotchas.md` before touching imports, prices, tax or settings.
 
-### Database
-SQLite by default (`portfolio.db`), PostgreSQL via `DATABASE_URL` env var. Use `portf_manager/database.py` for SQLite, `database_factory.py` for auto-detection.
+## Feature reference
+**Before editing an area, read its doc in `docs/features/`**, especially its closing "Must-know gotchas before editing" section.
 
-**Current schema version: 47.** Migrations run automatically on startup.
+| Area | Doc |
+|---|---|
+| Broker parsers, PDT, import/export, bookings | `imports-exports.md` |
+| Research, Portfolio Health, rebalance planner, caps | `research-rebalance.md` |
+| Analytics, fund look-through, risk, tax report, PDF reports | `analytics.md` |
+| Net worth, balance sheet, loans, retirement, portfolios, goals, sync | `networth-portfolios.md` |
+| Loans & Mortgage page, reconciliation, what-if | `mortgage.md` |
+| Wealth Simulator (projection exists in JS and Python — change both) | `wealth-simulator.md` |
+| Spending (bank accounts) | `spending.md` |
+| Budgeting | `budgeting.md` |
+| Cash-flow forecast | `cashflow-forecast.md` |
+| Action Items, Diagnostics follow-up | `action-items.md` |
+| Decision journal | `decisions.md` |
+| What-if scenarios (job loss, income, house, crash) | `scenarios.md` |
+| Next-euro allocator | `allocator.md` |
+| Price updates, market data | `prices-market.md` |
+| LLM, chat, app logs | `llm.md` |
+| Web client | `web-client.md` |
+| Metrics, error tracking, traces | `observability.md` |
 
-Migration history (condensed — see `_migrate_to_vN` for full schema detail):
-- v5: `bookings` table (deposits/withdrawals); `tax` on `transactions`
-- v6: per-tx `currency` | v7: `allocation_targets`, `price_targets`, `research_reports`
-- v8: `portfolio_snapshots` | v9: `watchlist`, `goals` | v10: `portfolios.website` | v11: `assets.auto_price`
-- v12: `research_notes` | v13: `'index'` asset_type — **add new `asset_type` values to BOTH Pydantic (`portf_server/schemas/assets.py`) AND `models.py` enum or `/assets` 500s**
-- v14: `kv_cache` (TTL cache via `portf_manager/cache.py` `cached(db, key, ttl, producer)`)
-- v15: `manual_assets` | v16: `'interest'` tx_type — update `models.py TransactionType` + SQLAlchemy CHECK + rebuild `transactions` table (all three)
-- v17: `price_update_runs` | v18: `assets.ticker` | v19: `fixed_deposits` | v20: `monthly_cashflow`
-- v21: `app_settings` (`key TEXT PK, value TEXT`; `db.get/set_setting`) | v22: `push_subscriptions` (PWA push) | v23: recovery migration
-- v24: `chat_sessions` (id TEXT PK, name, created_at, last_message_at, message_count, messages JSON) — persistent named chat threads; `db.create/get/list/update/delete_chat_session`; web: col-md-3 sidebar + col-md-9 message area
-- v25: `portfolios.account_type` (`'brokerage'`|`'bank'`, default brokerage — a bank account is a portfolio too); `spending_transactions` (id, portfolio_id, date, description, amount [signed: −out/+in], currency, category, is_transfer, transfer_link_type [`'spending'`|`'booking'`], transfer_link_id, source, created_at); `spending_rules` (id, pattern, category, created_at — global, case-insensitive substring match, first-match-by-id wins — superseded v32, see below). See `docs/features/spending.md`.
-- v26: `spending_transactions.balance` (nullable REAL) — populated from the optional `balance` column in imported bank statements. See `docs/features/networth-portfolios.md`.
-- v27: `spending_categories` (id, name UNIQUE, created_at) — lightweight category name registry, decoupled from `spending_transactions`/`spending_rules` (which keep storing `category` as a free string, no FK) so a category can exist with zero usages. See `docs/features/spending.md`.
-- v28: `spending_categories.parent_id`, `is_root` — hierarchical category tree rooted at fixed "Income" and "Spend" nodes. See `docs/features/spending.md`.
-- v29: `budgets` (id, name UNIQUE, description, is_active, created_at, updated_at), `budget_lines` (id, budget_id FK CASCADE, line_type [`income`|`spending`|`debt`|`investment`], ref_key, monthly_amount, overrides [JSON], link_id, notes, UNIQUE(budget_id, line_type, ref_key)) — named open-ended monthly budgets with budget-vs-actual variance. See `docs/features/budgeting.md`.
-- v30: `fund_profiles` (asset_id PK REFERENCES assets(id) ON DELETE CASCADE, benchmark_key, source [`benchmark`|`llm`|`manual`], asset_class/regions/sectors [JSON weight maps], currency_hedged, hedge_currency, as_of, notes, updated_at) — one row per fund-like asset (`etf`/`mutual_fund`/`index`), holding the weight maps that let a fund be "seen through" into asset class, region and sector instead of counted as one opaque line. Nothing is backfilled on migration — an asset with no row is reported as unclassified rather than guessed at. See `docs/features/analytics.md`.
-- v31: `app_logs` (id, created_at [UTC ISO], level, source [logger name], event, message, details [JSON]) — the persistent application log. See `docs/features/llm.md`.
-- v32: `spending_transactions.merchant` (`normalize_merchant`, backfilled); `spending_rules.portfolio_id`/`amount_sign`/`min_amount`/`max_amount`/`priority` — rules evaluate by priority then id. See `docs/features/spending.md`.
-- v33: re-runs v32's guarded steps; heals a DB stamped 32 without the columns.
-- v34: `fund_profiles.ongoing_charges_pct` (REAL, nullable; the fund's TER in % of NAV a year) — feeds the `ongoing_charges` block of `GET /analytics/fees`. See `docs/features/analytics.md`.
-- v35: `manual_assets.as_of` (TEXT, backfilled from `updated_at`); `loans` (principal, annual_rate_pct, `rate_as_of` + `balance_as_of` anchor, start_date, term_months, extra_payment_eur), `account_valuations` (portfolio_id PK, provider, account_ref, value incl. cash, cash, as_of, fetched_at, last_error), `retirement_incomes` (owner `self`|`partner`, monthly_eur in today's euros, from_age, to_age, indexed) — feed the balance sheet and retirement readiness. See `docs/features/networth-portfolios.md`.
-- v36: `goals.start_networth_eur` (REAL, nullable — the net worth when the goal was set, written by `POST /goals/`; NULL for older goals, nothing is backfilled because there is no net-worth history) and `goals.notes` (TEXT) — feed the "since set" gain and the actual-vs-needed monthly pace. See `docs/features/networth-portfolios.md`.
-- v37: `wealth_scenarios` (name UNIQUE, is_primary [at most one], params [JSON of the simulator inputs], baseline_date, baseline_net_worth_eur [nullable]) — saved Wealth Simulator scenarios tracked against the balance-sheet net worth. See `docs/features/wealth-simulator.md`.
-- v38: `portfolios.is_managed` (robo-advisor account: holdings tracked, never a price signal or research nag) and `decisions` (decided_on, symbol/asset_id, action CHECK, title, rationale, expectation, review_on, price_at_decision, outcome, outcome_rating CHECK, reviewed_at, source) — the decision journal. See `docs/features/decisions.md`.
-- v39: `research_history` (append-only copy of every research report: asset_id, symbol, generated_at, source [`llm`|`bulk`|`backfill`], recommendation, confidence, fair_value, buy_below, sell_above, currency, price_at_report, horizon_months default 12) — `upsert_research_report` appends a row on every call, the migration backfills one row per existing `research_reports` row. Feeds the research scorecard. See `docs/features/research-rebalance.md`.
-- v40: `position_caps` (scope `symbol`|`sector`|`asset_type`, key, max_pct, note; UNIQUE(scope, key)) — user caps checked against `compute_exposure` (`services/caps.py`), enforced by the allocator for symbols and sectors, raised as Action Items when breached. See `docs/features/research-rebalance.md`.
-- v41: `spending_transactions.transfer_source` (`match`|`pattern`|`manual`|`rejected`, nullable) — how a row became a transfer; backfills flagged rows (`match` if linked, else `manual`) and sets rows with category `Transfer` but no flag back to `uncategorized`. See `docs/features/spending.md`.
-- v42: `spending_categories.essentiality` (`fixed`|`flexible`|`optional`, nullable, nothing backfilled) — drives the what-if scenarios' cut order; `reports` (id, title, content_md, source_session_id, created_at, updated_at) — Markdown reports saved from the AI chat. See `docs/features/scenarios.md` and `llm.md`.
-- v43: `spending_transactions.one_off` (INTEGER NOT NULL DEFAULT 0 — counts in every total, left out of every average/baseline), `budget_lines.period` (`monthly`|`yearly`, default monthly; on a yearly line `monthly_amount` stores the YEARLY figure) and `budget_lines.rollover` (0/1) — nothing backfilled. See `docs/features/spending.md`, `budgeting.md`, `cashflow-forecast.md`.
-- v44: `budget_lines.link_type` (`manual`|`loan`, default manual — what a debt line's `link_id` points at: a `manual_assets` liability or a `loans` row; a dangling link returns `link_broken: true`, never an error). See `docs/features/budgeting.md`.
-- v45: `loan_rate_periods` (loan_id FK CASCADE, from_date, annual_rate_pct, balance_eur nullable, note; UNIQUE(loan_id, from_date)) — the rates a loan had before its anchor, rebuilding history, paid-to-date and pre-anchor reconciliation; nothing backfilled. See `docs/features/mortgage.md`.
-- v46: `planned_items` (date, description, amount [signed], currency, kind [`spending`|`savings`|`income`], portfolio_id, done, notes) — hand-entered future one-offs placed once in the cash-flow forecast; never part of an average. See `docs/features/cashflow-forecast.md`.
-- v47: `networth_snapshots` (snapshot_date PK, net_worth_eur, investments/cash/property/other_assets/liabilities_eur, detail, warnings JSON) — one stored balance sheet a day, no backfill; `recurring_resolutions` (portfolio_id, merchant UNIQUE, status `cancelled`|`paid_elsewhere`, since, note); `month_closes` (month PK, closed_at, figures, checklist, report_id, notes). See `docs/features/networth-portfolios.md`, `spending.md`.
-
-⚠️ **New tables must appear in BOTH `_create_all_tables` (fresh DBs) AND `_migrate_to_vN` (existing DBs)** — migration-only adds break fresh installs/tests with "no such table".
-⚠️ **CHECK constraint rebuilds** require `PRAGMA legacy_alter_table=ON` around the `RENAME` — see `_migrate_to_v13`.
-
-All transaction SELECT queries use `COALESCE(t.currency, a.currency) AS currency` with an explicit column list (NOT `t.*`) — `sqlite3.Row` uses the first column when names collide.
-
-`bookings` table: `id, portfolio_id, date, action (Deposit|Withdrawal), amount, currency`
-
-### Performance / event loop
-- Endpoints doing blocking yfinance I/O are plain `def` (not `async`) so FastAPI runs them in a threadpool. Keep new blocking-IO endpoints sync.
-- The `.venv` is root-owned (Docker-created); run tooling with `UV_PROJECT_ENVIRONMENT=~/.cache/pfm-venv uv run …`.
-
-### LLM
-Provider-agnostic via `portf_manager/llm_client.py`. `get_llm_client()` auto-detects
-Ollama → Anthropic → Gemini → OpenRouter; override with
-`PORTF_LLM_PROVIDER`/`PORTF_LLM_MODEL`. Production runs Anthropic with **model
-tiers**: call sites use `get_llm_client(tier="fast"|"main"|"heavy")` (Haiku /
-Sonnet / Opus 5.x, `PORTF_ANTHROPIC_<TIER>_MODEL`), never a model slug; no
-`temperature` on Claude 5 (see `docs/features/llm.md`). ⚠️ `docker-compose.yml` sets
-`PORTF_LLM_PROVIDER=anthropic` under `environment:`, which overrides `.env*` — change
-the provider there, not only in `.env.local`.
-
-- `EnhancedChatEngine` is lazily initialized — never instantiate it at module level
-  (crashes without an API key). `POST /chat` takes a per-turn `tier` (default
-  heavy) and returns `model`/`tools_used`/`session_name`; the auto-title (fast
-  tier, first exchange only) renames only `New Chat[ n]` placeholders and a
-  failed title is a warning, not a 502. `GET /chat/models` is 200 with
-  `available: false` when no provider is set — never a 5xx (e2e fails on any).
-- Search grounding (`generate_with_search`) exists only on Gemini and Anthropic;
-  callers detect it with `hasattr`. All four providers implement
-  `ToolCapableLLMClient`; the 55 chat tools in `portf_server/chat_tools.py` call
-  DB/service functions directly, never HTTP. Only `set_action_item_status`
-  (follow-up state) and `record_decision` (the journal) write; `tests/unit/test_chat_tools.py` pins the count. Chat on Anthropic runs
-  `AnthropicLLMClient.run_tool_loop` (several tools per answer; chat passes
-  `_CHAT_MAX_TOOL_ROUNDS` = 10, the method default is 6); the
-  engine checks for it on the class, so a `MagicMock` LLM keeps the two-pass path.
-- Every provider method is wrapped by `_instrument`: transient errors are retried
-  (`PORTF_LLM_MAX_ATTEMPTS`, `PORTF_LLM_RETRY_DELAY`), config/request errors fail
-  at once, a final failure raises `LLMError`, and each call is logged as an
-  `llm.call` event in `app_logs`.
-- Chat web search is off unless the turn sends `web_search: true` (Anthropic
-  only; queries leave the machine, and the system prompt forbids personal
-  figures in them). Answers end with a ```followups``` block that
-  `split_followups` cuts off before storing; `sources`/`followups` are stored
-  on the message like `tools_used`. Model-written Markdown is untrusted: the web
-  client renders it only through `safeMarkdownHtml` (DOMPurify, remote images
-  dropped) — never `marked.parse` straight into `innerHTML`.
-- Saved reports are `/api/v1/saved-reports`; `/api/v1/reports/portfolio` is the
-  older PDF report and a different router.
-- **LLM failures are errors, never an empty result.** Extraction raises
-  `LLMError`/`LLMResponseError` rather than returning `[]`; routers return 502
-  with the reason in `detail`; chat writes nothing to the session on failure;
-  research returns `recommendation: None`, never a placeholder `HOLD`. Don't add a
-  fallback that hides a failure as "nothing found".
-- `configure_logging()` (`portf_manager/event_log.py`) is the only place that
-  configures logging — library modules must never call `logging.basicConfig`.
-
-Full detail (tool loop, extract-bookings date handling, chat sessions, the
-`app_logs` handler, `GET /api/v1/system/logs`): `docs/features/llm.md`.
-
-### Auth
-API key auth (`X-API-Key` header). `SERVER_API_KEY` env var is **auto-seeded** at startup (`app.py` lifespan) — no manual DB insert needed after container restart.
-
-Startup fails fast in production if `PORTF_SECRET_KEY` is still the default
-placeholder or shorter than 32 characters.
-
-`APIKeyBearer` caches a successful validation on `request.state.api_key_info` for
-the lifetime of that request. This matters because data routers are protected at
-include-time **and** some endpoints still keep a local `_auth` dependency; with
-the cache, one request does one DB validation/`last_used` update instead of two.
-
-### Portfolio Resolver
-`db.get_or_create_portfolio(name, base_currency="EUR")` — centralized helper; use instead of inline get/create pattern.
-
-### Transactions
-`database.create_transaction()` requires `portfolio_id`. `asset_id` required — use `db.get_asset_by_symbol()` + `db.create_asset()`. Always pass `currency=` (the transaction's own currency) to preserve per-row currency.
-
-### Positions & corporate actions (`portf_manager/positions.py`)
-`compute_positions(transactions, key=...)` — single source of truth. Processes **chronologically**. Stock splits: `split` tx stores ratio in `quantity` (2-for-1=2.0; reverse=0.1), scales held quantity, cost unchanged. All holdings/analytics endpoints delegate to it.
-
-### Feature reference
-Full per-feature docs (endpoints, schema, UI wiring, design rationale) live in
-`docs/features/`. **Read the doc for the area you're changing before you edit
-it.** The column on the right lists only what's easy to break.
-
-| Area | Doc | Must-know gotchas |
-|---|---|---|
-| Broker parsers, PDT, import/export, bookings | `imports-exports.md` | A parser must set `broker=` on every row, or preview duplicate detection silently matches nothing. Match Indexa `Tipo` values by prefix. PDT: crypto/commodity exchange empty, `mutual_fund` exchange the literal `"Funds"` and `bond` the literal `"Bonds"`, synthetic assets (`_PDT_SKIP_SYMBOLS`, the Mintos P2P pool) are never exported, bond qty/price rescaled via `_pdt_bond_quantity_price`. In `find_duplicate_transaction` the whole price ratio goes inside `ABS()`, and a price of 0 is matched exactly (the ratio is NULL). Every import path (web, PDT pull, CLI) dedups against rows stored *before* the import — never within it — and `duplicate_action` doesn't apply to bookings (only per-row `force`). PDT checks Broker (= portfolio name) against its fixed `Brokers` list: a portfolio PDT doesn't list needs a `pdt_broker_map` entry (applied on export, reversed on import). A parser's `asset_type` overwrites the stored type on every re-import, so get it right in the parser (Indexa = `mutual_fund`). `POST /import/import-file` shares `_parse_broker_file`/`_save_import` with the web import (never fork them), uses deterministic parsers only (never the LLM; not PDT, which spans several brokers), shares its lock with `/import/save`, and leaves bookings that match a stored one only by amount a few days apart out for review. |
-| Research, Portfolio Health, rebalance planner | `research-rebalance.md` | Single-segment GET routes (`portfolio-analysis`, `compare`, `bulk-refresh-status`) must be registered before `/{symbol}`. `upsert_price_target` treats `None` as "leave unchanged"; only `clear=` nulls a field. `/rebalance/analysis` and `/plan` both use `compute_positions`. `compute_price_target_alerts` skips holdings that exist only in `is_managed` portfolios and also feeds the Telegram alert cron, so a change there reaches Telegram, the Action Items and `/alerts/check` at once. `research_reports` is one row per asset and overwritten; `research_history` (+ `research_notes` with a `fair_value`) is what the scorecard scores — `GET /research/scorecard` and `/history/{symbol}` must stay before `/{symbol}`. `build_plan` auto-excludes symbols held only in managed portfolios (`managed_symbol_split`); a symbol held in both stays tradable at its total quantity with a warning. Price-alert state (`app_settings` `price_alert_state`) is written only by `GET /research/alerts/check?record=true` (the 20:05 cron); every other reader must leave `record` false or a crossing stops being "new". Caps keys must match what `compute_exposure` emits (`by_position` symbols, `by_sector` names from `_resolve_sector_country`), not `assets.sector`. The research prompts get a track-record paragraph only when the calibration has n ≥ 10. |
-| Analytics, fund look-through, PDF reports | `analytics.md` | `/tax-report` converts at transaction-date FX (`_fx_on`); `/fees` at current FX. `TaxTransaction` internal field names differ from the response keys. Fund region weights come from hand-maintained `benchmarks.json`, never yfinance. `by_currency` ≠ `by_currency_exposure`. `compute_exposure()` backs both `/diversification` and Portfolio Health — don't fork it. The Portfolio Health PDF section reads the cache only, never runs the LLM. Risk metrics come only from `risk_metrics.compute_risk_metrics` (flow-adjusted returns) — never from raw snapshot value changes; snapshots are calendar-daily, so don't annualise with 252. Lifetime return/IRR come only from `performance.compute_performance`. Cost, realised gains and flows convert at **transaction-date** FX (`to_eur_transactions`), value at the valuation day's — a snapshot cost at today's FX turns currency moves into fake flows. Benchmarks are compared in EUR (`to_eur_closes`); beta uses weekly returns; Sharpe/Sortino/alpha subtract €STR (`risk_free.py`, stubbed autouse in tests). Real returns use HICP (`inflation.py`, also stubbed) with no fallback; savings rate/emergency fund count only complete months that have bank imports. Good/bad bands live only in `METRIC_RATINGS` (`pfm_core.js`). `/attribution` gain is `end − start − buys + sells + income` at transaction-date FX for flows and boundary-day FX for values; a boundary with no stored price is valued at cost and flagged `priced: false`, never zero. `GET /analytics/stress` (presets, look-through shocks; sector beats class beats type, currency compounds) is not the older `/stress-test` (historical crises). The tax optimizer's maths lives in `services/year_end_tax.py`; carry-forward assumes prior-year losses were declared. |
-| Net worth, balance sheet, loans, retirement, brokers/portfolios, goals, sync | `networth-portfolios.md` | Goal figures (status, projection, pace) come only from `services/goals.py` — the router, the `get_goals` chat tool and the Action Items check share it; `PUT /goals/{id}` treats a missing `start_networth_eur`/`notes` as "leave unchanged". `net_worth_eur(db)` is the one total (Goals uses it) and is `build_balance_sheet(db)["totals"]["net_worth_eur"]`. A fresh account valuation (≤ 7 days) replaces the portfolio's positions and cash lines. Ledger cash excludes buys/sells of `asset_type='cash'` assets (their interest/dividends count, net of `tax`); a negative ledger line is shown but not counted. Bank balances come from the latest `spending_transactions.balance`; an account with none is excluded, not zero. `account_type` is create-only. `cash_eur`/`cost_eur` use transaction-date FX from the row's own `t.currency` (not the asset's — EUR buys of USD-based ETFs), `value_eur` the live rate; a ~1–2% gap vs the broker's own EUR figure is expected FX noise. Net-worth history is not backfilled (it starts at the first snapshot); the five stored components must sum to the balance-sheet total to the cent, and the snapshot hook after a price run must never fail the run. |
-| Loans & Mortgage page, loan reconciliation, what-if | `mortgage.md` | Loan maths is `services/loans.py` (pure) and `services/mortgage.py` (database); routers only wrap them. A payment falls one month after the anchor, so the start year has 11. A month without a bank debit is `missing` only when a statement reaches past it, otherwise `pending`. Equity needs a `property` manual asset; with several loans all balances count. The what-if never writes. `PUT /loans/{id}` is partial: omitted stays, explicit null clears only lender/rate_as_of/balance_as_of/notes. A budget debt line's `link_type` (`manual`\|`loan`) says what `link_id` points at. `loan_rate_periods` need an anchored loan and never change the forward projection; a rate change in the what-if is rejected when combined with a lump sum/extra/invest; `/loans/detect` must stay before the `{loan_id}` routes. |
-| Wealth Simulator, saved scenarios | `wealth-simulator.md` | The projection exists twice — `runProjection` (JS) and `services/wealth_scenarios.py` (Python) — pinned to one fixture in both test suites; change both or the Dashboard/chat quote figures the page doesn't show. Tracking compares *changes* since the baseline, never levels (the simulator omits property). Sending `params` on PUT re-baselines. Only the primary scenario raises an Action Item. Names are checked before INSERT because `get_connection()` turns an `IntegrityError` into `DatabaseError`. `GET /prefill` must stay before `/{scenario_id}`; it never fills rates, and a source that fails leaves its keys `null`, never a 5xx. |
-| Spending (bank accounts) | `spending.md` | Bank accounts are `portfolios` rows with `account_type='bank'` and never touch `transactions`/`bookings`. `GET /spending/` returns `{items, total}`. A category's tree root must match the amount's sign. Un-transferring a row resets its reciprocal counterpart (`reset_transfer_counterpart`). Exclude already-linked bookings before transfer matching. Rules match description OR merchant; a rule whose category root conflicts with the sign is skipped, not a stop. "Missed" recurring needs an import past the due date. Category "Transfer" always carries `is_transfer` (`PUT` and the import save set both; "Transfer" chosen at import is a hand-marked transfer, an overwrite never touches an existing transfer, and the category can't be renamed or merged into) and rules cannot target it; own-account patterns are the way. A `rejected` (un-marked) row is never linked or flagged automatically, as source or counterpart; only marking it by hand again does. Every booking-creating path must call `settle_after_bookings`. "Unlinked" means no link, not "not flagged" (`transfer_link_id IS NULL`). A `one_off` row counts in every total but never in an average or baseline (comparison, anomalies, forecast, pace, seeding); comparison deltas are null unless the month is complete; money moved to `Invest`/`House purchase` is `savings_eur`, not spending. "Data through" is per bank account; completeness and the elapsed share use the earliest last import over the accounts with rows in the window (`spending_insights.account_data_through`), never the freshest one. `GET /spending/review` assembles existing services only, each part failing to null + warning. `uncategorized-queue/classify` validates everything and creates the rule before it updates a row; `import-file` shares `_save_rows` with `/save` (never fork the paths) but is all or nothing (`strict=True` deletes what the call saved), so only `/save` may leave a partial import. `GET /spending/year` sums only months complete with imports in BOTH years (a year in progress cuts the previous year to the same months). A live recurring resolution (cancelled / paid elsewhere) removes the series from missed items, forecast bills and the budget pace; a charge after it makes the resolution stale and the series live again. Month close is a mark, not a lock (`closed.stale` flags later changes). |
-| Budgeting | `budgeting.md` | `GET /summary` must stay before `/{budget_id}`. Positive variance always means favourable. Attribute unbudgeted actuals by SIGN, not tree root. Budget and `/spending/trend` must reconcile to the cent. An all-digits investment `ref_key` is a broker — use `line_uses_category()`. `net` is cash flow, not "better off". Never show a flattering variance for a month with nothing imported. On a yearly line `monthly_amount` is the YEARLY figure and `planned_total` only the set-aside; its limit is a rolling 12 months (yearly amount less the 11 months before, no January reset). Variance on fund/rollover lines is against `available_total`; a rollover window total is carry-in + planned - actual and the January reset only touches the per-month carry. Pace = actual + recurring still due + baseline everyday average x share of month left (`cashflow_forecast.everyday_outflows`, not a run rate); without a baseline it is a run rate from 25% of the month, else `too_early` (null projection, no Action Item). It exists only for a month with imports and is an estimate. Seed proposals only suggest `yearly`/rollover (`existing_line_id` + `change`) and write nothing; a suggested yearly `suggested_amount` is the YEARLY figure. A lumpy line (everyday spending in at most a third of a 6+ month baseline) has pace status `irregular`: no everyday average, no Action Item. |
-| Cash-flow forecast | `cashflow-forecast.md` | Income is the average of ALL incoming non-transfer, non-one-off money; recurring charges are taken out of the variable baseline and placed on their due dates, never both. The balance is bank-only (broker moves are not projected). The rest of the month is measured from the effective `data_through` (earliest last import over the accounts in the window), not today; bills dated before the 1st move the balance but are not this month's spending. A source that fails is a warning and `null`, never zero or a 5xx; clients print "not available". Planned items are placed once and never enter an average or the budget pace; an open item dated before data-through is `overdue`, not projected. Tax payments come from `deployable.quarter_reserve` only when work-income merchants are ticked, and then the quarterly tax series leave the known bills and the tax-paid rows the forecast baseline (the past-due rule is judged at data-through) (not the budget pace's `everyday_outflows`). |
-| Action Items, Diagnostics follow-up | `action-items.md` | Each check is wrapped independently. Net Worth checklist gaps are merged client-side (`computeNetWorthChecklist`), never duplicated server-side. Item ids are deterministic per entity. Only `consolidation_candidate` fund overlaps raise an item. Checked/snoozed state is server-side in `app_settings` `action_item_ack:{id}` (`services/action_item_acks.py`), never `localStorage`; Data Quality findings use id `dq:{finding_key}` and `check_data_quality` counts only un-checked ones. `GET /action-items/` defaults to `status=open`; the web page asks for `all`. `check_decision_reviews` nags on open journal decisions whose `review_on` passed. Groups (`group:<family>`, 3+ open items, `fold`) are never stored: acking a group acks its currently open children, and item ids are unchanged. |
-| Decision journal | `decisions.md` | A known `symbol` gets its latest stored price attached on create; an unknown one is kept as typed with no price. `record_decision` is a write-capable chat tool: only a decision the user confirmed, never a suggestion. `POST /{id}/review` with `reviewed: false` clears the review. |
-| What-if scenarios (job loss, income change, house purchase, crash) | `scenarios.md` | All maths is in `services/life_scenarios.py`; chat tools, `/api/v1/scenarios/*` (read-only GETs) and the MCP tools only wrap it. A category with no `essentiality` (own or inherited) is `unclassified` and never cut — don't add a guess. Loan payments are already inside the bank-statement spending; never subtract them again. Money moved to `Invest`/`House purchase` is not spending. Rate and purchase costs are assumptions an answer must state. |
-| Next-euro allocator | `allocator.md` | The tax reserve reads only the work-income merchants ticked in the settings; an empty list counts every income row and adds a warning. Traspasos are planned before the new-money split. Antiaplicación unavailable → no stock is proposed. |
-| Price updates, market data | `prices-market.md` | The chat's `get_market_data` reads `market.get_market_profile` (`mkt:profile:{SYM}`, 6 h): a new Yahoo per-share price field must also go in `_PROFILE_PENCE_KEYS` or UK listings show it 100× too high. `run_price_update(db)` takes the real `Database`, never `PortfolioHTTPClient`: in server mode the CLI delegates to `POST /analytics/trigger-price-update` (`symbols`, `source`) and reports the run record (adding a DB method to the updater broke every cron run for four nights in 2026-10). A fetched price far outside the band around the last stored one is held, not stored (`services/price_guard.py`; held state is `app_settings` `price_guard:{asset_id}`) and shown as an Action Item until a later fetch confirms it; manual prices skip the guard. yfinance returns UK prices in GBX — ÷100 when `fast_info.currency == "GBp"`. `_CRYPTO_YF_OVERRIDES` lives only in `price_updater.py`. Read `previous_close` by subscript, never `fast_info.get()` (silently None). Currency self-healing skips crypto. |
-| Web client | `web-client.md` | See the Web Client section below. |
-| Metrics, error tracking, traces | `observability.md` | All off unless configured (`PORTF_METRICS_ENABLED`, `PORTF_SENTRY_DSN`, `PORTF_OTEL_ENDPOINT`). Telemetry must never stop the API: a feature that fails to start is logged and skipped. LLM metrics/spans hook `_call_with_retry`/`_log_llm_call`, so every `_instrument`-wrapped call is covered. Prompt text goes on spans only with `PORTF_OTEL_CAPTURE_LLM_CONTENT`. `/metrics` is `include_in_schema=False` and outside the API-key dependency, so protect it with `PORTF_METRICS_TOKEN`. |
+Cross-cutting rule: route ordering — single-segment GETs (`/summary`, `/prefill`, `/detect`, `/scorecard`, …) must be registered before `/{id}` routes.
 
 ## Web Client (`web_client/`)
-Vanilla JS + Bootstrap 5.3, no build step. `index.html` loads five files **in this
-order**, sharing one global scope: `help_text.js` → `pfm_core.js` (prefs, `Fmt`,
-`esc`, API/modal managers, shared chart helpers, `notify`/`confirmDialog`) →
-`pfm_pages.js` (page manager: dashboard, transactions, assets, help) →
-`pfm_analytics.js` (charts, net worth) → `pfm_features.js` (nav and auth
-managers, all other pages + `DOMContentLoaded` bootstrap).
-Full reference (dashboard layout, chart helpers, page-by-page wiring):
-`docs/features/web-client.md`.
+`index.html` loads, in order, sharing one global scope: `help_text.js` → `pfm_core.js` → `pfm_pages.js` → `pfm_analytics.js` → `pfm_features.js`. Core rules:
+- Escape dynamic text before `innerHTML` (`esc(...)`); server-written sentences go through `serverTextHtml(text)`.
+- `notify()` / `await confirmDialog({...})`, no native `alert()`/`confirm()`.
+- Money via `Fmt.money(v, currency)` only; numbers `Fmt.num()`, dates `Fmt.date()`. `Fmt.amt` formatters emit a `<span>` — never put them in an attribute.
+- Web files are baked into the image — redeploy after every edit.
 
-- Escape dynamic text before `innerHTML` (`esc(err.message)`) — imported data and
-  backend errors are untrusted.
-- Messages via `notify(msg, level?)`; questions via
-  `await confirmDialog({title, message, confirmLabel, danger})`. No native
-  `alert()`/`confirm()` (the one `alert()` left, before the DB-restore reload, is
-  deliberate).
-- Money via `Fmt.money(v, currency)` only — no `'€' + Fmt.num(…)` strings. Numbers
-  `Fmt.num()`, dates `Fmt.date()`. A sentence the server wrote (Action Item
-  title/detail, anomaly `detail`) goes through `serverTextHtml(text)`, never
-  bare `esc()`: it escapes and reformats/blurs each "1,234.56 EUR" and formats ISO dates/months.
-- ⚠️ Formatters built on `Fmt.amt(...)` emit a `<span>` — never interpolate them
-  into an attribute; use `esc(fmtEurCents(v))` there.
-- ⚠️ An element with Bootstrap `d-flex`/`d-block` can't be hidden with
-  `style.display = 'none'` (`!important`) — swap classes instead.
-- Colours: `--viz-*` CSS tokens; asset types map to a fixed colour, never by rank.
-  SVG axes use `SVG_GRID`/`SVG_AXIS`/`SVG_LABEL`, never hard-coded hex.
-- New pages or non-obvious cards get entries in `METRIC_HELP`/`PAGE_HELP`
-  (`help_text.js`); call `initTooltips()` after rendering tooltip-bearing markup.
-- Pure helpers are `window.`-exported so the DOM-free JS tests
-  (`web_client/js/tests/`) can import them.
-- A new Dashboard block is a `.dash-block` wrapper with its own `data-block` id
-  directly inside `#dashBlocks`; never rename an existing id (saved layouts
-  reference it).
-- Check new pages at 390px width for horizontal overflow.
-- Installed app (PWA): `manifest.json` shortcuts open `/?page=<name>`; a shared
-  statement is a `POST /share-target` answered by `sw.js`, never the backend, and
-  imported through the `import-file` endpoints (never a second import path).
-  `SHARE_CACHE`/`SHARE_KEY` must be identical in `sw.js` and `pfm_features.js`.
-- Web files are baked into the image, not live-mounted — redeploy after every
-  edit (see the restart table).
+Full rules (Bootstrap `d-flex` hiding, colours, help text, dashboard blocks, PWA share target, 390px check): `docs/features/web-client.md`, section "Rules summary".
 
 ## Testing
-- Unit: `uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e`
-  (~1.9k tests, 1–2 min; also passes as root). JS: `make test-js`.
-- Integration + e2e: `uv run pytest tests/integration tests/e2e` (~30s). Each
-  starts the real app in a **spawned** (not forked — a fork inherits
-  already-imported settings) process on a temp DB with `SERVER_API_KEY` seeded.
-  The e2e smoke test mounts `web_client/`, stubs the CDN libraries, and fails on
-  any uncaught JS error or 5xx across every sidebar page. Needs Chromium; not in CI.
-- **Tests can't reach the network.** An autouse guard in `tests/conftest.py` fails
-  any real HTTP call, even one the app swallows. Mock at the seam:
-  `portf_manager.market._fetch_quote_live`, `currency_utils.is_gbx`,
-  `portf_server.routers.llm.get_llm_client`. `PORTF_LLM_RETRY_DELAY=0` is set
-  autouse. Genuine live tests are `@pytest.mark.network`, run only with
-  `PFM_LIVE_NETWORK_TESTS=1`. Loopback is allowed only in integration/e2e.
-- Every test gets its own empty `HOME` (the CLI writes `~/.portf_session`). Write
-  test files under `tmp_path`, never the working directory.
-- `pytest.ini` must start with `[pytest]` — `[tool:pytest]` is silently ignored.
-  Unknown-key warnings are hidden by `filterwarnings`; check with `-W default`.
-  `timeout = 300` needs the `pytest-timeout` dev dep.
-- Markers come from the directory (`unit`/`integration`/`e2e`) plus explicit
-  decorators — never from test names.
-- Assert the exact outcome. No "any of 200/403/500" or
-  `if "id" in data: … else: pass` tests — they pass against missing endpoints.
-- `make test-js` runs `/usr/bin/node` (18; the nvm shell node is 24): no global
-  `File`, so take it from `node:buffer`. It names `web_client/js/tests/*.test.mjs` explicitly; on Node 24
-  `node --test <dir>` fails with a misleading `MODULE_NOT_FOUND`.
-- Pre-push hook runs the full unit suite. F541 fixer:
-  `uv run python scripts/fix_f541.py`. Reset the LLM singleton with
-  `portf_manager.llm_client.reset_llm_client()`.
-- DB version bump: update every `== 47` assertion in `tests/test_database.py`, and check `tests/unit/test_schema_v*.py` — a per-version module may pin the number too (v37's did, and failed on the v38 bump); new ones compare with `DATABASE_VERSION`.
+- Unit: `uv run pytest tests/ --ignore=tests/integration --ignore=tests/e2e` (~1.9k tests, 1–2 min). JS: `make test-js`. Integration + e2e: `uv run pytest tests/integration tests/e2e` (~30 s, needs Chromium).
+- Tests can't reach the network (autouse guard); mock at the seam. Write files under `tmp_path`. Assert the exact outcome, never "any of 200/403/500".
+- DB version bump: update every `== 47` assertion in `tests/test_database.py` and check `tests/unit/test_schema_v*.py`.
+- More (seams to mock, live-network marker, pytest.ini traps, Node version for JS tests): `docs/TESTING.md`, section "Rules summary".
 
 ## Documentation (Default Behaviour)
 When adding or changing a feature, always update:
-1. `PROJECT_STATUS.md` — bump "Last updated" and add the feature to the Recent
-   summary line.
-2. `docs/features/<area>.md` — endpoints, schema notes, UI wiring, design
-   rationale. A new area gets a new file plus a row in the Feature reference table.
-3. `CLAUDE.md` — **only** what someone must know before touching that area: a
-   one-line gotcha in the Feature reference table or Important Gotchas, or a new
-   command/convention. No endpoint lists, element IDs or incident stories here;
-   the story of how a bug was found goes in the commit message.
+1. `PROJECT_STATUS.md` — bump "Last updated" and add the feature to the Recent summary line.
+2. `docs/features/<area>.md` — endpoints, schema notes, UI wiring, design rationale, and its "Must-know gotchas" section. A new area gets a new file plus a row in the Feature reference table.
+3. `CLAUDE.md` — **only** a new command, convention or hard rule. Gotchas go in the feature doc; incident stories go in the commit message.
 
 This is mandatory. A feature is not done until the docs reflect it.
 
-## Privacy and Demo Data
-Public repo — never commit real personal or financial data.
-
-**Forbidden:** real API keys/tokens/passwords; real Spreadsheet IDs (use `YOUR_SPREADSHEET_ID`); real ISINs for held assets (use `US0000000001`/`LU0000000001`/`ES0000000001` family); real portfolio amounts/prices; home directory paths (`/home/agoldhoorn/` → use `~/`). <!-- allow-financial: this line must quote the forbidden pattern -->
-
-**Enforced by a pre-commit hook** (`scripts/check_no_real_financials.py`, first
-in `.pre-commit-config.yaml`), because this rule lived only in prose and real
-figures reached `main` and GitHub anyway — scrubbed from all 554 commits on
-2026-09-04 with `git filter-repo`. The hook favours precision over recall (a
-noisy hook gets disabled): it blocks ISINs outside an allowlist, IBANs and
-home-directory paths anywhere, plus money-with-cents and six-figure amounts in
-**Markdown only** — invented examples are round, and a fixture price of
-`155.00` in a test carries no meaning. Put `allow-financial` in a comment on
-the line for a genuine exception, so exceptions show up in review.
-
-⚠️ **A history rewrite does not reach commit messages.** `--replace-text` only
-rewrites blob contents; the same strings survived in commit messages and needed
-a second `--replace-message` pass. Verify both (`git log -p --all` covers
-contents *and* messages) before believing a scrub is complete.
-
-**OK:** well-known tickers (AAPL, BTC-EUR) as format examples; Apple's `US0378331005` in prompt templates; personal website/GitHub links in About page; fictional prices in test fixtures.
-
-When writing tests, invent asset names (e.g. "Example Corp", "Global Bond Fund"). Same rule for plan docs under `docs/superpowers/`.
-
 ## Git
-- Public repo `github.com:alexgoldhoorn/pfm` — develop on `main`. Push: `GIT_SSH_COMMAND="ssh -o IdentitiesOnly=no" git push origin main`.
-- Use `git -P` or `GIT_PAGER=cat` (some git versions don't support `--no-pager` as a flag).
-- Conventional commits: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`. Co-author line names the agent that wrote the commit (e.g. `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`).
-- **Pre-commit**: black + flake8 + autoflake via `.pre-commit-config.yaml`. **Pre-push**: full unit suite.
-
-## Important Gotchas
-- **`_TX_COLS` uses f-strings**: queries in `database.py` are
-  `f"""SELECT {self._TX_COLS}..."""`; the `f` prefix is load-bearing. Never run
-  F541-fixers that touch triple-quoted strings on this file. Autoflake is safe;
-  custom regex strippers are not.
-- **Black + regex**: `f""` matches the first two chars of `f"""..."""`. Limit
-  F541-fixers to `[^\n]` single-line patterns.
-- **DB adapter comes from the URL, no silent fallback**:
-  `database_factory.get_database_adapter(settings.database_url)` maps
-  `sqlite:///...` to SQLite and `postgres://`/`postgresql://` to Postgres;
-  anything else raises.
-- **Linting**: `uv run flake8 portf_manager/ portf_server/ --max-line-length=88 --extend-ignore=E203,W503,E501`.
-  It reports 0 warnings — keep it that way.
-- **`sqlite3.Row` name collision**: never `SELECT t.*, ..., COALESCE(t.col, other) AS col`
-  — use an explicit column list. The first occurrence wins.
-- **Spanish tax**: stocks/ETFs/bonds/funds are IRPF Box 27. FIFO over the **full** history — out-of-window sells still
-  consume lots; only in-window sells are reported. `purchase_amount` includes
-  purchase fees, `sell_amount` is net of sale fees (`purchase_price`/`sell_price`
-  stay gross). Transaction rows store `user_id` NULL, so `calculate_tax_report`
-  ignores its `user_id` param, and any `user_id` filter (e.g. the CLI's
-  `transaction_filter.py`) must keep NULL rows.
-- **PDT XLSX**: openpyxl writes to a file path, not BytesIO. Always clean up with
-  `os.unlink()`.
-- **Env var prefixes**: `portf_server/settings.py` uses the `PORTF_` prefix.
-  `GOOGLE_SERVICE_ACCOUNT_FILE`/`GOOGLE_SPREADSHEET_ID` are not prefixed — read
-  via `os.getenv()`.
-- **Compose interpolates the whole file before service selection**: a required
-  var in one service can break `docker compose build web`. Keep local-dev
-  fallbacks for cross-service vars; enforce strict secrets in deployment envs.
-- **GBX**: `currency_utils.normalize_gbx_amounts()` ÷100 on import (`imports.py`
-  save + `sync.py` pull); missing it makes cost basis 100× too high. The live
-  price fetch ÷100 only when `fast_info.currency == "GBp"`, so an odd Yahoo
-  response can store one run's UK prices ~100× too high, and nothing guards
-  against it. A one-day spike-and-revert on a net-worth chart → check `prices`
-  for GBP assets on that date. `is_gbx` caches successful lookups only.
-- **ISIN→ticker resolution** (`ticker_resolver.py`): OpenFIGI returns no currency,
-  so `_pick_best_ticker` infers it from the exchange code and `_verify_yf` checks
-  the quote's currency. The resolver returns `None` rather than a wrong-currency
-  ticker; those assets need a manual `ticker` via `PUT /api/v1/assets/{id}`.
-  Known gap: with several right-currency venues, the first one wins.
-- **`auto_price`**: a manual price (`POST /assets/{id}/prices` with
-  `source="manual"`, or a deposit import) sets `auto_price=0`, and the daily cron
-  skips the asset from then on. Re-enable with
-  `PUT /api/v1/assets/{id} {"auto_price": true}`.
-- **`asset_type` enum**: add new values to BOTH Pydantic
-  (`portf_server/schemas/assets.py`) and `models.py`, or `/assets` 500s.
-- **`transaction_type`**: `models.py TransactionType` + SQLAlchemy CHECK +
-  `transactions` table rebuild — update all three.
-- **Thousands with no decimals**: `parsers/utils.py`'s `parse_european_number`
-  and `parse_unsigned_amount` read a lone separator followed by groups of three
-  as thousands (`"10.000"` = 10000, `"1.000.000"` = 1000000). Keep it that way.
-- **MyInvestor CSV**: semicolon-delimited, European numbers (comma decimal, dot
-  thousands). `myinvestor_csv_parser.py` covers trades, dividends, deposits, fees
-  and cash interest; LLM text import covers the rest.
+- Public repo `github.com:alexgoldhoorn/pfm`, branch `main`. Push: `GIT_SSH_COMMAND="ssh -o IdentitiesOnly=no" git push origin main`.
+- Use `git -P` or `GIT_PAGER=cat`.
+- Conventional commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`). Co-author line names the agent that wrote the commit (e.g. `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`).
+- **Pre-commit:** privacy check + black + flake8 + autoflake (`.pre-commit-config.yaml`). **Pre-push:** full unit suite.
 
 ## After Every Task — What Needs Restarting
 
 | Change type | Action required |
 |---|---|
-| `web_client/` JS/HTML/CSS edited | `docker compose build web && docker stop portf_web && WEB_PORT=8080 docker compose up -d web` |
-| `web_client/nginx.conf` edited | Same as above (nginx config is baked into the image) |
-| `portf_server/` or `portf_manager/` Python edited | Nothing — `portf_backend_dev` runs `uvicorn --reload` on the checkout bind-mounted at `/app`, so an edit in `~/repos/pfm` is live at once |
-| `DATABASE_VERSION` bumped / new migration added | Nothing — the next reload migrates the **live** DB |
+| `web_client/` JS/HTML/CSS or `nginx.conf` edited | `docker compose build web && docker stop portf_web && WEB_PORT=8080 docker compose up -d web` |
+| `portf_server/` or `portf_manager/` Python edited | Nothing — live at once via `uvicorn --reload` once it reaches `~/repos/pfm` |
+| `DATABASE_VERSION` bumped / new migration | Nothing — the next reload migrates the **live** DB |
 | DB schema patched manually | No restart — note what was done |
-| `docker-compose.yml` or `Dockerfile` edited | Full rebuild of affected service |
-| No code changes (docs/tests only) | Nothing — say so explicitly |
-
-⚠️ **Develop in a separate git worktree, never in `~/repos/pfm`**: the live backend
-runs whatever is checked out there, half-written code and migrations included.
+| `docker-compose.yml` or `Dockerfile` edited | Full rebuild of the affected service |
+| Docs/tests only | Nothing — say so explicitly |
 
 Never leave the user guessing. If a change is already live, say that too.
 
-## Status
-See `PROJECT_STATUS.md` for full component status, pending work, and known issues.
-
-## Issue Tracker
-Tickets managed in **Todoist** → project **#Dev Projects / #pfm**.
+## Status and issues
+`PROJECT_STATUS.md` has component status, pending work and known issues. Tickets: **Todoist** → **#Dev Projects / #pfm**.

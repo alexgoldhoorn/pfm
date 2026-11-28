@@ -65,3 +65,52 @@ All LLM calls: `LLMClient.generate(prompt) -> str`. `GeminiClient` is a legacy w
 **Cost control tools in chat (2026-11-15).** 50 chat tools (since 2026-11-16 incl. `get_loans`, `loan_what_if`, see `mortgage.md`). Five read-only tools call the services directly (no HTTP, no writes): `compare_spending(month, group_by, baseline_months)` (`spending_insights.compare_month`), `get_spending_anomalies(days)`, `get_spending_tiers(months)`, `get_cashflow_forecast(months)` (`cashflow_forecast.load_forecast`, trimmed to 25 bills and the main month fields) and `get_spending_review(month)` (`spending_review.build_review`). Every reply carries a `notes` string saying which figures are estimates (baselines, forecast, pace) and the `data_through` date; the tool-loop system prompt names when to use each and tells the model to repeat the warnings. `get_household_finances` now reports the budget through `_budget_digest`: sections with `available_total` (variance is measured against it), the spending `pace`, the yearly funds and the lines at risk or over, plus `data_through` and `warnings`. A null part of a review means it could not be built, not zero. Details: `spending.md`, `budgeting.md`, `cashflow-forecast.md`.
 
 **Cost control 3 chat tools (2026-11-18).** Read-only, calling the services directly: `get_action_items(include_resolved, family)` now reads the grouped form (one entry per group with `count` and `summary`; `family` returns that group's items), `get_networth_history(period, start, end)` (`networth_history.get_history` plus `compute_change`; null parts are reported as not available with the warnings; history starts at the first snapshot), `get_month_close(month)` (`month_close.build_month_close`; default the last complete month), and `get_recurring_spending` returns `resolution`, `resolution_stale`, the `cancelled` / `paid_elsewhere` statuses and the three totals. 55 chat tools. The MCP counterparts are `action_items` (grouped, `family`), `networth_history`, `month_close` and `subscriptions` (54 tools).
+
+## Rules summary (from CLAUDE.md)
+
+Provider-agnostic via `portf_manager/llm_client.py`. `get_llm_client()` auto-detects
+Ollama → Anthropic → Gemini → OpenRouter; override with
+`PORTF_LLM_PROVIDER`/`PORTF_LLM_MODEL`. Production runs Anthropic with **model
+tiers**: call sites use `get_llm_client(tier="fast"|"main"|"heavy")` (Haiku /
+Sonnet / Opus 5.x, `PORTF_ANTHROPIC_<TIER>_MODEL`), never a model slug; no
+`temperature` on Claude 5 (see `docs/features/llm.md`). ⚠️ `docker-compose.yml` sets
+`PORTF_LLM_PROVIDER=anthropic` under `environment:`, which overrides `.env*` — change
+the provider there, not only in `.env.local`.
+
+- `EnhancedChatEngine` is lazily initialized — never instantiate it at module level
+  (crashes without an API key). `POST /chat` takes a per-turn `tier` (default
+  heavy) and returns `model`/`tools_used`/`session_name`; the auto-title (fast
+  tier, first exchange only) renames only `New Chat[ n]` placeholders and a
+  failed title is a warning, not a 502. `GET /chat/models` is 200 with
+  `available: false` when no provider is set — never a 5xx (e2e fails on any).
+- Search grounding (`generate_with_search`) exists only on Gemini and Anthropic;
+  callers detect it with `hasattr`. All four providers implement
+  `ToolCapableLLMClient`; the 55 chat tools in `portf_server/chat_tools.py` call
+  DB/service functions directly, never HTTP. Only `set_action_item_status`
+  (follow-up state) and `record_decision` (the journal) write; `tests/unit/test_chat_tools.py` pins the count. Chat on Anthropic runs
+  `AnthropicLLMClient.run_tool_loop` (several tools per answer; chat passes
+  `_CHAT_MAX_TOOL_ROUNDS` = 10, the method default is 6); the
+  engine checks for it on the class, so a `MagicMock` LLM keeps the two-pass path.
+- Every provider method is wrapped by `_instrument`: transient errors are retried
+  (`PORTF_LLM_MAX_ATTEMPTS`, `PORTF_LLM_RETRY_DELAY`), config/request errors fail
+  at once, a final failure raises `LLMError`, and each call is logged as an
+  `llm.call` event in `app_logs`.
+- Chat web search is off unless the turn sends `web_search: true` (Anthropic
+  only; queries leave the machine, and the system prompt forbids personal
+  figures in them). Answers end with a ```followups``` block that
+  `split_followups` cuts off before storing; `sources`/`followups` are stored
+  on the message like `tools_used`. Model-written Markdown is untrusted: the web
+  client renders it only through `safeMarkdownHtml` (DOMPurify, remote images
+  dropped) — never `marked.parse` straight into `innerHTML`.
+- Saved reports are `/api/v1/saved-reports`; `/api/v1/reports/portfolio` is the
+  older PDF report and a different router.
+- **LLM failures are errors, never an empty result.** Extraction raises
+  `LLMError`/`LLMResponseError` rather than returning `[]`; routers return 502
+  with the reason in `detail`; chat writes nothing to the session on failure;
+  research returns `recommendation: None`, never a placeholder `HOLD`. Don't add a
+  fallback that hides a failure as "nothing found".
+- `configure_logging()` (`portf_manager/event_log.py`) is the only place that
+  configures logging — library modules must never call `logging.basicConfig`.
+
+Full detail (tool loop, extract-bookings date handling, chat sessions, the
+`app_logs` handler, `GET /api/v1/system/logs`): `docs/features/llm.md`.

@@ -211,3 +211,9 @@ which reuses the ranking helpers, and `warnings`. An unknown bucket is a 404
 - `wash_sale.py` imports the private `analytics._build_tax_report_data`, and
   `allocator.py`/`deployable.py` take their FX helpers (`_get_fx_rate`,
   `_get_fx_rate_on`) from the portfolios router.
+
+## Must-know gotchas before editing
+
+_Area: Next-euro allocator. Kept here from the CLAUDE.md feature table._
+
+The tax reserve reads only the work-income merchants ticked in the settings; an empty list counts every income row and adds a warning. Traspasos are planned before the new-money split. Antiaplicación unavailable → no stock is proposed.

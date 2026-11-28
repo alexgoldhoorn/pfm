@@ -200,3 +200,9 @@ to be.
 - A scenario's `stocks_amount` is a snapshot; the page's refresh icon brings in
   today's holdings but does not update the scenario (that is "Update with
   current inputs", which also re-baselines).
+
+## Must-know gotchas before editing
+
+_Area: Wealth Simulator, saved scenarios. Kept here from the CLAUDE.md feature table._
+
+The projection exists twice — `runProjection` (JS) and `services/wealth_scenarios.py` (Python) — pinned to one fixture in both test suites; change both or the Dashboard/chat quote figures the page doesn't show. Tracking compares *changes* since the baseline, never levels (the simulator omits property). Sending `params` on PUT re-baselines. Only the primary scenario raises an Action Item. Names are checked before INSERT because `get_connection()` turns an `IntegrityError` into `DatabaseError`. `GET /prefill` must stay before `/{scenario_id}`; it never fills rates, and a source that fails leaves its keys `null`, never a 5xx.

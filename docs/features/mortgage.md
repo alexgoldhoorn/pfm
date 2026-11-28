@@ -64,3 +64,9 @@ A budget debt line can point at a loan: see `budgeting.md` (schema v44, `budget_
 ## Agent tools
 
 MCP `loans` (per loan: balance, rate, payment, end, interest, paid to date, rate periods, equity/LTV, latest complete bank month) and `loan_what_if` wrap the overview and what-if endpoints. Chat `get_loans` (via `mortgage.digest`) and `loan_what_if` call the services directly. All read-only.
+
+## Must-know gotchas before editing
+
+_Area: Loans & Mortgage page, loan reconciliation, what-if. Kept here from the CLAUDE.md feature table._
+
+Loan maths is `services/loans.py` (pure) and `services/mortgage.py` (database); routers only wrap them. A payment falls one month after the anchor, so the start year has 11. A month without a bank debit is `missing` only when a statement reaches past it, otherwise `pending`. Equity needs a `property` manual asset; with several loans all balances count. The what-if never writes. `PUT /loans/{id}` is partial: omitted stays, explicit null clears only lender/rate_as_of/balance_as_of/notes. A budget debt line's `link_type` (`manual`|`loan`) says what `link_id` points at. `loan_rate_periods` need an anchored loan and never change the forward projection; a rate change in the what-if is rejected when combined with a lump sum/extra/invest; `/loans/detect` must stay before the `{loan_id}` routes.

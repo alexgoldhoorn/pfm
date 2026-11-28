@@ -120,3 +120,9 @@ constants, not fetched.
 
 `tests/unit/test_life_scenarios.py` (pure maths on a fixed baseline, the
 database wiring, the endpoints and the chat tools), `mcp/tests/test_scenarios.py`.
+
+## Must-know gotchas before editing
+
+_Area: What-if scenarios (job loss, income change, house purchase, crash). Kept here from the CLAUDE.md feature table._
+
+All maths is in `services/life_scenarios.py`; chat tools, `/api/v1/scenarios/*` (read-only GETs) and the MCP tools only wrap it. A category with no `essentiality` (own or inherited) is `unclassified` and never cut — don't add a guess. Loan payments are already inside the bank-statement spending; never subtract them again. Money moved to `Invest`/`House purchase` is not spending. Rate and purchase costs are assumptions an answer must state.
